@@ -1,0 +1,6 @@
+[submodule "notcurses"]
+	path = notcurses
+	url = https://github.com/dankamongmen/notcurses
+[submodule "libnotcurses-sys"]
+	path = libnotcurses-sys
+	url = https://github.com/dankamongmen/libnotcurses-sys
