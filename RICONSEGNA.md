@@ -118,3 +118,179 @@ NC_SPEC_SEED=1234 bundle exec rspec spec/inline_reimpl_spec.rb < /dev/null    # 
 10. **Test.** Lo schema della spec differenziale (oracolo `libnotcurses-ffi`, `termtype` fisso, contesto unico su
     `/dev/null`) si può riusare per i wrapper idiomatici.
 11. **Piattaforme.** Provato solo su Linux x86_64. Big-endian solo simulato; macOS e Ruby 3.1 non provati.
+
+## Fase 2 — wrapper Ruby idiomatico
+
+- **Data di completamento:** 2026-10-25
+- **Log dettagliato:** `memory/fase2-wrapper-idiomatico.md` (decisioni di design, ciclo di vita, memoria e callback,
+  tabelle dei bug aggirati, funzioni escluse, differenze dai pattern del prompt, verifiche)
+- **Fase 1:** nessun file modificato (`lib/notcurses/ffi.rb`, `lib/notcurses/ffi/`).
+- **Dimensioni:** 28 file in `lib/` (12 470 righe, Fase 1 esclusa); 29 file di spec e helper (7 515 righe) più 2
+  fixture (`spec/fixtures/visual/rgbw.png`, `frames.mkv`).
+- **Uso:** `require 'notcurses'`; il punto di ingresso è `Notcurses::Context.open { |nc| ... }` (o
+  `Notcurses::Direct.open`).
+
+### Classi e moduli
+
+| Classe o modulo | File | Metodi d'istanza | Metodi di classe | di cui `@api private` |
+| --- | --- | ---: | ---: | ---: |
+| `Notcurses` | `notcurses.rb`, `version.rb`, `format.rb`, `context.rb` | 0 | 20 | 2 |
+| `Notcurses::Context` | `context.rb` | 64 | 1 | 14 |
+| `Notcurses::Capabilities` | `context.rb` | 10 | 0 | 0 |
+| `Notcurses::Plane` | `plane.rb` | 138 | 7 | 14 |
+| `Notcurses::FadeContext` | `plane.rb` | 9 | 0 | 0 |
+| `Notcurses::Cell` | `cell.rb` | 13 | 2 | 3 |
+| `Notcurses::Channel` | `channel.rb` | 22 | 4 | 0 |
+| `Notcurses::Channels` | `channel.rb` | 39 | 2 | 0 |
+| `Notcurses::Input` | `input.rb` | 29 | 1 | 0 |
+| `Notcurses::Key` | `input.rb` | 0 | 6 | 0 |
+| `Notcurses::Palette` | `palette.rb` | 13 | 1 | 0 |
+| `Notcurses::Pixel` | `pixel.rb` | 16 | 2 | 0 |
+| `Notcurses::Stats` | `stats.rb` | 41 | 1 | 1 |
+| `Notcurses::Direct` | `direct.rb` | 61 | 1 | 1 |
+| `Notcurses::Direct::Frame` | `direct.rb` | 6 | 0 | 0 |
+| `Notcurses::Direct::Image` | `direct.rb` | 7 | 1 | 0 |
+| `Notcurses::Visual` | `visual.rb` | 20 | 14 | 0 |
+| `Notcurses::Visual::Geometry` | `visual.rb` | 22 | 0 | 0 |
+| `Notcurses::Selector` | `widgets/selector.rb` | 12 | 1 | 0 |
+| `Notcurses::MultiSelector` | `widgets/multiselector.rb` | 9 | 1 | 0 |
+| `Notcurses::Menu` | `widgets/menu.rb` | 18 | 1 | 0 |
+| `Notcurses::Menu::Item` | `widgets/menu.rb` | 4 | 0 | 0 |
+| `Notcurses::Reader` | `widgets/reader.rb` | 15 | 1 | 0 |
+| `Notcurses::Reel` | `widgets/reel.rb` | 17 | 1 | 0 |
+| `Notcurses::Tablet` | `widgets/reel.rb` | 9 | 0 | 6 |
+| `Notcurses::Tabbed` | `widgets/tabbed.rb` | 32 | 3 | 5 |
+| `Notcurses::Tab` | `widgets/tabbed.rb` | 17 | 0 | 4 |
+| `Notcurses::Tree` | `widgets/tree.rb` | 19 | 1 | 0 |
+| `Notcurses::Plot` | `widgets/plot.rb` | 14 | 1 | 0 |
+| `Notcurses::ProgBar` | `widgets/progbar.rb` | 9 | 1 | 0 |
+| `Notcurses::FdPlane` | `fd_plane.rb` | 8 | 1 | 0 |
+| `Notcurses::Subprocess` | `subprocess.rb` | 9 | 1 | 0 |
+| `Notcurses::Widget` | `widgets/widget.rb` | 7 | 0 | 0 |
+| `Notcurses::Resource` | `resource.rb` | 3 | 0 | 0 |
+| `Notcurses::Resource::ClassMethods` | `resource.rb` | 1 | 0 | 0 |
+| `Notcurses::Util` (helper interni) | `util.rb` | 0 | 38 | 0 |
+
+- Classi di errore (`error.rb`, 11): `Error` e le sottoclassi `InitError`, `ClosedError`, `RenderError`,
+  `PlaneError`, `CellError`, `VisualError`, `InputError`, `WidgetError`, `DirectError`, `ContextError`.
+- Conteggio per riflessione (`public_instance_methods`, `singleton_methods`): comprende alias, `attr_reader` e i
+  metodi che una classe riceve dai moduli del wrapper (`Resource`, `Widget`, `Resource::ClassMethods#open`).
+  Contando ogni definizione una sola volta i metodi pubblici sono 723. La colonna `@api private` conta i metodi
+  pubblici per Ruby ma interni al wrapper (registro del contesto, collegamenti tra classi).
+
+### Copertura delle funzioni FFI (383 + 248)
+
+| Voce | Funzioni |
+| --- | ---: |
+| Funzioni della Fase 1 | 631 (383 `attach_function`, 248 inline e macro) |
+| Chiamate direttamente dal wrapper | 477 (75,6%): 317 `attach_function`, 160 inline |
+| Escluse, ognuna con un motivo | 154 (24,4%) |
+| - raggruppate in un metodo più generale o sostituite da un valore Ruby | 97 |
+| - bug di 3.0.17: reimplementate in Ruby o non offerte | 41 |
+| - non applicabili da Ruby (libc, `wchar_t`, macro di formato e di byte order, `userptr`) | 14 |
+| - attesa con il GVL tenuto (`notcurses_get_blocking`, `ncdirect_get_blocking`) | 2 |
+
+`spec/coverage_spec.rb` controlla l'elenco a ogni esecuzione: fallisce se una funzione non è né chiamata né esclusa,
+se un'esclusione riguarda una funzione chiamata o inesistente, o se manca il motivo.
+
+### Test
+
+| Spec | Esempi |
+| --- | ---: |
+| `spec/notcurses/` (25 file, uno per classe o area) | 520 |
+| `spec/integration/lifecycle_spec.rb`, `spec/integration/visual_spec.rb` | 20 |
+| `spec/coverage_spec.rb` | 3 |
+| Totale Fase 2 | 543 |
+| Fase 1 (`ffi_sanity_spec.rb`, `inline_reimpl_spec.rb`) | 257 |
+| **Totale** | **800, 0 fallimenti (100% pass)** |
+
+- Stesso risultato in 5 ordini casuali (`--order rand:1234`, `4242`, `1`, `31337`, `2026`); durata circa 8 s.
+- Esempi per file: plane 68, visual 72, direct 56, context 28, tabbed 28, tree 26, reel 25, plot 24, menu 23,
+  reader 22, selector 19, channel 16, fd_plane 16, subprocess 15, progbar 14, multiselector 13, input 11, format 10,
+  cell 8, palette 6, pixel 6, version 5, fade_context 4, stats 4, error 1.
+- YARD: ogni metodo pubblico ha commento, `@param` per ogni parametro e `@return`; i metodi che possono sollevare
+  hanno `@raise` (controlli euristici con script fuori dal progetto).
+
+Come eseguire (dalla radice del progetto):
+
+```sh
+TERM=xterm-256color timeout -k 5 -s KILL 600 bundle exec rspec < /dev/null                          # tutte le spec
+TERM=xterm-256color timeout -k 5 -s KILL 300 bundle exec rspec spec/notcurses/plane_spec.rb < /dev/null  # una classe
+```
+
+- Le spec aprono un `Context` su `/dev/null` con `termtype: 'xterm-256color'` e l'input scartato: non serve un
+  terminale. Un solo contesto alla volta: ogni gruppo lo apre in `before(:all)` e lo chiude in `after(:all)`.
+- `timeout -s KILL`: dopo una corruzione dell'heap Ruby può restare appeso invece di terminare.
+- Le spec dei visual usano le fixture e richiedono notcurses compilato con ffmpeg; quelle dei tabbed usano nomi non
+  ASCII e richiedono una locale UTF-8.
+
+### Bug di notcurses 3.0.17 aggirati
+
+Le tabelle complete, con il file C, la riga e il workaround, sono in `memory/fase2-wrapper-idiomatico.md` (102 righe:
+contesto e input 11, piani 20, celle 3, Direct 14, Visual 10, Selector/MultiSelector/Menu/Reader/ProgBar 20,
+Reel/Tree/Tabbed 14, Plot/FdPlane/Subprocess 10). Regola seguita: un bug che corrompe la memoria o va in crash si
+previene prima della chiamata C, con un'eccezione chiara; un bug di semantica si aggira in Ruby se il workaround è
+corto e sicuro, altrimenti si documenta nel YARD. I più importanti:
+
+- **double free** in `notcurses_stop`/`drop_planes` con un reader vivo, e in `drop_planes` con pile di 2 o più piani:
+  il contesto chiude prima i widget e distrugge da sé quelle pile;
+- **scritture oltre il piano**: TAB nell'ultima colonna, EGC di larghezza zero a fine riga, `ncplane_resize` con
+  `x_off < 0`, scorciatoie del menu da U+0800: rifiutati prima della chiamata;
+- **letture oltre il buffer**: regioni dei visual con `begy`/`begx`, `ncreader_offer_input` con 4 codepoint,
+  `ncvisual_from_rgb_loose`, il decoder sixel: dati copiati o controllati in Ruby;
+- **crash e cicli infiniti** nei widget (`ncselector_delitem`, menu senza sezioni apribili, albero vuoto, tabbed senza
+  tab, `ncreel`): chiamate evitate o widget riscritti in Ruby;
+- **blocchi dell'interprete**: `ncfdplane_destroy` dentro un callback, `ncsubproc_destroy` con il figlio vivo,
+  `notcurses_get` con il GVL: `FdPlane`, `Subprocess` e le attese dell'input sono in Ruby;
+- **segnali**: `NCOPTION_NO_QUIT_SIGHANDLERS` e `NCOPTION_NO_WINCH_SIGHANDLER` per default (con i gestori di notcurses
+  Ctrl-C termina Ruby senza `ensure` e SIGWINCH resta bloccato per sempre).
+
+Bug noti **non** aggirati (documentati nel YARD): dopo il primo scroll di un piano `duplicate`, i resize (anche
+l'autogrow), `rotate_*`, il merge sulla destinazione e `FadeContext` permutano o perdono righe (`logrow`);
+`ncvisual_from_palidx` non usa i colori della palette; `ncvisual_rotate` perde la prima riga e la prima colonna;
+Backspace del reader non cancella la colonna 0; l'intestazione di `Tabbed` non segue il resize.
+
+### API volutamente non wrappate
+
+Le 154 funzioni escluse sono elencate con il motivo in `spec/coverage_spec.rb`. Per quasi tutte la funzionalità esiste
+con un altro metodo (per esempio `Plane#putstr` al posto delle 27 varianti `put*`/`printf*`, `Cell` e `Channels` al
+posto delle 39 funzioni `nccell_*`). Funzionalità di notcurses **non offerte**:
+
+- render su buffer o su file (`ncpile_render_to_buffer`, `ncpile_render_to_file`): non funzionano in 3.0.17;
+- cancellazione delle voci di un `Selector` (`ncselector_delitem`: segfault);
+- fusione di una regione (`ncplane_mergedown`): solo la fusione completa (`Plane#merge_down`);
+- `NCREADER_OPTION_HORSCROLL`, `tchannels` e `tattrword` del reader;
+- `userptr` di piani, tablet e tab: i dati Ruby stanno negli oggetti Ruby;
+- attesa bloccante nel C (`notcurses_get_blocking`, `ncdirect_get_blocking`): `get(timeout: nil)` attende in Ruby.
+
+Reimplementate in Ruby (stessa funzionalità, senza i bug): `ncreel`/`nctablet` (`Reel`, `Tablet`), `ncfdplane`
+(`FdPlane`), `ncsubproc` (`Subprocess`), `ncplane_puttext`, `ncplane_contents`, `ncplane_fadeout`/`fadein`/`pulse`,
+`ncplane_resize_marginalized`/`placewithin`, `ncdirect_stream`, `ncdirect_printf_aligned`, `nctree_goto`,
+`ncblit_rgb_packed`.
+
+### Cosa serve alla Fase 3
+
+1. **Ciclo degli eventi e focus.** Il wrapper non ha un dispatcher: `Context#get(timeout:)` restituisce un `Input` e
+   ogni widget ha `offer_input(input) → true/false`. La Fase 3 deve scegliere chi ha il focus e a chi passare
+   l'evento non consumato.
+2. **Resize.** Con il default `no_winch_sighandler: true` serve `trap('WINCH')` più `Context#refresh`; i piani
+   reagiscono con `resize:`/`set_resize_callback` (`:maximize`, `:realign`, `:marginalized`, `:placewithin` o un
+   blocco). Limiti da gestire: l'intestazione di `Tabbed` non segue il resize; un `Reader` il cui piano cambia
+   dimensioni solleva `WidgetError` e va ricreato.
+3. **Composizione.** I widget avanzati si possono scrivere sopra `Plane`, come `Reel` (Ruby puro: piani figli, `box`,
+   `putstr`, callback di disegno). Utili: `create_child(margins:)`, gli allineamenti, le pile separate
+   (`Context#create_pile`, `Plane#render_pile`), `FadeContext` per le animazioni, `Visual#stream` con un blocco.
+4. **Thread.** Nessun lock interno: serve una politica (per esempio un solo thread UI, e i blocchi di `FdPlane` e
+   `Subprocess` che passano i dati con una `Queue`).
+5. **Bug `logrow` dopo lo scroll** (non aggirato): evitare `duplicate`, resize e `rotate` sui piani che hanno fatto
+   scroll, oppure ricrearli.
+6. **GVL nella Fase 1.** `ncdirect_readline`, `ncdirect_cursor_yx`, `ncdirect_cursor_move_yx`, `ncdirect_init` e
+   `ncvisual_stream` sono collegate senza `blocking: true` e bloccano gli altri thread Ruby durante l'attesa. Serve una
+   decisione: cambiare la Fase 1 o accettare il limite (documentato nel YARD).
+7. **Test grafici.** Blitter a pixel (sixel, kitty), quadranti, sestanti e ottanti non si provano su `/dev/null`:
+   serve un emulatore di terminale vero su un pty (per esempio in CI).
+8. **Ruby 3.1.** Sintassi controllata con `Parser::Ruby31` su tutti i file di `lib`, ma la suite non è mai stata
+   eseguita su 3.1: il build di Ruby 3.1.7 con gcc 16 fallisce su questa macchina. Serve un ambiente con Ruby 3.1 (o
+   una matrice CI 3.1–4.0).
+9. **Pacchetto.** Non c'è ancora un gemspec né la documentazione YARD generata (la gem `yard` non è tra le
+   dipendenze).

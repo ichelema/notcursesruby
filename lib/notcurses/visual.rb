@@ -1,0 +1,1096 @@
+# Generated from notcurses 3.0.17
+# Source: notcurses/include/notcurses/notcurses.h
+# frozen_string_literal: true
+
+module Notcurses
+  # Immagine o video (+struct ncvisual*+): una matrice di pixel RGBA (vedi
+  # {Pixel}) da disegnare su un piano con {#blit}.
+  #
+  # Si crea da un file multimediale ({.open}, {.from_file}: tutto ciò che
+  # ffmpeg sa aprire con uno stream video) o da pixel in memoria
+  # ({.from_rgba}, {.from_bgra}, {.from_rgb_packed}, {.from_rgb_loose},
+  # {.from_palidx}, {.from_sixel}, {.from_plane}). I costruttori copiano i
+  # dati: la String sorgente si può riusare subito.
+  #
+  # Ciclo di vita. Serve un {Context} attivo: in notcurses 3.0.17 un ncvisual
+  # creato senza contesto va in crash alla distruzione. Il visual appartiene al
+  # contesto: {#close} lo distrugge, e {Context#close} (anche
+  # {Context#drop_planes}) chiude i visual ancora aperti; da quel momento ogni
+  # metodo solleva ClosedError. Il GC non distrugge mai un visual. Nessun piano
+  # tiene un riferimento al visual: si può chiudere subito dopo {#blit}.
+  #
+  # Thread: notcurses non è thread-safe; usa il visual dal thread del contesto.
+  #
+  # @example
+  #   Notcurses::Visual.open('foto.png') do |visual|
+  #     plane = visual.blit(plane: nc.stdplane, child: true, scale: :scale)
+  #     nc.render
+  #     plane.close
+  #   end
+  class Visual
+    include Resource
+
+    # Allineamento delle righe che ffmpeg aggiunge allo stride interno
+    # (+rowalign+ di src/media/ffmpeg.c).
+    ROW_ALIGN = 64
+    # Registri di colore del decoder sixel di notcurses (MAXCOLORS di sixel.h).
+    SIXEL_COLORS = 65_535
+    # Corpo di un sixel che il decoder di 3.0.17 legge senza uscire dai buffer.
+    SIXEL_BODY = /\A(?>[?-~$-]|#\d{1,5}(?>;2;\d{1,3};\d{1,3};\d{1,3})?|!\d{1,9}[?-~])*\z/
+    private_constant :ROW_ALIGN, :SIXEL_COLORS, :SIXEL_BODY
+
+    # Geometria di un blit calcolata da notcurses (+ncvgeom+), copiata in un
+    # oggetto immutabile. I campi in pixel si riferiscono all'immagine, quelli
+    # in celle al piano.
+    class Geometry
+      # @return [Integer] righe dell'immagine, in pixel
+      attr_reader :pixy
+      # @return [Integer] colonne dell'immagine, in pixel
+      attr_reader :pixx
+      # @return [Integer] altezza di una cella in pixel (0 se il terminale non la comunica)
+      attr_reader :cdimy
+      # @return [Integer] larghezza di una cella in pixel (0 se il terminale non la comunica)
+      attr_reader :cdimx
+      # @return [Integer] righe disegnate, in pixel, dopo lo scaling
+      attr_reader :rpixy
+      # @return [Integer] colonne disegnate, in pixel, dopo lo scaling
+      attr_reader :rpixx
+      # @return [Integer] righe di celle occupate
+      attr_reader :rcelly
+      # @return [Integer] colonne di celle occupate
+      attr_reader :rcellx
+      # @return [Integer] pixel per cella in verticale con il blitter scelto
+      attr_reader :scaley
+      # @return [Integer] pixel per cella in orizzontale con il blitter scelto
+      attr_reader :scalex
+      # @return [Integer] prima riga della regione disegnata, in pixel
+      attr_reader :begy
+      # @return [Integer] prima colonna della regione disegnata, in pixel
+      attr_reader :begx
+      # @return [Integer] righe della regione disegnata, in pixel
+      attr_reader :leny
+      # @return [Integer] colonne della regione disegnata, in pixel
+      attr_reader :lenx
+      # @return [Integer] righe massime di una bitmap (blitter :pixel; altrimenti 0)
+      attr_reader :maxpixely
+      # @return [Integer] colonne massime di una bitmap (blitter :pixel; altrimenti 0)
+      attr_reader :maxpixelx
+      # @return [Symbol, Integer] blitter che notcurses userà (:ascii, :half, ...)
+      attr_reader :blitter
+
+      # @param geom [FFI::NcVgeom] struct compilata da +ncvisual_geom+
+      # @raise [TypeError] se geom non è un FFI::NcVgeom
+      def initialize(geom)
+        raise TypeError, "geom deve essere Notcurses::FFI::NcVgeom, non #{geom.class}" unless geom.is_a?(FFI::NcVgeom)
+
+        @pixy = geom[:pixy]
+        @pixx = geom[:pixx]
+        @cdimy = geom[:cdimy]
+        @cdimx = geom[:cdimx]
+        @rpixy = geom[:rpixy]
+        @rpixx = geom[:rpixx]
+        @rcelly = geom[:rcelly]
+        @rcellx = geom[:rcellx]
+        @scaley = geom[:scaley]
+        @scalex = geom[:scalex]
+        @begy = geom[:begy]
+        @begx = geom[:begx]
+        @leny = geom[:leny]
+        @lenx = geom[:lenx]
+        @maxpixely = geom[:maxpixely]
+        @maxpixelx = geom[:maxpixelx]
+        @blitter = Util.enum_symbol(Util::BLITTERS, geom[:blitter])
+        freeze
+      end
+
+      # @return [Hash{Symbol => Integer, Symbol}] i campi, nell'ordine di +ncvgeom+
+      def to_h
+        { pixy: @pixy, pixx: @pixx, cdimy: @cdimy, cdimx: @cdimx, rpixy: @rpixy, rpixx: @rpixx,
+          rcelly: @rcelly, rcellx: @rcellx, scaley: @scaley, scalex: @scalex, begy: @begy, begx: @begx,
+          leny: @leny, lenx: @lenx, maxpixely: @maxpixely, maxpixelx: @maxpixelx, blitter: @blitter }
+      end
+
+      # @param other [Object] oggetto da confrontare
+      # @return [Boolean]
+      def ==(other) = other.is_a?(Geometry) && other.to_h == to_h
+      alias eql? ==
+
+      # @return [Integer]
+      def hash = [Geometry, to_h].hash
+
+      # @return [String]
+      def inspect
+        "#<Notcurses::Visual::Geometry #{@pixy}x#{@pixx} px -> #{@rcelly}x#{@rcellx} celle blitter=#{@blitter.inspect}>"
+      end
+    end
+
+    # @return [Context] contesto a cui appartiene il visual
+    attr_reader :context
+
+    # Avvolge un ncvisual* appena creato e lo registra nel contesto, che lo
+    # chiude prima di +notcurses_stop+. Di solito non serve chiamarlo: usa i
+    # costruttori +from_*+.
+    #
+    # @api private
+    # @param ptr [::FFI::Pointer] ncvisual* non NULL, di proprietà del chiamante
+    # @param context [Context] il contesto attivo
+    # @param file [Boolean] true se il visual viene da +ncvisual_from_file+
+    # @raise [VisualError] se ptr è NULL
+    def initialize(ptr, context, file: false)
+      Util.check_ptr!(ptr, VisualError, 'ncvisual*')
+      @ptr = ptr
+      @context = context
+      @owner = context
+      @closed = false
+      @file = file
+      context.adopt(self)
+    end
+
+    # --- costruttori ---
+
+    # Apre un file multimediale, come {.from_file}; con un blocco passa il
+    # visual al blocco e lo chiude alla fine, come File.open.
+    #
+    # @param path [String, #to_path] percorso del file
+    # @yieldparam visual [Visual]
+    # @return [Visual] il visual; con un blocco, il valore del blocco
+    # @raise [VisualError] se +ncvisual_from_file+ restituisce NULL
+    # @raise [TypeError, ArgumentError] se path non è un percorso valido
+    # @raise [ClosedError] se non c'è un Context attivo
+    def self.open(path, &block) = from_file(path, &block)
+
+    # Carica un'immagine o un video e ne decodifica il primo frame
+    # (+ncvisual_from_file+). Formati: tutto ciò che ffmpeg apre con uno stream
+    # video (PNG, JPEG, GIF, MKV, ...).
+    #
+    # @param path [String, #to_path] percorso del file
+    # @yieldparam visual [Visual] (facoltativo) il visual, chiuso alla fine del blocco
+    # @return [Visual] il visual; con un blocco, il valore del blocco
+    # @raise [VisualError] se il file non esiste, non è multimediale, non ha uno
+    #   stream video, o se notcurses non ha ffmpeg (contesto aperto con core: true)
+    # @raise [TypeError, ArgumentError] se path non è un percorso valido
+    # @raise [ClosedError] se non c'è un Context attivo
+    def self.from_file(path, &block)
+      ctx = Internal.context!
+      file = Util.string!(File.path(path), 'path')
+      raise ArgumentError, 'path è vuoto' if file.empty?
+
+      ptr = FFI.ncvisual_from_file(file)
+      if ptr.null?
+        raise VisualError, "ncvisual_from_file(#{file.inspect}) ha restituito NULL (file inesistente, non " \
+                           'multimediale o senza stream video? contesto aperto con core: true?)'
+      end
+      Util.with_resource(new(ptr, ctx, file: true), &block)
+    end
+
+    # Visual da pixel RGBA (+ncvisual_from_rgba+): 4 byte per pixel, R, G, B,
+    # A in quest'ordine (il formato di {Pixel}).
+    #
+    # Bug di 3.0.17 aggirati: il C accetta rowstride < cols * 4 lasciando pixel
+    # non inizializzati (visual.c:784) e, senza ffmpeg, con rowstride >
+    # cols * 4 scrive oltre il buffer (visual.c:768, 801). Il wrapper valida
+    # rowstride e passa al C righe compatte.
+    #
+    # @param data [String] pixel, almeno rows * rowstride byte
+    # @param rows [Integer] righe, >= 1
+    # @param cols [Integer] colonne, >= 1
+    # @param rowstride [Integer, nil] byte per riga in data, multiplo di 4 e
+    #   >= cols * 4; nil = cols * 4
+    # @yieldparam visual [Visual] (facoltativo) il visual, chiuso alla fine del blocco
+    # @return [Visual] il visual; con un blocco, il valore del blocco
+    # @raise [VisualError] se +ncvisual_from_rgba+ restituisce NULL
+    # @raise [TypeError, ArgumentError] se un argomento non è valido
+    # @raise [ClosedError] se non c'è un Context attivo
+    def self.from_rgba(data, rows:, cols:, rowstride: nil, &block)
+      ctx = Internal.context!
+      buf = Internal.pixel_buffer(data, rows, cols, 4, rowstride)
+      wrap(ctx, FFI.ncvisual_from_rgba(buf, rows, cols * 4, cols), 'ncvisual_from_rgba', &block)
+    end
+
+    # Visual da pixel RGB compatti (+ncvisual_from_rgb_packed+): 3 byte per
+    # pixel, R, G, B, con la stessa alpha per tutti.
+    #
+    # @param data [String] pixel, almeno rows * rowstride byte
+    # @param rows [Integer] righe, >= 1
+    # @param cols [Integer] colonne, >= 1
+    # @param rowstride [Integer, nil] byte per riga, multiplo di 3 e >= cols * 3;
+    #   nil = cols * 3
+    # @param alpha [Integer] alpha dei pixel, 0..255 (il C, fuori intervallo,
+    #   mette 0 senza errore)
+    # @yieldparam visual [Visual] (facoltativo) il visual, chiuso alla fine del blocco
+    # @return [Visual] il visual; con un blocco, il valore del blocco
+    # @raise [VisualError] se +ncvisual_from_rgb_packed+ restituisce NULL
+    # @raise [TypeError, ArgumentError] se un argomento non è valido
+    # @raise [ClosedError] se non c'è un Context attivo
+    def self.from_rgb_packed(data, rows:, cols:, rowstride: nil, alpha: 255, &block)
+      ctx = Internal.context!
+      Util.uint8!(alpha, 'alpha')
+      buf = Internal.pixel_buffer(data, rows, cols, 3, rowstride)
+      wrap(ctx, FFI.ncvisual_from_rgb_packed(buf, rows, cols * 3, cols, alpha), 'ncvisual_from_rgb_packed', &block)
+    end
+
+    # Visual da pixel RGBx (+ncvisual_from_rgb_loose+): 4 byte per pixel, R, G,
+    # B e un byte ignorato, sostituito da alpha.
+    #
+    # Bug di 3.0.17 aggirato: con rowstride maggiore dello stride interno il C
+    # copia righe intere oltre il buffer (heap overflow, visual.c:884). Il
+    # wrapper passa al C righe compatte.
+    #
+    # @param data [String] pixel, almeno rows * rowstride byte
+    # @param rows [Integer] righe, >= 1
+    # @param cols [Integer] colonne, >= 1
+    # @param rowstride [Integer, nil] byte per riga, multiplo di 4 e >= cols * 4;
+    #   nil = cols * 4
+    # @param alpha [Integer] alpha dei pixel, 0..255 (il C, fuori intervallo,
+    #   lascia il quarto byte di data)
+    # @yieldparam visual [Visual] (facoltativo) il visual, chiuso alla fine del blocco
+    # @return [Visual] il visual; con un blocco, il valore del blocco
+    # @raise [VisualError] se +ncvisual_from_rgb_loose+ restituisce NULL
+    # @raise [TypeError, ArgumentError] se un argomento non è valido
+    # @raise [ClosedError] se non c'è un Context attivo
+    def self.from_rgb_loose(data, rows:, cols:, rowstride: nil, alpha: 255, &block)
+      ctx = Internal.context!
+      Util.uint8!(alpha, 'alpha')
+      buf = Internal.pixel_buffer(data, rows, cols, 4, rowstride)
+      wrap(ctx, FFI.ncvisual_from_rgb_loose(buf, rows, cols * 4, cols, alpha), 'ncvisual_from_rgb_loose', &block)
+    end
+
+    # Visual da pixel BGRA (+ncvisual_from_bgra+): 4 byte per pixel, B, G, R, A.
+    #
+    # @param data [String] pixel, almeno rows * rowstride byte
+    # @param rows [Integer] righe, >= 1
+    # @param cols [Integer] colonne, >= 1
+    # @param rowstride [Integer, nil] byte per riga, multiplo di 4 e >= cols * 4;
+    #   nil = cols * 4
+    # @yieldparam visual [Visual] (facoltativo) il visual, chiuso alla fine del blocco
+    # @return [Visual] il visual; con un blocco, il valore del blocco
+    # @raise [VisualError] se +ncvisual_from_bgra+ restituisce NULL
+    # @raise [TypeError, ArgumentError] se un argomento non è valido
+    # @raise [ClosedError] se non c'è un Context attivo
+    def self.from_bgra(data, rows:, cols:, rowstride: nil, &block)
+      ctx = Internal.context!
+      buf = Internal.pixel_buffer(data, rows, cols, 4, rowstride)
+      wrap(ctx, FFI.ncvisual_from_bgra(buf, rows, cols * 4, cols), 'ncvisual_from_bgra', &block)
+    end
+
+    # Visual da pixel indicizzati in una palette (+ncvisual_from_palidx+): ogni
+    # pixel occupa pstride byte e il primo è l'indice.
+    #
+    # Bug di 3.0.17 non aggirato: il C non usa i colori della palette
+    # (visual.c:969). Una voce con il colore di default ({Channel.default})
+    # diventa un colore ricavato dall'indice i (alpha 255 - i, rosso i, verde
+    # 220 - i / 2, blu i); qualsiasi altra voce diventa un pixel trasparente.
+    # Per una palette vera converti i pixel in RGBA e usa {.from_rgba}.
+    #
+    # @param data [String] indici, almeno rows * rowstride byte
+    # @param rows [Integer] righe, >= 1
+    # @param cols [Integer] colonne, >= 1
+    # @param palette [Array<Channel>] da 1 a 256 voci; ogni indice di data deve
+    #   essere < palette.size
+    # @param rowstride [Integer, nil] byte per riga, multiplo di pstride e >=
+    #   cols * pstride; nil = cols * pstride
+    # @param pstride [Integer] byte per pixel, >= 1
+    # @yieldparam visual [Visual] (facoltativo) il visual, chiuso alla fine del blocco
+    # @return [Visual] il visual; con un blocco, il valore del blocco
+    # @raise [VisualError] se +ncvisual_from_palidx+ restituisce NULL (un indice
+    #   >= palette.size)
+    # @raise [TypeError, ArgumentError] se un argomento non è valido
+    # @raise [ClosedError] se non c'è un Context attivo
+    def self.from_palidx(data, rows:, cols:, palette:, rowstride: nil, pstride: 1, &block)
+      ctx = Internal.context!
+      Util.integer!(pstride, 'pstride', 1..Util::INT32.max)
+      raise TypeError, "palette deve essere Array di Notcurses::Channel, non #{palette.class}" unless palette.is_a?(Array)
+      unless (1..FFI::NCPALETTESIZE).cover?(palette.size)
+        raise ArgumentError, "palette ha #{palette.size} voci: ne servono da 1 a #{FFI::NCPALETTESIZE}"
+      end
+
+      values = palette.each_with_index.map do |channel, i|
+        raise TypeError, "palette[#{i}] deve essere Notcurses::Channel, non #{channel.class}" unless channel.is_a?(Channel)
+
+        channel.value
+      end
+      pal = ::FFI::MemoryPointer.new(:uint32, values.size)
+      pal.put_array_of_uint32(0, values)
+      buf = Internal.pixel_buffer(data, rows, cols, pstride, rowstride)
+      ptr = FFI.ncvisual_from_palidx(buf, rows, cols * pstride, cols, values.size, pstride, pal)
+      wrap(ctx, ptr, 'ncvisual_from_palidx (un indice di data è >= palette.size?)', &block)
+    end
+
+    # Visual dal contenuto di un piano (+ncvisual_from_plane+): ogni cella
+    # diventa i pixel del blitter (per esempio 2 righe per cella con :half). Le
+    # celle devono contenere solo spazi o i blocchi del blitter.
+    #
+    # @param plane [Plane]
+    # @param blitter [Symbol, Integer] blitter con cui leggere le celle (:ascii,
+    #   :half, ...; non :default né :pixel)
+    # @param begy [Integer] prima riga, >= 0; -1 = riga del cursore
+    # @param begx [Integer] prima colonna, >= 0; -1 = colonna del cursore
+    # @param leny [Integer] righe, 0 = fino al bordo
+    # @param lenx [Integer] colonne, 0 = fino al bordo
+    # @yieldparam visual [Visual] (facoltativo) il visual, chiuso alla fine del blocco
+    # @return [Visual] il visual; con un blocco, il valore del blocco
+    # @raise [VisualError] se il C restituisce NULL: blitter :default, :pixel o
+    #   non disponibile, regione fuori dal piano, celle con altri glifi o mai scritte
+    # @raise [TypeError, ArgumentError] se un argomento non è valido
+    # @raise [ClosedError] se il piano è chiuso
+    def self.from_plane(plane, blitter:, begy: 0, begx: 0, leny: 0, lenx: 0, &block)
+      raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
+
+      ptr = FFI.ncvisual_from_plane(plane.to_ptr, Util.blitter_value(blitter), Util.int!(begy, 'begy'),
+                                    Util.int!(begx, 'begx'), Util.uint!(leny, 'leny'), Util.uint!(lenx, 'lenx'))
+      wrap(plane.context, ptr, 'ncvisual_from_plane (blitter :default o :pixel? regione fuori dal piano? celle ' \
+                               'con glifi diversi da spazi e blocchi?)', &block)
+    end
+
+    # Visual da una sequenza sixel (+ncvisual_from_sixel+), per esempio
+    # "\ePq#0;2;100;0;0#0~~\e\\".
+    #
+    # Il decoder di 3.0.17 scrive o legge fuori dai buffer con indici di colore
+    # >= 65535, definizioni di colore troncate, "!" senza cifre e, se rows non è
+    # un multiplo di 6, con le righe dell'ultima banda oltre rows (sixel.h:131,
+    # 167, 180). Il wrapper controlla la sequenza prima della chiamata e accetta
+    # solo ciò che il decoder legge in sicurezza: "#n" (n < 65535) con una
+    # definizione ";2;r;g;b" facoltativa, dati "?".."~", "!n" seguito da un
+    # dato, "$" e "-", fino al primo ESC; l'intestazione prima del primo "#" o
+    # "-" viene saltata. Con rows non multiplo di 6 decodifica le bande intere
+    # e ritaglia.
+    #
+    # @param sixel [String] la sequenza
+    # @param rows [Integer] righe dell'immagine, >= 1
+    # @param cols [Integer] colonne dell'immagine, >= 1
+    # @yieldparam visual [Visual] (facoltativo) il visual, chiuso alla fine del blocco
+    # @return [Visual] il visual; con un blocco, il valore del blocco
+    # @raise [ArgumentError] se la sequenza non rispetta la sintassi accettata
+    # @raise [VisualError] se il decoder la rifiuta (per esempio dati oltre rows
+    #   o cols)
+    # @raise [TypeError] se un argomento ha il tipo sbagliato
+    # @raise [ClosedError] se non c'è un Context attivo
+    def self.from_sixel(sixel, rows:, cols:, &block)
+      ctx = Internal.context!
+      text = Util.string!(sixel, 'sixel')
+      Internal.dims!(rows, cols)
+      tall = (rows + 5) / 6 * 6
+      Internal.dims!(tall, cols)
+      Internal.sixel_check!(text)
+      ptr = Util.check_ptr!(FFI.ncvisual_from_sixel(text, tall, cols), VisualError, 'ncvisual_from_sixel')
+      unless tall == rows
+        begin
+          cropped = Internal.crop(ptr, 0, 0, rows, cols)
+        ensure
+          FFI.ncvisual_destroy(ptr)
+        end
+        ptr = cropped
+      end
+      wrap(ctx, ptr, 'ncvisual_from_sixel', &block)
+    end
+
+    # --- funzioni senza visual ---
+
+    # Blitter che notcurses sceglie per i media con blitter: :default
+    # (+ncvisual_media_defblitter+).
+    #
+    # @param scale [Symbol] :none, :scale, :stretch, :none_hires, :scale_hires
+    # @return [Symbol] per esempio :half
+    # @raise [ArgumentError] se scale non è valido
+    # @raise [ClosedError] se non c'è un Context attivo
+    def self.media_default_blitter(scale: :none)
+      ctx = Internal.context!
+      Util.enum_symbol(Util::BLITTERS, FFI.ncvisual_media_defblitter(ctx.to_ptr, Util.scale_value(scale)))
+    end
+
+    # Disegna pixel RGBA su un piano senza creare un Visual (+ncblit_rgba+).
+    #
+    # @param data [String] pixel R, G, B, A; almeno rows * linesize byte
+    # @param plane [Plane] piano su cui disegnare (non se ne crea uno nuovo)
+    # @param rows [Integer] righe dell'immagine, >= 1
+    # @param cols [Integer] colonne dell'immagine, >= 1
+    # @param linesize [Integer, nil] byte per riga, multiplo di 4 e >= cols * 4;
+    #   nil = cols * 4
+    # @param options [Hash] y:, x:, scale:, blitter:, pxoffy:, pxoffx:,
+    #   nodegrade:, blend:, nointerpolate:, transcolor:, come in {#blit}
+    # @return [Plane] plane
+    # @raise [VisualError] se +ncblit_rgba+ fallisce
+    # @raise [TypeError, ArgumentError] se un argomento non è valido
+    # @raise [ClosedError] se il piano è chiuso
+    def self.blit_rgba(data, plane:, rows:, cols:, linesize: nil, **options)
+      buf = Internal.pixel_buffer(data, rows, cols, 4, linesize, 'linesize')
+      blit_buffer(plane, rows, cols, 'ncblit_rgba', options) { |vopts| FFI.ncblit_rgba(buf, cols * 4, vopts) }
+    end
+
+    # Disegna pixel BGRx su un piano (+ncblit_bgrx+): 4 byte per pixel, B, G,
+    # R e un byte ignorato; i pixel sono opachi.
+    #
+    # @param data [String] pixel, almeno rows * linesize byte
+    # @param plane [Plane] piano su cui disegnare
+    # @param rows [Integer] righe, >= 1
+    # @param cols [Integer] colonne, >= 1
+    # @param linesize [Integer, nil] byte per riga, multiplo di 4 e >= cols * 4;
+    #   nil = cols * 4
+    # @param options [Hash] come in {.blit_rgba}
+    # @return [Plane] plane
+    # @raise [VisualError] se +ncblit_bgrx+ fallisce
+    # @raise [TypeError, ArgumentError] se un argomento non è valido
+    # @raise [ClosedError] se il piano è chiuso
+    def self.blit_bgrx(data, plane:, rows:, cols:, linesize: nil, **options)
+      buf = Internal.pixel_buffer(data, rows, cols, 4, linesize, 'linesize')
+      blit_buffer(plane, rows, cols, 'ncblit_bgrx', options) { |vopts| FFI.ncblit_bgrx(buf, cols * 4, vopts) }
+    end
+
+    # Disegna pixel RGBx su un piano (+ncblit_rgb_loose+): 4 byte per pixel,
+    # R, G, B e un byte ignorato, sostituito da alpha.
+    #
+    # @param data [String] pixel, almeno rows * linesize byte
+    # @param plane [Plane] piano su cui disegnare
+    # @param rows [Integer] righe, >= 1
+    # @param cols [Integer] colonne, >= 1
+    # @param linesize [Integer, nil] byte per riga, multiplo di 4 e >= cols * 4;
+    #   nil = cols * 4
+    # @param alpha [Integer] alpha dei pixel, 0..255
+    # @param options [Hash] come in {.blit_rgba}
+    # @return [Plane] plane
+    # @raise [VisualError] se +ncblit_rgb_loose+ fallisce
+    # @raise [TypeError, ArgumentError] se un argomento non è valido
+    # @raise [ClosedError] se il piano è chiuso
+    def self.blit_rgb_loose(data, plane:, rows:, cols:, linesize: nil, alpha: 255, **options)
+      Util.uint8!(alpha, 'alpha')
+      buf = Internal.pixel_buffer(data, rows, cols, 4, linesize, 'linesize')
+      blit_buffer(plane, rows, cols, 'ncblit_rgb_loose', options) do |vopts|
+        FFI.ncblit_rgb_loose(buf, cols * 4, vopts, alpha)
+      end
+    end
+
+    # Disegna pixel RGB compatti su un piano: 3 byte per pixel, R, G, B.
+    #
+    # Bug di 3.0.17 aggirato: +ncblit_rgb_packed+ legge i pixel con passo di 1
+    # byte invece di 3 (visual.c:494) e disegna colori sbagliati. Il wrapper non
+    # la usa: crea un visual temporaneo con +ncvisual_from_rgb_packed+, che è
+    # corretta, e lo disegna con +ncvisual_blit+.
+    #
+    # @param data [String] pixel, almeno rows * linesize byte
+    # @param plane [Plane] piano su cui disegnare
+    # @param rows [Integer] righe, >= 1
+    # @param cols [Integer] colonne, >= 1
+    # @param linesize [Integer, nil] byte per riga, multiplo di 3 e >= cols * 3;
+    #   nil = cols * 3
+    # @param alpha [Integer] alpha dei pixel, 0..255
+    # @param options [Hash] come in {.blit_rgba}
+    # @return [Plane] plane
+    # @raise [VisualError] se il visual temporaneo o +ncvisual_blit+ falliscono
+    # @raise [TypeError, ArgumentError] se un argomento non è valido
+    # @raise [ClosedError] se il piano è chiuso
+    def self.blit_rgb_packed(data, plane:, rows:, cols:, linesize: nil, alpha: 255, **options)
+      raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
+
+      from_rgb_packed(data, rows: rows, cols: cols, rowstride: linesize, alpha: alpha) do |visual|
+        blit_buffer(plane, rows, cols, 'ncvisual_blit', options) do |vopts|
+          FFI.ncvisual_blit(plane.context.to_ptr, visual.to_ptr, vopts).null? ? -1 : 0
+        end
+      end
+    end
+
+    # @param ctx [Context] contesto proprietario
+    # @param ptr [::FFI::Pointer] puntatore restituito dal C
+    # @param what [String] nome della funzione C, per il messaggio d'errore
+    # @return [Visual] il visual creato; con un blocco, il valore del blocco
+    # @raise [VisualError] se ptr è NULL
+    def self.wrap(ctx, ptr, what, &block)
+      raise VisualError, "#{what} ha restituito NULL" if ptr.null?
+
+      Util.with_resource(new(ptr, ctx), &block)
+    end
+
+    # Esegue una ncblit_* sul piano: leny/lenx = l'immagine intera.
+    # @param plane [Plane] piano su cui disegnare
+    # @param rows [Integer] righe dell'immagine
+    # @param cols [Integer] colonne dell'immagine
+    # @param what [String] nome della funzione C, per il messaggio d'errore
+    # @param options [Hash] come in {.blit_rgba}
+    # @return [Plane] plane
+    # @raise [TypeError] se plane non è un Plane
+    # @raise [VisualError] se la funzione C fallisce
+    def self.blit_buffer(plane, rows, cols, what, options)
+      raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
+
+      ctx = plane.context
+      vopts = Internal.options(ctx, plane, **options)
+      vopts[:leny] = rows
+      vopts[:lenx] = cols
+      rc = yield vopts
+      ctx.raise_callback_errors!
+      Util.check!(rc, VisualError, what)
+      plane
+    end
+    private_class_method :wrap, :blit_buffer
+
+    # --- ciclo di vita ---
+
+    # Distrugge il visual (+ncvisual_destroy+). Idempotente. I piani su cui è
+    # stato disegnato non cambiano.
+    #
+    # @return [nil]
+    # @raise [VisualError] dentro un callback chiamato da notcurses (per esempio
+    #   il blocco di {#stream}, mentre il C usa il visual)
+    def close
+      return nil if @closed
+
+      ctx = @context
+      ctx.check_not_in_callback!('Visual#close', VisualError)
+      FFI.ncvisual_destroy(@ptr)
+      @closed = true
+      ctx.disown(self)
+      nil
+    end
+    alias destroy close
+
+    # --- geometria ---
+
+    # Dimensioni dell'immagine in pixel (+ncvisual_geom+ senza contesto).
+    #
+    # @return [Array(Integer, Integer)] [righe, colonne]
+    # @raise [VisualError] se +ncvisual_geom+ fallisce
+    # @raise [ClosedError] se il visual è chiuso
+    def dims
+      geom = FFI::NcVgeom.new
+      Util.check!(FFI.ncvisual_geom(nil, to_ptr, nil, geom), VisualError, 'ncvisual_geom')
+      [geom[:pixy], geom[:pixx]]
+    end
+
+    # Geometria che avrebbe {#blit} con le stesse opzioni (+ncvisual_geom+):
+    # blitter scelto, dimensioni dopo lo scaling, celle occupate. Non disegna.
+    # Con una regione il wrapper la calcola, come {#blit}, sulla copia della
+    # regione; pixy, pixx, begy e begx restano quelli del visual.
+    #
+    # @param plane [Plane, nil] come in {#blit}
+    # @param child [Boolean] come in {#blit}
+    # @param begy [Integer] come in {#blit}
+    # @param begx [Integer] come in {#blit}
+    # @param leny [Integer] come in {#blit}
+    # @param lenx [Integer] come in {#blit}
+    # @param options [Hash] le altre opzioni di {#blit}
+    # @return [Geometry]
+    # @raise [VisualError] se +ncvisual_geom+ fallisce (per esempio blitter non
+    #   disponibile con nodegrade: true)
+    # @raise [TypeError, ArgumentError] se un'opzione non è valida
+    # @raise [ClosedError] se il visual, il piano o il contesto sono chiusi
+    def geometry(plane: nil, child: false, begy: 0, begx: 0, leny: 0, lenx: 0, **options)
+      ctx = @context
+      vopts = Internal.options(ctx, plane, **options)
+      Internal.child!(vopts, plane, child)
+      geom = FFI::NcVgeom.new
+      rc = with_region(begy, begx, leny, lenx) do |src, original|
+        r = FFI.ncvisual_geom(ctx.to_ptr, src, vopts, geom)
+        geom[:pixy], geom[:pixx], geom[:begy], geom[:begx] = original if original
+        r
+      end
+      Util.check!(rc, VisualError, 'ncvisual_geom')
+      Geometry.new(geom)
+    end
+
+    # --- frame ---
+
+    # Decodifica il frame successivo (+ncvisual_decode+): i pixel del visual
+    # diventano quelli del nuovo frame. {.from_file} ha già decodificato il
+    # primo; un'immagine ha un solo frame.
+    #
+    # @return [Boolean] true se c'è un nuovo frame, false a fine stream (il
+    #   visual conserva l'ultimo frame; il C restituisce 1, che non è un errore)
+    # @raise [VisualError] se il visual non viene da un file o se la
+    #   decodifica fallisce
+    # @raise [ClosedError] se il visual è chiuso
+    def decode
+      rc = FFI.ncvisual_decode(to_ptr)
+      raise VisualError, 'ncvisual_decode fallita (il visual non viene da un file?)' if rc.negative?
+
+      rc.zero?
+    end
+
+    # Come {#decode}, ma a fine stream riparte dal primo frame
+    # (+ncvisual_decode_loop+).
+    #
+    # @return [Boolean] true se c'è il frame successivo, false se è ripartito
+    #   dall'inizio (il visual contiene il primo frame)
+    # @raise [VisualError] se il visual non viene da un file o se la
+    #   decodifica o il riavvolgimento falliscono
+    # @raise [ClosedError] se il visual è chiuso
+    def decode_loop
+      rc = FFI.ncvisual_decode_loop(to_ptr)
+      raise VisualError, 'ncvisual_decode_loop fallita (il visual non viene da un file?)' if rc.negative?
+
+      rc.zero?
+    end
+
+    # --- trasformazioni ---
+
+    # Ruota il visual (+ncvisual_rotate+); le dimensioni si adattano
+    # all'immagine ruotata. notcurses garantisce solo ±π/2.
+    #
+    # Bug di 3.0.17 non aggirato: a qualsiasi angolo, anche 0, la rotazione
+    # perde la prima riga e la prima colonna di pixel (visual.c:746); le
+    # immagini di una sola riga o colonna diventano trasparenti.
+    #
+    # @param radians [Numeric] angolo; positivo = senso antiorario
+    # @return [self]
+    # @raise [VisualError] se la rotazione fallisce (per esempio nessun pixel
+    #   opaco)
+    # @raise [TypeError, ArgumentError] se radians non è un numero finito
+    # @raise [ClosedError] se il visual è chiuso
+    def rotate(radians)
+      rc = FFI.ncvisual_rotate(to_ptr, Util.float!(radians, 'radians'))
+      raise VisualError, 'ncvisual_rotate fallita (nessun pixel opaco?)' if rc.negative?
+
+      self
+    end
+
+    # Ridimensiona l'immagine con interpolazione (+ncvisual_resize+; senza
+    # ffmpeg come {#resize_noninterpolative}).
+    #
+    # @param rows [Integer] nuove righe in pixel, >= 1
+    # @param cols [Integer] nuove colonne in pixel, >= 1
+    # @return [self]
+    # @raise [VisualError] se il resize fallisce
+    # @raise [TypeError, ArgumentError] se rows o cols non sono validi
+    # @raise [ClosedError] se il visual è chiuso
+    def resize(rows, cols)
+      Internal.dims!(rows, cols)
+      Util.check!(FFI.ncvisual_resize(to_ptr, rows, cols), VisualError, "ncvisual_resize(#{rows}, #{cols})")
+      self
+    end
+
+    # Ridimensiona l'immagine senza interpolazione, senza colori nuovi
+    # (+ncvisual_resize_noninterpolative+). Il wrapper rifiuta 0 righe o
+    # colonne, che il C di 3.0.17 accetta producendo un visual vuoto.
+    #
+    # @param rows [Integer] nuove righe in pixel, >= 1
+    # @param cols [Integer] nuove colonne in pixel, >= 1
+    # @return [self]
+    # @raise [VisualError] se il resize fallisce
+    # @raise [TypeError, ArgumentError] se rows o cols non sono validi
+    # @raise [ClosedError] se il visual è chiuso
+    def resize_noninterpolative(rows, cols)
+      Internal.dims!(rows, cols)
+      rc = FFI.ncvisual_resize_noninterpolative(to_ptr, rows, cols)
+      Util.check!(rc, VisualError, "ncvisual_resize_noninterpolative(#{rows}, #{cols})")
+      self
+    end
+
+    # Riempimento a macchia d'olio (+ncvisual_polyfill_yx+): il pixel (y, x) e
+    # quelli collegati (in 4 direzioni) che hanno il suo stesso valore
+    # diventano pixel.
+    #
+    # @param y [Integer] riga, 0...righe
+    # @param x [Integer] colonna, 0...colonne
+    # @param pixel [Pixel, Integer] nuovo valore (Integer: il valore a 32 bit di {Pixel})
+    # @return [Integer] pixel cambiati (0 se (y, x) vale già pixel)
+    # @raise [VisualError] se il riempimento fallisce (memoria)
+    # @raise [TypeError, ArgumentError] se un argomento non è valido o (y, x) è
+    #   fuori dal visual
+    # @raise [ClosedError] se il visual è chiuso
+    def polyfill(y, x, pixel)
+      value = Internal.pixel_value(pixel)
+      point!(y, x)
+      Util.check!(FFI.ncvisual_polyfill_yx(to_ptr, y, x, value), VisualError, 'ncvisual_polyfill_yx')
+    end
+
+    # Pixel in (y, x) (+ncvisual_at_yx+).
+    #
+    # @param y [Integer] riga, 0...righe
+    # @param x [Integer] colonna, 0...colonne
+    # @return [Pixel]
+    # @raise [TypeError, ArgumentError] se un argomento non è valido o (y, x) è
+    #   fuori dal visual
+    # @raise [VisualError] se +ncvisual_at_yx+ fallisce
+    # @raise [ClosedError] se il visual è chiuso
+    def at(y, x)
+      point!(y, x)
+      out = ::FFI::MemoryPointer.new(:uint32)
+      Util.check!(FFI.ncvisual_at_yx(to_ptr, y, x, out), VisualError, 'ncvisual_at_yx')
+      Pixel.new(out.read_uint32)
+    end
+
+    # Cambia il pixel in (y, x) (+ncvisual_set_yx+).
+    #
+    # @param y [Integer] riga, 0...righe
+    # @param x [Integer] colonna, 0...colonne
+    # @param pixel [Pixel, Integer] nuovo valore (Integer: il valore a 32 bit di {Pixel})
+    # @return [self]
+    # @raise [TypeError, ArgumentError] se un argomento non è valido o (y, x) è
+    #   fuori dal visual
+    # @raise [VisualError] se +ncvisual_set_yx+ fallisce
+    # @raise [ClosedError] se il visual è chiuso
+    def set(y, x, pixel)
+      value = Internal.pixel_value(pixel)
+      point!(y, x)
+      Util.check!(FFI.ncvisual_set_yx(to_ptr, y, x, value), VisualError, 'ncvisual_set_yx')
+      self
+    end
+
+    # --- disegno ---
+
+    # Disegna il visual (+ncvisual_blit+). Destinazione:
+    # - plane: nil: un piano nuovo, radice di una nuova pila (che
+    #   {Context#render} non disegna: usa {Plane#render_pile});
+    # - plane: p: disegna in p, con y e x posizione nel piano;
+    # - plane: p, child: true: un piano nuovo figlio di p, grande quanto
+    #   l'immagine, con y e x posizione nel genitore.
+    # Il piano nuovo è del chiamante: chiudilo con {Plane#close}.
+    #
+    # Bug di 3.0.17 aggirato: con una regione diversa dall'immagine intera il C
+    # ridimensiona dall'inizio dei dati ignorando begy/begx, poi legge oltre il
+    # buffer ridimensionato (ffmpeg.c:586); con nointerpolate o senza ffmpeg la
+    # regione viene ignorata. Il wrapper copia la regione in un visual
+    # temporaneo, pixel per pixel (costo proporzionale all'area), e disegna quello.
+    #
+    # @param plane [Plane, nil] piano di destinazione, o il genitore con child: true
+    # @param child [Boolean] NCVISUAL_OPTION_CHILDPLANE: crea un figlio di plane
+    # @param begy [Integer] prima riga della regione, in pixel, >= 0
+    # @param begx [Integer] prima colonna della regione, in pixel, >= 0
+    # @param leny [Integer] righe della regione, 0 = fino al bordo
+    # @param lenx [Integer] colonne della regione, 0 = fino al bordo
+    # @param options [Hash] le opzioni seguenti
+    # @option options [Integer, Symbol] :y (0) riga, oppure :top, :center,
+    #   :bottom (NCVISUAL_OPTION_VERALIGNED; richiede plane:)
+    # @option options [Integer, Symbol] :x (0) colonna, oppure :left, :center,
+    #   :right (NCVISUAL_OPTION_HORALIGNED; richiede plane:)
+    # @option options [Symbol] :scale (:none) :none, :scale, :stretch,
+    #   :none_hires, :scale_hires
+    # @option options [Symbol] :blitter (:default) :default, :ascii, :half,
+    #   :quad, :sextant, :octant, :braille, :pixel
+    # @option options [Integer] :pxoffy (0) offset verticale in pixel nella
+    #   prima cella (solo :pixel)
+    # @option options [Integer] :pxoffx (0) offset orizzontale in pixel nella
+    #   prima cella (solo :pixel)
+    # @option options [Boolean] :nodegrade (false) NCVISUAL_OPTION_NODEGRADE:
+    #   errore invece di ripiegare su un blitter più semplice
+    # @option options [Boolean] :blend (false) NCVISUAL_OPTION_BLEND: colori in
+    #   NCALPHA_BLEND
+    # @option options [Boolean] :nointerpolate (false)
+    #   NCVISUAL_OPTION_NOINTERPOLATE: scaling senza interpolazione
+    # @option options [Integer, nil] :transcolor (nil) colore 0xRRGGBB da
+    #   rendere trasparente (NCVISUAL_OPTION_ADDALPHA)
+    # @return [Plane] plane, oppure il piano nuovo
+    # @raise [VisualError] se +ncvisual_blit+ restituisce NULL (blitter non
+    #   disponibile con nodegrade: true, :pixel sullo stdplane senza child:,
+    #   pxoffy/pxoffx con un blitter di celle, ...)
+    # @raise [Exception] l'eccezione di un callback Ruby di resize (il blitter
+    #   :pixel ridimensiona il piano)
+    # @raise [TypeError, ArgumentError] se un'opzione non è valida (anche una
+    #   regione fuori dal visual, child: true o y:/x: simbolici senza plane:)
+    # @raise [ClosedError] se il visual, il piano o il contesto sono chiusi
+    def blit(plane: nil, child: false, begy: 0, begx: 0, leny: 0, lenx: 0, **options)
+      ctx = @context
+      vopts = Internal.options(ctx, plane, **options)
+      Internal.child!(vopts, plane, child)
+      ptr = with_region(begy, begx, leny, lenx) { |src, _| FFI.ncvisual_blit(ctx.to_ptr, src, vopts) }
+      created = plane.nil? || child
+      if ptr.null?
+        ctx.planes_destroyed! if created # il C distrugge il piano che aveva creato
+        ctx.raise_callback_errors!
+        raise VisualError, 'ncvisual_blit ha restituito NULL (blitter non disponibile con nodegrade? :pixel ' \
+                           'sullo stdplane? pxoffy/pxoffx con un blitter di celle?)'
+      end
+      result = created ? Plane.new(ptr, owned: true, context: ctx) : plane
+      ctx.raise_callback_errors!
+      result
+    end
+
+    # Crea un piano e ci disegna il visual (+ncvisualplane_create+): come
+    # {Plane#create_child} sul genitore (o {Context#create_pile} senza parent:)
+    # seguito da {#blit} nel piano nuovo, che viene distrutto se il blit
+    # fallisce. L'immagine parte dall'angolo del piano. Il piano è del chiamante.
+    #
+    # @param rows [Integer, nil] righe del piano, >= 1 (omesso con margins:)
+    # @param cols [Integer, nil] colonne del piano, >= 1 (omesso con margins:)
+    # @param parent [Plane, nil] genitore; nil = radice di una nuova pila
+    # @param y [Integer, Symbol] riga del piano; simboli come in
+    #   {Plane#create_child}, solo con parent:
+    # @param x [Integer, Symbol] colonna del piano; simboli solo con parent:
+    # @param margins [Array(Integer, Integer, Integer, Integer), nil] come in {Plane#create_child}
+    # @param name [String, nil] nome del piano
+    # @param fixed [Boolean] come in {Plane#create_child}
+    # @param autogrow [Boolean] come in {Plane#create_child}
+    # @param vscroll [Boolean] come in {Plane#create_child}
+    # @param resize [Symbol, #call, nil] callback di resize, come in {Plane#create_child}
+    # @param begy [Integer] regione, come in {#blit}
+    # @param begx [Integer] regione, come in {#blit}
+    # @param leny [Integer] regione, come in {#blit}
+    # @param lenx [Integer] regione, come in {#blit}
+    # @param options [Hash] scale:, blitter:, pxoffy:, pxoffx:, nodegrade:,
+    #   blend:, nointerpolate:, transcolor:, come in {#blit}
+    # @yieldparam plane [Plane] (facoltativo) il piano, distrutto alla fine del blocco
+    # @return [Plane] il piano; con un blocco, il valore del blocco
+    # @raise [VisualError] se la creazione del piano o il blit falliscono
+    # @raise [Exception] l'eccezione di un callback Ruby di resize
+    # @raise [TypeError, ArgumentError] se un'opzione non è valida
+    # @raise [ClosedError] se il visual, parent o il contesto sono chiusi
+    def create_plane(rows: nil, cols: nil, parent: nil, y: 0, x: 0, margins: nil, name: nil, fixed: false,
+                     autogrow: false, vscroll: false, resize: nil, begy: 0, begx: 0, leny: 0, lenx: 0,
+                     **options, &block)
+      ctx = @context
+      vopts = Internal.options(ctx, parent, **options)
+      if parent.nil? && (y.is_a?(Symbol) || x.is_a?(Symbol))
+        raise ArgumentError, 'create_plane: y: e x: simbolici richiedono parent: (una pila non ha un genitore)'
+      end
+
+      area = parent ? parent.dims : ctx.dims
+      opts, keep = Plane.build_options(context: ctx, parent_dims: area, rows: rows, cols: cols, y: y, x: x,
+                                       margins: margins, name: name, fixed: fixed, autogrow: autogrow,
+                                       vscroll: vscroll, resize: resize)
+      ptr = with_region(begy, begx, leny, lenx) { |src, _| FFI.ncvisualplane_create(ctx.to_ptr, opts, src, vopts) }
+      if ptr.null?
+        ctx.planes_destroyed!
+        ctx.raise_callback_errors!
+        raise VisualError, 'ncvisualplane_create ha restituito NULL (piano non creato o blit fallito)'
+      end
+      plane = Plane.new(ptr, owned: true, context: ctx)
+      plane.adopt_options!(keep)
+      ctx.raise_callback_errors!
+      Util.with_resource(plane, &block)
+    end
+
+    # Piano con il sottotitolo del frame corrente (+ncvisual_subtitle_plane+),
+    # figlio di parent. Ha senso per un video con sottotitoli, dopo {#decode}.
+    # Il piano è del chiamante.
+    #
+    # @param parent [Plane]
+    # @return [Plane, nil] il piano, o nil se nel frame corrente non c'è un sottotitolo
+    # @raise [TypeError, ArgumentError] se parent non è un Plane del contesto
+    # @raise [ClosedError] se il visual o parent sono chiusi
+    def subtitle_plane(parent)
+      raise TypeError, "parent deve essere Notcurses::Plane, non #{parent.class}" unless parent.is_a?(Plane)
+      raise ArgumentError, 'parent appartiene a un altro contesto' unless parent.context.equal?(@context)
+
+      ptr = FFI.ncvisual_subtitle_plane(parent.to_ptr, to_ptr)
+      ptr.null? ? nil : Plane.new(ptr, owned: true, context: @context)
+    end
+
+    # Riproduce il video dal frame corrente alla fine (+ncvisual_stream+):
+    # disegna ogni frame come {#blit} e poi chiama il blocco. Bloccante.
+    #
+    # Senza blocco usa lo streamer di notcurses: render del contesto dopo ogni
+    # frame e attesa fino all'istante del frame successivo; il render mostra
+    # solo la pila dello stdplane, quindi passa un piano di quella pila. Con il
+    # blocco, render e attesa sono compito del blocco.
+    #
+    # Piano: con plane: nil notcurses crea al primo frame una nuova pila e la
+    # distrugge alla fine; con plane: p disegna in p, cancellandolo prima di
+    # ogni frame. child: e le regioni non sono ammessi: in 3.0.17 child: true
+    # crea un piano nuovo a ogni frame e li lascia tutti tranne l'ultimo
+    # (ffmpeg.c:528), e la regione ha il bug descritto in {#blit}.
+    #
+    # Il blocco riceve il piano del frame e l'istante in cui mostrarlo, in
+    # secondi di Process::CLOCK_MONOTONIC. Per fermare lo stream restituisce
+    # :stop (anche con next :stop); non usare break, return o throw, che
+    # uscirebbero attraverso i frame C di notcurses. Dentro il blocco non si
+    # possono distruggere piani né chiudere visual. Un'eccezione del blocco
+    # ferma lo stream ed esce da questo metodo.
+    #
+    # Thread: il blocco gira sul thread chiamante, e la chiamata C tiene il GVL
+    # (anche durante le attese dello streamer di notcurses).
+    #
+    # @param plane [Plane, nil] piano di destinazione
+    # @param timescale [Numeric] moltiplicatore delle durate dei frame, > 0
+    #   (0.5 = velocità doppia)
+    # @param options [Hash] y:, x:, scale:, blitter:, pxoffy:, pxoffx:,
+    #   nodegrade:, blend:, nointerpolate:, transcolor:, come in {#blit}
+    # @yieldparam plane [Plane] piano del frame (preso in prestito se l'ha
+    #   creato notcurses: valido solo dentro il blocco)
+    # @yieldparam deadline [Float] istante del frame, CLOCK_MONOTONIC
+    # @yieldreturn [Object] :stop per fermare lo stream
+    # @return [Boolean] true se lo stream è arrivato alla fine, false se il
+    #   blocco l'ha fermato
+    # @raise [VisualError] se il visual non viene da un file (in 3.0.17 il C
+    #   andrebbe in crash) o se +ncvisual_stream+ fallisce
+    # @raise [Exception] l'eccezione sollevata dal blocco o da un callback di resize
+    # @raise [TypeError, ArgumentError] se un'opzione non è valida
+    # @raise [ClosedError] se il visual, il piano o il contesto sono chiusi
+    def stream(plane: nil, timescale: 1.0, **options, &block)
+      ptr = to_ptr
+      raise VisualError, 'stream: il visual non viene da un file (from_file/open)' unless @file
+
+      scale = Util.float!(timescale, 'timescale')
+      raise ArgumentError, "timescale = #{timescale} deve essere > 0" unless scale.positive?
+
+      ctx = @context
+      vopts = Internal.options(ctx, plane, **options)
+      fn = block && stream_function(ctx, block)
+      begin
+        rc = FFI.ncvisual_stream(ctx.to_ptr, ptr, scale, fn, vopts, nil)
+      ensure
+        ctx.planes_destroyed! # il piano creato da notcurses non esiste più
+      end
+      ctx.raise_callback_errors!
+      raise VisualError, "ncvisual_stream fallita (#{rc})" if rc.negative?
+
+      rc.zero?
+    end
+
+    private
+
+    # Trampolino C → Ruby per ncstreamcb: 0 = continua, 1 = fermati, -1 =
+    # eccezione (salvata nel contesto e rilanciata da {#stream}).
+    def stream_function(ctx, block)
+      box = ctx.callback_errors
+      ::FFI::Function.new(:int, %i[pointer pointer pointer pointer]) do |_ncv, vopts, tspec, _curry|
+        Util.guard(box, -1) do
+          ctx.callback_scope do
+            plane = ctx.plane_for(FFI::NcVisualOptions.new(vopts)[:n])
+            deadline = FFI::Timespec.new(tspec)
+            block.call(plane, deadline[:tv_sec] + (deadline[:tv_nsec] / 1e9)) == :stop ? 1 : 0
+          end
+        end
+      end
+    end
+
+    # Esegue il blocco con il ncvisual* da disegnare e, se la regione non è
+    # l'immagine intera, [righe, colonne, begy, begx] del visual: il ncvisual*
+    # è allora una copia temporanea della regione.
+    def with_region(begy, begx, leny, lenx)
+      ptr = to_ptr
+      rows, cols = dims
+      Util.uint!(begy, 'begy')
+      Util.uint!(begx, 'begx')
+      Util.uint!(leny, 'leny')
+      Util.uint!(lenx, 'lenx')
+      raise ArgumentError, "regione da (#{begy}, #{begx}) fuori dal visual #{rows}x#{cols}" if begy >= rows || begx >= cols
+
+      leny = rows - begy if leny.zero?
+      lenx = cols - begx if lenx.zero?
+      if begy + leny > rows || begx + lenx > cols
+        raise ArgumentError, "regione (#{begy}, #{begx}) #{leny}x#{lenx} fuori dal visual #{rows}x#{cols}"
+      end
+      return yield(ptr, nil) if leny == rows && lenx == cols
+
+      copy = Internal.crop(ptr, begy, begx, leny, lenx)
+      begin
+        yield copy, [rows, cols, begy, begx]
+      ensure
+        FFI.ncvisual_destroy(copy)
+      end
+    end
+
+    def point!(y, x)
+      Util.uint!(y, 'y')
+      Util.uint!(x, 'x')
+      rows, cols = dims
+      raise ArgumentError, "(#{y}, #{x}) fuori dal visual #{rows}x#{cols}" unless y < rows && x < cols
+    end
+
+    # Funzioni interne condivise dai metodi di classe e di istanza.
+    module Internal
+      module_function
+
+      # Il contesto attivo: in 3.0.17 un ncvisual creato senza contesto va in
+      # crash alla distruzione (details NULL, ffmpeg.c:735).
+      def context!
+        ctx = Notcurses.active_context
+        return ctx if ctx.is_a?(Context) && !ctx.closed?
+
+        raise ClosedError, 'nessun Notcurses::Context attivo: un Visual si crea solo con un contesto aperto'
+      end
+
+      # ncvisual_options da opzioni Ruby; plane resta referenziato dal chiamante.
+      def options(ctx, plane, y: 0, x: 0, scale: :none, blitter: :default, pxoffy: 0, pxoffx: 0,
+                  nodegrade: false, blend: false, nointerpolate: false, transcolor: nil)
+        vopts = FFI::NcVisualOptions.new
+        unless plane.nil?
+          raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
+          raise ArgumentError, 'plane appartiene a un altro contesto' unless plane.context.equal?(ctx)
+
+          vopts[:n] = plane.to_ptr
+        end
+        vopts[:y], vflag = Plane.position(y, 'y', %i[top center bottom], FFI::NCVISUAL_OPTION_VERALIGNED)
+        vopts[:x], hflag = Plane.position(x, 'x', %i[left center right], FFI::NCVISUAL_OPTION_HORALIGNED)
+        raise ArgumentError, 'y: e x: simbolici richiedono plane:' if plane.nil? && (vflag | hflag).positive?
+
+        vopts[:scaling] = Util.scale_value(scale)
+        vopts[:blitter] = Util.blitter_value(blitter)
+        vopts[:pxoffy] = Util.uint!(pxoffy, 'pxoffy')
+        vopts[:pxoffx] = Util.uint!(pxoffx, 'pxoffx')
+        flags = vflag | hflag |
+                Util.flag(nodegrade, FFI::NCVISUAL_OPTION_NODEGRADE, 'nodegrade') |
+                Util.flag(blend, FFI::NCVISUAL_OPTION_BLEND, 'blend') |
+                Util.flag(nointerpolate, FFI::NCVISUAL_OPTION_NOINTERPOLATE, 'nointerpolate')
+        unless transcolor.nil?
+          vopts[:transcolor] = Util.integer!(transcolor, 'transcolor', 0..0xffffff)
+          flags |= FFI::NCVISUAL_OPTION_ADDALPHA
+        end
+        vopts[:flags] = flags
+        vopts
+      end
+
+      def child!(vopts, plane, child)
+        return unless Util.bool!(child, 'child')
+        raise ArgumentError, 'child: true richiede plane: (il genitore del piano nuovo)' if plane.nil?
+
+        vopts[:flags] |= FFI::NCVISUAL_OPTION_CHILDPLANE
+      end
+
+      # Dimensioni in pixel tali che ogni dimensione in byte del C (righe di
+      # bpp byte per pixel, stride arrotondato da ffmpeg compreso) resti in un int.
+      def dims!(rows, cols, bpp = 4)
+        Util.integer!(rows, 'rows', 1..Util::INT32.max)
+        Util.integer!(cols, 'cols', 1..Util::INT32.max)
+        return if rows * ((cols * [bpp, 4].max) + ROW_ALIGN) <= Util::INT32.max
+
+        raise ArgumentError, "#{rows}x#{cols} pixel: troppi per notcurses (le dimensioni in byte sono int del C)"
+      end
+
+      # Copia compatta (stride cols * bpp) delle righe di data: il C non legge
+      # mai oltre il buffer e non riceve stride che gestisce male.
+      # @return [::FFI::MemoryPointer]
+      def pixel_buffer(data, rows, cols, bpp, stride, name = 'rowstride')
+        raise TypeError, "data deve essere String, non #{data.class}" unless data.is_a?(String)
+
+        dims!(rows, cols, bpp)
+        line = cols * bpp
+        stride = Util.integer!(stride || line, name, line..Util::INT32.max)
+        raise ArgumentError, "#{name} = #{stride} non è un multiplo di #{bpp}" unless (stride % bpp).zero?
+        if data.bytesize < rows * stride
+          raise ArgumentError, "data ha #{data.bytesize} byte: ne servono rows * #{name} = #{rows * stride}"
+        end
+
+        bytes = if stride == line
+                  data.byteslice(0, rows * line)
+                else
+                  Array.new(rows) { |row| data.byteslice(row * stride, line) }.join
+                end
+        ::FFI::MemoryPointer.new(:uint8, bytes.bytesize).put_bytes(0, bytes)
+      end
+
+      # Nuovo ncvisual* con la regione di ptr, da distruggere dal chiamante.
+      def crop(ptr, begy, begx, leny, lenx)
+        out = ::FFI::MemoryPointer.new(:uint32, leny * lenx)
+        px = ::FFI::MemoryPointer.new(:uint32)
+        leny.times do |dy|
+          row = Array.new(lenx) do |dx|
+            FFI.ncvisual_at_yx(ptr, begy + dy, begx + dx, px)
+            px.read_uint32
+          end
+          out.put_array_of_uint32(4 * dy * lenx, row)
+        end
+        Util.check_ptr!(FFI.ncvisual_from_rgba(out, leny, lenx * 4, lenx), VisualError, 'ncvisual_from_rgba')
+      end
+
+      # @raise [ArgumentError] se il decoder sixel di 3.0.17 uscirebbe dai buffer
+      def sixel_check!(text)
+        start = text.index(/[#-]/)
+        raise ArgumentError, "sixel senza dati: manca '#' o '-' dopo l'intestazione" if start.nil?
+
+        body = text[start...(text.index("\e", start) || text.size)]
+        return if SIXEL_BODY.match?(body) && body.scan(/#(\d+)/).all? { |(n)| n.to_i < SIXEL_COLORS }
+
+        raise ArgumentError, 'sixel non accettato: ammessi "#n" (n < 65535) con ";2;r;g;b" facoltativo, ' \
+                             'dati "?".."~", "!n" seguito da un dato, "$" e "-"'
+      end
+
+      def pixel_value(pixel)
+        case pixel
+        when Pixel then pixel.value
+        when Integer then Util.uint32!(pixel, 'pixel')
+        else raise TypeError, "pixel deve essere Notcurses::Pixel o Integer, non #{pixel.class}"
+        end
+      end
+    end
+    private_constant :Internal
+  end
+end
