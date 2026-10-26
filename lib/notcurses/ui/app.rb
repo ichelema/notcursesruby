@@ -40,7 +40,7 @@ module Notcurses
     #     Notcurses::UI::Label.new(form, text: 'Nome:', size: 1)
     #     name = Notcurses::UI::TextInput.new(form, size: 1)
     #     Notcurses::UI::Button.new(form, 'Entra', size: 3) { app.stop }
-    #     app.on_key('q', ctrl: true) { app.stop }
+    #     app.on_key('x', ctrl: true) { app.stop }
     #     app.run
     #     puts name.text
     #   end

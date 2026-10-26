@@ -258,6 +258,10 @@ module Notcurses
       # carattere stampabile Shift non conta (è già nel carattere, per esempio
       # 'Q'); conta per gli altri codici, come {Key::TAB} (Shift+Tab).
       #
+      # Tasti che non arrivano: notcurses 3.0.17 toglie al terminale solo
+      # ECHO, ICANON e ICRNL, quindi Ctrl+C, Ctrl+Z e Ctrl+\ restano
+      # segnali (ISIG) e Ctrl+S e Ctrl+Q restano il controllo di flusso (IXON).
+      #
       # @param key [String, Integer] un carattere (String di un codepoint) o
       #   un codice: codepoint o costante {Key}
       # @param ctrl [Boolean] con Ctrl
