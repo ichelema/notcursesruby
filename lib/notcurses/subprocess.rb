@@ -159,7 +159,7 @@ module Notcurses
     # Fine dell'output: aspetta l'uscita del figlio e chiama on_done:.
     def finish(_error)
       status = Thread.handle_interrupt(Object => :immediate) { @waiter.value }
-      @on_done&.call(self, status) unless @closed
+      @on_done&.call(self, status) unless @stopping
     end
 
     # @return [Process::Status, nil] il valore di {#close}

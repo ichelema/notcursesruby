@@ -33,7 +33,10 @@ module Notcurses
   # troverebbe un piano chiuso (ClosedError); durante il blocco l'accesso non
   # è protetto. Dentro il blocco le interruzioni asincrone (Thread#kill,
   # Thread#raise, Timeout) arrivano solo alle attese (sleep, IO, Queue, ...),
-  # mai a metà di una chiamata del wrapper.
+  # mai a metà di una chiamata del wrapper. Eccezione su Ruby 3.1 (su 4.0.7
+  # no): anche +String#grapheme_clusters+ e +each_grapheme_cluster+ sono
+  # attese, e i metodi di testo del wrapper li usano (per esempio
+  # {Plane#putstr}), quindi lì un'interruzione può fermarli a metà testo.
   #
   # Errori del blocco. Un'eccezione nel blocco o in on_done: ferma la lettura
   # (on_done: non viene chiamato) e viene rilanciata da {#close}, dopo aver
@@ -122,17 +125,23 @@ module Notcurses
     # (sleep, IO, Queue, ...) o finisce, e close lo attende: un blocco che
     # calcola senza fine non si ferma, e un +IO#readpartial+/+sysread+ del
     # blocco iniziato dopo la richiesta di chiusura aspetta i suoi dati (limite
-    # di Ruby 4.0: usa +wait_readable+). Chiamato dal blocco stesso non attende
-    # (il thread esce dopo il blocco). Non distrugge il piano. Idempotente.
+    # di Ruby 4.0: usa +wait_readable+). Durante l'attesa l'oggetto non è
+    # ancora chiuso: il blocco in corso può usare +plane+ fino alla fine.
+    # Chiamato dal blocco stesso non attende (il thread esce dopo il blocco).
+    # Non distrugge il piano. Idempotente.
     #
     # @return [nil]
     # @raise [Exception] la prima eccezione sollevata dal blocco o da on_done:
     #   (una volta sola: le chiamate successive restituiscono nil)
     def close
-      return @result if @closed
+      return @result if @closed || @stopping
 
-      @closed = true
-      @result = shutdown
+      @stopping = true # ferma la lettura; @closed solo dopo il blocco in corso, che usa ancora l'oggetto
+      begin
+        @result = shutdown
+      ensure
+        @closed = true
+      end
       @context.disown(self)
       Util.reraise!(@errors)
       @result
@@ -167,6 +176,7 @@ module Notcurses
       @on_done = on_done
       @errors = []
       @result = nil
+      @stopping = false
       attach!(plane.to_ptr, plane, owns_plane: false)
       begin
         @thread = Thread.new { run }
@@ -186,18 +196,18 @@ module Notcurses
       Thread.handle_interrupt(Object => :on_blocking) do
         Util.guard(@errors, nil) do
           error = read_loop
-          finish(error) unless @closed
+          finish(error) unless @stopping
         end
       end
     end
 
     # @return [Exception, nil] errore di lettura, o nil a fine file o dopo close
     def read_loop
-      until @closed
+      until @stopping
         data = read_chunk
         case data
         when String
-          return nil if @closed
+          return nil if @stopping
 
           @on_data.call(self, data)
         when :eof

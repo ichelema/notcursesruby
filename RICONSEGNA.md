@@ -67,8 +67,8 @@ e offset di ogni campo delle 26 struct contro il C compilato.
 - **Facoltativa:** `libnotcurses-ffi.so.3`, solo per la spec differenziale. Se manca, quella spec va in skip.
 - **libc** (glibc su Linux): `fopen`, `fclose`, `free` e le funzioni usate dalle reimplementazioni.
 - **terminfo** (database di ncurses) con una voce per il terminale, per esempio `xterm-256color`.
-- **Ruby >= 3.1** (provato solo su Ruby 4.0.7), Bundler, le gem del `Gemfile`. Nessun compilatore: il progetto non ha
-  C extension.
+- **Ruby >= 3.1** (provato su Ruby 4.0.7 e 3.1.7), Bundler, le gem del `Gemfile`. Nessun compilatore: il progetto
+  non ha C extension.
 
 ### Come eseguire i test
 
@@ -130,8 +130,8 @@ NC_SPEC_SEED=1234 bundle exec rspec spec/inline_reimpl_spec.rb < /dev/null    # 
   tabelle dei bug aggirati, funzioni escluse, differenze dai pattern del prompt, verifiche)
 - **Fase 1:** nessun file modificato durante la Fase 2. Il 2026-10-26, su richiesta, `blocking: true` su 8 funzioni
   di `lib/notcurses/ffi/functions.rb`, e nella review su altre 2 (vedi il punto 6 di "Cosa serve alla Fase 3").
-- **Dimensioni** (dopo la review): 28 file in `lib/` (12 594 righe, Fase 1 esclusa); 31 file di spec e helper
-  (8 109 righe) più 2 fixture (`spec/fixtures/visual/rgbw.png`, `frames.mkv`).
+- **Dimensioni** (dopo la review e il fix trovato su Ruby 3.1): 28 file in `lib/` (12 604 righe, Fase 1 esclusa); 31
+  file di spec e helper (8 130 righe) più 2 fixture (`spec/fixtures/visual/rgbw.png`, `frames.mkv`).
 - **Uso:** `require 'notcurses'`; il punto di ingresso è `Notcurses::Context.open { |nc| ... }` (o
   `Notcurses::Direct.open`).
 
@@ -202,17 +202,18 @@ se un'esclusione riguarda una funzione chiamata o inesistente, o se manca il mot
 
 | Spec | Esempi |
 | --- | ---: |
-| `spec/notcurses/` (26 file, uno per classe o area) | 542 |
+| `spec/notcurses/` (26 file, uno per classe o area) | 543 |
 | `spec/integration/` (`lifecycle_spec.rb` 8, `visual_spec.rb` 12, `pty_spec.rb` 4) | 24 |
 | `spec/coverage_spec.rb` | 3 |
-| Totale Fase 2 | 569 |
+| Totale Fase 2 | 570 |
 | Fase 1 (`ffi_sanity_spec.rb`, `inline_reimpl_spec.rb`) | 257 |
-| **Totale** | **826, 0 fallimenti (100% pass)** |
+| **Totale** | **827, 0 fallimenti (100% pass)** |
 
-- Numeri dopo la review della Fase 2 (prima: 802 esempi). Stesso risultato in ordine casuale (semi `1234`, `4242`,
-  `7`; prima della modifica del 2026-10-26 anche `1`, `31337`, `2026`); durata circa 15 s su Ruby 4.0.7.
+- Numeri dopo la review della Fase 2 e il fix trovato su Ruby 3.1 (prima: 802 esempi). Stesso risultato in ordine
+  casuale (semi `1234`, `4242`, `7`; prima della modifica del 2026-10-26 anche `1`, `31337`, `2026`) e su Ruby
+  3.1.7; durata circa 15 s su Ruby 4.0.7 e 35 s su Ruby 3.1.7.
 - Esempi per file: plane 79, visual 73, direct 56, tabbed 29, context 28, reel 27, tree 27, plot 24, reader 24,
-  menu 23, selector 19, channel 16, fd_plane 16, subprocess 15, progbar 14, multiselector 13, input 11, format 10,
+  menu 23, selector 19, fd_plane 17, channel 16, subprocess 15, progbar 14, multiselector 13, input 11, format 10,
   cell 9, palette 6, pixel 6, version 5, fade_context 4, stats 4, api 3, error 1.
 - YARD: ogni metodo pubblico ha commento, `@param` per ogni parametro e `@return`; i metodi che possono sollevare
   hanno `@raise` (controlli euristici con script fuori dal progetto).
@@ -293,7 +294,9 @@ Reimplementate in Ruby (stessa funzionalità, senza i bug): `ncreel`/`nctablet` 
    widget) diventano una `LocalJumpError`; `Plane.new` su un piano che ha già un `Plane` aperto solleva
    `ArgumentError` (un secondo wrapper si crea con `owned: false, tracked: false`).
 4. **Thread.** Nessun lock interno: serve una politica (per esempio un solo thread UI, e i blocchi di `FdPlane` e
-   `Subprocess` che passano i dati con una `Queue`).
+   `Subprocess` che passano i dati con una `Queue`). Su Ruby 3.1 un `kill` o un `Thread#raise` rimandato nel blocco
+   di un `FdPlane` o di un `Subprocess` arriva anche a `String#grapheme_clusters`, quindi anche dentro i metodi di
+   testo del wrapper (vedi "Ruby 3.1" nella sezione della review).
 5. **Bug `logrow` dopo lo scroll** (non aggirato): evitare `duplicate`, resize e `rotate` sui piani che hanno fatto
    scroll, oppure ricrearli.
 6. **GVL nella Fase 1 (risolto il 2026-10-26).** `notcurses_init`, `notcurses_core_init`, `ncdirect_init`,
@@ -308,9 +311,11 @@ Reimplementate in Ruby (stessa funzionalità, senza i bug): `ncreel`/`nctablet` 
    contesto, e vieta ENV durante l'init).
 7. **Test grafici.** Blitter a pixel (sixel, kitty), quadranti, sestanti e ottanti non si provano su `/dev/null`:
    serve un emulatore di terminale vero su un pty (per esempio in CI).
-8. **Ruby 3.1.** Sintassi controllata con `Parser::Ruby31` su tutti i file di `lib`, ma la suite non è mai stata
-   eseguita su 3.1: il build di Ruby 3.1.7 con gcc 16 fallisce su questa macchina. Serve un ambiente con Ruby 3.1 (o
-   una matrice CI 3.1–4.0).
+8. **Ruby 3.1 (provato il 2026-10-26).** La suite completa passa su Ruby 3.1.7 (827 esempi, 0 fallimenti, anche con
+   i semi), dopo il fix di una corsa in `FdPlane#close` che 3.1 rende più frequente. Su questa macchina il build di
+   Ruby 3.1.7 con gcc 16 serve `RUBY_CFLAGS='-std=gnu17'` (comandi nella sezione "Review della Fase 2 e Ruby 3.1").
+   Il controllo su 3.1 è manuale: per non regredire serve rieseguirlo a ogni fase, anche con i semi, o una matrice
+   CI 3.1–4.0.
 9. **Pacchetto.** Non c'è ancora un gemspec né la documentazione YARD generata (la gem `yard` non è tra le
    dipendenze).
 10. **Finding aperti della review.** Prima di costruire sopra l'API, decidi i punti aperti della sezione "Review della
@@ -450,7 +455,47 @@ Note dei verificatori, da controllare:
 ### Controlli
 
 - Suite completa su Ruby 4.0.7: 826 esempi, 0 fallimenti, anche con i semi `1234`, `4242` e `7`.
-- `ruby -w -Ilib -e 'require "notcurses"'`: nessun warning.
+- `ruby -w -Ilib -e 'require "notcurses"'`: nessun warning, su Ruby 4.0.7 e 3.1.7.
 - `spec/coverage_spec.rb` passa: la review non aggiunge e non toglie chiamate FFI (477 chiamate, 154 escluse).
 - YARD: 0 problemi con `yard_check.rb`; `yard_raise_check.rb` controlla 605 metodi e segnala solo il falso positivo
   noto `input.rb:300 to_ffi`, presente anche prima della review.
+
+### Ruby 3.1
+
+- **Risultato:** la suite completa passa su Ruby 3.1.7: 827 esempi, 0 fallimenti, anche con i semi `1234`, `4242` e
+  `7` (circa 35 s). `ruby -w` non dà warning. Prima dei fix della review passava (802 esempi, 0 fallimenti, anche
+  con i semi); dopo i fix (826 esempi) passava in ordine normale, ma il seme `4242` ha trovato la corsa R31-01.
+- **R31-01** (media, CONFERMATO, corretto): `FdPlane#close` segnava l'oggetto come chiuso prima di aspettare il
+  blocco in corso, quindi il blocco riceveva `ClosedError` da `f.plane` e `close` (o `Context#close`) lo
+  rilanciava. Il YARD promette invece che `close` aspetta la fine del blocco. È un bug della Fase 2, non della
+  review: l'esempio "Context#close chiude un FdPlane in lettura prima di notcurses_stop" falliva 2 volte su 40 su
+  3.1.7 e 0 su 40 su 4.0.7. Ora un flag interno ferma la lettura e l'oggetto diventa chiuso dopo il `join`;
+  `Subprocess` eredita il fix. La spec nuova fallisce sempre sul codice vecchio, su 3.1.7 e 4.0.7; dopo il fix
+  l'esempio originale passa 80 volte su 80 su 3.1.7.
+- **Differenza di Ruby 3.1:** `String#grapheme_clusters` e `each_grapheme_cluster` consegnano le interruzioni
+  rimandate da `Thread.handle_interrupt(Object => :on_blocking)`, su 4.0.7 no (nelle prove `scan` e `match?` no in
+  entrambe). Su 3.1 il blocco di un `FdPlane` o di un `Subprocess` può quindi essere interrotto anche dentro un
+  metodo di testo del wrapper (per esempio `Plane#putstr`): lo dice il YARD di `FdPlane`.
+- **Build:** mise 2026.10.17 compila Ruby 3.1.7 con ruby-build, perché non trova un binario precompilato. Con
+  gcc 16.2.1 il build fallisce in `enc/euc_jp.o`: da gcc 15 lo standard C di default è C23, dove `f()` vale
+  `f(void)`, e `enc/jis/props.h:72` dichiara `onig_jis_property()` senza parametri. Con `RUBY_CFLAGS='-std=gnu17'`
+  il build riesce (circa 3 minuti).
+- **Versioni:** `ruby 3.1.7p261`, RubyGems 3.3.27, Bundler 2.3.27, ffi 1.17.4, rspec 3.13.2 (rspec-core 3.13.6).
+- **Gemfile:** il `Gemfile.lock` del progetto ha `BUNDLED WITH 4.0.22`, e Bundler 4 richiede Ruby >= 3.2. Su 3.1 usa
+  una copia del `Gemfile` fuori dal progetto, con `BUNDLE_GEMFILE`; `Gemfile` e `Gemfile.lock` del progetto non
+  cambiano.
+
+Come eseguire, dalla radice del progetto (`S` è una cartella temporanea fuori dal progetto):
+
+```sh
+mkdir -p "$S/ruby-build-tmp" "$S/gemfile31" && cp Gemfile "$S/gemfile31/Gemfile"
+TMPDIR="$S/ruby-build-tmp" RUBY_CFLAGS='-std=gnu17' mise install ruby@3.1.7 > "$S/ruby31-install.log" 2>&1; echo "exit $?"
+MISE_EXEC_AUTO_INSTALL=false BUNDLE_GEMFILE="$S/gemfile31/Gemfile" mise exec ruby@3.1.7 -- bundle install --quiet
+MISE_EXEC_AUTO_INSTALL=false BUNDLE_GEMFILE="$S/gemfile31/Gemfile" TERM=xterm-256color \
+  mise exec ruby@3.1.7 -- timeout -k 5 -s KILL 600 bundle exec rspec < /dev/null
+```
+
+- `MISE_EXEC_AUTO_INSTALL=false` serve in ogni `mise exec`: se la versione non è installata, mise avvia il build da
+  solo.
+- `TMPDIR` nella cartella temporanea: ruby-build scrive log e cartelle di build di circa 340 MB.
+- `mise exec` non cambia la versione globale di Ruby (4.0.7 in `~/.config/mise/config.toml`).

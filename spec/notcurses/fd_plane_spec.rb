@@ -173,6 +173,27 @@ RSpec.describe Notcurses::FdPlane do
       writer.close
     end
 
+    it 'close aspetta il blocco in corso, che può ancora usare l\'FdPlane' do
+      reader, writer = IO.pipe
+      inside = Queue.new
+      seen = []
+      fdp = described_class.new(plane, reader) do |f, _bytes|
+        inside << true
+        deadline = now + 5
+        # il kill di close resta in attesa fino alla prima attesa del blocco: Thread.pass non lo consegna
+        # (su Ruby 3.1 lo consegna anche String#grapheme_clusters, che Plane#putstr usa)
+        Thread.pass until Thread.pending_interrupt? || now > deadline
+        seen << f.plane
+      end
+      writer.write('x')
+      pop(inside)
+      expect { fdp.close }.not_to raise_error
+      expect(seen).to eq([plane])
+      expect(fdp).to be_closed
+    ensure
+      writer&.close
+    end
+
     it 'close dal blocco non aspetta se stesso e lascia chiuso l\'oggetto' do
       reader, writer = IO.pipe
       events = Queue.new

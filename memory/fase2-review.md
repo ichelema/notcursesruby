@@ -5,6 +5,8 @@
 - Esito: 6 finder, 27 finding, 22 dopo l'unione dei doppioni. Verdetti: 21 CONFERMATI (4 alta, 6 media, 11
   bassa), 1 SMENTITO, nessun PLAUSIBILE come finding intero (tre parti di A6-02 e A6-03 restano PLAUSIBILI, vedi
   "Aperti"). Tutti i confermati sono corretti; la suite passa da 802 a 826 esempi, 0 fallimenti.
+- Ruby 3.1.7: build con `-std=gnu17`. La suite con il seme `4242` ha trovato una corsa della Fase 2 in
+  `FdPlane#close` (R31-01, sezione "Ruby 3.1"), corretta: 827 esempi, 0 fallimenti su 3.1.7 e 4.0.7.
 
 ## Metodo
 
@@ -140,11 +142,70 @@ A2-02, A2-03, A2-04 (piano nuovo `==` al vecchio), A5-01 (`ArgumentError`), A3-0
   due righe sotto (`notcurses.c:1888-1890` e `1903-1904`), contro il YARD di `putstr`; la causa radice di A4-01
   (`cellcmp_and_dupfar` senza width) potrebbe toccare altre copie fra piani: nessuna trovata, da controllare.
 
+## Ruby 3.1
+
+- **Build.** mise 2026.10.17 compila Ruby 3.1.7 con ruby-build (nessun binario precompilato) e gcc 16.2.1. Ipotesi
+  confermata: da gcc 15 lo standard C di default è C23, dove `f()` vale `f(void)`. `enc/jis/props.h:72` dichiara
+  `onig_jis_property()` senza parametri, mentre la definizione generata da gperf (`enc/jis/props.kwd:146`) ha
+  `(const char *, size_t)`. Con `RUBY_CFLAGS='-std=gnu17'` il build riesce in 196 s, e
+  `RbConfig::CONFIG['CFLAGS']` del Ruby installato vale ` -std=gnu17 -fPIC`.
+- **Versioni.** `ruby 3.1.7p261 (2025-03-26 revision 0a3704f218) [x86_64-linux]`, RubyGems 3.3.27, Bundler 2.3.27,
+  ffi 1.17.4 (`x86_64-linux-gnu`), rspec 3.13.2 (rspec-core 3.13.6, rspec-expectations 3.13.5, rspec-mocks 3.13.8,
+  rspec-support 3.13.7), diff-lcs 1.6.2. Il `Gemfile` è una copia fuori dal progetto: `Gemfile` e `Gemfile.lock`
+  del progetto non cambiano.
+- **Risultato.** Nessuna incompatibilità di sintassi o di API. Prima dei fix della review (`b2d873a`): 802 esempi,
+  0 fallimenti (29 s), anche con i semi `1234`, `4242` e `7`. Dopo i fix (`553aa1d`): 826 esempi, 0 fallimenti
+  (35 s) in ordine normale, ma 1 fallimento con il seme `4242` (R31-01). Dopo il fix di R31-01: 827 esempi, 0
+  fallimenti, anche con i tre semi, su 3.1.7 e 4.0.7. `ruby -w -Ilib -e 'require "notcurses"'`: nessun warning.
+- **R31-01** (media, errori e thread, CONFERMATO, corretto). `lib/notcurses/fd_plane.rb:134` (prima del fix):
+  `FdPlane#close` impostava `@closed = true` e poi aspettava il thread di lettura. Il blocco in corso riceveva
+  `ClosedError` da `f.plane`, `Util.guard` la salvava e `close` la rilanciava (da `Context#close` dopo
+  `notcurses_stop`). Il YARD di `close` dice invece che `close` aspetta la fine del blocco. Bug della Fase 2
+  (`fd_plane.rb` e la spec non sono cambiati da `7e033bd`): l'esempio "Context#close chiude un FdPlane in lettura
+  prima di notcurses_stop" falliva 2 volte su 40 da solo su 3.1.7, 0 su 40 su 4.0.7. Fix: `@stopping` ferma il ciclo
+  di lettura e `on_done:` (anche in `Subprocess#finish`); `@closed` diventa true dopo lo `join`, in un `ensure`.
+  Spec nuova "close aspetta il blocco in corso, che può ancora usare l'FdPlane": il blocco aspetta con
+  `Thread.pass until Thread.pending_interrupt?` il `kill` di `close` (inviato dopo il flag), poi chiama `f.plane`;
+  sul codice vecchio fallisce sempre (3 su 3 su 3.1.7 e 4.0.7), dopo il fix passa 10 su 10. L'esempio originale
+  dopo il fix: 80 su 80 su 3.1.7.
+- **Differenza di Ruby 3.1 trovata con R31-01.** Su 3.1.7 `String#grapheme_clusters` e `each_grapheme_cluster`
+  consegnano le interruzioni rimandate da `Thread.handle_interrupt(Object => :on_blocking)`, su 4.0.7 no; nelle
+  prove `scan` e `match?` non le consegnano in nessuna delle due. Effetto: su 3.1 il `kill` di `close` può fermare
+  il blocco di un `FdPlane` dentro un metodo di testo del wrapper (`Plane#putstr` chiama `grapheme_clusters` prima
+  di scrivere; `puttext`, `Reader`, `Cell.egc!`, `box` li usano). Nessun uso sta fra una creazione C e la sua
+  registrazione: il rischio è un testo scritto a metà. Documentato nel YARD di classe di `FdPlane`; la spec nuova
+  non usa `putstr` per questo motivo.
+
+Comandi esatti, dalla radice del progetto. `S` è una cartella temporanea fuori dal progetto (in questa sessione lo
+scratchpad di Claude Code).
+
+```sh
+S=/percorso/assoluto/dello/scratchpad
+mkdir -p "$S/ruby-build-tmp" "$S/gemfile31" && cp Gemfile "$S/gemfile31/Gemfile"
+# build, circa 3 minuti; ruby-build scrive in TMPDIR circa 340 MB
+TMPDIR="$S/ruby-build-tmp" RUBY_CFLAGS='-std=gnu17' mise install ruby@3.1.7 > "$S/ruby31-install.log" 2>&1; echo "exit $?"
+# gem e suite su 3.1.7
+MISE_EXEC_AUTO_INSTALL=false BUNDLE_GEMFILE="$S/gemfile31/Gemfile" mise exec ruby@3.1.7 -- bundle install --quiet
+MISE_EXEC_AUTO_INSTALL=false BUNDLE_GEMFILE="$S/gemfile31/Gemfile" TERM=xterm-256color \
+  mise exec ruby@3.1.7 -- timeout -k 5 -s KILL 600 bundle exec rspec < /dev/null
+# in ordine casuale
+for seed in 1234 4242 7; do MISE_EXEC_AUTO_INSTALL=false BUNDLE_GEMFILE="$S/gemfile31/Gemfile" TERM=xterm-256color \
+  mise exec ruby@3.1.7 -- timeout -k 5 -s KILL 600 bundle exec rspec --order rand:$seed < /dev/null; done
+# warning
+MISE_EXEC_AUTO_INSTALL=false mise exec ruby@3.1.7 -- ruby -w -Ilib -e 'require "notcurses"'
+```
+
+`MISE_EXEC_AUTO_INSTALL=false` serve in ogni `mise exec`: con `exec_auto_install = true` mise riavvia il build se la
+versione non è installata. La versione globale di Ruby (4.0.7 in `~/.config/mise/config.toml`) non cambia.
+
 ## Controlli eseguiti
 
-- Suite completa su Ruby 4.0.7: 826 esempi, 0 fallimenti (15 s), anche con `--order rand:1234`, `rand:4242`,
-  `rand:7`.
-- `ruby -w -Ilib -e 'require "notcurses"'`: nessun warning.
+Stato finale, dopo i fix della review e di R31-01:
+
+- Suite completa su Ruby 4.0.7: 827 esempi, 0 fallimenti (15 s), anche con `--order rand:1234`, `rand:4242`,
+  `rand:7`. Sullo stato di `553aa1d`: 826 esempi, 0 fallimenti, anche con i tre semi.
+- Suite completa su Ruby 3.1.7: 827 esempi, 0 fallimenti (35 s), anche con i tre semi.
+- `ruby -w -Ilib -e 'require "notcurses"'`: nessun warning, su Ruby 4.0.7 e 3.1.7.
 - `spec/coverage_spec.rb` passa (parte della suite): nessuna funzione FFI nuova o tolta.
 - YARD con gli script euristici della sessione precedente: `yard_check.rb` 0 problemi; `yard_raise_check.rb` 605
   metodi, 1 falso positivo noto (`input.rb:300 to_ffi`).
