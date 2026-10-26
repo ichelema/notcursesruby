@@ -499,3 +499,148 @@ MISE_EXEC_AUTO_INSTALL=false BUNDLE_GEMFILE="$S/gemfile31/Gemfile" TERM=xterm-25
   solo.
 - `TMPDIR` nella cartella temporanea: ruby-build scrive log e cartelle di build di circa 340 MB.
 - `mise exec` non cambia la versione globale di Ruby (4.0.7 in `~/.config/mise/config.toml`).
+
+## Fase 3 — ciclo degli eventi, focus e widget composti
+
+- **Data di completamento:** 2026-10-26
+- **Design:** `memory/fase3-design.md`, approvato dall'utente (scelte D1–D7 nella sezione 9).
+- **Log dettagliato:** `memory/fase3-ui.md` (Parte 0, ricerca del design, decisioni prese durante l'implementazione,
+  problemi, bug di notcurses, controlli).
+- **Commit:** `e710a92` (Parte 0); `6c55106`, `aab16b6`, `db19dbc`, `2534b02`, `692c455` (Parte 2, uno per area);
+  poi la documentazione.
+- **Fase 1:** nessun cambio. `git diff 5dbf71e -- lib/notcurses/ffi lib/notcurses/ffi.rb Gemfile Gemfile.lock` è
+  vuoto.
+- **Dimensioni:** 11 file nuovi in `lib/` (2 107 righe), `examples/demo.rb` (58 righe), 10 file di spec nuovi (1 405
+  righe). Il framework usa solo l'API pubblica della Fase 2: nessuna chiamata FFI diretta.
+- **Uso:** `require 'notcurses'`, poi `app = Notcurses::UI::App.new(nc)` dentro `Notcurses::Context.open`, i
+  componenti sotto `app.root` e `app.run` (restituisce `:stop`, `:eof` o `:interrupt`). Prova manuale su un terminale
+  vero: `ruby -Ilib examples/demo.rb`.
+
+### File
+
+| File | Righe | Contenuto |
+| --- | ---: | --- |
+| `lib/notcurses/ui.rb` | 26 | modulo `Notcurses::UI`, `require` dei file sotto (richiesto in fondo a `lib/notcurses.rb`) |
+| `lib/notcurses/ui/event_loop.rb` | 516 | `EventLoop` (ciclo, `post`, `stop`, timer, `on_key`, `on_input`, `on_resize`), `Timer` |
+| `lib/notcurses/ui/component.rb` | 398 | modulo `Component` (protocollo dei componenti), helper privato `Text`, `FOCUSED_CHANNELS`, `FIELD_CHANNELS` |
+| `lib/notcurses/ui/container.rb` | 164 | `Container`: figli in righe o colonne, `size:` e `weight:`, bordo e titolo |
+| `lib/notcurses/ui/app.rb` | 364 | `App < EventLoop`: radice, focus, consegna degli eventi, mouse, dialoghi, cursore |
+| `lib/notcurses/ui/label.rb` | 69 | `Label` |
+| `lib/notcurses/ui/button.rb` | 90 | `Button` |
+| `lib/notcurses/ui/text_input.rb` | 137 | `TextInput` (in Ruby, non sopra `Reader`) |
+| `lib/notcurses/ui/list_view.rb` | 142 | `ListView` (in Ruby, non sopra `Selector`) |
+| `lib/notcurses/ui/log_view.rb` | 96 | `LogView`: righe in memoria, byte grezzi da `FdPlane` e `Subprocess` |
+| `lib/notcurses/ui/dialog.rb` | 105 | `Dialog < Container`: finestra modale |
+| `examples/demo.rb` | 58 | prova manuale: modulo, elenco, log di un processo figlio, orologio, dialogo di conferma |
+
+### Classi e moduli
+
+| Classe o modulo | File | Metodi d'istanza | Metodi di classe | di cui `@api private` |
+| --- | --- | ---: | ---: | ---: |
+| `Notcurses::UI::EventLoop` | `ui/event_loop.rb` | 12 | 0 | 1 |
+| `Notcurses::UI::Timer` | `ui/event_loop.rb` | 8 | 0 | 4 |
+| `Notcurses::UI::App` | `ui/app.rb` | 24 | 0 | 5 |
+| `Notcurses::UI::Component` (modulo) | `ui/component.rb` | 18 | 0 | 2 |
+| `Notcurses::UI::Container` | `ui/container.rb` | 24 | 0 | 4 |
+| `Notcurses::UI::Label` | `ui/label.rb` | 21 | 0 | 2 |
+| `Notcurses::UI::Button` | `ui/button.rb` | 20 | 0 | 2 |
+| `Notcurses::UI::TextInput` | `ui/text_input.rb` | 21 | 0 | 2 |
+| `Notcurses::UI::ListView` | `ui/list_view.rb` | 23 | 0 | 2 |
+| `Notcurses::UI::LogView` | `ui/log_view.rb` | 22 | 0 | 2 |
+| `Notcurses::UI::Dialog` | `ui/dialog.rb` | 27 | 0 | 5 |
+| `Notcurses::UI::Text` (costante privata, helper interni) | `ui/component.rb` | 0 | 6 | 6 |
+
+- Conteggio per riflessione, come nella Fase 2: comprende gli `attr_reader` e i metodi ricevuti da `Resource`,
+  `Component`, `Container` ed `EventLoop`. Contando ogni definizione una sola volta i metodi pubblici sono 91, di cui
+  20 `@api private` (collegamenti fra `App`, contenitori e componenti, la lista dei timer, le 6 funzioni di `Text`).
+- Costanti pubbliche: `FOCUSED_CHANNELS`, `FIELD_CHANNELS`, `Container::DIRECTIONS`, `Label::ALIGNS`.
+- Riassunto del funzionamento (i dettagli sono nel YARD di ogni classe e nel design):
+  - un giro di `run`: `IO.select` sul fd di `Context#inputready_fd` e su un pipe di risveglio, con il timeout del
+    primo timer; poi il resize segnalato, tutto l'input pronto, i blocchi di `post`, i timer scaduti e al massimo un
+    render;
+  - solo il thread del ciclo chiama notcurses; `post` e `stop` funzionano da qualsiasi thread e dai `trap` (`Queue`
+    e un byte sul pipe, niente `Mutex`);
+  - consegna in `App`: componente con il focus (o sotto il mouse), risalita ai contenitori fino alla radice attiva,
+    poi `on_key`, Tab e Shift+Tab, `on_input`;
+  - un componente ridisegna tutto dal proprio stato a ogni layout: nessun widget scorre i propri piani o copia celle
+    fra piani, quindi il resize non incontra il bug `logrow` né la causa di A4-01.
+
+### Cambi all'API della Fase 2
+
+| Prima | Dopo | Origine |
+| --- | --- | --- |
+| `Visual.from_plane(plane, blitter:, begy:, begx:, leny:, lenx:)`, con i valori speciali del C (`-1`, `0`) | `from_plane(plane, blitter:, y: 0, x: 0, rows: nil, cols: nil)`: `nil` = cursore o «fino al bordo»; `-1` e `0` sollevano `ArgumentError` | Parte 0, decisione dell'utente |
+| `Plane#as_rgba(blitter, y: nil, x: nil, rows: nil, cols: nil)` | `as_rgba(blitter, y: 0, x: 0, rows: nil, cols: nil)`: senza argomenti converte tutto il piano | Parte 0 |
+| `Visual.blit_rgba`, `blit_bgrx`, `blit_rgb_loose`, `blit_rgb_packed` con `linesize:` | `rowstride:`, come i metodi `from_*` | Parte 0 |
+| — | `Reel#empty?`, `Tabbed#empty?`, come `Tree#empty?` | Parte 0 |
+| `Plane#putstr`: un `"\n"` dopo una riga piena lasciava una riga vuota (due a capo nel C) | va a capo una volta sola | Parte 0, nota della review (bug di 3.0.17, `notcurses.c:1888-1890` e `1903-1904`) |
+| — | `Context#drain_input?` e `Context#no_winch_sighandler?` | design, D6 |
+
+I nomi vecchi sono rimossi, senza alias. Dentro il wrapper la regione di `from_plane` e `as_rgba` passa da un helper
+comune (`Util.c_region`); la copertura FFI non cambia (477 chiamate, 154 escluse).
+
+### Test
+
+| Spec | Esempi |
+| --- | ---: |
+| `spec/notcurses/ui/` (9 file) | 76 |
+| `spec/integration/ui_pty_spec.rb` | 2 |
+| Totale Fase 3 (spec nuove) | 78 |
+| Fase 2 (`spec/notcurses/` 26 file, `spec/integration/` 3 file, `spec/coverage_spec.rb`), con la Parte 0 e i due predicati | 575 |
+| Fase 1 (`ffi_sanity_spec.rb`, `inline_reimpl_spec.rb`) | 257 |
+| **Totale** | **910, 0 fallimenti (100% pass)** |
+
+- Esempi per file della Fase 3: `event_loop` 18, `app` 15, `dialog` 9, `container` 8, `label` 6, `log_view` 6,
+  `list_view` 5, `text_input` 5, `button` 4; integrazione 2. Spec della Fase 2 con un esempio nuovo: `plane` 80,
+  `visual` 74, `tabbed` 30, `reel` 28 (Parte 0) e `context` 29 (i due predicati); gli altri file invariati.
+- Stesso risultato in ordine normale e con `--order rand:1234`, `rand:4242`, `rand:7`, su Ruby 4.0.7 e 3.1.7.
+- Le spec della Fase 3 usano eventi sintetici (`Input.synthesize`, anche per il mouse) su un contesto su `/dev/null`.
+  `ui_pty_spec.rb` esegue il ciclo completo in un processo figlio: il pty diventa il terminale di controllo
+  (`setsid` e `TIOCSCTTY`, solo Linux: altrove l'esempio viene saltato), un thread scrive tasti veri (testo, Tab,
+  Invio, clic SGR, Ctrl+X), il cambio di `winsize` manda SIGWINCH e `"\x03"` manda SIGINT dal kernel; i dati di un
+  `FdPlane` e di un `Subprocess` arrivano a un `LogView` con `post`. Un secondo figlio controlla `:eof`.
+- Comandi: quelli della Fase 2 e della sezione "Ruby 3.1".
+
+### Bug e limiti di notcurses 3.0.17 trovati nella Fase 3
+
+| Bug o limite | Dove | Gestione |
+| --- | --- | --- |
+| `notcurses_get` svuota tutto il pipe di prontezza, anche con altri eventi in coda | `in.c:2751-2757` | il ciclo legge fino al primo `nil` a ogni risveglio |
+| A fine input il pipe resta leggibile per sempre; con `drain_input: true` `get` solleva sempre `InputError` | `in.c:2610-2616`, `2702-2710` | `Key::EOF` ferma il ciclo (`:eof`); un contesto che scarta l'input non viene ascoltato (`Context#drain_input?`) |
+| `NCKEY_RESIZE` entra in coda solo insieme ad altro input | `in.c:2439-2445` | di default `trap('WINCH')` durante `run`; dopo ogni render un cambio di dimensioni non segnalato si applica al giro dopo |
+| `"\n"` dopo una riga piena: due a capo | `notcurses.c:1888-1890`, `1903-1904` | corretto nella Parte 0 |
+| Il modo del terminale toglie solo ECHO, ICANON e ICRNL: Ctrl+S e Ctrl+Q restano il controllo di flusso (IXON), Ctrl+C, Ctrl+Z e Ctrl+\ restano segnali (ISIG) | `termdesc.c:1631-1637` | non arrivano come tasti: lo dice il YARD di `EventLoop#on_key`; la demo usa Ctrl+X (trovato con la demo) |
+| In `read_input_nblock` la condizione su `errno` non è mai vera dove `EAGAIN == EWOULDBLOCK` (Linux): ogni errore di `read`, anche EIO, segna la fine dell'input | `in.c:2180-2190` | letto nel C, non riprodotto: per esempio un pty il cui master si chiude dà `Key::EOF`, e `run` restituisce `:eof` |
+| notcurses divide il keycap `"1️⃣"` diversamente da Ruby e ne scrive U+20E3 come carattere di larghezza zero | `nccell_load` | il controllo del testo dei widget non lo vede; il disegno lo scrive come `"?"` invece di sollevare |
+| Nessuno stile «reverse»; senza tty `cursor_disable` e `mice_enable` sollevano `ContextError` | — | il focus si mostra con i colori; `App` ignora l'errore di `cursor_disable` |
+
+### Controlli
+
+- Suite completa: 910 esempi, 0 fallimenti su Ruby 4.0.7 e 3.1.7, in ordine normale e con i semi `1234`, `4242`, `7`
+  (8 esecuzioni sul commit `692c455`; circa 17 s su 4.0.7 e 40 s su 3.1.7).
+- `ruby -w -Ilib -e 'require "notcurses"'`: nessun warning, su Ruby 4.0.7 e 3.1.7.
+- `spec/coverage_spec.rb` e `spec/notcurses/api_spec.rb` passano; `api_spec.rb` controlla per riflessione anche le
+  classi di `Notcurses::UI`.
+- YARD: 0 problemi con `yard_check.rb`; `yard_raise_check.rb` segnala solo il falso positivo noto `input.rb:300
+  to_ffi`.
+- `git diff 5dbf71e -- lib/notcurses/ffi lib/notcurses/ffi.rb Gemfile Gemfile.lock`: nessun cambio.
+- `examples/demo.rb` provata in un pty (`PTY.spawn`) con tasti simulati: il saluto compare nel log, Ctrl+X apre la
+  conferma, Invio su «Sì» ferma l'App ed esce con `Uscita: stop`.
+
+### Cosa serve alla fase successiva
+
+1. **Pacchetto e CI** (fuori scope finora, punti 7, 8 e 9 di "Cosa serve alla Fase 3"): gemspec, documentazione YARD
+   generata, matrice CI Ruby 3.1–4.0 con un emulatore di terminale vero per i test grafici. Il controllo su Ruby
+   3.1 resta manuale.
+2. **Widget esclusi dal design** (sezione 8): `TextArea` a più righe, temi, scorciatoie per contenitore, drag del
+   mouse, incolla con bracketed paste. I widget C della Fase 2 si ospitano in un componente dell'utente e vanno
+   ricreati in `on_resize` (`Tabbed`, `Reader`).
+3. **Tasti consumati dal terminale.** Ctrl+S, Ctrl+Q, Ctrl+C, Ctrl+Z e Ctrl+\ non arrivano all'applicazione. Per
+   usarli serve togliere IXON (e ISIG) durante `run`: notcurses non ha una funzione per IXON, e `IO#raw` di
+   `io/console` cambia anche altri flag.
+4. **Limiti del framework.** Una riga senza `"\n"` in un `LogView` cresce senza limite; la coda di `post` non ha
+   limite; ogni figlio aggiunto rifà il layout dei fratelli (costo quadratico alla costruzione, trascurabile per un
+   modulo, da rivedere con migliaia di componenti: un elenco lungo va in un `ListView`).
+5. **Controllo esatto del testo.** Per rifiutare alla creazione anche i grapheme che notcurses divide diversamente da
+   Ruby serve un cambio dell'API della Fase 2: un controllo pubblico (o `@api private`) basato su
+   `Plane#zero_width_egc!`.
