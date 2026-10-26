@@ -318,10 +318,10 @@ Reimplementate in Ruby (stessa funzionalità, senza i bug): `ncreel`/`nctablet` 
    CI 3.1–4.0.
 9. **Pacchetto.** Non c'è ancora un gemspec né la documentazione YARD generata (la gem `yard` non è tra le
    dipendenze).
-10. **Finding aperti della review.** Prima di costruire sopra l'API, decidi i punti aperti della sezione "Review della
-    Fase 2 e Ruby 3.1": i nomi `from:`/`channels:` di `hline` e `rowstride:`/`linesize:` di `Visual`,
-    `print_aligned` contro `putstr(align:)`, i valori `-1` e `0` di `Visual.from_plane`, `empty?` in `Reel` e
-    `Tabbed`.
+10. **Finding aperti della review (decisi dall'utente il 2026-10-26, da applicare nella Parte 0 della Fase 3).**
+    `Visual.from_plane(y:, x:, rows:, cols:)` come `Plane#as_rgba`, con default `y: 0, x: 0` in entrambi (`nil` =
+    cursore o fino al bordo; `-1` e `0` rifiutati); `rowstride:` anche nei 4 `Visual.blit_*` (oggi `linesize:`);
+    `empty?` in `Reel` e `Tabbed`. `Direct` resta com'è (`print_aligned`, `hline(channels:)`).
 
 ## Review della Fase 2 e Ruby 3.1
 

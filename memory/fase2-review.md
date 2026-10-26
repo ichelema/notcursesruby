@@ -132,6 +132,9 @@ A2-02, A2-03, A2-04 (piano nuovo `==` al vecchio), A5-01 (`ArgumentError`), A3-0
   della prima cella della sfumatura) contro `Direct#hline(channels:)` (il nome di tutto `Direct` per i colori di
   scrittura); `Direct#print_aligned` contro `Plane#putstr(align:)` (`Direct#putstr` rispecchia `ncdirect_putstr`,
   senza allineamento); in `Visual` `rowstride:` (5 `from_*`) contro `linesize:` (4 `blit_*`), che seguono i nomi C.
+- **Decisioni dell'utente sugli aperti (2026-10-26, Parte 0 della Fase 3 in `RIPRESA.md`):** `from_plane` e
+  `as_rgba` con `y:`, `x:`, `rows:`, `cols:` e default `y: 0, x: 0` (`nil` = cursore o fino al bordo; `-1` e `0`
+  rifiutati); `rowstride:` anche nei `blit_*`; `empty?` in `Reel` e `Tabbed`; `Direct` invariato.
 - **Emersi dal controllo, fuori dall'elenco approvato:** `Visual.from_plane(begy:, begx:, leny:, lenx:)` ha ancora i
   valori speciali del C (`-1` = cursore, `0` = fino al bordo) e nomi diversi da `as_rgba(y:, x:, rows:, cols:)`
   (stessa correzione di `as_rgba`); `empty?` esiste in `Tree` ma non in `Reel` e `Tabbed`.

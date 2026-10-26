@@ -1,203 +1,168 @@
 # RIPRESA — prompt per la prossima sessione
 
 > Avvio: incolla questo file nella nuova sessione di Claude Code, oppure scrivi «Leggi RIPRESA.md ed esegui il
-> prompt». Scritto il 2026-10-26, con il repository su `5c4c35b`.
+> prompt». Scritto il 2026-10-26, con il repository su `5dbf71e`.
 
 ## Contesto
 
 - **Progetto:** binding Ruby completo per notcurses 3.0.17, in `/mnt/data/Sviluppo/Progetti/notcursesruby`.
   Repository privato https://github.com/ichelema/notcursesruby, branch `master`.
 - **Fase 1** (layer FFI raw, `lib/notcurses/ffi.rb` e `lib/notcurses/ffi/`): completa, commit `465418f`.
-- **Fase 2** (wrapper Ruby idiomatico, gli altri 28 file di `lib/`, 12 482 righe): completa, commit `7e033bd`. Il
-  commit `5c4c35b` ha aggiunto `blocking: true` a 8 funzioni della Fase 1, su richiesta dell'utente.
-- **Stato su Ruby 4.0.7:** 802 esempi e 0 fallimenti, anche con i semi `1234`, `4242` e `7`; 0 problemi YARD secondo
-  due script euristici; `ruby -w` senza warning; il wrapper chiama 477 delle 631 funzioni FFI, e le altre 154 sono
-  escluse con un motivo in `spec/coverage_spec.rb`.
-- **Ruby 3.1**, la versione minima dichiarata, non è mai stata eseguita: è controllata solo la sintassi.
+- **Fase 2** (wrapper Ruby idiomatico, gli altri 28 file di `lib/`, 12 604 righe): completa, commit `7e033bd`. Review
+  indipendente e fix: commit `553aa1d` e `fe7e420`. Prova su Ruby 3.1 e fix di `FdPlane#close`: commit `5dbf71e`.
+- **Stato:** 827 esempi e 0 fallimenti su Ruby 4.0.7 e 3.1.7, anche con i semi `1234`, `4242` e `7`; `ruby -w` senza
+  warning; 0 problemi YARD secondo due script euristici; il wrapper chiama 477 delle 631 funzioni FFI, e le altre 154
+  sono escluse con un motivo in `spec/coverage_spec.rb`.
 - `notcurses/` (sorgenti C) e `libnotcurses-sys/` (binding Rust) sono submodule git. Usa `notcurses/src/` per
   controllare la semantica del C. Non usare `libnotcurses-sys/` come riferimento.
 
 ## Obiettivo
 
-1. Esegui una review indipendente della Fase 2. Trova i difetti prima che la Fase 3 costruisca sopra questa API.
-2. Correggi i difetti confermati, ognuno con un test.
-3. Esegui la suite completa su Ruby 3.1.
+La Fase 3 aggiunge sopra l'API della Fase 2 ciò che serve a un'applicazione interattiva: il ciclo degli eventi, il
+focus, il resize e i widget composti.
 
-La Fase 3 (ciclo degli eventi, focus, resize, widget composti) è fuori scope: non iniziarla.
+1. **Parte 0:** applica le decisioni dell'utente sui punti aperti della review.
+2. **Parte 1:** scrivi il design e fallo approvare dall'utente.
+3. **Parte 2:** implementa il design approvato, con le spec.
+4. **Parte 3:** esegui i controlli finali e scrivi la documentazione.
+
+Fuori scope, salvo una richiesta esplicita dell'utente: gemspec e pubblicazione della gem, documentazione YARD
+generata, CI (punti 7, 8 e 9 di "Cosa serve alla Fase 3" in `RICONSEGNA.md`).
 
 ## Prima di iniziare
 
-1. Fai il recall in Hindsight. Il bank `notcursesruby` si legge via REST (comando in "Comandi"). Il fatto sul build di
-   Ruby 3.1 con mise è nel bank predefinito: usa `mcp__hindsight__recall`.
-2. Leggi `RICONSEGNA.md`, sezioni "Fase 1" e "Fase 2".
-3. Leggi `memory/fase2-wrapper-idiomatico.md`. Per il GVL leggi anche la decisione 20 di `memory/fase1-ffi-raw.md`.
-4. Controlla `git status` e `git log --oneline -3`. Il working tree deve essere pulito, su `5c4c35b` o dopo.
-5. Avvia subito in background il build di Ruby 3.1.7 (Parte 2, passo 1): dura alcuni minuti e non dipende dalla
-   review.
+1. Fai il recall in Hindsight, bank `notcursesruby`, via REST (comando in "Comandi").
+2. Leggi `RICONSEGNA.md`: la sezione "Fase 2", soprattutto "Cosa serve alla Fase 3", e la sezione "Review della
+   Fase 2 e Ruby 3.1".
+3. Leggi `memory/fase2-wrapper-idiomatico.md` (ciclo di vita, callback, thread e GVL, segnali, bug noti) e
+   `memory/fase2-review.md` (decisioni e finding aperti).
+4. Controlla `git status` e `git log --oneline -3`. Il working tree deve essere pulito, su `5dbf71e` o dopo.
+5. Controlla che Ruby 3.1.7 sia installato: `MISE_EXEC_AUTO_INSTALL=false mise exec ruby@3.1.7 -- ruby -v`. Se
+   manca, avvia in background il build con i comandi della sezione "Ruby 3.1" di `RICONSEGNA.md`.
 
 ## Regole vincolanti
 
-Le regole vengono dal prompt della Fase 2 e valgono per i fix. La review controlla che il codice le rispetti.
+Le regole 1–10 vengono dai prompt delle fasi precedenti. Le regole 11–14 sono nuove per la Fase 3.
 
-1. Non cambiare la Fase 1 (`lib/notcurses/ffi/`, `lib/notcurses/ffi.rb`). Se un finding richiede un cambio nella
-   Fase 1, fermati e chiedi all'utente.
+1. Non cambiare la Fase 1 (`lib/notcurses/ffi/`, `lib/notcurses/ffi.rb`). Se un cambio serve, fermati e chiedi
+   all'utente.
 2. Ogni puntatore opaco ha un distruttore (`close` o `destroy`). Il pattern `owned:` copre i puntatori non posseduti,
    per esempio lo stdplane.
 3. notcurses non è thread-safe. Il wrapper lo documenta e non aggiunge lock interni.
-4. I metodi restituiscono `self` dove il chaining ha senso (`render`, `erase`, `move_cursor`, i setter dei colori).
+4. I metodi restituiscono `self` dove il chaining ha senso.
 5. Nomi Ruby: `snake_case`, suffisso `?` per i predicati, nessun prefisso `nc` o `notcurses_`.
 6. Ogni ritorno C che indica un errore (-1 o NULL) diventa un'eccezione con un messaggio chiaro.
 7. Le opzioni con un default sono keyword arguments. Gli argomenti posizionali servono solo per i parametri
-   obbligatori.
+   obbligatori. `spec/notcurses/api_spec.rb` controlla le regole 5 e 7 per riflessione.
 8. `define_method` e `method_missing` sono vietati: il codice deve essere leggibile e navigabile con grep.
 9. Ogni metodo pubblico ha un commento YARD con `@param`, `@return` e `@raise`.
 10. Dipendenze: solo la gem `ffi`. Ruby >= 3.1.
+11. Le classi della Fase 3 usano l'API pubblica della Fase 2. Una chiamata FFI diretta serve solo se l'API non basta,
+    con un commento che dice perché.
+12. Un cambio all'API pubblica della Fase 2, oltre alla Parte 0, entra nel design e richiede l'approvazione
+    dell'utente. Elenca ogni cambio in `RICONSEGNA.md`.
+13. Solo il thread del ciclo degli eventi chiama notcurses. Gli altri thread (i blocchi di `FdPlane` e `Subprocess`,
+    eventuali timer) passano i dati al ciclo, per esempio con una `Queue` e un pipe di risveglio. Un gestore `trap`
+    non chiama notcurses: imposta un flag o sveglia il ciclo.
+14. Una scelta con due letture valide spetta all'utente: chiedi con AskUserQuestion.
 
-Le deviazioni volute dai pattern del prompt della Fase 2 sono nella tabella "Differenze dai pattern del prompt" di
-`memory/fase2-wrapper-idiomatico.md`. La review può contestarle, con un motivo.
+## Parte 0 — punti aperti della review
 
-## Parte 1 — review della Fase 2
+L'utente ha deciso il 2026-10-26:
 
-### Metodo
+1. `Visual.from_plane(plane, blitter:, y: 0, x: 0, rows: nil, cols: nil)` e
+   `Plane#as_rgba(blitter, y: 0, x: 0, rows: nil, cols: nil)`: stessi nomi e stesse regole, e senza argomenti
+   convertono tutto il piano. `y: nil` e `x: nil` valgono «posizione del cursore», `rows: nil` e `cols: nil` «fino
+   al bordo»; `-1` e `0` (i valori speciali del C) sollevano `ArgumentError`. In `from_plane` le keyword `begy:`,
+   `begx:`, `leny:` e `lenx:` spariscono. In `as_rgba` cambia il default di `y:` e `x:`: oggi è `nil`, cioè il
+   cursore.
+2. `rowstride:` in tutti i metodi di `Visual`: in `blit_rgba`, `blit_bgrx`, `blit_rgb_loose` e `blit_rgb_packed`
+   `linesize:` diventa `rowstride:`.
+3. `Reel#empty?` e `Tabbed#empty?`, come `Tree#empty?`.
+4. `Direct` resta com'è: `print_aligned` e `hline`/`vline` con `channels:`.
 
-Usa un workflow multi-agente (questo prompt lo autorizza) con al massimo 12 agenti: 6 finder (agenti che cercano i
-difetti, per esempio `trinity:reviewer`) e 6 agenti di controllo (per esempio `trinity:deep-reasoner`, che può
-scrivere script di prova nello scratchpad).
+Controlla anche la nota della review su `Plane#putstr`: su un piano che scorre, un testo largo quanto la riga e
+seguito da `"\n"` lascia il cursore due righe sotto (`notcurses.c:1888-1890` e `1903-1904`), contro il YARD. Se il C
+fa davvero così, correggi il YARD, oppure il comportamento se il fix è corto e sicuro.
 
-1. **Finder.** Un agente in sola lettura per area (tabella sotto). Ogni finder riceve le regole vincolanti, i
-   criteri, i file della sua area e le spec corrispondenti. Non dare ai finder la memoria della Fase 2 né le tue
-   conclusioni: la review deve essere indipendente. Il YARD e i commenti nel codice spiegano già le scelte.
-2. **Doppioni e decisioni note.** Unisci i finding uguali. Confronta ogni finding con
-   `memory/fase2-wrapper-idiomatico.md` (bug aggirati, bug noti, differenze dai pattern). Un finding che contesta una
-   decisione documentata passa al controllo insieme al motivo della decisione.
-3. **Controllo avversario.** Un agente per area prova a smentire ogni finding. Una prova è uno script o una spec che
-   riproduce il difetto, oppure le righe del C che lo dimostrano. Verdetti: CONFERMATO, PLAUSIBILE, SMENTITO. Nel
-   dubbio il verdetto è PLAUSIBILE.
-4. Gli script che possono andare in crash girano nello scratchpad, in un processo figlio, con
-   `timeout -k 5 -s KILL` e lo stdin da `/dev/null`.
+Per ogni punto: prima una spec che fallisce con il codice attuale, poi il fix, poi la suite completa. I nomi vecchi
+spariscono, senza alias. La Parte 0 ha un commit suo, prima della Parte 2.
 
-### Aree
+## Parte 1 — design
 
-| Area | File in `lib/notcurses/` | Righe |
-| --- | --- | ---: |
-| 1. Nucleo e valori | `context.rb`, `resource.rb`, `error.rb`, `version.rb`, `input.rb`, `stats.rb`, `channel.rb`, `format.rb`, `util.rb`, e `lib/notcurses.rb` | 2 980 |
-| 2. Piani | `plane.rb`, `cell.rb` | 2 850 |
-| 3. Direct e Visual | `direct.rb`, `visual.rb`, `pixel.rb`, `palette.rb` | 2 671 |
-| 4. Selector, MultiSelector, Menu, Reader, ProgBar, Plot | `widgets/widget.rb`, `widgets/selector.rb`, `widgets/multiselector.rb`, `widgets/menu.rb`, `widgets/reader.rb`, `widgets/progbar.rb`, `widgets/plot.rb` | 1 867 |
-| 5. Reel, Tree, Tabbed e processi | `widgets/reel.rb`, `widgets/tree.rb`, `widgets/tabbed.rb`, `fd_plane.rb`, `subprocess.rb` | 2 114 |
-| 6. Trasversale | API pubblica di tutte le classi | — |
+Scrivi `memory/fase3-design.md` prima del codice. Il design copre:
 
-Il finder dell'area 6 elenca i metodi pubblici di tutte le classi e controlla la coerenza: lo stesso nome per lo
-stesso concetto, le stesse keyword (`y:`/`x:`, `rows:`/`cols:`), `self` o un valore come ritorno, i predicati, la
-simmetria di `open`, `new`, `close` e `destroy`, le classi di eccezione per area.
+1. **Ciclo degli eventi.** Una classe possiede il ciclo: attende l'input, gli eventi degli altri thread e i timer,
+   consegna ogni evento e rende lo schermo al massimo una volta per giro. Punto di partenza: `IO.select` su
+   `Context#inputready_fd` e su un pipe di risveglio, poi `Context#getvec` o `#get(timeout: 0)`. Il ciclo esce pulito
+   su richiesta, su `Key::EOF` e su `Interrupt`: con il default `no_quit_sighandlers: true` Ctrl-C arriva come
+   `Interrupt`.
+2. **Focus e consegna degli eventi.** Il design dice chi ha il focus, l'ordine di Tab e Shift+Tab, il focus con il
+   mouse e quali widget non ricevono il focus. Un evento va al widget con il focus (`offer_input`); se il widget non
+   lo consuma, l'evento risale ai contenitori e poi ai tasti globali. Il mouse va al piano sotto il puntatore
+   (`Plane#translate_abs`, z-order) e richiede `Context#mice_enable`.
+3. **Resize.** `trap('WINCH')` sveglia il ciclo; il ciclo chiama `Context#refresh` e poi il layout. Con
+   `no_winch_sighandler: false` arriva invece `Key::RESIZE`, solo insieme all'input successivo. Limiti noti:
+   l'intestazione di `Tabbed` non segue il resize e un `Reader` ridimensionato solleva `WidgetError`, quindi vanno
+   ricreati; dopo uno scroll, resize e `duplicate` permutano le righe del piano (bug `logrow`).
+4. **Widget composti.** Un protocollo comune (per esempio `plane`, `offer_input`, focus, layout, `close`) e l'elenco
+   dei widget. Proposta minima da far approvare: un contenitore che dispone i figli in righe o colonne, un'etichetta,
+   un pulsante, un campo di testo sopra `Reader`, un elenco (sopra `Selector`, o in Ruby come `Reel`), una finestra di
+   dialogo modale. Ogni widget composto segue il ciclo di vita della Fase 2: `close` idempotente e chiusura dal
+   contesto prima di `notcurses_stop`.
+5. **Thread.** La politica della regola 13, e il modo in cui `FdPlane` e `Subprocess` mandano i dati al ciclo.
+6. **Test.** Eventi sintetici con `Input.synthesize` su un contesto su `/dev/null` (anche il mouse:
+   `mice_enable` richiede un tty); il ciclo completo su un pty, come in `spec/integration/pty_spec.rb`.
 
-### Criteri (ogni finder li applica tutti alla sua area)
+Poi chiedi all'utente, con AskUserQuestion, le scelte con due letture valide: per esempio il namespace (`Notcurses`
+o un sotto-modulo), lo stile degli handler (blocchi o oggetti evento), i widget da includere, un esempio eseguibile
+per la prova manuale su un terminale vero. Non scrivere il codice della Parte 2 prima dell'approvazione.
 
-1. **Memoria e ciclo di vita:** puntatori senza distruttore; uso dopo `close` o dopo una distruzione fatta dal C
-   (`family_destroy`, destroy dei widget, `drop_planes`, `close` del contesto); double free; buffer che il C conserva
-   dopo la chiamata (stringhe, array di opzioni); oggetti `FFI::Function` raccolti dal GC mentre il C li può ancora
-   chiamare; registro dei piani del contesto (`plane_for`, `generation`).
-2. **Errori ai confini:** ritorni C non controllati; classe di eccezione sbagliata; validazione mancante (interi fuori
-   range che il C tronca, `nil`, encoding, coordinate, dimensioni); metodi che dopo `close` non sollevano
-   `ClosedError`.
-3. **Callback ed eccezioni:** eccezioni Ruby dentro un callback C (`callback_scope`, `raise_callback_errors!`);
-   chiamate vietate dentro un callback (`check_not_in_callback!`); `break`, `throw` e `return` dentro i blocchi.
-4. **Thread, GVL e segnali:** le 8 funzioni con `blocking: true`; le attese in Ruby (`Context#get`, `FdPlane`,
-   `Subprocess`); il YARD sui thread deve descrivere il codice reale.
-5. **Convenzioni:** le 10 regole vincolanti; YARD fedele al codice (`@raise` mancanti o impossibili).
-6. **Test:** esempi che passano per il motivo sbagliato, percorsi rischiosi senza test, dipendenze dall'ordine degli
-   esempi.
+## Parte 2 — implementazione
 
-Ogni finding riporta `file:riga`, severità, criterio, uno scenario concreto (input o stato → risultato sbagliato o
-crash) e la prova proposta.
-
-| Severità | Significato |
-| --- | --- |
-| alta | crash, corruzione della memoria, blocco dell'interprete, perdita di dati |
-| media | eccezione sbagliata o assente, comportamento diverso dal YARD, perdita di risorse |
-| bassa | convenzione, nome, YARD |
-
-### Fix
-
-- Correggi solo i finding CONFERMATI. Elenca i PLAUSIBILI in `RICONSEGNA.md`, con il motivo per cui restano aperti.
-- Per ogni fix scrivi prima una spec che fallisce con il codice attuale. Poi applica il fix. Poi esegui la suite
-  completa.
-- Applica i fix uno alla volta, non in parallelo: molti fix toccano file condivisi (`context.rb`, `util.rb`,
-  `widgets/widget.rb`).
-- Un cambio dell'API pubblica (nome, firma, valore di ritorno) è ammesso se un finding confermato lo richiede, perché
-  la gem non ha ancora utenti. Elenca ogni cambio in `RICONSEGNA.md`.
-- Una scelta con due letture valide spetta all'utente: chiedi con AskUserQuestion.
-
-## Parte 2 — suite su Ruby 3.1
-
-### Fatti già noti
-
-- Docker e podman non sono installati. `gh` è installato.
-- mise 2026.10.17: `mise install ruby@3.1.7` non trova un binario precompilato e compila con ruby-build.
-- Il build di Ruby 3.1.7 con gcc 16.2.1 fallisce nella compilazione di `enc/euc_jp.o`:
-
-  ```text
-  enc/jis/props.kwd:146:1: error: conflicting types for 'onig_jis_property'; have 'const struct enc_property *(const char *, size_t)'
-  ```
-
-- L'impostazione `exec_auto_install` di mise vale `true`: `mise exec ruby@3.1.7 -- ...` su una versione non
-  installata riavvia il build da solo. Metti `MISE_EXEC_AUTO_INSTALL=false` in ogni comando `mise exec`.
-- ruby-build scrive in `/tmp` log e cartelle di build di circa 340 MB ciascuna. Imposta `TMPDIR` dentro lo scratchpad
-  prima del build.
-- `Gemfile.lock` ha `BUNDLED WITH 4.0.22`, e Bundler 4.0.22 richiede Ruby >= 3.2.0. Su Ruby 3.1 non usare e non
-  cambiare il lockfile del progetto: usa una copia del `Gemfile` nello scratchpad con `BUNDLE_GEMFILE`.
-- Non cambiare la versione globale di Ruby (4.0.7 in `~/.config/mise/config.toml`): usa solo `mise exec ruby@3.1.7`.
-
-### Procedura
-
-1. **Build con C17.** Ipotesi da controllare: da gcc 15 lo standard C di default è C23 (`gnu23`), e in C23 una
-   dichiarazione `f()` vale `f(void)`. Avvia il build con `-std=gnu17` (comandi sotto). Se il build fallisce, leggi
-   nel log la riga `note: previous declaration` prima di scegliere un altro workaround.
-2. **Suite.** Se il build riesce, esegui la suite completa su 3.1.7 e correggi le incompatibilità nel codice della
-   Fase 2. Ogni fix deve passare anche su 4.0.7.
-3. **Piano B.** Se il build fallisce ancora dopo un'analisi breve, fermati e chiedi all'utente quale strada scegliere:
-   - `pacman -S podman` e un container con Ruby 3.1 e notcurses 3.0.17 compilato dal submodule `notcurses/`;
-   - una matrice GitHub Actions 3.1–4.0 (il repository è privato: la CI usa i minuti Actions dell'account);
-   - Ruby >= 3.2 come versione minima (cambia la regola 10).
-
-```sh
-S=/percorso/assoluto/dello/scratchpad
-mkdir -p "$S/ruby-build-tmp" "$S/gemfile31" && cp Gemfile "$S/gemfile31/Gemfile"
-# build (alcuni minuti: avvialo in background)
-TMPDIR="$S/ruby-build-tmp" RUBY_CFLAGS='-std=gnu17' mise install ruby@3.1.7 > "$S/ruby31-install.log" 2>&1; echo "exit $?"
-# gem e suite su 3.1.7, dalla radice del progetto
-MISE_EXEC_AUTO_INSTALL=false BUNDLE_GEMFILE="$S/gemfile31/Gemfile" mise exec ruby@3.1.7 -- bundle install --quiet
-MISE_EXEC_AUTO_INSTALL=false BUNDLE_GEMFILE="$S/gemfile31/Gemfile" TERM=xterm-256color \
-  mise exec ruby@3.1.7 -- timeout -k 5 -s KILL 600 bundle exec rspec < /dev/null
-```
+- Implementa nell'ordine del design. Ogni classe ha le sue spec in `spec/notcurses/`; il ciclo con un terminale ha un
+  esempio in `spec/integration/pty_spec.rb`.
+- Gli script che possono andare in crash girano nello scratchpad, in un processo figlio, con
+  `timeout -k 5 -s KILL` e lo stdin da `/dev/null`.
+- Vincoli della Fase 2 da rispettare:
+  - `break`, `return` e `throw` in un blocco chiamato dal C diventano una `LocalJumpError`;
+  - dentro un callback chiamato dal C non si distruggono né si riparentano piani (`check_not_in_callback!`);
+  - `Plane.new` su un piano che ha già un `Plane` aperto solleva `ArgumentError`;
+  - `FdPlane#close` aspetta il blocco in corso; su Ruby 3.1 il `kill` di `close` arriva anche a
+    `String#grapheme_clusters`, quindi anche dentro i metodi di testo del wrapper;
+  - la causa di A4-01 (`cellcmp_and_dupfar` non confronta la width, `internal.h:1512-1519`) può toccare le copie fra
+    piani: se un widget composto copia celle fra piani, provalo con glifi larghi.
+- Un difetto della Fase 2 trovato durante il lavoro segue la stessa regola: prima una spec che fallisce, poi il fix.
 
 ## Consegne
 
-1. `memory/fase2-review.md`: metodo (agenti, aree, criteri), tabella dei finding (id, `file:riga`, severità,
-   criterio, verdetto, fix o motivo), cambi dell'API pubblica, comandi esatti per Ruby 3.1, controlli eseguiti.
-2. `RICONSEGNA.md`: una sezione nuova "Review della Fase 2 e Ruby 3.1" dopo la sezione "Fase 2", con la data, i
-   finding per severità e verdetto, i cambi dell'API, i finding aperti e il risultato su 3.1. Aggiorna anche i numeri
-   della sezione "Test" e i punti di "Cosa serve alla Fase 3" che cambiano (almeno il punto 8).
-3. Hindsight, bank `notcursesruby`: le decisioni, le cause radice e il workaround per Ruby 3.1 (comando in
-   "Comandi").
-4. Commit separati per i fix della review e per Ruby 3.1, con Conventional Commits e scope in italiano, poi push su
-   `origin/master`.
-5. Alla fine proponi il passo successivo e chiedi all'utente se scrivere in `RIPRESA.md` il prompt della Fase 3. Non
-   iniziare la Fase 3.
+1. Codice e spec della Fase 3, con i `require` in `lib/notcurses.rb`.
+2. `memory/fase3-design.md` (design approvato) e un log di lavoro `memory/fase3-<argomento>.md`: decisioni, problemi
+   e soluzioni, bug di notcurses trovati, verifiche.
+3. `RICONSEGNA.md`: una sezione "Fase 3" con la data, i file, le classi, i test, i cambi dell'API (Parte 0
+   compresa), i bug trovati e "Cosa serve alla fase successiva". Aggiorna anche la tabella "Test".
+4. Hindsight, bank `notcursesruby`: le decisioni e le cause radice (comando in "Comandi").
+5. Commit separati: la Parte 0, poi uno per area della Parte 2, poi la documentazione. Conventional Commits con
+   scope in italiano, poi push su `origin/master`.
+6. Alla fine proponi il passo successivo e chiedi all'utente se scrivere in `RIPRESA.md` il prompt della fase
+   successiva.
 
 ## Controlli finali
 
-- Suite completa su Ruby 4.0.7: 0 fallimenti, anche con `--order rand:1234`, `rand:4242` e `rand:7`.
-- Suite completa su Ruby 3.1.7: 0 fallimenti, se la Parte 2 è riuscita.
-- `ruby -w -Ilib -e 'require "notcurses"'`: nessun warning.
+- Suite completa su Ruby 4.0.7 e su Ruby 3.1.7: 0 fallimenti, anche con `--order rand:1234`, `rand:4242` e `rand:7`.
+  Su 3.1.7 i semi servono: la corsa di `FdPlane#close` è emersa solo con il seme `4242`.
+- `ruby -w -Ilib -e 'require "notcurses"'`: nessun warning, su entrambe le versioni.
 - `spec/coverage_spec.rb` passa: ogni funzione FFI è chiamata dal wrapper o esclusa con un motivo.
-- YARD: 0 problemi con gli script euristici della sessione precedente, se esistono ancora (uso:
-  `ruby <script> <file.rb>...`):
+- `spec/notcurses/api_spec.rb` passa, anche sulle classi nuove.
+- YARD: 0 problemi con gli script euristici, se esistono ancora (uso: `ruby <script> <file.rb>...`;
+  `input.rb:300 to_ffi` è un falso positivo noto):
 
   ```text
   /home/ichelema/.claude/tmp/claude-1001/-mnt-data-Sviluppo-Progetti-notcursesruby/881ff4c3-b6e5-46db-b66a-11a45b82ccbf/scratchpad/scripts/yard_check.rb
   /home/ichelema/.claude/tmp/claude-1001/-mnt-data-Sviluppo-Progetti-notcursesruby/881ff4c3-b6e5-46db-b66a-11a45b82ccbf/scratchpad/scripts/yard_raise_check.rb
   ```
+
+- `git diff 5dbf71e -- lib/notcurses/ffi lib/notcurses/ffi.rb Gemfile Gemfile.lock` non mostra cambi.
 
 ## Comandi
 
@@ -208,15 +173,25 @@ TERM=xterm-256color timeout -k 5 -s KILL 600 bundle exec rspec --order rand:1234
 # una sola spec
 TERM=xterm-256color timeout -k 5 -s KILL 300 bundle exec rspec spec/notcurses/plane_spec.rb < /dev/null
 
+# Ruby 3.1.7: Gemfile copiato fuori dal progetto (S = scratchpad della sessione). Non cambiare la versione globale
+# di Ruby (4.0.7) e non usare il Gemfile.lock del progetto su 3.1.
+mkdir -p "$S/gemfile31" && cp Gemfile "$S/gemfile31/Gemfile"
+MISE_EXEC_AUTO_INSTALL=false BUNDLE_GEMFILE="$S/gemfile31/Gemfile" mise exec ruby@3.1.7 -- bundle install --quiet
+MISE_EXEC_AUTO_INSTALL=false BUNDLE_GEMFILE="$S/gemfile31/Gemfile" TERM=xterm-256color \
+  mise exec ruby@3.1.7 -- timeout -k 5 -s KILL 600 bundle exec rspec --order rand:1234 < /dev/null
+
 # recall dal bank notcursesruby
 curl -s -m 30 -X POST http://127.0.0.1:8888/v1/default/banks/notcursesruby/memories/recall \
   -H 'Content-Type: application/json' \
-  -d '{"query":"decisioni Fase 2, ciclo di vita, callback, GVL, Ruby 3.1","budget":"high","max_tokens":6000}'
+  -d '{"query":"decisioni Fase 2 e review, ciclo di vita, callback, thread, resize, Ruby 3.1","budget":"high","max_tokens":6000}'
 
 # retain nel bank notcursesruby: il JSON sta in un file dello scratchpad
 curl -s -m 30 -X POST http://127.0.0.1:8888/v1/default/banks/notcursesruby/memories \
   -H 'Content-Type: application/json' --data @"$S/retain.json"
 ```
+
+In zsh una variabile non si divide in parole: scrivi `--order "rand:$seed"`, non `$opts` con `--order rand:N`
+dentro.
 
 Formato di `retain.json`:
 
