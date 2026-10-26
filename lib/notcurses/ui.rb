@@ -15,3 +15,6 @@ module Notcurses
 end
 
 require_relative 'ui/event_loop'
+require_relative 'ui/component'
+require_relative 'ui/container'
+require_relative 'ui/app'
