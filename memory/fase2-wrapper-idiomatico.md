@@ -1,7 +1,8 @@
 # Fase 2 — wrapper Ruby idiomatico: log di lavoro
 
 - Data: 2026-10-25
-- Base: layer FFI raw della Fase 1 (`lib/notcurses/ffi.rb`, `lib/notcurses/ffi/`), non modificato.
+- Base: layer FFI raw della Fase 1 (`lib/notcurses/ffi.rb`, `lib/notcurses/ffi/`), non modificato durante la Fase 2.
+  Il 2026-10-26, su richiesta, `functions.rb` ha ricevuto `blocking: true` su 8 funzioni (vedi "Thread e GVL").
 - Ambiente di prova: Arch Linux, pacchetto `notcurses 3.0.17-3` (con ffmpeg), Ruby 4.0.7 (mise), gem `ffi` 1.17.4,
   `rspec` 3.13.2. Nessuna dipendenza nuova: solo `ffi`, codice compatibile con Ruby >= 3.1.
 - File in più rispetto alla struttura del prompt:
@@ -115,6 +116,21 @@
   Ruby non ha fatto nessun passo. Per questo le attese lunghe sono in Ruby: `Context#get`/`Direct#get` aspettano con
   `IO#wait_readable` sul fd di `inputready_fd` e poi leggono con `get_nblock`; le dissolvenze e gli stream dormono
   con `sleep` tra un passo e l'altro.
+- **Eccezione, dal 2026-10-26: `blocking: true`** su 8 funzioni che il wrapper chiama e che aspettano il terminale o
+  il tempo dentro il C: `notcurses_init`, `notcurses_core_init`, `ncdirect_init`, `ncdirect_core_init` (attendono la
+  risposta a DA1 senza timeout, `termdesc.c:1217`, `in.c:2921-2926`), `ncdirect_cursor_yx`,
+  `ncdirect_cursor_move_yx` (con una coordinata -1 chiede la posizione al terminale), `ncdirect_readline` e
+  `ncvisual_stream` (decodifica, disegno e attese tra i frame). Prima, con il GVL tenuto, un terminale finto in un
+  thread Ruby dello stesso processo (per esempio un pty nei test) non poteva rispondere: stallo già all'init.
+  - ruby-ffi 1.17.4 gestisce i callback durante una chiamata senza GVL: `callback_invoke` riprende il GVL con
+    `rb_thread_call_with_gvl` e cattura le eccezioni con `rb_rescue2`, poi le rilancia dopo il ritorno
+    (`Function.c:616-622`, `805`, `Call.c:371-415`). Il trampolino di `Visual#stream` funziona quindi come prima.
+  - Conseguenza: durante quelle attese gli altri thread Ruby girano e possono chiamare notcurses insieme al C. Il
+    YARD lo dice (non usare lo stesso contesto, né ENV durante l'init: con `termtype:` notcurses chiama `setenv`).
+  - Le altre funzioni tengono il GVL apposta: le scritture e i render sono brevi, e rilasciare il GVL su di loro
+    renderebbe molto più probabili le sovrapposizioni tra thread.
+  - `notcurses_get` e `ncdirect_get` restano senza `blocking: true`: il wrapper li chiama solo attraverso le inline
+    `*_get_nblock`, dopo l'attesa in Ruby.
 - I callback di resize, dei widget e degli stream sono chiamati in modo sincrono dal thread Ruby che ha fatto la
   chiamata C: nessun thread di notcurses chiama codice Ruby.
 
@@ -212,7 +228,7 @@ copertura.
 | `ncdirect_raster_frame` libera il piano su tutti i percorsi, anche di errore (`direct.c:631`) | il `Frame` risulta chiuso prima della chiamata: un secondo `raster` non arriva al C |
 | `ncdirect_putstr` con NULL: `fputs(NULL)` (`direct.c:46`, `52`) | `nil` rifiutato |
 | Dopo la fine dell'input ogni lettura restituisce EOF (`in.c:2798`) | documentato in `Direct#get` |
-| `readline` e `cursor_yx` attendono la risposta del terminale senza timeout, GVL compreso (`in.c:2820`) | `DirectError` senza `can_get_cursor?`; con un terminale vero l'attesa resta (documentata) |
+| `readline` e `cursor_yx` attendono la risposta del terminale senza timeout (`in.c:2820`) | `DirectError` senza `can_get_cursor?`; con un terminale vero l'attesa resta (documentata), ma dal 2026-10-26 rilascia il GVL |
 | `termtype:` scrive `ENV['TERM']` anche se l'init fallisce (`termdesc.c:1672`) | `TERM` ripristinato dopo un init fallito |
 | `ncdirect_stream` ignora il ritorno del callback (`direct.c:1588`), va in SIGSEGV con `vopts` NULL e tiene il GVL per tutto il video | `Direct#stream` in Ruby: `break` nel blocco ferma lo stream |
 
@@ -407,7 +423,7 @@ Valutate e non applicate:
 - Suite completa, con il comando ufficiale
   `TERM=xterm-256color timeout -k 5 -s KILL 600 bundle exec rspec < /dev/null`: 800 esempi, 0 fallimenti, circa 8 s
   (543 esempi della Fase 2, 257 della Fase 1). Stesso risultato con 5 ordini casuali (`--order rand:1234`, `4242`, `1`,
-  `31337`, `2026`).
+  `31337`, `2026`). Dopo la modifica del 2026-10-26: 802 esempi, 0 fallimenti, anche con i semi `1234`, `4242`, `7`.
 - Un ordine casuale ha mostrato una dipendenza tra gli esempi della spec dei piani: l'helper `with_parent` chiudeva
   solo il genitore, e i figli creati dall'esempio restavano agganciati allo stdplane (in fondo allo z-order dopo
   `move_family_bottom`). Ora l'helper distrugge la famiglia; la spec passa in 8 ordini casuali.
@@ -424,3 +440,10 @@ Valutate e non applicate:
 - Ogni implementatore ha eseguito le proprie spec anche in ordine casuale. Gli esempi che possono restare appesi hanno
   un timeout interno; i casi che vanno in crash girano in processi figli; `FdPlane` e `Subprocess` contano i fd in
   `/proc/self/fd` prima e dopo ogni esempio.
+- `blocking: true` (2026-10-26), con due esempi scritti prima della modifica e falliti con il codice vecchio:
+  - `spec/integration/pty_spec.rb`: un processo figlio crea un pty e un thread Ruby che risponde a DA1 e alla
+    posizione del cursore, poi apre `Context` e `Direct` e chiama `cursor_yx`, `cursor_move(y: 2)` e `readline`.
+    Prima: stallo all'init di `Context` (timeout di 15 s). Dopo: tutto funziona, e durante `readline` (circa 0,3 s di
+    attesa) un altro thread fa una sessantina di passi; stabile in 5 esecuzioni;
+  - `spec/notcurses/visual_spec.rb`: durante `Visual#stream` senza blocco un thread che conta i passi faceva 0 passi,
+    ora più di 10 (soglia del test).

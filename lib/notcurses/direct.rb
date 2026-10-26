@@ -29,8 +29,10 @@ module Notcurses
   #
   # Input: arriva sempre da stdin (fd 0), letto da un thread di notcurses: non
   # leggere STDIN da Ruby mentre il contesto è aperto. {#get} attende fuori dal
-  # C (gli altri thread e i segnali restano serviti); {#readline} e
-  # {#cursor_yx} invece bloccano tutto il processo finché il terminale risponde.
+  # C (gli altri thread e i segnali restano serviti). L'init, {#readline},
+  # {#cursor_yx} e {#cursor_move} con x: nil attendono il terminale dentro il C,
+  # senza timeout ma con il GVL rilasciato: gli altri thread Ruby girano, i
+  # segnali vengono serviti al ritorno della chiamata.
   #
   # Effetti sul processo mentre il contesto è attivo: fd 0 in O_NONBLOCK e
   # terminale in cbreak (ripristinati da {#close}); termtype: cambia ENV['TERM']
@@ -162,7 +164,9 @@ module Notcurses
     #
     # Con un terminale vero l'init interroga il terminale e ne attende (senza
     # timeout) la risposta; query e report del cursore vanno al terminale di
-    # controllo anche quando output è un file.
+    # controllo anche quando output è un file. Durante l'init il GVL è
+    # rilasciato: gli altri thread Ruby girano, ma non devono usare ENV (con
+    # termtype: notcurses chiama setenv).
     #
     # @param termtype [String, nil] voce terminfo del terminale; nil = variabile
     #   TERM. notcurses la scrive in ENV['TERM']
@@ -568,7 +572,8 @@ module Notcurses
     # Bug di 3.0.17 (direct.c:233, condizione invertita): per conservare la
     # colonna (x: nil) il C legge la posizione dal terminale, quindi serve
     # {#can_get_cursor?} (senza, il wrapper solleva invece di andare alla
-    # colonna 0 come il C) e la chiamata attende la risposta del terminale.
+    # colonna 0 come il C) e la chiamata attende la risposta del terminale
+    # (senza timeout, con il GVL rilasciato).
     # Con y: nil su un terminale senza +hpa+ e senza tty il C va alla riga 0.
     #
     # @param y [Integer, nil] riga, 0..INT_MAX
@@ -667,9 +672,9 @@ module Notcurses
 
     # Posizione del cursore, letta dal terminale (+ncdirect_cursor_yx+).
     #
-    # Blocca il processo (senza timeout, GVL compreso) finché il terminale
-    # risponde alla query; un input che somiglia alla risposta può falsare il
-    # risultato.
+    # Attende la risposta del terminale alla query senza timeout, con il GVL
+    # rilasciato (gli altri thread Ruby girano, ma non devono usare il
+    # contesto); un input che somiglia alla risposta può falsare il risultato.
     #
     # @return [Array(Integer, Integer)] [y, x] a partire da 0
     # @raise [DirectError] se il terminale non riporta il cursore
@@ -860,9 +865,10 @@ module Notcurses
     # (+ncdirect_readline+): Backspace cancella l'ultimo carattere, frecce,
     # Ctrl+A, Ctrl+E.
     #
-    # Serve un terminale che riporti il cursore ({#can_get_cursor?}). Blocca il
-    # processo (senza timeout, GVL compreso) fino a Invio o Ctrl+D; i segnali
-    # vengono serviti solo dopo.
+    # Serve un terminale che riporti il cursore ({#can_get_cursor?}). Attende
+    # senza timeout fino a Invio o Ctrl+D, con il GVL rilasciato: gli altri
+    # thread Ruby girano (ma non devono usare il contesto), i segnali vengono
+    # serviti al ritorno.
     #
     # @param prompt [String] testo da scrivere prima della riga
     # @return [String, nil] la riga senza il newline; nil a fine input (Ctrl+D

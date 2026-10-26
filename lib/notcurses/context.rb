@@ -219,7 +219,9 @@ module Notcurses
     # @param cli_mode [Boolean] NCOPTION_CLI_MODE (no_alternate_screen,
     #   no_clear_bitmaps, preserve_cursor e scrolling insieme)
     # Con un terminale vero l'init attende (senza timeout) la risposta del
-    # terminale alle query iniziali.
+    # terminale alle query iniziali, con il GVL rilasciato: gli altri thread
+    # Ruby girano, ma non devono usare ENV (con termtype: notcurses chiama
+    # setenv).
     #
     # @raise [InitError] se un altro contesto è attivo, se l'output non si apre,
     #   o se +notcurses_init+ restituisce NULL (per esempio terminfo non

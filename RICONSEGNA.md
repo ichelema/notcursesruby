@@ -5,6 +5,9 @@
 - **Data di completamento:** 2026-10-25
 - **Versione mappata:** notcurses 3.0.17 (`version.h`)
 - **Log dettagliato:** `memory/fase1-ffi-raw.md` (decisioni, problemi e soluzioni, lista completa delle inline, funzioni saltate)
+- **Modifica successiva (2026-10-26):** `blocking: true` su 8 funzioni di `functions.rb` che aspettano il terminale o
+  il tempo (gli init, `ncdirect_cursor_yx`, `ncdirect_cursor_move_yx`, `ncdirect_readline`, `ncvisual_stream`);
+  decisione 20 di `memory/fase1-ffi-raw.md`.
 
 ### File generati
 
@@ -124,8 +127,9 @@ NC_SPEC_SEED=1234 bundle exec rspec spec/inline_reimpl_spec.rb < /dev/null    # 
 - **Data di completamento:** 2026-10-25
 - **Log dettagliato:** `memory/fase2-wrapper-idiomatico.md` (decisioni di design, ciclo di vita, memoria e callback,
   tabelle dei bug aggirati, funzioni escluse, differenze dai pattern del prompt, verifiche)
-- **Fase 1:** nessun file modificato (`lib/notcurses/ffi.rb`, `lib/notcurses/ffi/`).
-- **Dimensioni:** 28 file in `lib/` (12 470 righe, Fase 1 esclusa); 29 file di spec e helper (7 515 righe) più 2
+- **Fase 1:** nessun file modificato durante la Fase 2. Il 2026-10-26, su richiesta, `blocking: true` su 8 funzioni
+  di `lib/notcurses/ffi/functions.rb` (vedi il punto 6 di "Cosa serve alla Fase 3").
+- **Dimensioni:** 28 file in `lib/` (12 482 righe, Fase 1 esclusa); 30 file di spec e helper (7 614 righe) più 2
   fixture (`spec/fixtures/visual/rgbw.png`, `frames.mkv`).
 - **Uso:** `require 'notcurses'`; il punto di ingresso è `Notcurses::Context.open { |nc| ... }` (o
   `Notcurses::Direct.open`).
@@ -197,15 +201,16 @@ se un'esclusione riguarda una funzione chiamata o inesistente, o se manca il mot
 
 | Spec | Esempi |
 | --- | ---: |
-| `spec/notcurses/` (25 file, uno per classe o area) | 520 |
-| `spec/integration/lifecycle_spec.rb`, `spec/integration/visual_spec.rb` | 20 |
+| `spec/notcurses/` (25 file, uno per classe o area) | 521 |
+| `spec/integration/` (`lifecycle_spec.rb` 8, `visual_spec.rb` 12, `pty_spec.rb` 1) | 21 |
 | `spec/coverage_spec.rb` | 3 |
-| Totale Fase 2 | 543 |
+| Totale Fase 2 | 545 |
 | Fase 1 (`ffi_sanity_spec.rb`, `inline_reimpl_spec.rb`) | 257 |
-| **Totale** | **800, 0 fallimenti (100% pass)** |
+| **Totale** | **802, 0 fallimenti (100% pass)** |
 
-- Stesso risultato in 5 ordini casuali (`--order rand:1234`, `4242`, `1`, `31337`, `2026`); durata circa 8 s.
-- Esempi per file: plane 68, visual 72, direct 56, context 28, tabbed 28, tree 26, reel 25, plot 24, menu 23,
+- Stesso risultato in ordine casuale (semi `1234`, `4242`, `7`; prima della modifica del 2026-10-26 anche `1`,
+  `31337`, `2026`); durata circa 9 s.
+- Esempi per file: plane 68, visual 73, direct 56, context 28, tabbed 28, tree 26, reel 25, plot 24, menu 23,
   reader 22, selector 19, channel 16, fd_plane 16, subprocess 15, progbar 14, multiselector 13, input 11, format 10,
   cell 8, palette 6, pixel 6, version 5, fade_context 4, stats 4, error 1.
 - YARD: ogni metodo pubblico ha commento, `@param` per ogni parametro e `@return`; i metodi che possono sollevare
@@ -284,9 +289,13 @@ Reimplementate in Ruby (stessa funzionalità, senza i bug): `ncreel`/`nctablet` 
    `Subprocess` che passano i dati con una `Queue`).
 5. **Bug `logrow` dopo lo scroll** (non aggirato): evitare `duplicate`, resize e `rotate` sui piani che hanno fatto
    scroll, oppure ricrearli.
-6. **GVL nella Fase 1.** `ncdirect_readline`, `ncdirect_cursor_yx`, `ncdirect_cursor_move_yx`, `ncdirect_init` e
-   `ncvisual_stream` sono collegate senza `blocking: true` e bloccano gli altri thread Ruby durante l'attesa. Serve una
-   decisione: cambiare la Fase 1 o accettare il limite (documentato nel YARD).
+6. **GVL nella Fase 1 (risolto il 2026-10-26).** `notcurses_init`, `notcurses_core_init`, `ncdirect_init`,
+   `ncdirect_core_init`, `ncdirect_cursor_yx`, `ncdirect_cursor_move_yx`, `ncdirect_readline` e `ncvisual_stream` ora
+   hanno `blocking: true`: durante le loro attese gli altri thread Ruby girano, e un terminale finto in un thread dello
+   stesso processo (un pty nei test) può rispondere. Prove: `spec/integration/pty_spec.rb` e l'esempio sul GVL in
+   `spec/notcurses/visual_spec.rb`, entrambi falliti prima della modifica. Da gestire nella Fase 3: durante quelle
+   attese un altro thread può chiamare notcurses insieme al C (il YARD lo vieta per lo stesso contesto, e vieta ENV
+   durante l'init).
 7. **Test grafici.** Blitter a pixel (sixel, kitty), quadranti, sestanti e ottanti non si provano su `/dev/null`:
    serve un emulatore di terminale vero su un pty (per esempio in CI).
 8. **Ruby 3.1.** Sintassi controllata con `Parser::Ruby31` su tutti i file di `lib`, ma la suite non è mai stata

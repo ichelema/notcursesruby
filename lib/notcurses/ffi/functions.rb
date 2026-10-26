@@ -6,6 +6,10 @@ module Notcurses
   module FFI
     # ffi_lib è caricata in ffi.rb (libnotcurses, libnotcurses-core, libc)
     # Ritorno Classe.by_ref: NULL diventa un'istanza con .null? == true, non nil.
+    # blocking: true (la chiamata rilascia il GVL) solo per le funzioni che
+    # aspettano il terminale o il tempo: gli init (risposta a DA1, senza timeout
+    # con un tty), ncdirect_cursor_yx, ncdirect_cursor_move_yx, ncdirect_readline
+    # e ncvisual_stream. Le altre tengono il GVL durante la chiamata.
 
     # ═══════════════════════════════════════
     # Notcurses lifecycle
@@ -16,8 +20,8 @@ module Notcurses
     attach_function :notcurses_version_components, [:pointer, :pointer, :pointer, :pointer], :void
 
     # --- init/stop ---
-    attach_function :notcurses_init, [NotcursesOptions.by_ref, :pointer], :pointer
-    attach_function :notcurses_core_init, [NotcursesOptions.by_ref, :pointer], :pointer
+    attach_function :notcurses_init, [NotcursesOptions.by_ref, :pointer], :pointer, blocking: true
+    attach_function :notcurses_core_init, [NotcursesOptions.by_ref, :pointer], :pointer, blocking: true
     attach_function :notcurses_stop, [:pointer], :int
 
     # --- opzioni ---
@@ -298,7 +302,8 @@ module Notcurses
     attach_function :ncvisual_media_defblitter, [:pointer, :ncscale_e], :ncblitter_e
     attach_function :ncvisual_simple_streamer, [:pointer, NcVisualOptions.by_ref, Timespec.by_ref, :pointer], :int
     # callback: int (*ncstreamcb)(struct ncvisual*, struct ncvisual_options*, const struct timespec*, void*)
-    attach_function :ncvisual_stream, [:pointer, :pointer, :float, :pointer, NcVisualOptions.by_ref, :pointer], :int
+    attach_function :ncvisual_stream, [:pointer, :pointer, :float, :pointer, NcVisualOptions.by_ref, :pointer], :int,
+                    blocking: true
 
     # --- ncblit ---
     attach_function :ncblit_rgba, [:pointer, :int, NcVisualOptions.by_ref], :int
@@ -534,8 +539,8 @@ module Notcurses
     # ═══════════════════════════════════════
 
     # --- init/stop ---
-    attach_function :ncdirect_init, [:string, :pointer, :uint64], :pointer
-    attach_function :ncdirect_core_init, [:string, :pointer, :uint64], :pointer
+    attach_function :ncdirect_init, [:string, :pointer, :uint64], :pointer, blocking: true
+    attach_function :ncdirect_core_init, [:string, :pointer, :uint64], :pointer, blocking: true
     attach_function :ncdirect_stop, [:pointer], :int
 
     # --- colori ---
@@ -568,14 +573,14 @@ module Notcurses
     attach_function :ncdirect_clear, [:pointer], :int
 
     # --- cursore ---
-    attach_function :ncdirect_cursor_move_yx, [:pointer, :int, :int], :int
+    attach_function :ncdirect_cursor_move_yx, [:pointer, :int, :int], :int, blocking: true
     attach_function :ncdirect_cursor_enable, [:pointer], :int
     attach_function :ncdirect_cursor_disable, [:pointer], :int
     attach_function :ncdirect_cursor_up, [:pointer, :int], :int
     attach_function :ncdirect_cursor_left, [:pointer, :int], :int
     attach_function :ncdirect_cursor_right, [:pointer, :int], :int
     attach_function :ncdirect_cursor_down, [:pointer, :int], :int
-    attach_function :ncdirect_cursor_yx, [:pointer, :pointer, :pointer], :int
+    attach_function :ncdirect_cursor_yx, [:pointer, :pointer, :pointer], :int, blocking: true
     attach_function :ncdirect_cursor_push, [:pointer], :int
     attach_function :ncdirect_cursor_pop, [:pointer], :int
 
@@ -589,7 +594,7 @@ module Notcurses
 
     # --- input ---
     # ALLOC: restituisce memoria da liberare con free()
-    attach_function :ncdirect_readline, [:pointer, :string], :pointer
+    attach_function :ncdirect_readline, [:pointer, :string], :pointer, blocking: true
     attach_function :ncdirect_get, [:pointer, Timespec.by_ref, NcInput.by_ref], :uint32
     attach_function :ncdirect_inputready_fd, [:pointer], :int
 

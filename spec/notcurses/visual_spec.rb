@@ -547,6 +547,21 @@ RSpec.describe Notcurses::Visual do
         end
       end
 
+      it 'durante lo stream gli altri thread Ruby girano (il C rilascia il GVL)' do
+        nc.stdplane.create_child(rows: 8, cols: 8) do |plane|
+          described_class.open(mkv) do |v|
+            ticks = 0
+            ticker = Thread.new { loop { ticks += 1; sleep 0.005 } }
+            sleep 0.01 until ticks.positive?
+            before = ticks
+            expect(v.stream(plane: plane, blitter: :ascii, timescale: 2)).to be(true) # 4 frame da 0,2 s
+            during = ticks - before
+            ticker.kill.join
+            expect(during).to be >= 10
+          end
+        end
+      end
+
       it 'rifiuta i visual non da file, che in 3.0.17 manderebbero in crash il C' do
         expect { visual.stream }.to raise_error(Notcurses::VisualError, /file/)
       end

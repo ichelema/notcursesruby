@@ -83,6 +83,11 @@
 19. **Spec aggiuntiva.** `spec/inline_reimpl_spec.rb` (con `spec/support/nc_oracle.rb`) confronta ogni reimplementazione
     con l'inline C vera di `libnotcurses-ffi.so.3` (l'oracolo). Se l'oracolo non si carica, la spec va in skip.
     La spec usa `termtype = "xterm-256color"`: con `TERM` assente o `dumb` funziona lo stesso.
+20. **GVL (modifica del 2026-10-26, dopo la Fase 2, su richiesta).** In origine nessuna `attach_function` aveva
+    `blocking: true`, quindi ogni chiamata teneva il GVL. Ora lo hanno le 8 funzioni che aspettano il terminale o il
+    tempo dentro il C: `notcurses_init`, `notcurses_core_init`, `ncdirect_init`, `ncdirect_core_init`,
+    `ncdirect_cursor_yx`, `ncdirect_cursor_move_yx`, `ncdirect_readline`, `ncvisual_stream`. Motivo e verifiche in
+    `memory/fase2-wrapper-idiomatico.md` (sezione "Thread e GVL").
 
 ## Problemi incontrati e soluzioni
 

@@ -884,8 +884,10 @@ module Notcurses
     # possono distruggere piani né chiudere visual. Un'eccezione del blocco
     # ferma lo stream ed esce da questo metodo.
     #
-    # Thread: il blocco gira sul thread chiamante, e la chiamata C tiene il GVL
-    # (anche durante le attese dello streamer di notcurses).
+    # Thread: il blocco gira sul thread chiamante. La chiamata C rilascia il
+    # GVL (decodifica, disegno e attese dello streamer di notcurses) e lo
+    # riprende per il blocco: durante lo stream gli altri thread Ruby girano,
+    # ma non devono usare lo stesso contesto finché lo stream non torna.
     #
     # @param plane [Plane, nil] piano di destinazione
     # @param timescale [Numeric] moltiplicatore delle durate dei frame, > 0

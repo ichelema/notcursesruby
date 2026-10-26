@@ -21,7 +21,9 @@ module Notcurses
   #
   # Thread. Il blocco e on_done: girano nel thread di lettura, non in quello
   # che ha creato l'FdPlane. Le chiamate a notcurses tengono il GVL, quindi
-  # due chiamate C non si sovrappongono mai; ma una sequenza di chiamate del
+  # due chiamate C non si sovrappongono, tranne {Visual#stream}, che lo
+  # rilascia: durante uno stream il blocco gira insieme al C dello stream (non
+  # scrivere sulla stessa pila senza un lock). Una sequenza di chiamate del
   # thread principale (per esempio putstr seguito da render) può essere
   # interrotta tra una chiamata e l'altra dal blocco. Il wrapper non aggiunge
   # lock: se il blocco e il thread principale usano gli stessi oggetti,
