@@ -22,7 +22,7 @@ module Notcurses
   #
   # @example
   #   red = Notcurses::Channels.rgb(255, 0, 0, 0, 0, 0)
-  #   plane.putc(Notcurses::Cell.new('★', styles: :bold, channels: red), y: 0, x: 0)
+  #   plane.putc(Notcurses::Cell.new(egc: '★', styles: :bold, channels: red), y: 0, x: 0)
   class Cell
     # @return [String] grapheme cluster UTF-8 ("" per una cella vuota)
     attr_reader :egc
@@ -43,14 +43,16 @@ module Notcurses
     # @raise [ArgumentError] se egc non è UTF-8 valido, contiene NUL, più di un
     #   grapheme cluster o un carattere di controllo
     # @raise [RangeError] se il codepoint non è valido
-    def initialize(egc = ' ', styles: [], channels: 0)
+    def initialize(egc: ' ', styles: [], channels: 0)
       text = Cell.egc!(egc)
-      assign(text, Util.styles_symbols(Util.styles_value(styles)), Channels.new(Util.channels_value(channels)),
+      assign(text, Util.styles_symbols(Util.styles_value(styles)), Channels.new(value: Util.channels_value(channels)),
              Notcurses.strwidth(text))
     end
 
     # Cell con i dati letti dal C, senza controlli (il C può restituire anche
-    # EGC che Cell.new rifiuta).
+    # EGC che Cell.new rifiuta). La cella "\n", che ncplane_put di 3.0.17
+    # lascia sotto il cursore dopo un a capo e che il C disegna come uno
+    # spazio, diventa la cella vuota "".
     # @api private
     # @param egc [String] EGC (copia UTF-8 o BINARY)
     # @param stylemask [Integer]
@@ -58,13 +60,14 @@ module Notcurses
     # @param width [Integer, nil] colonne; nil = calcolate con +ncstrwidth+
     # @return [Cell]
     def self.from_c(egc, stylemask, channels, width = nil)
+      egc, width = '', 0 if egc == "\n"
       text = egc.dup.force_encoding(Encoding::UTF_8).freeze
       if width.nil?
         width = FFI.ncstrwidth(text, nil, nil)
         width = 1 if width.negative?
       end
       styles = Util.styles_symbols(stylemask)
-      chans = Channels.new(channels)
+      chans = Channels.new(value: channels)
       allocate.instance_exec { assign(text, styles, chans, width) }
     end
 
@@ -94,7 +97,7 @@ module Notcurses
     # @return [Cell]
     # @raise [TypeError, ArgumentError, RangeError] come {#initialize}
     def with(egc: @egc, styles: @styles, channels: @channels)
-      Cell.new(egc, styles: styles, channels: channels)
+      Cell.new(egc: egc, styles: styles, channels: channels)
     end
 
     # Copia la cella in nccell, legata all'egcpool del piano (+nccell_prime+).

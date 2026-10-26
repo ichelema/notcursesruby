@@ -30,7 +30,7 @@ RSpec.describe Notcurses::Menu do
   def fg_at(plane, y, x)
     channels = ::FFI::MemoryPointer.new(:uint64)
     Notcurses::FFI.free(Notcurses::FFI.ncplane_at_yx(plane.to_ptr, y, x, nil, channels))
-    Notcurses::Channels.new(channels.read_uint64).fg_rgb24
+    Notcurses::Channels.new(value: channels.read_uint64).fg_rgb24
   end
 
   describe 'con un contesto aperto' do
@@ -290,7 +290,7 @@ RSpec.describe Notcurses::Menu do
       expect { described_class.new(std, sections: [{ name: 'a', shortcut: ev(0), items: ['x'] }]) }
         .to raise_error(ArgumentError)
       expect { described_class.new(std, sections: sections, bottom: 1) }.to raise_error(TypeError)
-      expect { described_class.new(std, sections: sections, headerchannels: 'grigio') }.to raise_error(TypeError)
+      expect { described_class.new(std, sections: sections, header_channels: 'grigio') }.to raise_error(TypeError)
       expect(nc.stats.planes).to eq(1)
     end
 
@@ -298,7 +298,7 @@ RSpec.describe Notcurses::Menu do
       grey = Notcurses::Channels.new.with_fg_rgb24(0x808080)
       secs = [{ name: 'S', items: [{ desc: 'é', shortcut: ev('é'.ord, modifiers: [:alt]) },
                                    { desc: 'ߛ', shortcut: ev(0x7ff) }] }]
-      described_class.open(std, sections: secs, headerchannels: grey, sectionchannels: grey.value) do |menu|
+      described_class.open(std, sections: secs, header_channels: grey, section_channels: grey.value) do |menu|
         menu.unroll(0)
         expect(menu.selected.shortcut.alt?).to be true
         expect(row_text(menu.plane, 2)).to include('Alt+é')

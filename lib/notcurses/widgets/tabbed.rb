@@ -9,13 +9,15 @@ module Notcurses
   #
   # I tab formano una lista circolare: {#leftmost} è il primo tab mostrato
   # nell'intestazione, {#selected} quello selezionato. Come in notcurses, solo
-  # {#redraw} disegna: gli altri metodi cambiano lo stato.
+  # {#redraw} disegna: gli altri metodi cambiano lo stato. break, return e
+  # throw non possono uscire dal blocco di un tab attraverso il C: diventano
+  # una LocalJumpError, che esce da {#redraw} come un'eccezione del blocco.
   #
   # @example
   #   tabbed = Notcurses::Tabbed.new(plane, separator: ' | ')
   #   tabbed.add('Uno') { |_tab, content| content.erase.putstr('primo', y: 0, x: 0) }
   #   tabbed.add('Due') { |_tab, content| content.erase.putstr('secondo', y: 0, x: 0) }
-  #   tabbed.select_next
+  #   tabbed.next
   #   tabbed.redraw
   #
   # Ciclo di vita: il Tabbed prende possesso del piano e, alla chiusura,
@@ -53,18 +55,19 @@ module Notcurses
     # @param separator [String, nil] testo fra i nomi; nil = nessuno
     # @param bottom [Boolean] NCTABBED_OPTION_BOTTOM: intestazione in basso
     #   (in 3.0.17 sulla penultima riga)
-    # @raise [ArgumentError] se il piano ha meno di 2 righe, o se il separatore
-    #   contiene caratteri di controllo o che notcurses non misura
+    # @raise [ArgumentError] se il separatore contiene caratteri di controllo o
+    #   che notcurses non misura
     # @raise [TypeError] se un argomento ha il tipo sbagliato
-    # @raise [WidgetError] se il piano non si può dare al widget (stdplane,
-    #   piano di un widget o con un widget fra i discendenti, piano preso in
-    #   prestito) o se +nctabbed_create+ fallisce (in quel caso notcurses ha
-    #   distrutto il piano e i suoi discendenti)
+    # @raise [WidgetError] se il piano ha meno di 2 righe (piano intatto), se
+    #   il piano non si può dare al widget (stdplane, piano di un widget o con
+    #   un widget fra i discendenti, piano preso in prestito) o se
+    #   +nctabbed_create+ fallisce (in quel caso notcurses ha distrutto il
+    #   piano e i suoi discendenti)
     # @raise [ClosedError] se il piano è chiuso
     def initialize(plane, selected_channels: 0, header_channels: 0, separator_channels: 0, separator: nil,
                    bottom: false)
       claim_plane!(plane)
-      raise ArgumentError, "il piano del Tabbed deve avere almeno 2 righe (ne ha #{plane.dim_y})" if plane.dim_y < 2
+      raise WidgetError, "il piano del Tabbed deve avere almeno 2 righe (ne ha #{plane.dim_y})" if plane.dim_y < 2
 
       opts = FFI::NcTabbedOptions.new
       opts[:selchan] = Util.channels_value(selected_channels, 'selected_channels')
@@ -216,6 +219,7 @@ module Notcurses
     # @return [Integer] numero di tab (+nctabbed_tabcount+)
     # @raise [ClosedError] se il widget è chiuso
     def tab_count = FFI.nctabbed_tabcount(to_ptr)
+    alias size tab_count
 
     # Tab nell'ordine dell'intestazione, da {#leftmost}.
     #
@@ -250,14 +254,14 @@ module Notcurses
     # @return [Tab, nil] il nuovo tab selezionato, nil senza tab
     # @raise [WidgetError] dentro il blocco di un tab
     # @raise [ClosedError] se il widget è chiuso
-    def select_next = tab_for(FFI.nctabbed_next(idle!))
+    def next = tab_for(FFI.nctabbed_next(idle!))
 
     # Seleziona il tab precedente (+nctabbed_prev+). Non ridisegna.
     #
     # @return [Tab, nil] il nuovo tab selezionato, nil senza tab
     # @raise [WidgetError] dentro il blocco di un tab
     # @raise [ClosedError] se il widget è chiuso
-    def select_prev = tab_for(FFI.nctabbed_prev(idle!))
+    def prev = tab_for(FFI.nctabbed_prev(idle!))
 
     # Fa scorrere l'intestazione (+nctabbed_rotate+): con amt > 0 il primo tab
     # mostrato diventa quello amt posti più a sinistra, con amt < 0 quello amt
@@ -283,15 +287,15 @@ module Notcurses
 
     # @return [Channels] colori dei nomi non selezionati (+nctabbed_hdrchan+)
     # @raise [ClosedError] se il widget è chiuso
-    def header_channels = Channels.new(FFI.nctabbed_hdrchan(to_ptr))
+    def header_channels = Channels.new(value: FFI.nctabbed_hdrchan(to_ptr))
 
     # @return [Channels] colori del nome selezionato (+nctabbed_selchan+)
     # @raise [ClosedError] se il widget è chiuso
-    def selected_channels = Channels.new(FFI.nctabbed_selchan(to_ptr))
+    def selected_channels = Channels.new(value: FFI.nctabbed_selchan(to_ptr))
 
     # @return [Channels] colori del separatore (+nctabbed_sepchan+)
     # @raise [ClosedError] se il widget è chiuso
-    def separator_channels = Channels.new(FFI.nctabbed_sepchan(to_ptr))
+    def separator_channels = Channels.new(value: FFI.nctabbed_sepchan(to_ptr))
 
     # Cambia i colori dei nomi non selezionati (+nctabbed_set_hdrchan+), dal
     # prossimo {#redraw}.

@@ -65,6 +65,7 @@ module Notcurses
       opts = FFI::NcReaderOptions.new
       opts[:flags] = Util.flag(no_cmd_keys, FFI::NCREADER_OPTION_NOCMDKEYS, 'no_cmd_keys') |
                      Util.flag(cursor, FFI::NCREADER_OPTION_CURSOR, 'cursor')
+      @no_cmd_keys = no_cmd_keys
       # ncplane_put farebbe scorrere o crescere solo la vista (reader.c:90-104)
       raise WidgetError, 'il piano di un reader non può avere lo scrolling attivo' if plane.scrolling?
       raise WidgetError, "il piano di un reader non può avere l'autogrow attivo" if plane.autogrow?
@@ -111,7 +112,11 @@ module Notcurses
     # aggirato: Backspace all'inizio di una riga successiva alla prima sposta
     # sulla riga sopra solo la copia nascosta (reader.c:265); il wrapper
     # sposta anche la vista, altrimenti la freccia sinistra successiva
-    # termina il processo, e il cursore del terminale.
+    # termina il processo, e il cursore del terminale. Ancora: Backspace, Ctrl+U
+    # e Ctrl+W su un glifo largo lasciavano nella vista la sua metà destra, e il
+    # glifo largo successivo in fondo alla riga scriveva oltre il piano
+    # (notcurses.c:1957-1961): il wrapper svuota la vista prima di questi tasti
+    # e il ridisegno del C la ricopia dalla copia nascosta.
     #
     # Bug di 3.0.17 non aggirato: Backspace, Ctrl+U e Ctrl+W non cancellano il
     # carattere della colonna 0. Il C cancella scrivendo "" con
@@ -136,7 +141,16 @@ module Notcurses
         return true
       end
       y, x = @cursor
-      wrap = plain && input.id == Key::BACKSPACE && x.zero? && y.positive?
+      backspace = plain && input.id == Key::BACKSPACE
+      wrap = backspace && x.zero? && y.positive?
+      # Backspace, Ctrl+U e Ctrl+W cancellano solo nella copia nascosta, e il
+      # ridisegno non confronta la width (internal.h:1512-1519): una metà destra
+      # larga resterebbe nella vista. Svuotata, la vista viene ricopiata intera.
+      ctrl = !@no_cmd_keys && !input.release? && input.modifiers.anybits?(FFI::NCKEY_MOD_CTRL)
+      if backspace || (ctrl && x.positive? && [0x55, 0x57].include?(input.id)) # 'U', 'W'
+        FFI.ncplane_erase(@plane.to_ptr)
+        FFI.ncplane_cursor_move_yx(@plane.to_ptr, y, x)
+      end
       consumed = FFI.ncreader_offer_input(ptr, ni)
       wrap_backspace(y - 1) if wrap
       @cursor = @plane.cursor

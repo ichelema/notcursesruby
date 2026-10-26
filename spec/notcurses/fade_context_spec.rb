@@ -39,13 +39,13 @@ RSpec.describe Notcurses::FadeContext do
     with_colored_plane do |p|
       p.fade_context do |fc|
         expect(fc.fadeout(fc.iterations)).to equal(fc)
-        expect(p.at(0, 0).channels.fg_rgb24).to eq(0)
+        expect(p.at(y: 0, x: 0).channels.fg_rgb24).to eq(0)
         fc.fadein(fc.iterations / 2)
-        expect(p.at(0, 0).channels.fg_rgb).to eq([100, 50, 25])
+        expect(p.at(y: 0, x: 0).channels.fg_rgb).to eq([100, 50, 25])
         fc.fadein(fc.iterations)
-        expect(p.at(0, 0).channels.fg_rgb24).to eq(0xc86432)
+        expect(p.at(y: 0, x: 0).channels.fg_rgb24).to eq(0xc86432)
         fc.fadeout(0)
-        expect(p.at(0, 0).channels.bg_rgb24).to eq(0x102030)
+        expect(p.at(y: 0, x: 0).channels.bg_rgb24).to eq(0x102030)
       end
     end
   end

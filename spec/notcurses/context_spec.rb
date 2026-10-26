@@ -89,6 +89,13 @@ RSpec.describe Notcurses::Context do
         expect(nc.stddim).to eq([24 - 1 - 3, 80 - 2 - 4])
         expect(nc.dims).to eq(nc.stddim)
       end
+      # come create_child e create_pile: [alto, destra, basso, sinistra]
+      NcHelpers.open_context(margins: [1, 2, 3, 4]) { |nc| expect(nc.stddim).to eq([24 - 1 - 3, 80 - 2 - 4]) }
+      expect { NcHelpers.open_context(margins: [1, 2, 3]) }.to raise_error(TypeError, /alto, destra/)
+      expect { NcHelpers.open_context(margins: [1, 2, 3, -4]) }.to raise_error(ArgumentError)
+      expect { NcHelpers.open_context(margins: [1, 2, 3, 4], margin_l: 1) }.to raise_error(ArgumentError)
+      expect { NcHelpers.open_context(margins: 1) }.to raise_error(TypeError)
+      expect(Notcurses.active_context).to be_nil
       NcHelpers.open_context(margin_t: 2, margin_l: 5) do |nc|
         expect(nc.stdplane.dims).to eq([22, 75])
       end
@@ -143,9 +150,9 @@ RSpec.describe Notcurses::Context do
 
     it 'cursor_enable controlla i limiti; cursor_disable è idempotente' do
       expect(nc.cursor_disable).to equal(nc)
-      expect { nc.cursor_enable(24, 0) }.to raise_error(ArgumentError)
-      expect { nc.cursor_enable(0, 80) }.to raise_error(ArgumentError)
-      expect(nc.cursor_enable(1, 2)).to equal(nc)
+      expect { nc.cursor_enable(y: 24, x: 0) }.to raise_error(ArgumentError)
+      expect { nc.cursor_enable(y: 0, x: 80) }.to raise_error(ArgumentError)
+      expect(nc.cursor_enable(y: 1, x: 2)).to equal(nc)
       # senza un tty il C non riesce a nascondere il cursore
       expect { nc.cursor_disable }.to raise_error(Notcurses::ContextError)
     end
@@ -160,7 +167,7 @@ RSpec.describe Notcurses::Context do
       expect { nc.enter_alternate_screen }.to raise_error(Notcurses::ContextError)
       expect { nc.leave_alternate_screen }.to raise_error(Notcurses::ContextError)
       expect { nc.mice_enable }.to raise_error(Notcurses::ContextError)
-      expect { nc.mice_enable(:clic) }.to raise_error(ArgumentError)
+      expect { nc.mice_enable(events: :clic) }.to raise_error(ArgumentError)
       expect(nc.mice_disable).to equal(nc)
     end
 

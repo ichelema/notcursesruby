@@ -30,9 +30,11 @@ module Notcurses
   # Input: arriva sempre da stdin (fd 0), letto da un thread di notcurses: non
   # leggere STDIN da Ruby mentre il contesto è aperto. {#get} attende fuori dal
   # C (gli altri thread e i segnali restano serviti). L'init, {#readline},
-  # {#cursor_yx} e {#cursor_move} con x: nil attendono il terminale dentro il C,
-  # senza timeout ma con il GVL rilasciato: gli altri thread Ruby girano, i
-  # segnali vengono serviti al ritorno della chiamata.
+  # {#cursor_yx}, {#move_cursor} con x: nil e, con il blitter :pixel o con
+  # align :center/:right su un terminale senza hpa, {#render_image},
+  # {Frame#raster} e {#stream} attendono il terminale dentro il C, senza
+  # timeout ma con il GVL rilasciato: gli altri thread Ruby girano, i segnali
+  # vengono serviti al ritorno della chiamata.
   #
   # Effetti sul processo mentre il contesto è attivo: fd 0 in O_NONBLOCK e
   # terminale in cbreak (ripristinati da {#close}); termtype: cambia ENV['TERM']
@@ -50,7 +52,7 @@ module Notcurses
     include Resource
     extend Resource::ClassMethods
 
-    # Lati del box per l'opzione omit: di {#box} (+NCBOXMASK_*+).
+    # Lati del box per l'opzione hide: di {#box} (+NCBOXMASK_*+).
     BOX_EDGES = {
       top: FFI::NCBOXMASK_TOP,
       right: FFI::NCBOXMASK_RIGHT,
@@ -166,7 +168,10 @@ module Notcurses
     # timeout) la risposta; query e report del cursore vanno al terminale di
     # controllo anche quando output è un file. Durante l'init il GVL è
     # rilasciato: gli altri thread Ruby girano, ma non devono usare ENV (con
-    # termtype: notcurses chiama setenv).
+    # termtype: notcurses chiama setenv). L'init gira in un thread interno:
+    # un'eccezione asincrona durante l'attesa (Ctrl-C, Thread#raise, Timeout)
+    # arriva a init completato, e il wrapper ferma il contesto prima di
+    # rilanciarla.
     #
     # @param termtype [String, nil] voce terminfo del terminale; nil = variabile
     #   TERM. notcurses la scrive in ENV['TERM']
@@ -204,33 +209,40 @@ module Notcurses
               Util.flag(very_verbose, FFI::NCDIRECT_OPTION_VERY_VERBOSE, 'very_verbose')
       check_output!(output)
 
+      @closed = true # fino alla fine dell'init: close e at_exit ignorano l'oggetto
       Notcurses.acquire_context(self)
       old_term = ENV.fetch('TERM', nil)
       own_fp = false
+      init = nil
       begin
         fp, own_fp = open_output(output)
         $stdout.flush if output.nil?
-        ptr = core ? FFI.ncdirect_core_init(term, fp, flags) : FFI.ncdirect_init(term, fp, flags)
+        # Un'eccezione asincrona (Ctrl-C, Thread#raise, Timeout) consegnata al ritorno della chiamata
+        # bloccante perderebbe il puntatore; nel thread resta, e il rescue ferma il contesto.
+        init = Thread.new { core ? FFI.ncdirect_core_init(term, fp, flags) : FFI.ncdirect_init(term, fp, flags) }
+        ptr = init.value
         if ptr.null?
-          # il C ha già scritto termtype in TERM: un init successivo senza termtype fallirebbe
-          ENV['TERM'] = old_term unless term.nil?
           raise InitError, 'ncdirect_init ha restituito NULL (terminfo non trovata per TERM o termtype? stdin chiuso?)'
         end
-      rescue StandardError
+
+        @ptr = ptr
+        @fp = fp
+        @own_fp = own_fp
+        @owner = nil
+        @pid = Process.pid
+        @drain_input = drain_input
+        @eof_input = nil
+        @input_io = nil
+        @closed = false
+      rescue Exception # rubocop:disable Lint/RescueException
+        ptr = init&.value
+        FFI.ncdirect_stop(ptr) if ptr && !ptr.null?
+        # il C ha già scritto termtype in TERM: un init successivo senza termtype fallirebbe
+        ENV['TERM'] = old_term unless term.nil?
         Notcurses.release_context(self)
         FFI.fclose(fp) if own_fp
         raise
       end
-
-      @ptr = ptr
-      @fp = fp
-      @own_fp = own_fp
-      @closed = false
-      @owner = nil
-      @pid = Process.pid
-      @drain_input = drain_input
-      @eof_input = nil
-      @input_io = nil
     end
 
     # Ripristina il terminale e libera il contesto (+ncdirect_stop+).
@@ -388,7 +400,7 @@ module Notcurses
     # @raise [ClosedError] se il contesto è chiuso
     def supported_styles = Util.styles_symbols(FFI.ncdirect_supported_styles(to_ptr))
 
-    # @return [Array<Symbol>] stili attivi impostati con {#set_styles},
+    # @return [Array<Symbol>] stili attivi impostati con {#styles=},
     #   {#on_styles} e {#off_styles} (+ncdirect_styles+)
     # @raise [ClosedError] se il contesto è chiuso
     def styles = Util.styles_symbols(FFI.ncdirect_styles(to_ptr))
@@ -399,31 +411,29 @@ module Notcurses
     # @param styles [Symbol, Array<Symbol>, Integer] :bold, :italic,
     #   :underline, :undercurl, :struck, oppure una maschera NCSTYLE_*; [] o 0
     #   = nessuno
-    # @return [self]
     # @raise [ArgumentError] se uno stile non è valido o il terminale non lo
     #   supporta ({#supported_styles})
     # @raise [TypeError] se styles non è Symbol, Array o Integer
     # @raise [DirectError] se la scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
-    def set_styles(styles)
+    def styles=(styles)
       ptr = to_ptr
       mask = supported_styles!(ptr, styles)
       Util.check!(FFI.ncdirect_set_styles(ptr, mask), DirectError, 'ncdirect_set_styles')
-      self
     end
 
     # Aggiunge stili a quelli attivi (+ncdirect_on_styles+).
     #
-    # @param styles [Symbol, Array<Symbol>, Integer] come in {#set_styles}
+    # @param styles [Array<Symbol, Array<Symbol>, Integer>] come in {#styles=}
     # @return [self]
     # @raise [ArgumentError] se uno stile non è valido o il terminale non lo
     #   supporta
-    # @raise [TypeError] se styles non è Symbol, Array o Integer
+    # @raise [TypeError] se uno stile non è Symbol, Array o Integer
     # @raise [DirectError] se la scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
-    def on_styles(styles)
+    def on_styles(*styles)
       ptr = to_ptr
-      mask = supported_styles!(ptr, styles)
+      mask = supported_styles!(ptr, Util.styles_mask(styles))
       Util.check!(FFI.ncdirect_on_styles(ptr, mask), DirectError, 'ncdirect_on_styles')
       self
     end
@@ -431,14 +441,14 @@ module Notcurses
     # Toglie stili da quelli attivi (+ncdirect_off_styles+). Accetta anche
     # stili non supportati dal terminale.
     #
-    # @param styles [Symbol, Array<Symbol>, Integer] come in {#set_styles}
+    # @param styles [Array<Symbol, Array<Symbol>, Integer>] come in {#styles=}
     # @return [self]
     # @raise [ArgumentError] se uno stile non è valido
-    # @raise [TypeError] se styles non è Symbol, Array o Integer
+    # @raise [TypeError] se uno stile non è Symbol, Array o Integer
     # @raise [DirectError] se la scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
-    def off_styles(styles)
-      mask = Util.styles_value(styles)
+    def off_styles(*styles)
+      mask = Util.styles_mask(styles)
       Util.check!(FFI.ncdirect_off_styles(to_ptr, mask), DirectError, 'ncdirect_off_styles')
       self
     end
@@ -583,13 +593,13 @@ module Notcurses
     # @raise [DirectError] se x è nil e il terminale non riporta il cursore,
     #   o se lo spostamento fallisce
     # @raise [ClosedError] se il contesto è chiuso
-    def cursor_move(y: nil, x: nil)
+    def move_cursor(y: nil, x: nil)
       ptr = to_ptr
       Util.nonneg_int!(y, 'y') unless y.nil?
       Util.nonneg_int!(x, 'x') unless x.nil?
       return self if y.nil? && x.nil?
       if x.nil? && !FFI.ncdirect_canget_cursor(ptr)
-        raise DirectError, 'cursor_move(x: nil): senza un terminale che riporti il cursore la colonna non si conserva'
+        raise DirectError, 'move_cursor(x: nil): senza un terminale che riporti il cursore la colonna non si conserva'
       end
 
       Util.check!(FFI.ncdirect_cursor_move_yx(ptr, y || -1, x || -1), DirectError, 'ncdirect_cursor_move_yx')
@@ -624,7 +634,7 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se count non è un intero >= 0
     # @raise [DirectError] se il terminale non lo permette
     # @raise [ClosedError] se il contesto è chiuso
-    def cursor_up(count = 1)
+    def cursor_up(count: 1)
       Util.nonneg_int!(count, 'count')
       Util.check!(FFI.ncdirect_cursor_up(to_ptr, count), DirectError, 'ncdirect_cursor_up')
       self
@@ -638,7 +648,7 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se count non è un intero >= 0
     # @raise [DirectError] se la scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
-    def cursor_down(count = 1)
+    def cursor_down(count: 1)
       Util.nonneg_int!(count, 'count')
       Util.check!(FFI.ncdirect_cursor_down(to_ptr, count), DirectError, 'ncdirect_cursor_down')
       self
@@ -651,7 +661,7 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se count non è un intero >= 0
     # @raise [DirectError] se il terminale non lo permette
     # @raise [ClosedError] se il contesto è chiuso
-    def cursor_left(count = 1)
+    def cursor_left(count: 1)
       Util.nonneg_int!(count, 'count')
       Util.check!(FFI.ncdirect_cursor_left(to_ptr, count), DirectError, 'ncdirect_cursor_left')
       self
@@ -664,7 +674,7 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se count non è un intero >= 0
     # @raise [DirectError] se il terminale non lo permette
     # @raise [ClosedError] se il contesto è chiuso
-    def cursor_right(count = 1)
+    def cursor_right(count: 1)
       Util.nonneg_int!(count, 'count')
       Util.check!(FFI.ncdirect_cursor_right(to_ptr, count), DirectError, 'ncdirect_cursor_right')
       self
@@ -772,7 +782,7 @@ module Notcurses
     #
     # @param rows [Integer] righe, 2..{MAX_LINE}
     # @param cols [Integer] colonne, 2..{MAX_LINE}
-    # @param style [Symbol, String] :light, :heavy, :rounded, :double, :ascii,
+    # @param set [Symbol, String] :light, :heavy, :rounded, :double, :ascii,
     #   oppure 6 caratteri larghi una colonna: angoli in alto a sinistra, in
     #   alto a destra, in basso a sinistra, in basso a destra, lato orizzontale,
     #   lato verticale
@@ -781,7 +791,7 @@ module Notcurses
     # @param ur [Channels, Integer] angolo in alto a destra
     # @param ll [Channels, Integer] angolo in basso a sinistra
     # @param lr [Channels, Integer] angolo in basso a destra
-    # @param omit [Symbol, Array<Symbol>] lati da non disegnare: :top, :right,
+    # @param hide [Symbol, Array<Symbol>] lati da non disegnare: :top, :right,
     #   :bottom, :left
     # @param corners [Integer] lati adiacenti disegnati che servono per
     #   disegnare un angolo: 0 = sempre, 1, 2, 3 = mai
@@ -790,22 +800,22 @@ module Notcurses
     # @raise [DirectError] se la scrittura fallisce (per esempio caratteri non
     #   rappresentabili nella locale); l'output resta parziale
     # @raise [ClosedError] se il contesto è chiuso
-    def box(rows, cols, style: :light, ul: 0, ur: ul, ll: ul, lr: ul, omit: [], corners: 0)
+    def box(rows, cols, set: :light, ul: 0, ur: ul, ll: ul, lr: ul, hide: [], corners: 0)
       ptr = to_ptr
       Util.integer!(rows, 'rows', 2..MAX_LINE)
       Util.integer!(cols, 'cols', 2..MAX_LINE)
       corner = [ul, ur, ll, lr].zip(%w[ul ur ll lr]).map { |v, name| Args.line_channels(v, name) }
-      ctlword = Array(omit).reduce(0) { |m, edge| m | Util.enum_value(BOX_EDGES, edge, 'omit') } |
+      ctlword = Array(hide).reduce(0) { |m, edge| m | Util.enum_value(BOX_EDGES, edge, 'hide') } |
                 (Util.integer!(corners, 'corners', 0..3) << FFI::NCBOXCORNER_SHIFT)
-      rc = case style
+      rc = case set
            when :light then FFI.ncdirect_light_box(ptr, *corner, rows, cols, ctlword)
            when :heavy then FFI.ncdirect_heavy_box(ptr, *corner, rows, cols, ctlword)
            when :rounded then FFI.ncdirect_rounded_box(ptr, *corner, rows, cols, ctlword)
            when :double then FFI.ncdirect_double_box(ptr, *corner, rows, cols, ctlword)
            when :ascii then FFI.ncdirect_ascii_box(ptr, *corner, rows, cols, ctlword)
-           when String then FFI.ncdirect_box(ptr, *corner, box_chars(style), rows, cols, ctlword)
+           when String then FFI.ncdirect_box(ptr, *corner, box_chars(set), rows, cols, ctlword)
            else
-             raise ArgumentError, "style = #{style.inspect} non valido: usa uno di " \
+             raise ArgumentError, "set = #{set.inspect} non valido: usa uno di " \
                                   "#{BOX_STYLES.map(&:inspect).join(', ')} o 6 caratteri"
            end
       Util.check!(rc, DirectError, 'ncdirect_box')
@@ -894,7 +904,9 @@ module Notcurses
 
     # Carica, scala e disegna un'immagine dalla posizione del cursore
     # (+ncdirect_render_image+). L'output scorre se serve; ogni riga finisce
-    # con un newline e i colori tornano quelli di prima.
+    # con un newline e i colori tornano quelli di prima. Con il blitter :pixel,
+    # o con align :center/:right su un terminale senza hpa, il C chiede la
+    # posizione del cursore al terminale e la attende senza il GVL.
     #
     # @param path [String] file immagine (qualsiasi formato di ffmpeg)
     # @param align [Symbol] :left, :center o :right rispetto al terminale
@@ -960,7 +972,8 @@ module Notcurses
     # blocco. Reimplementa +ncdirect_stream+, che in 3.0.17 ignora il ritorno
     # del callback (direct.c:1588) e non si può fermare: qui basta +break+ nel
     # blocco. Con il blitter :pixel i frame precedenti non vengono tolti dal
-    # terminale (il C usa una funzione interna).
+    # terminale (il C usa una funzione interna) e ogni frame attende la
+    # posizione del cursore come {Frame#raster}.
     #
     # @param path [String] file video o immagine
     # @param align [Symbol] :left, :center o :right
@@ -1079,10 +1092,6 @@ module Notcurses
       include Resource
       extend Resource::ClassMethods
 
-      # Campi di +ncvgeom+ restituiti da {#geom}.
-      GEOM_FIELDS = %i[pixy pixx cdimy cdimx rpixy rpixx rcelly rcellx scaley scalex begy begx leny lenx
-                       maxpixely maxpixelx].freeze
-
       # Carica il file (+ncdirectf_from_file+). Usa di solito {Direct#load_image}.
       #
       # @param direct [Direct] contesto aperto
@@ -1144,19 +1153,19 @@ module Notcurses
       # @param direct [Direct] contesto aperto
       # @param blitter [Symbol, Integer] come in {Direct#render_image}
       # @param scale [Symbol, Integer] come in {Direct#render_image}
-      # @return [Hash{Symbol => Integer, Symbol}] i campi di +ncvgeom+
-      #   ({GEOM_FIELDS}: pixy/pixx = pixel dell'immagine, rcelly/rcellx =
-      #   celle del render, scaley/scalex = pixel per cella, ...) e :blitter
-      #   (il blitter scelto, come simbolo)
+      # @return [Visual::Geometry] i campi di +ncvgeom+, come
+      #   {Visual#geometry}: pixy/pixx = pixel dell'immagine, rcelly/rcellx =
+      #   celle del render, scaley/scalex = pixel per cella, blitter = il
+      #   blitter scelto, ...
       # @raise [DirectError] se il blitter non è disponibile
       # @raise [TypeError, ArgumentError] se un argomento non è valido
       # @raise [ClosedError] se l'immagine o direct sono chiusi
-      def geom(direct, blitter: :default, scale: :scale)
+      def geometry(direct, blitter: :default, scale: :scale)
         dptr = Util.ptr_of(direct, Direct, 'direct')
         vopts = Args.visual_options(blitter, scale)
         g = FFI::NcVgeom.new
         Util.check!(FFI.ncdirectf_geom(dptr, to_ptr, vopts, g), DirectError, 'ncdirectf_geom')
-        GEOM_FIELDS.to_h { |f| [f, g[f]] }.merge(blitter: Util.enum_symbol(Util::BLITTERS, g[:blitter])).freeze
+        Visual::Geometry.new(g)
       end
     end
 
@@ -1193,7 +1202,9 @@ module Notcurses
       # Disegna il frame dalla riga del cursore e lo libera
       # (+ncdirect_raster_frame+). Ogni riga finisce con un newline; con :center
       # e :right un frame più largo del terminale parte dalla colonna 0. Dopo la
-      # chiamata il frame è chiuso, anche se fallisce.
+      # chiamata il frame è chiuso, anche se fallisce. Con il blitter :pixel, o
+      # con align :center/:right su un terminale senza hpa, il C chiede la
+      # posizione del cursore al terminale e la attende senza il GVL.
       #
       # @param align [Symbol] :left, :center o :right
       # @return [nil]
@@ -1266,10 +1277,10 @@ module Notcurses
     end
 
     # Sei caratteri di un box come vettore wchar_t (UL, UR, LL, LR, HL, VL).
-    def box_chars(style)
-      chars = Util.string!(style, 'style').chars
+    def box_chars(set)
+      chars = Util.string!(set, 'set').chars
       unless chars.size == 6 && chars.all? { |c| FFI.wcwidth(c.ord) == 1 }
-        raise ArgumentError, "style = #{style.inspect}: servono 6 caratteri larghi una colonna"
+        raise ArgumentError, "set = #{set.inspect}: servono 6 caratteri larghi una colonna"
       end
 
       ::FFI::MemoryPointer.new(:wchar_t, 6).put_array_of_int32(0, chars.map(&:ord))

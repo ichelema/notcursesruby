@@ -8,8 +8,11 @@ module Notcurses
     # Ritorno Classe.by_ref: NULL diventa un'istanza con .null? == true, non nil.
     # blocking: true (la chiamata rilascia il GVL) solo per le funzioni che
     # aspettano il terminale o il tempo: gli init (risposta a DA1, senza timeout
-    # con un tty), ncdirect_cursor_yx, ncdirect_cursor_move_yx, ncdirect_readline
-    # e ncvisual_stream. Le altre tengono il GVL durante la chiamata.
+    # con un tty), ncdirect_cursor_yx, ncdirect_cursor_move_yx, ncdirect_readline,
+    # ncvisual_stream, ncdirect_render_image e ncdirect_raster_frame (con un
+    # blitter pixel, o con un allineamento su un terminale senza hpa, chiedono
+    # la posizione del cursore: direct.c:225 e 439). Le altre tengono il GVL
+    # durante la chiamata.
 
     # ═══════════════════════════════════════
     # Notcurses lifecycle
@@ -599,9 +602,9 @@ module Notcurses
     attach_function :ncdirect_inputready_fd, [:pointer], :int
 
     # --- immagini ---
-    attach_function :ncdirect_render_image, [:pointer, :string, :ncalign_e, :ncblitter_e, :ncscale_e], :int
+    attach_function :ncdirect_render_image, [:pointer, :string, :ncalign_e, :ncblitter_e, :ncscale_e], :int, blocking: true
     attach_function :ncdirect_render_frame, [:pointer, :string, :ncblitter_e, :ncscale_e, :int, :int], :pointer
-    attach_function :ncdirect_raster_frame, [:pointer, :pointer, :ncalign_e], :int
+    attach_function :ncdirect_raster_frame, [:pointer, :pointer, :ncalign_e], :int, blocking: true
     attach_function :ncdirectf_from_file, [:pointer, :string], :pointer
     attach_function :ncdirectf_free, [:pointer], :void
     attach_function :ncdirectf_render, [:pointer, :pointer, NcVisualOptions.by_ref], :pointer

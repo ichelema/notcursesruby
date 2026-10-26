@@ -117,7 +117,7 @@ RSpec.describe Notcurses::MultiSelector do
       expect { described_class.new(plane, items: [["a\n"]]) }.to raise_error(ArgumentError, /controllo/)
       expect { described_class.new(plane, items: ['a'], title: "\t") }.to raise_error(ArgumentError)
       expect { described_class.new(plane, items: ['a'], max_display: 2**32) }.to raise_error(ArgumentError)
-      expect { described_class.new(plane, items: ['a'], descchannels: :blu) }.to raise_error(TypeError)
+      expect { described_class.new(plane, items: ['a'], desc_channels: :blu) }.to raise_error(TypeError)
       expect(plane).to be_owned
       plane.close
     end

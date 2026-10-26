@@ -319,7 +319,7 @@ RSpec.describe Notcurses::Visual do
       end
 
       it 'solleva gli errori del C e valida le opzioni' do
-        expect { visual.geometry(blitter: :pixel, nodegrade: true) }.to raise_error(Notcurses::VisualError)
+        expect { visual.geometry(blitter: :pixel, no_degrade: true) }.to raise_error(Notcurses::VisualError)
         expect { visual.geometry(child: true) }.to raise_error(ArgumentError, /child/)
         expect { visual.geometry(begy: 4) }.to raise_error(ArgumentError, /fuori/)
         expect { visual.geometry(colore: 1) }.to raise_error(ArgumentError)
@@ -454,7 +454,7 @@ RSpec.describe Notcurses::Visual do
         nc.stdplane.create_child(rows: 2, cols: 1) do |plane|
           visual.blit(plane: plane, blitter: :ascii, begy: 2, leny: 2, begx: 1)
           expect([cell(plane, 0, 0)[1], cell(plane, 1, 0)[1]]).to eq([0x0000ff, 0xffffff])
-          visual.blit(plane: plane, blitter: :ascii, begy: 1, leny: 2, scale: :stretch, nointerpolate: true)
+          visual.blit(plane: plane, blitter: :ascii, begy: 1, leny: 2, scale: :stretch, no_interpolate: true)
           expect([cell(plane, 0, 0)[1], cell(plane, 1, 0)[1]]).to eq([0x00ff00, 0x0000ff])
         end
       end
@@ -468,9 +468,9 @@ RSpec.describe Notcurses::Visual do
       end
 
       it 'solleva VisualError quando il C restituisce NULL' do
-        expect { visual.blit(plane: nc.stdplane, blitter: :pixel, nodegrade: true) }.to raise_error(Notcurses::VisualError)
+        expect { visual.blit(plane: nc.stdplane, blitter: :pixel, no_degrade: true) }.to raise_error(Notcurses::VisualError)
         expect { visual.blit(plane: nc.stdplane, blitter: :ascii, pxoffy: 1) }.to raise_error(Notcurses::VisualError)
-        expect { visual.blit(blitter: :pixel, nodegrade: true) }.to raise_error(Notcurses::VisualError)
+        expect { visual.blit(blitter: :pixel, no_degrade: true) }.to raise_error(Notcurses::VisualError)
       end
 
       it 'valida le opzioni prima del C' do
@@ -611,7 +611,7 @@ RSpec.describe Notcurses::Visual do
 
       it 'sollevano VisualError se il C fallisce' do
         expect do
-          described_class.blit_rgba(rgbw, plane: nc.stdplane, rows: 4, cols: 2, blitter: :pixel, nodegrade: true)
+          described_class.blit_rgba(rgbw, plane: nc.stdplane, rows: 4, cols: 2, blitter: :pixel, no_degrade: true)
         end.to raise_error(Notcurses::VisualError)
       end
     end

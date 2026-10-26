@@ -147,8 +147,8 @@ RSpec.describe Notcurses::Selector do
       expect { described_class.new(plane, items: %w[a b], default: 2) }.to raise_error(ArgumentError)
       expect { described_class.new(plane, default: 1) }.to raise_error(ArgumentError)
       expect { described_class.new(plane, max_display: -1) }.to raise_error(ArgumentError)
-      expect { described_class.new(plane, opchannels: 'rosso') }.to raise_error(TypeError)
-      expect { described_class.new(plane, boxchannels: -1) }.to raise_error(ArgumentError)
+      expect { described_class.new(plane, op_channels: 'rosso') }.to raise_error(TypeError)
+      expect { described_class.new(plane, box_channels: -1) }.to raise_error(ArgumentError)
       expect(plane).to be_owned
       expect(plane.dims).to eq([1, 1])
       plane.close
@@ -156,8 +156,8 @@ RSpec.describe Notcurses::Selector do
 
     it 'accetta i colori come Channels o Integer' do
       white_on_blue = Notcurses::Channels.combine(Notcurses::Channel.rgb(255, 255, 255), Notcurses::Channel.rgb(0, 0, 255))
-      described_class.open(new_plane, items: %w[a], opchannels: white_on_blue, descchannels: white_on_blue.value,
-                                      titlechannels: white_on_blue, footchannels: 0, boxchannels: white_on_blue) do |sel|
+      described_class.open(new_plane, items: %w[a], op_channels: white_on_blue, desc_channels: white_on_blue.value,
+                                      title_channels: white_on_blue, foot_channels: 0, box_channels: white_on_blue) do |sel|
         expect(sel.selected).to eq('a')
       end
     end

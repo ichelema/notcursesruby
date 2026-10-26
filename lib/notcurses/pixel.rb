@@ -21,7 +21,7 @@ module Notcurses
     # @param value [Integer] valore a 32 bit
     # @raise [TypeError] se value non è Integer
     # @raise [ArgumentError] se value è fuori da 0..0xffffffff
-    def initialize(value = 0)
+    def initialize(value: 0)
       @value = Util.uint32!(value, 'value')
       freeze
     end
@@ -37,7 +37,7 @@ module Notcurses
       Util.uint8!(r, 'r')
       Util.uint8!(g, 'g')
       Util.uint8!(b, 'b')
-      new(FFI.ncpixel(r, g, b))
+      new(value: FFI.ncpixel(r, g, b))
     end
 
     # Pixel con alpha esplicita.
@@ -121,7 +121,7 @@ module Notcurses
       ptr = ::FFI::MemoryPointer.new(:uint32)
       ptr.write_uint32(@value)
       yield ptr
-      Pixel.new(ptr.read_uint32)
+      Pixel.new(value: ptr.read_uint32)
     end
   end
 end

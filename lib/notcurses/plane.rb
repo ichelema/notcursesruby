@@ -19,7 +19,9 @@ module Notcurses
   #   non viene distrutto un piano; dopo va riottenuto.
   #
   # Il GC non distrugge mai un piano: il piano vive finché lo distruggi o finché
-  # il contesto si chiude, come nel C. Due wrapper dello stesso piano sono {#==}.
+  # il contesto si chiude, come nel C. Due wrapper dello stesso piano sono {#==};
+  # un wrapper chiuso è uguale solo ai wrapper creati senza distruzioni di piani
+  # fra le due creazioni (il C riusa gli indirizzi dei piani distrutti).
   #
   # @example
   #   child = nc.stdplane.create_child(rows: 5, cols: 20, y: 2, x: :center)
@@ -87,11 +89,19 @@ module Notcurses
     #   (default: il contesto)
     # @param tracked [Boolean] false = piano preso in prestito (vedi la classe)
     # @raise [PlaneError] se ptr è NULL
+    # @raise [ArgumentError] se il piano ha già un wrapper aperto e il nuovo è
+    #   tracciato o posseduto (un secondo wrapper si crea con owned: false,
+    #   tracked: false)
     # @raise [ClosedError] se non c'è un Context attivo
     def initialize(ptr, owned: true, context: nil, owner: nil, tracked: true)
       Util.check_ptr!(ptr, PlaneError, 'ncplane*')
       ctx = context || Notcurses.active_context
       raise ClosedError, 'nessun Notcurses::Context attivo per il piano' unless ctx.is_a?(Context)
+      # tracciato sfratterebbe il wrapper esistente e i suoi callback (il C chiamerebbe un
+      # trampolino raccolto dal GC); posseduto distruggerebbe il piano sotto il wrapper esistente
+      if (tracked || owned) && ctx.tracked_plane(ptr.address)
+        raise ArgumentError, 'il piano ha già un Plane aperto: usa quello (o owned: false, tracked: false)'
+      end
 
       @ptr = ptr
       @context = ctx
@@ -100,6 +110,7 @@ module Notcurses
       @closed = false
       @callbacks = []
       @margins = nil
+      @born = ctx.generation
       if tracked
         @generation = nil
         ctx.track_plane(self)
@@ -530,7 +541,8 @@ module Notcurses
     # solleva un'eccezione, il C riceve -1 e l'eccezione esce dal metodo che ha
     # causato il resize ({Context#render}, {#resize}, l'output che fa crescere
     # un piano con autogrow, ...). Il callback non può distruggere o
-    # riparentare piani.
+    # riparentare piani. break, return e throw non possono uscire attraverso il
+    # C: diventano una LocalJumpError, che esce come un'eccezione.
     #
     # @param callback [Symbol, #call, nil] uno dei {RESIZE_CALLBACKS}, un
     #   oggetto con +call(plane)+, o nil per toglierlo
@@ -544,7 +556,7 @@ module Notcurses
     # @raise [ArgumentError] se si passano sia callback sia un blocco
     # @raise [TypeError, ArgumentError] se callback non è valido
     # @raise [ClosedError] se il piano è chiuso
-    def set_resize_callback(callback = nil, &block)
+    def set_resize_callback(callback: nil, &block)
       ptr = to_ptr
       raise ArgumentError, 'passa un callback o un blocco, non entrambi' if callback && block
       raise PlaneError, 'il resizecb dello stdplane non si può cambiare' if stdplane?
@@ -994,7 +1006,7 @@ module Notcurses
     #   stdplane, crescita per autogrow)
     # @raise [TypeError, ArgumentError] se lines non è un intero >= 1
     # @raise [ClosedError] se il piano è chiuso
-    def scrollup(lines = 1)
+    def scrollup(lines: 1)
       ptr = to_ptr
       Util.integer!(lines, 'lines', 1..Util::INT32.max)
       raise PlaneError, 'scrollup: il piano non ha lo scrolling attivo' unless scrolling?
@@ -1059,18 +1071,18 @@ module Notcurses
     # controlla la posizione prima della chiamata: il C di 3.0.17 cambia x anche
     # quando poi rifiuta y.
     #
-    # @param y [Integer] riga, o -1 per non cambiarla
-    # @param x [Integer] colonna, o -1 per non cambiarla
+    # @param y [Integer, nil] riga; nil = non cambiarla
+    # @param x [Integer, nil] colonna; nil = non cambiarla
     # @return [self]
     # @raise [PlaneError] se la posizione risultante è fuori dal piano
-    # @raise [TypeError, ArgumentError] se un argomento non è un int del C
+    # @raise [TypeError, ArgumentError] se un argomento non è un int del C né nil
     # @raise [ClosedError] se il piano è chiuso
     def move_cursor(y, x)
       ptr = to_ptr
-      Util.int!(y, 'y')
-      Util.int!(x, 'x')
       cy, cx = cursor
-      cursor_target!(y == -1 ? cy : y, x == -1 ? cx : x)
+      y = y.nil? ? cy : Util.int!(y, 'y')
+      x = x.nil? ? cx : Util.int!(x, 'x')
+      cursor_target!(y, x)
       Util.check!(FFI.ncplane_cursor_move_yx(ptr, y, x), PlaneError, "ncplane_cursor_move_yx(#{y}, #{x})")
       self
     end
@@ -1110,6 +1122,7 @@ module Notcurses
       FFI.ncplane_cursor_yx(to_ptr, y, x)
       [y.read_uint, x.read_uint]
     end
+    alias cursor_yx cursor
 
     # @return [Integer] riga del cursore (+ncplane_cursor_y+)
     # @raise [ClosedError] se il piano è chiuso
@@ -1124,7 +1137,9 @@ module Notcurses
     # Contenuto della cella (y, x) (+ncplane_at_yx+). Sulla metà destra di un
     # glifo largo restituisce il glifo (con stili e canali della metà
     # sinistra); su una cella vuota l'EGC e gli stili della cella base, con i
-    # canali della cella.
+    # canali della cella. Sulla cella "\n" che notcurses 3.0.17 lascia sotto il
+    # cursore dopo un a capo (putstr su un piano che scorre) restituisce l'EGC
+    # "": il C la disegna come uno spazio, non come la cella base.
     #
     # Bug di 3.0.17 aggirato: con la metà destra di un glifo largo rimasta da
     # sola in colonna 0 (dopo un resize o una cancellazione parziale)
@@ -1139,7 +1154,7 @@ module Notcurses
     # @raise [PlaneError] se il cursore è oltre l'ultima colonna, o se la
     #   lettura fallisce
     # @raise [ClosedError] se il piano è chiuso
-    def at(y = nil, x = nil)
+    def at(y: nil, x: nil)
       ptr = to_ptr
       y, x = cell_coords!(y, x)
       x -= 1 while x.positive? && wide_right?(ptr, y, x)
@@ -1179,9 +1194,9 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è valido (più di un
     #   grapheme cluster, caratteri di controllo, ...)
     # @raise [ClosedError] se il piano è chiuso
-    def set_base(egc = ' ', styles: 0, channels: 0)
+    def set_base(egc: ' ', styles: 0, channels: 0)
       ptr = to_ptr
-      text = Util.egc!(egc)
+      text = Cell.egc!(egc)
       mask = Util.styles_value(styles)
       chans = Util.channels_value(channels)
       Util.check!(FFI.ncplane_set_base(ptr, text, mask, chans), PlaneError, 'ncplane_set_base')
@@ -1190,7 +1205,8 @@ module Notcurses
 
     # Testo del piano in una regione, riga dopo riga, senza separatori di riga
     # e senza le celle vuote; un glifo largo compare una volta (come
-    # +ncplane_contents+).
+    # +ncplane_contents+). Salta anche la cella "\n" che notcurses 3.0.17
+    # lascia sotto il cursore dopo un a capo (vedi {#at}).
     #
     # Bug di 3.0.17 aggirato: +ncplane_contents+ lascia nell'egcpool del piano
     # una copia di ogni EGC di più di 4 byte a ogni chiamata (il pool cresce
@@ -1222,7 +1238,8 @@ module Notcurses
             len = FFI.ncplane_at_yx_cell(ptr, yy, xx, cell)
             raise PlaneError, "ncplane_at_yx_cell(#{yy}, #{xx}) fallita" if len.negative?
 
-            out << FFI.nccell_extended_gcluster(ptr, cell) if len.positive?
+            egc = FFI.nccell_extended_gcluster(ptr, cell)
+            out << egc if len.positive? && egc != "\n" # la cella che ncplane_put lascia dopo un a capo
           end
         end
       ensure
@@ -1274,15 +1291,15 @@ module Notcurses
     #
     # @param dst [Plane] piano di destinazione, della stessa pila
     # @return [self]
-    # @raise [ArgumentError] se dst è il piano stesso o sta in un'altra pila
-    # @raise [PlaneError] se la fusione fallisce (per esempio con un bitmap)
+    # @raise [PlaneError] se dst è il piano stesso o sta in un'altra pila, o se
+    #   la fusione fallisce (per esempio con un bitmap)
     # @raise [TypeError] se dst non è un Plane
     # @raise [ClosedError] se uno dei piani è chiuso
     def merge_down(dst)
       ptr = to_ptr
       target = same_context_plane!(dst, 'dst')
-      raise ArgumentError, 'merge_down: dst è il piano stesso' if target.address == ptr.address
-      raise ArgumentError, "merge_down: dst è in un'altra pila" unless FFI.ncpile_top(ptr).address == FFI.ncpile_top(target).address
+      raise PlaneError, 'merge_down: dst è il piano stesso' if target.address == ptr.address
+      raise PlaneError, "merge_down: dst è in un'altra pila" unless FFI.ncpile_top(ptr).address == FFI.ncpile_top(target).address
 
       Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
       self
@@ -1308,26 +1325,27 @@ module Notcurses
     # alpha non opaco danno pixel trasparenti (0).
     #
     # @param blitter [Symbol, Integer] blitter di lettura (non :pixel né :default)
-    # @param y [Integer] riga di partenza, -1 = riga del cursore
-    # @param x [Integer] colonna di partenza, -1 = colonna del cursore
-    # @param rows [Integer] righe, 0 = fino al bordo
-    # @param cols [Integer] colonne, 0 = fino al bordo
+    # @param y [Integer, nil] riga di partenza, >= 0; nil = riga del cursore
+    # @param x [Integer, nil] colonna di partenza, >= 0; nil = colonna del cursore
+    # @param rows [Integer, nil] righe, >= 1; nil = fino al bordo
+    # @param cols [Integer, nil] colonne, >= 1; nil = fino al bordo
     # @return [Array(String, Integer, Integer)] [pixel RGBA (BINARY, 4 byte per
     #   pixel, riga dopo riga), altezza in pixel, larghezza in pixel]
     # @raise [PlaneError] se la conversione fallisce
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il piano è chiuso
-    def as_rgba(blitter, y: -1, x: -1, rows: 0, cols: 0)
+    def as_rgba(blitter, y: nil, x: nil, rows: nil, cols: nil)
       ptr = to_ptr
       blit = Util.blitter_value(blitter)
       if [FFI::NCBLIT_PIXEL, FFI::NCBLIT_DEFAULT].include?(blit)
         raise ArgumentError, 'as_rgba: i blitter :pixel e :default non sono ammessi'
       end
 
-      Util.integer!(y, 'y', -1..Util::INT32.max)
-      Util.integer!(x, 'x', -1..Util::INT32.max)
-      Util.uint!(rows, 'rows')
-      Util.uint!(cols, 'cols')
+      # il C usa -1 per il cursore e 0 per «fino al bordo»
+      y = y.nil? ? -1 : Util.nonneg_int!(y, 'y')
+      x = x.nil? ? -1 : Util.nonneg_int!(x, 'x')
+      rows = rows.nil? ? 0 : Util.integer!(rows, 'rows', 1..Util::UINT32.max)
+      cols = cols.nil? ? 0 : Util.integer!(cols, 'cols', 1..Util::UINT32.max)
       pxy = ::FFI::MemoryPointer.new(:uint)
       pxx = ::FFI::MemoryPointer.new(:uint)
       buf = FFI.ncplane_as_rgba(ptr, blit, y, x, rows, cols, pxy, pxx)
@@ -1560,7 +1578,7 @@ module Notcurses
       written = 0
       lines.each do |line|
         if row >= dim_y
-          scrollup(1)
+          scrollup(lines: 1)
           row = dim_y - 1
         end
         written += putstr(line, y: row, align: align) unless line.empty?
@@ -1592,7 +1610,7 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se uno stile non è valido
     # @raise [ClosedError] se il piano è chiuso
     def on_styles(*styles)
-      FFI.ncplane_on_styles(to_ptr, styles_mask(styles))
+      FFI.ncplane_on_styles(to_ptr, Util.styles_mask(styles))
       self
     end
 
@@ -1603,13 +1621,13 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se uno stile non è valido
     # @raise [ClosedError] se il piano è chiuso
     def off_styles(*styles)
-      FFI.ncplane_off_styles(to_ptr, styles_mask(styles))
+      FFI.ncplane_off_styles(to_ptr, Util.styles_mask(styles))
       self
     end
 
     # @return [Channels] colori delle scritture successive (+ncplane_channels+)
     # @raise [ClosedError] se il piano è chiuso
-    def channels = Channels.new(FFI.ncplane_channels(to_ptr))
+    def channels = Channels.new(value: FFI.ncplane_channels(to_ptr))
 
     # Imposta i colori delle scritture successive (+ncplane_set_channels+).
     #
@@ -1620,18 +1638,18 @@ module Notcurses
     # @raise [ClosedError] se il piano è chiuso
     def channels=(channels)
       value = Util.channels_value(channels)
-      raise ArgumentError, "l'alpha :highcontrast non è ammessa per lo sfondo" if Channels.new(value).bg_alpha == :highcontrast
+      raise ArgumentError, "l'alpha :highcontrast non è ammessa per lo sfondo" if Channels.new(value: value).bg_alpha == :highcontrast
 
       FFI.ncplane_set_channels(to_ptr, value)
     end
 
     # @return [Channel] colore di primo piano (+ncplane_fchannel+)
     # @raise [ClosedError] se il piano è chiuso
-    def fchannel = Channel.new(FFI.ncplane_fchannel(to_ptr))
+    def fchannel = Channel.new(value: FFI.ncplane_fchannel(to_ptr))
 
     # @return [Channel] colore di sfondo (+ncplane_bchannel+)
     # @raise [ClosedError] se il piano è chiuso
-    def bchannel = Channel.new(FFI.ncplane_bchannel(to_ptr))
+    def bchannel = Channel.new(value: FFI.ncplane_bchannel(to_ptr))
 
     # Imposta il colore di primo piano (+ncplane_set_fchannel+).
     # @param channel [Channel, Integer]
@@ -1648,7 +1666,7 @@ module Notcurses
     # @raise [ClosedError] se il piano è chiuso
     def bchannel=(channel)
       value = Util.channel_value(channel)
-      raise ArgumentError, "l'alpha :highcontrast non è ammessa per lo sfondo" if Channel.new(value).alpha == :highcontrast
+      raise ArgumentError, "l'alpha :highcontrast non è ammessa per lo sfondo" if Channel.new(value: value).alpha == :highcontrast
 
       FFI.ncplane_set_bchannel(to_ptr, value)
     end
@@ -2437,9 +2455,6 @@ module Notcurses
       end
     end
 
-    # @return [Integer] maschera degli stili di on_styles/off_styles
-    def styles_mask(styles) = styles.reduce(0) { |mask, s| mask | Util.styles_value(s) }
-
     def rgb8_of
       ptrs = Array.new(3) { ::FFI::MemoryPointer.new(:uint) }
       yield(*ptrs)
@@ -2449,7 +2464,7 @@ module Notcurses
     # Cella di linee e riempimenti, larga 1 colonna. Una String usa stile e
     # colori del piano.
     def line_cell!(cell)
-      cell = Cell.new(cell, styles: styles, channels: channels) if cell.is_a?(String)
+      cell = Cell.new(egc: cell, styles: styles, channels: channels) if cell.is_a?(String)
       raise TypeError, "cell deve essere Notcurses::Cell o String, non #{cell.class}" unless cell.is_a?(Cell)
       raise ArgumentError, "il carattere #{cell.egc.inspect} deve essere largo 1 colonna" unless cell.width == 1
 
@@ -2493,7 +2508,7 @@ module Notcurses
     end
 
     def gradient_channels!(values, which)
-      chans = values.map { |v| Channel.new(v) }
+      chans = values.map { |v| Channel.new(value: v) }
       raise ArgumentError, "#{which}: o tutti gli angoli hanno il colore di default o nessuno" if chans.map(&:default?).uniq.size > 1
       raise ArgumentError, "#{which}: gli angoli devono avere lo stesso alpha" if chans.map(&:alpha).uniq.size > 1
       raise ArgumentError, "#{which}: i colori di palette non si possono sfumare" if chans.any?(&:palindex?)
@@ -2530,7 +2545,7 @@ module Notcurses
         glyphs = Util.string!(set, 'set').grapheme_clusters
         raise ArgumentError, "set: servono 6 caratteri (ul ur ll lr hl vl), non #{glyphs.size}" unless glyphs.size == 6
 
-        box_cells(ptr, glyphs.map { |g| Cell.new(g, styles: styles, channels: channels) }, &block)
+        box_cells(ptr, glyphs.map { |g| Cell.new(egc: g, styles: styles, channels: channels) }, &block)
       when Array
         raise ArgumentError, 'set: servono 6 Notcurses::Cell (ul ur ll lr hl vl)' unless set.size == 6 && set.all?(Cell)
         unless Util.styles_value(styles).zero? && Util.channels_value(channels).zero?
@@ -2596,13 +2611,24 @@ module Notcurses
 
     public
 
+    # Un wrapper chiuso è uguale solo ai wrapper nati nella sua stessa
+    # generazione: il C può dare l'indirizzo di un piano distrutto a un piano nuovo.
     # @param other [Object] oggetto da confrontare
     # @return [Boolean] stesso piano C (anche con wrapper diversi)
-    def ==(other) = other.is_a?(Plane) && other.address == address && other.context.equal?(@context)
+    def ==(other)
+      return false unless other.is_a?(Plane) && other.address == address && other.context.equal?(@context)
+
+      (!closed? && !other.closed?) || other.born == @born
+    end
     alias eql? ==
 
     # @return [Integer]
     def hash = [Plane, address].hash
+
+    protected
+
+    # @return [Integer] generazione del contesto alla creazione del wrapper
+    attr_reader :born
   end
 
   # Fotografia dei colori di un piano per una dissolvenza passo per passo

@@ -141,9 +141,9 @@ module Notcurses
   # Resize del terminale: con il default no_winch_sighandler: true notcurses
   # non installa un gestore di SIGWINCH; {#render} e {#refresh} leggono
   # comunque le nuove dimensioni. Per reagire subito usa +trap('WINCH')+ e poi
-  # {#refresh}. Con il gestore di notcurses SIGWINCH e SIGCONT restano
-  # bloccati nel thread che ha creato il contesto anche dopo {#close}, e
-  # l'evento {Key::RESIZE} arriva solo insieme all'input successivo.
+  # {#refresh}. Con il gestore di notcurses l'evento {Key::RESIZE} arriva solo
+  # insieme all'input successivo (notcurses blocca SIGWINCH e SIGCONT nel
+  # thread interno che esegue l'init, non nei thread del chiamante).
   #
   # @example
   #   Notcurses::Context.open do |nc|
@@ -193,8 +193,10 @@ module Notcurses
     # @param core [Boolean] true = +notcurses_core_init+ (niente multimedia)
     # @param loglevel [Symbol] :silent, :panic (default del C), :fatal, :error,
     #   :warning, :info, :verbose, :debug, :trace
-    # @param margins [String, nil] margini nel formato di +notcurses_lex_margins+
-    #   ("1" oppure "alto,destra,basso,sinistra"); alternativo a margin_*
+    # @param margins [Array(Integer, Integer, Integer, Integer), String, nil]
+    #   margini [alto, destra, basso, sinistra] (come in {Plane#create_child}),
+    #   o una String nel formato di +notcurses_lex_margins+ ("1" oppure
+    #   "alto,destra,basso,sinistra"); alternativo a margin_*
     # @param margin_t [Integer] margine superiore (righe), >= 0
     # @param margin_r [Integer] margine destro (colonne), >= 0
     # @param margin_b [Integer] margine inferiore (righe), >= 0
@@ -221,7 +223,9 @@ module Notcurses
     # Con un terminale vero l'init attende (senza timeout) la risposta del
     # terminale alle query iniziali, con il GVL rilasciato: gli altri thread
     # Ruby girano, ma non devono usare ENV (con termtype: notcurses chiama
-    # setenv).
+    # setenv). L'init gira in un thread interno: un'eccezione asincrona durante
+    # l'attesa (Ctrl-C, Thread#raise, Timeout) arriva a init completato, e il
+    # wrapper ferma il contesto prima di rilanciarla.
     #
     # @raise [InitError] se un altro contesto è attivo, se l'output non si apre,
     #   o se +notcurses_init+ restituisce NULL (per esempio terminfo non
@@ -251,40 +255,48 @@ module Notcurses
                      Util.flag(drain_input, FFI::NCOPTION_DRAIN_INPUT, 'drain_input') |
                      Util.flag(scrolling, FFI::NCOPTION_SCROLLING, 'scrolling') |
                      Util.flag(cli_mode, FFI::NCOPTION_CLI_MODE, 'cli_mode')
+      @closed = true # fino alla fine dell'init: close e at_exit ignorano l'oggetto
       Notcurses.acquire_context(self)
       old_term = ENV.fetch('TERM', nil)
       fp = nil
+      init = nil
       @own_fp = false
       begin
         # dopo acquire_context: con un altro contesto attivo il FILE* resterebbe aperto
         fp, @own_fp = open_output(output)
         $stdout.flush if output.nil?
-        ptr = core ? FFI.notcurses_core_init(opts, fp) : FFI.notcurses_init(opts, fp)
+        # Un'eccezione asincrona (Ctrl-C, Thread#raise, Timeout) consegnata al ritorno della chiamata
+        # bloccante perderebbe il puntatore; nel thread resta, e il rescue ferma il contesto.
+        init = Thread.new { core ? FFI.notcurses_core_init(opts, fp) : FFI.notcurses_init(opts, fp) }
+        ptr = init.value
         if ptr.null?
-          # notcurses ha già scritto termtype in TERM: un init successivo senza termtype fallirebbe
-          ENV['TERM'] = old_term unless termtype.nil?
           raise InitError, 'notcurses_init ha restituito NULL (terminfo non trovata per TERM o termtype? ' \
                            'locale non UTF-8? margini troppo grandi?)'
         end
-      rescue StandardError
+
+        @ptr = ptr
+        @fp = fp
+        @owner = nil
+        @pid = Process.pid
+        @generation = 0
+        @planes = {}
+        @children = {}.compare_by_identity
+        @callback_errors = []
+        @callback_depth = 0
+        @callback_errors_seen = 0
+        @cursor_enabled = false
+        @mice_enabled = false
+        @stdplane = Plane.new(FFI.notcurses_stdplane(ptr), owned: false, context: self)
+        @closed = false
+      rescue Exception # rubocop:disable Lint/RescueException
+        ptr = init&.value
+        FFI.notcurses_stop(ptr) if ptr && !ptr.null?
+        # notcurses ha già scritto termtype in TERM: un init successivo senza termtype fallirebbe
+        ENV['TERM'] = old_term unless termtype.nil?
         Notcurses.release_context(self)
         FFI.fclose(fp) if @own_fp
         raise
       end
-
-      @ptr = ptr
-      @fp = fp
-      @closed = false
-      @owner = nil
-      @pid = Process.pid
-      @generation = 0
-      @planes = {}
-      @children = {}.compare_by_identity
-      @callback_errors = []
-      @callback_depth = 0
-      @cursor_enabled = false
-      @mice_enabled = false
-      @stdplane = Plane.new(FFI.notcurses_stdplane(ptr), owned: false, context: self)
     end
 
     # Ferma notcurses e ripristina il terminale (+notcurses_stop+). Chiude prima
@@ -392,7 +404,8 @@ module Notcurses
 
     # Contenuto dell'ultimo frame scritto sul terminale alla posizione (y, x)
     # (+notcurses_at_yx+), in coordinate dell'area di rendering (margini
-    # esclusi). La metà destra di un glifo largo risulta vuota ("").
+    # esclusi). La metà destra di un glifo largo risulta vuota (""), come la
+    # cella "\n" che notcurses 3.0.17 lascia dopo un a capo (vedi {Plane#at}).
     #
     # @param y [Integer] riga, >= 0
     # @param x [Integer] colonna, >= 0
@@ -506,7 +519,7 @@ module Notcurses
     # @raise [ContextError] se il terminale non può mostrare il cursore
     # @raise [TypeError, ArgumentError] se y o x non sono interi nell'area
     # @raise [ClosedError] se il contesto è chiuso
-    def cursor_enable(y = 0, x = 0)
+    def cursor_enable(y: 0, x: 0)
       rows, cols = stddim
       Util.integer!(y, 'y', 0...rows)
       Util.integer!(x, 'x', 0...cols)
@@ -653,7 +666,7 @@ module Notcurses
     # @raise [ContextError] senza un tty o se il terminale rifiuta
     # @raise [ArgumentError] se events non è valido
     # @raise [ClosedError] se il contesto è chiuso
-    def mice_enable(events = :all)
+    def mice_enable(events: :all)
       ptr = to_ptr
       mask = Array(events).reduce(0) { |m, ev| m | Util.enum_value(MICE_EVENTS, ev, 'events') }
       Util.check!(FFI.notcurses_mice_enable(ptr, mask), ContextError, 'notcurses_mice_enable')
@@ -847,10 +860,14 @@ module Notcurses
     def plane_for(ptr)
       return nil if ptr.nil? || ptr.null?
 
-      known = @planes[ptr.address]
-      return known if known && !known.closed?
+      tracked_plane(ptr.address) || Plane.new(ptr, owned: false, context: self, tracked: false)
+    end
 
-      Plane.new(ptr, owned: false, context: self, tracked: false)
+    # @api private
+    # @return [Plane, nil] il piano tracciato e aperto con questo indirizzo
+    def tracked_plane(addr)
+      plane = @planes[addr]
+      plane if plane && !plane.closed?
     end
 
     # @api private
@@ -875,8 +892,13 @@ module Notcurses
       @children.delete(child)
     end
 
+    # Rilancia l'eccezione salvata da un callback. Dentro un callback solo quella
+    # salvata dopo il suo ingresso: l'eccezione di un callback fratello la
+    # rilancia la chiamata esterna, senza interrompere a metà questo callback.
     # @api private
-    def raise_callback_errors! = Util.reraise!(@callback_errors)
+    def raise_callback_errors!
+      Util.reraise!(@callback_errors) if @callback_errors.size > @callback_errors_seen
+    end
 
     # Esegue il blocco come callback chiamato dal C. Durante il blocco il C sta
     # ancora percorrendo le sue liste di piani: distruggere o spostare piani
@@ -884,8 +906,11 @@ module Notcurses
     # @api private
     def callback_scope
       @callback_depth += 1
+      seen = @callback_errors_seen
+      @callback_errors_seen = @callback_errors.size
       yield
     ensure
+      @callback_errors_seen = seen
       @callback_depth -= 1
     end
 
@@ -935,8 +960,16 @@ module Notcurses
 
       raise ArgumentError, 'usa margins: oppure margin_t/r/b/l:, non entrambi' unless sides.values.all?(&:zero?)
 
-      rc = FFI.notcurses_lex_margins(Util.string!(margins, 'margins'), opts)
-      raise ArgumentError, "margins = #{margins.inspect} non valido (notcurses_lex_margins)" if rc.negative?
+      case margins
+      when String
+        rc = FFI.notcurses_lex_margins(Util.string!(margins, 'margins'), opts)
+        raise ArgumentError, "margins = #{margins.inspect} non valido (notcurses_lex_margins)" if rc.negative?
+      when Array
+        raise TypeError, 'margins deve essere [alto, destra, basso, sinistra]' unless margins.size == 4
+
+        sides.each_key.with_index { |name, i| opts[name] = Util.uint!(margins[i], 'margins') }
+      else raise TypeError, "margins deve essere [alto, destra, basso, sinistra] o String, non #{margins.class}"
+      end
     end
 
     # Ripete il blocco finché restituisce un valore, attendendo l'input fuori

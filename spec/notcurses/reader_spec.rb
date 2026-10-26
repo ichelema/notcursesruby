@@ -2,6 +2,8 @@
 # Source: notcurses/include/notcurses/notcurses.h
 # frozen_string_literal: true
 
+require 'open3'
+require 'rbconfig'
 require_relative '../support/nc_helpers'
 
 RSpec.describe Notcurses::Reader do
@@ -143,6 +145,58 @@ RSpec.describe Notcurses::Reader do
       end
     end
 
+    # true se nella riga y del piano c'è una metà destra di glifo largo (gcluster 0,
+    # width >= 2) senza la sua metà sinistra
+    def orphan_wide_right?(plane, y)
+      cell = Notcurses::FFI::NcCell.new
+      cells = (0...plane.dim_x).map do |x|
+        Notcurses::FFI.ncplane_at_yx_cell(plane.to_ptr, y, x, cell)
+        [cell[:gcluster], cell[:width]]
+      end
+      cells.each_cons(2).any? { |(left, _), (right, width)| right.zero? && width >= 2 && left.zero? }
+    ensure
+      Notcurses::FFI.nccell_release(plane.to_ptr, cell)
+    end
+
+    it 'Backspace, Ctrl+U e Ctrl+W su un glifo largo non lasciano nella vista una metà destra orfana' do
+      [ev(key::BACKSPACE), ctrl('U'), ctrl('W')].each do |input|
+        new_reader(rows: 1, cols: 6) do |reader|
+          reader.write('漢漢漢')
+          reader.offer_input(ev(key::RIGHT))
+          expect(reader.offer_input(input)).to be true
+          expect(reader.contents).to eq('漢漢') if input.id == key::BACKSPACE
+          expect(orphan_wide_right?(reader.plane, 0)).to be(false), input.inspect
+          expect(reader.plane.cursor).to eq(input.id == key::BACKSPACE ? [0, 4] : [0, 0])
+        end
+      end
+    end
+
+    it 'il glifo largo scritto in fondo alla riga dopo quei tasti resta nel piano (prima: heap corrotto, abort)' do
+      skip 'serve libc_malloc_debug di glibc' unless File.exist?('/usr/lib/libc_malloc_debug.so.0')
+      script = <<~'RUBY'
+        require 'notcurses'
+        ev = ->(id, **o) { Notcurses::Input.synthesize(id, **o) }
+        keys = [ev.(Notcurses::Key::BACKSPACE), ev.('U'.ord, modifiers: [:ctrl]), ev.('W'.ord, modifiers: [:ctrl])]
+        Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true) do |nc|
+          keys.each do |input|
+            Notcurses::Reader.open(nc.stdplane.create_child(rows: 1, cols: 6)) do |reader|
+              reader.write('漢漢漢')
+              reader.move_right
+              reader.offer_input(input)
+              reader.move_right while reader.plane.cursor[1] < 4
+              reader.write('漢') # in colonna 4: con la metà destra orfana in 5 il C scriveva oltre la riga
+            end
+          end
+        end
+        puts 'ok'
+      RUBY
+      env = { 'TERM' => 'xterm-256color', 'LD_PRELOAD' => '/usr/lib/libc_malloc_debug.so.0', 'MALLOC_CHECK_' => '3' }
+      lib = File.expand_path('../../lib', __dir__)
+      out, status = Open3.capture2e(env, 'timeout', '-k', '5', '-s', 'KILL', '30', RbConfig.ruby, '-I', lib, '-e', script,
+                                    stdin_data: '')
+      expect([status.exitstatus, out]).to eq([0, "ok\n"])
+    end
+
     it 'le scorciatoie con Ctrl e Alt' do
       new_reader(rows: 1, cols: 10) do |reader|
         reader.write('uno due')
@@ -264,7 +318,7 @@ RSpec.describe Notcurses::Reader do
     end
 
     it 'Context#cursor_disable non solleva se la chiusura di un reader con cursor: true ha già spento il cursore' do
-      nc.cursor_enable(1, 2)
+      nc.cursor_enable(y: 1, x: 2)
       new_reader(cursor: true) { |reader| reader.write('a') }
       expect(nc.cursor_disable).to equal(nc)
     end

@@ -195,6 +195,25 @@ RSpec.describe Notcurses::Reel do
       reel.close
     end
 
+    it 'senza bordi orizzontali un tablet con 0 righe occupa una riga vuota e il reel resta disegnabile' do
+      [%i[top bottom], 0xf].each do |mask|
+        reel = described_class.new(new_plane(rows: 6), tablet_mask: mask)
+        one = reel.add { |tablet, _from_top| tablet.plane.putstr('a.0', y: 0, x: 0) && 1 }
+        zero = reel.add { |_tablet, _from_top| 0 }
+        expect(zero.plane).to be_nil
+        expect(one.plane.contents).to eq('a.0')
+        if mask == 0xf
+          expect(screen(6)).to eq(['+--------------+', '|a.0           |', '|              |', '|              |',
+                                   '|              |', '+--------------+'])
+        end
+        expect(reel.next).to equal(zero) # anche con il fuoco sul tablet alto 0
+        expect(reel.redraw).to equal(reel)
+        expect(one.plane.contents).to eq('a.0')
+        expect(zero.plane).to be_nil
+        reel.close
+      end
+    end
+
     it 'delete: il fuoco passa al successivo o, se era l\'ultimo, al precedente' do
       reel = new_reel(4)
       t1, t2, t3, t4 = reel.tablets
@@ -384,6 +403,16 @@ RSpec.describe Notcurses::Reel do
       reel.delete(reel.tablets[1])
       check_layout!(reel)
       reel.close
+    end
+
+    it 'il blocco riceve subito l\'eccezione di un callback di resize che ha causato' do
+      parent = std.create_child(rows: 5, cols: 5)
+      parent.create_child(rows: 1, cols: 1, resize: ->(_) { raise 'figlio fallisce' })
+      reel = described_class.new(new_plane)
+      expect { reel.add { |_tablet, _from_top| parent.resize(6, 6); 1 } }.to raise_error(RuntimeError, 'figlio fallisce')
+      expect(nc.callback_errors).to be_empty
+      reel.close
+      parent.family_destroy
     end
 
     it 'dentro il blocco i metodi che cambiano il reel sollevano WidgetError, distruggere piani PlaneError' do

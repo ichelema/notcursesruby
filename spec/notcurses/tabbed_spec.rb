@@ -65,7 +65,7 @@ RSpec.describe Notcurses::Tabbed do
     it 'valida gli argomenti e lascia il piano al chiamante' do
       plane = new_plane
       small = new_plane(rows: 1)
-      expect { described_class.new(small) }.to raise_error(ArgumentError, /2 righe/)
+      expect { described_class.new(small) }.to raise_error(Notcurses::WidgetError, /2 righe/)
       small.close
       expect { described_class.new(plane, separator: "a\tb") }.to raise_error(ArgumentError, /controllo/)
       expect { described_class.new(plane, separator: "\xff".b) }.to raise_error(ArgumentError, /UTF-8/)
@@ -217,15 +217,16 @@ RSpec.describe Notcurses::Tabbed do
       tabbed.close
     end
 
-    it 'select, select_next e select_prev seguono la lista circolare' do
+    it 'select, next e prev seguono la lista circolare; size è tab_count' do
       tabbed = abc
       a, b, c = tabbed.tabs
       expect(tabbed.select(c)).to equal(a)
       expect(tabbed.selected).to equal(c)
-      expect(tabbed.select_next).to equal(a)
-      expect(tabbed.select_prev).to equal(c)
-      expect(tabbed.select_prev).to equal(b)
+      expect(tabbed.next).to equal(a)
+      expect(tabbed.prev).to equal(c)
+      expect(tabbed.prev).to equal(b)
       expect(tabbed.leftmost).to equal(a)
+      expect([tabbed.size, tabbed.tab_count]).to eq([3, 3])
       other = described_class.new(new_plane)
       expect { tabbed.select(other.add('o')) }.to raise_error(ArgumentError)
       expect { tabbed.select(nil) }.to raise_error(TypeError)
@@ -251,12 +252,12 @@ RSpec.describe Notcurses::Tabbed do
       tabbed.close
     end
 
-    it 'senza tab rotate, select_next e select_prev non chiamano il C (nctabbed_rotate va in crash)' do
+    it 'senza tab rotate, next e prev non chiamano il C (nctabbed_rotate va in crash)' do
       tabbed = described_class.new(new_plane)
       expect(tabbed.rotate(5)).to equal(tabbed)
       expect(tabbed.rotate(-1)).to equal(tabbed)
-      expect(tabbed.select_next).to be_nil
-      expect(tabbed.select_prev).to be_nil
+      expect(tabbed.next).to be_nil
+      expect(tabbed.prev).to be_nil
       expect(tabbed.ensure_selected_header_visible).to equal(tabbed)
       expect(tabbed.redraw).to equal(tabbed)
       tabbed.close
@@ -329,7 +330,7 @@ RSpec.describe Notcurses::Tabbed do
       expect(calls).to eq([['Uno', true]])
       expect(screen_row(0)).to eq('Uno|Due')
       expect(screen_row(1)).to eq('contenuto Uno')
-      tabbed.select_next
+      tabbed.next
       tabbed.redraw
       expect(screen_row(1)).to eq('contenuto Due')
       expect(calls.last).to eq(['Due', true])
@@ -350,16 +351,16 @@ RSpec.describe Notcurses::Tabbed do
     end
 
     it 'colori: valori iniziali, getter e setter' do
-      tabbed = described_class.new(new_plane, selected_channels: Notcurses::Channels.new(0x1234),
+      tabbed = described_class.new(new_plane, selected_channels: Notcurses::Channels.new(value: 0x1234),
                                               header_channels: 0x5678, separator_channels: 0)
-      expect(tabbed.selected_channels).to eq(Notcurses::Channels.new(0x1234))
+      expect(tabbed.selected_channels).to eq(Notcurses::Channels.new(value: 0x1234))
       expect(tabbed.header_channels.value).to eq(0x5678)
       expect(tabbed.separator_channels.value).to eq(0)
       tabbed.header_channels = Notcurses::Channels.rgb(255, 0, 0, 0, 0, 0)
       expect(tabbed.header_channels.fg_rgb).to eq([255, 0, 0])
       tabbed.selected_channels = 0
       expect(tabbed.selected_channels.value).to eq(0)
-      tabbed.separator_channels = Notcurses::Channels.new(0x9abc)
+      tabbed.separator_channels = Notcurses::Channels.new(value: 0x9abc)
       expect(tabbed.separator_channels.value).to eq(0x9abc)
       expect { tabbed.header_channels = 'rosso' }.to raise_error(TypeError)
       expect { tabbed.separator_channels = -1 }.to raise_error(ArgumentError)
@@ -402,6 +403,14 @@ RSpec.describe Notcurses::Tabbed do
       tabbed.close
     end
 
+    it 'throw nel blocco non attraversa il C: LocalJumpError da redraw' do
+      tabbed = described_class.new(new_plane)
+      tabbed.add('X') { |_tab, _content| throw :fuori }
+      expect { catch(:fuori) { tabbed.redraw } }.to raise_error(LocalJumpError)
+      expect(nc.callback_errors).to be_empty
+      tabbed.close
+    end
+
     it 'dentro il blocco i metodi che cambiano il widget sollevano WidgetError, distruggere piani PlaneError' do
       tabbed = abc
       a, b, = tabbed.tabs
@@ -410,7 +419,7 @@ RSpec.describe Notcurses::Tabbed do
       seen = nil
       a.callback = lambda do |tab, content|
         seen = [tab.name, tabbed.tab_count, names(tabbed)]
-        [-> { tabbed.add('x') }, -> { tabbed.select_next }, -> { tabbed.rotate(1) }, -> { tabbed.delete(b) },
+        [-> { tabbed.add('x') }, -> { tabbed.next }, -> { tabbed.rotate(1) }, -> { tabbed.delete(b) },
          -> { tab.name = 'y' }, -> { tab.move_left }, -> { b.move(after: tab) }, -> { tab.callback = nil },
          -> { tabbed.separator = '-' }, -> { tabbed.header_channels = 0 }, -> { tabbed.close }].each do |call|
           call.call
@@ -451,7 +460,7 @@ RSpec.describe Notcurses::Tabbed do
       expect(tabbed.inspect).to include('chiuso')
       [-> { tabbed.redraw }, -> { tabbed.add('x') }, -> { tabbed.delete(a) }, -> { tabbed.selected },
        -> { tabbed.leftmost }, -> { tabbed.tab_count }, -> { tabbed.tabs }, -> { tabbed.select(a) },
-       -> { tabbed.select_next }, -> { tabbed.select_prev }, -> { tabbed.rotate(1) },
+       -> { tabbed.next }, -> { tabbed.prev }, -> { tabbed.rotate(1) },
        -> { tabbed.ensure_selected_header_visible }, -> { tabbed.plane }, -> { tabbed.content_plane },
        -> { tabbed.header_channels }, -> { tabbed.selected_channels }, -> { tabbed.separator_channels },
        -> { tabbed.header_channels = 0 }, -> { tabbed.selected_channels = 0 }, -> { tabbed.separator_channels = 0 },

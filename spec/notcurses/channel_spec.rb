@@ -17,21 +17,21 @@ RSpec.describe Notcurses::Channel do
 
   describe '.new' do
     it 'accetta 0..0xffffffff e congela il valore' do
-      c = described_class.new(0xffff_ffff)
+      c = described_class.new(value: 0xffff_ffff)
       expect(c.value).to eq(0xffff_ffff)
       expect(c).to be_frozen
       expect(described_class.new.value).to eq(0)
     end
 
     it 'rifiuta valori fuori range invece di troncarli' do
-      expect { described_class.new(0x1_0000_0000) }.to raise_error(ArgumentError)
-      expect { described_class.new(-1) }.to raise_error(ArgumentError)
+      expect { described_class.new(value: 0x1_0000_0000) }.to raise_error(ArgumentError)
+      expect { described_class.new(value: -1) }.to raise_error(ArgumentError)
     end
 
     it 'rifiuta tipi non interi' do
-      expect { described_class.new(1.0) }.to raise_error(TypeError)
-      expect { described_class.new(nil) }.to raise_error(TypeError)
-      expect { described_class.new('1') }.to raise_error(TypeError)
+      expect { described_class.new(value: 1.0) }.to raise_error(TypeError)
+      expect { described_class.new(value: nil) }.to raise_error(TypeError)
+      expect { described_class.new(value: '1') }.to raise_error(TypeError)
     end
   end
 
@@ -87,7 +87,7 @@ RSpec.describe Notcurses::Channel do
       r = rng.rand(256)
       g = rng.rand(256)
       b = rng.rand(256)
-      c = described_class.new(v)
+      c = described_class.new(value: v)
       expect(c.with_rgb(r, g, b).value).to eq(ffi_set32(v) { |p| Notcurses::FFI.ncchannel_set_rgb8(p, r, g, b) })
       expect(c.with_alpha(:highcontrast).value).to eq(ffi_set32(v) { |p| Notcurses::FFI.ncchannel_set_alpha(p, Notcurses::FFI::NCALPHA_HIGHCONTRAST) })
       expect(c.with_default.value).to eq(ffi_set32(v) { |p| Notcurses::FFI.ncchannel_set_default(p) })
@@ -146,9 +146,9 @@ RSpec.describe Notcurses::Channels do
   end
 
   it '.new valida il range a 64 bit' do
-    expect(described_class.new(0xffff_ffff_ffff_ffff).value).to eq(0xffff_ffff_ffff_ffff)
-    expect { described_class.new(0x1_0000_0000_0000_0000) }.to raise_error(ArgumentError)
-    expect { described_class.new(-1) }.to raise_error(ArgumentError)
+    expect(described_class.new(value: 0xffff_ffff_ffff_ffff).value).to eq(0xffff_ffff_ffff_ffff)
+    expect { described_class.new(value: 0x1_0000_0000_0000_0000) }.to raise_error(ArgumentError)
+    expect { described_class.new(value: -1) }.to raise_error(ArgumentError)
     expect(described_class.new).to be_frozen
   end
 
@@ -181,10 +181,10 @@ RSpec.describe Notcurses::Channels do
     100.times do
       v = rng.rand(0x1_0000_0000_0000_0000)
       w = rng.rand(0x1_0000_0000_0000_0000)
-      ch = described_class.new(v)
+      ch = described_class.new(value: v)
       expect(ch.reverse.value).to eq(Notcurses::FFI.ncchannels_reverse(v))
       expect(ch.masked.value).to eq(Notcurses::FFI.ncchannels_channels(v))
-      expect(ch.with_channels(described_class.new(w)).value).to eq(ffi_set64(v) { |p| Notcurses::FFI.ncchannels_set_channels(p, w) })
+      expect(ch.with_channels(described_class.new(value: w)).value).to eq(ffi_set64(v) { |p| Notcurses::FFI.ncchannels_set_channels(p, w) })
       expect(ch.with_fg_default.value).to eq(ffi_set64(v) { |p| Notcurses::FFI.ncchannels_set_fg_default(p) })
     end
   end

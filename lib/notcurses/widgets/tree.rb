@@ -33,7 +33,9 @@ module Notcurses
   # finale del suo contenuto. Una voce spinta fuori dallo schermo riceve plane
   # nil (notcurses ha appena distrutto il suo piano) e il ritorno non conta.
   # Il piano vale solo durante il blocco. Dentro il blocco non si possono
-  # chiamare i metodi dell'albero né distruggere piani (WidgetError).
+  # chiamare i metodi dell'albero né distruggere piani (WidgetError). break,
+  # return e throw non possono uscire dal blocco attraverso il C: diventano
+  # una LocalJumpError, che esce come un'eccezione del blocco.
   #
   # Ridisegno: come in notcurses, disegnano solo {#initialize} e {#redraw};
   # gli altri metodi cambiano lo stato e lasciano il ridisegno al chiamante.

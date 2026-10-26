@@ -21,7 +21,7 @@ module Notcurses
     # @param value [Integer] valore a 32 bit (0 = colore di default, opaco)
     # @raise [TypeError] se value non è Integer
     # @raise [ArgumentError] se value è fuori da 0..0xffffffff
-    def initialize(value = 0)
+    def initialize(value: 0)
       @value = Util.uint32!(value, 'value')
       freeze
     end
@@ -38,7 +38,7 @@ module Notcurses
       Util.uint8!(r, 'r')
       Util.uint8!(g, 'g')
       Util.uint8!(b, 'b')
-      new(FFI.NCCHANNEL_INITIALIZER(r, g, b))
+      new(value: FFI.NCCHANNEL_INITIALIZER(r, g, b))
     end
 
     # Canale RGB opaco da un valore 0xRRGGBB.
@@ -57,7 +57,7 @@ module Notcurses
 
     # Canale con il colore di default del terminale (valore 0).
     # @return [Channel]
-    def self.default = new(0)
+    def self.default = new
 
     # @return [Integer] componente rossa, 0..255 (+ncchannel_r+)
     def r = FFI.ncchannel_r(@value)
@@ -184,7 +184,7 @@ module Notcurses
       ptr = ::FFI::MemoryPointer.new(:uint32)
       ptr.write_uint32(@value)
       yield ptr
-      Channel.new(ptr.read_uint32)
+      Channel.new(value: ptr.read_uint32)
     end
   end
 
@@ -205,7 +205,7 @@ module Notcurses
     # @param value [Integer] valore a 64 bit (0 = entrambi i canali di default)
     # @raise [TypeError] se value non è Integer
     # @raise [ArgumentError] se value è fuori da 0..0xffffffffffffffff
-    def initialize(value = 0)
+    def initialize(value: 0)
       @value = Util.uint64!(value, 'value')
       freeze
     end
@@ -220,7 +220,7 @@ module Notcurses
       raise TypeError, "fg deve essere Notcurses::Channel, non #{fg.class}" unless fg.is_a?(Channel)
       raise TypeError, "bg deve essere Notcurses::Channel, non #{bg.class}" unless bg.is_a?(Channel)
 
-      new(FFI.ncchannels_combine(fg.value, bg.value))
+      new(value: FFI.ncchannels_combine(fg.value, bg.value))
     end
 
     # Coppia di canali RGB opachi (+NCCHANNELS_INITIALIZER+).
@@ -235,24 +235,24 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un componente non è un Integer in 0..255
     def self.rgb(fr, fg, fb, br, bg, bb)
       { fr: fr, fg: fg, fb: fb, br: br, bg: bg, bb: bb }.each { |name, v| Util.uint8!(v, name.to_s) }
-      new(FFI.NCCHANNELS_INITIALIZER(fr, fg, fb, br, bg, bb))
+      new(value: FFI.NCCHANNELS_INITIALIZER(fr, fg, fb, br, bg, bb))
     end
 
     # @return [Channel] canale di primo piano (+ncchannels_fchannel+)
-    def fg = Channel.new(FFI.ncchannels_fchannel(@value))
+    def fg = Channel.new(value: FFI.ncchannels_fchannel(@value))
 
     # @return [Channel] canale di sfondo (+ncchannels_bchannel+)
-    def bg = Channel.new(FFI.ncchannels_bchannel(@value))
+    def bg = Channel.new(value: FFI.ncchannels_bchannel(@value))
 
     # Solo i bit di colore e alpha dei due canali, senza i bit di servizio
     # (+ncchannels_channels+).
     # @return [Channels]
-    def masked = Channels.new(FFI.ncchannels_channels(@value))
+    def masked = Channels.new(value: FFI.ncchannels_channels(@value))
 
     # Primo piano e sfondo scambiati, senza toccare i bit di servizio; l'alpha
     # che diventerebbe illegale passa a :opaque (+ncchannels_reverse+).
     # @return [Channels]
-    def reverse = Channels.new(FFI.ncchannels_reverse(@value))
+    def reverse = Channels.new(value: FFI.ncchannels_reverse(@value))
 
     # @return [Array(Integer, Integer, Integer)] [r, g, b] del primo piano (+ncchannels_fg_rgb8+)
     def fg_rgb = rgb8_of { |ptrs| FFI.ncchannels_fg_rgb8(@value, *ptrs) }
@@ -458,7 +458,7 @@ module Notcurses
       ptr = ::FFI::MemoryPointer.new(:uint64)
       ptr.write_uint64(@value)
       yield ptr
-      Channels.new(ptr.read_uint64)
+      Channels.new(value: ptr.read_uint64)
     end
 
     def rgb8_of

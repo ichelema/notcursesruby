@@ -44,14 +44,14 @@ RSpec.describe Notcurses::Plot do
         expect(caps.quadrants? || caps.sextants? || caps.octants?).to be(false) # contesto headless
         expected = { default: :half, ascii: :ascii, half: :half, quad: :half, sextant: :half, octant: :half,
                      braille: :braille, pixel: :half, four_by_one: :half, eight_by_one: :half }
-        expected.each do |grid, blitter|
-          plot = described_class.new(new_plane(rows: 2, cols: 10), grid: grid)
-          expect(plot.blitter).to eq(blitter), "grid #{grid}"
+        expected.each do |requested, blitter|
+          plot = described_class.new(new_plane(rows: 2, cols: 10), blitter: requested)
+          expect(plot.blitter).to eq(blitter), "blitter #{requested}"
           expect(plot.slot_count).to eq(blitter == :braille ? 20 : 10)
           # dopo un salto il C ha slotx = slot_count: x C 1 è in finestra, 0 è dietro
           expect(plot.add_sample(10**12, 4)).to be(true)
-          expect(raw_sample(plot, 1).first).to eq(0), "grid #{grid}"
-          expect(raw_sample(plot, 0).first).to eq(-1), "grid #{grid}"
+          expect(raw_sample(plot, 1).first).to eq(0), "blitter #{requested}"
+          expect(raw_sample(plot, 0).first).to eq(-1), "blitter #{requested}"
           plot.close
         end
       end
@@ -59,8 +59,8 @@ RSpec.describe Notcurses::Plot do
       it 'calcola gli slot con range_x e label_ticks come il C' do
         { [{ range_x: 5 }, :ascii, 20] => 5, [{ range_x: 50 }, :ascii, 20] => 20,
           [{ label_ticks: true }, :ascii, 20] => 13, [{ label_ticks: true }, :braille, 20] => 26,
-          [{ label_ticks: true, range_x: 4 }, :ascii, 10] => 3 }.each do |(opts, grid, cols), slots|
-          plot = described_class.new(new_plane(cols: cols), grid: grid, **opts)
+          [{ label_ticks: true, range_x: 4 }, :ascii, 10] => 3 }.each do |(opts, requested, cols), slots|
+          plot = described_class.new(new_plane(cols: cols), blitter: requested, **opts)
           expect(plot.slot_count).to eq(slots), opts.inspect
           plot.add_sample(10**9, 1)
           expect(raw_sample(plot, 1).first).to eq(0)
@@ -71,11 +71,11 @@ RSpec.describe Notcurses::Plot do
 
       it 'con no_degrade: rifiuta un blitter non disponibile prima del C, senza toccare il piano' do
         plane = new_plane
-        expect { described_class.new(plane, grid: :quad, no_degrade: true) }
+        expect { described_class.new(plane, blitter: :quad, no_degrade: true) }
           .to raise_error(Notcurses::WidgetError, /non disponibile/)
         expect(plane).not_to be_closed
         expect(plane).not_to be_widget_plane
-        plot = described_class.new(plane, grid: :braille, no_degrade: true)
+        plot = described_class.new(plane, blitter: :braille, no_degrade: true)
         expect(plot.blitter).to eq(:braille)
         plot.close
       end
@@ -83,7 +83,7 @@ RSpec.describe Notcurses::Plot do
       it 'copia il titolo e accetta colori, stili e flag' do
         title = +'TITOLO'
         plane = new_plane(cols: 30)
-        plot = described_class.new(plane, title: title, label_ticks: true, max_channels: Notcurses::Channels.new(0),
+        plot = described_class.new(plane, title: title, label_ticks: true, max_channels: Notcurses::Channels.new(value: 0),
                                           min_channels: 0, legend_style: %i[bold], exponential: true,
                                           print_sample: true)
         title.replace('XXXXXX')
@@ -107,8 +107,8 @@ RSpec.describe Notcurses::Plot do
         expect { described_class.new(plane, min: 0, max: 5, detect_max_only: true) }.to raise_error(ArgumentError)
         expect { described_class.new(plane, type: :double, max: Float::NAN) }.to raise_error(ArgumentError)
         expect { described_class.new(plane, type: :double, min: '0') }.to raise_error(TypeError)
-        expect { described_class.new(plane, grid: :nessuno) }.to raise_error(ArgumentError)
-        expect { described_class.new(plane, grid: 42) }.to raise_error(ArgumentError) # fuori enum: abort nel C
+        expect { described_class.new(plane, blitter: :nessuno) }.to raise_error(ArgumentError)
+        expect { described_class.new(plane, blitter: 42) }.to raise_error(ArgumentError) # fuori enum: abort nel C
         expect { described_class.new(plane, range_x: -1) }.to raise_error(ArgumentError)
         expect { described_class.new(plane, title: "a\nb") }.to raise_error(ArgumentError)
         expect { described_class.new(plane, title: 7) }.to raise_error(TypeError)
@@ -117,7 +117,7 @@ RSpec.describe Notcurses::Plot do
         expect { described_class.new(plane, exponential: 1) }.to raise_error(TypeError)
         expect { described_class.new(plane, no_degrade: nil) }.to raise_error(TypeError)
         # 7 colonne con le etichette: il C scriverebbe fuori dal piano
-        expect { described_class.new(plane, label_ticks: true) }.to raise_error(ArgumentError, /almeno 8/)
+        expect { described_class.new(plane, label_ticks: true) }.to raise_error(Notcurses::WidgetError, /almeno 8/)
         expect(plane).not_to be_closed
         expect(plane).not_to be_widget_plane
         plane.close
@@ -139,7 +139,7 @@ RSpec.describe Notcurses::Plot do
                                                         sextants?: false, quadrants?: true, halfblocks?: true)
         allow(nc).to receive(:capabilities).and_return(fake)
         plane = new_plane
-        expect { described_class.new(plane, grid: :quad) }.to raise_error(Notcurses::WidgetError, /NULL/)
+        expect { described_class.new(plane, blitter: :quad) }.to raise_error(Notcurses::WidgetError, /NULL/)
         expect(plane).to be_closed # il C prende il piano anche quando fallisce
       end
 
@@ -210,7 +210,7 @@ RSpec.describe Notcurses::Plot do
       it 'se la finestra del Ruby fosse più larga di quella del C, set_sample non scriverebbe fuori dal buffer' do
         plane = new_plane(cols: 20)
         allow(plane).to receive(:dim_x).and_return(40) # il Ruby calcola 40 slot, il C ne ha 20
-        plot = described_class.new(plane, grid: :ascii)
+        plot = described_class.new(plane, blitter: :ascii)
         expect(plot.slot_count).to eq(40)
         plot.add_sample(1_000, 1)
         expect(Notcurses::FFI).not_to receive(:ncuplot_set_sample)
@@ -316,7 +316,7 @@ RSpec.describe Notcurses::Plot do
 
       it 'drop_planes chiude il grafico prima di distruggere i piani' do
         plane = new_plane
-        plot = described_class.new(plane, grid: :braille)
+        plot = described_class.new(plane, blitter: :braille)
         plot.add_sample(3, 3)
         nc.drop_planes
         expect(plot).to be_closed

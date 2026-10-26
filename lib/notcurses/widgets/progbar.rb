@@ -17,10 +17,10 @@ module Notcurses
   #
   # @example
   #   plane = nc.stdplane.create_child(rows: 1, cols: 40, y: 10, x: 2)
-  #   bar = Notcurses::ProgBar.new(plane, ulchannel: Notcurses::Channel.rgb(0, 80, 0),
-  #                                urchannel: Notcurses::Channel.rgb(0, 255, 0),
-  #                                blchannel: Notcurses::Channel.rgb(0, 80, 0),
-  #                                brchannel: Notcurses::Channel.rgb(0, 255, 0))
+  #   bar = Notcurses::ProgBar.new(plane, ul_channel: Notcurses::Channel.rgb(0, 80, 0),
+  #                                ur_channel: Notcurses::Channel.rgb(0, 255, 0),
+  #                                bl_channel: Notcurses::Channel.rgb(0, 80, 0),
+  #                                br_channel: Notcurses::Channel.rgb(0, 255, 0))
   #   bar.progress = 0.25
   #   nc.render
   class ProgBar
@@ -33,10 +33,10 @@ module Notcurses
     #
     # @param plane [Plane] piano posseduto dal wrapper, non lo stdplane e non
     #   già di un widget: passa alla barra
-    # @param ulchannel [Channel, Integer] colore dell'angolo in alto a sinistra
-    # @param urchannel [Channel, Integer] colore dell'angolo in alto a destra
-    # @param blchannel [Channel, Integer] colore dell'angolo in basso a sinistra
-    # @param brchannel [Channel, Integer] colore dell'angolo in basso a destra
+    # @param ul_channel [Channel, Integer] colore dell'angolo in alto a sinistra
+    # @param ur_channel [Channel, Integer] colore dell'angolo in alto a destra
+    # @param bl_channel [Channel, Integer] colore dell'angolo in basso a sinistra
+    # @param br_channel [Channel, Integer] colore dell'angolo in basso a destra
     # @param retrograde [Boolean] NCPROGBAR_OPTION_RETROGRADE: si riempie da
     #   destra a sinistra o dall'alto in basso
     # @raise [WidgetError] se +ncprogbar_create+ fallisce (il piano risulta
@@ -44,15 +44,15 @@ module Notcurses
     #   posseduto; dentro un callback chiamato da notcurses
     # @raise [TypeError, ArgumentError] se un'opzione non è valida
     # @raise [ClosedError] se il piano è chiuso
-    def initialize(plane, ulchannel: 0, urchannel: 0, blchannel: 0, brchannel: 0, retrograde: false)
+    def initialize(plane, ul_channel: 0, ur_channel: 0, bl_channel: 0, br_channel: 0, retrograde: false)
       claim_plane!(plane)
       ctx = plane.context
       ctx.check_not_in_callback!('ProgBar.new', WidgetError)
       opts = FFI::NcProgbarOptions.new
-      opts[:ulchannel] = Util.channel_value(ulchannel, 'ulchannel')
-      opts[:urchannel] = Util.channel_value(urchannel, 'urchannel')
-      opts[:blchannel] = Util.channel_value(blchannel, 'blchannel')
-      opts[:brchannel] = Util.channel_value(brchannel, 'brchannel')
+      opts[:ulchannel] = Util.channel_value(ul_channel, 'ul_channel')
+      opts[:urchannel] = Util.channel_value(ur_channel, 'ur_channel')
+      opts[:blchannel] = Util.channel_value(bl_channel, 'bl_channel')
+      opts[:brchannel] = Util.channel_value(br_channel, 'br_channel')
       opts[:flags] = Util.flag(retrograde, FFI::NCPROGBAR_OPTION_RETROGRADE, 'retrograde')
       ptr = FFI.ncprogbar_create(plane.to_ptr, opts)
       if ptr.null?

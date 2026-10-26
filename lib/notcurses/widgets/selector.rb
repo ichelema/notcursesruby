@@ -45,12 +45,12 @@ module Notcurses
     # @param default [Integer] indice della voce selezionata all'inizio,
     #   0...items.size (0 se non ci sono voci)
     # @param max_display [Integer] voci visibili al massimo, 0..UINT_MAX (0 = tutte)
-    # @param opchannels [Channels, Integer] colori delle opzioni (la voce
+    # @param op_channels [Channels, Integer] colori delle opzioni (la voce
     #   selezionata li inverte)
-    # @param descchannels [Channels, Integer] colori delle descrizioni
-    # @param titlechannels [Channels, Integer] colori del titolo
-    # @param footchannels [Channels, Integer] colori di secondary e footer
-    # @param boxchannels [Channels, Integer] colori dei bordi
+    # @param desc_channels [Channels, Integer] colori delle descrizioni
+    # @param title_channels [Channels, Integer] colori del titolo
+    # @param foot_channels [Channels, Integer] colori di secondary e footer
+    # @param box_channels [Channels, Integer] colori dei bordi
     # @raise [WidgetError] se +ncselector_create+ fallisce (il piano risulta
     #   distrutto); se il piano è lo stdplane, è già di un widget o non è
     #   posseduto; dentro un callback chiamato da notcurses
@@ -60,7 +60,7 @@ module Notcurses
     # @raise [Exception] l'eccezione di un callback Ruby di resize di un figlio
     #   del piano: il resize fallito fa fallire la creazione
     def initialize(plane, items: [], title: nil, secondary: nil, footer: nil, default: 0, max_display: 0,
-                   opchannels: 0, descchannels: 0, titlechannels: 0, footchannels: 0, boxchannels: 0)
+                   op_channels: 0, desc_channels: 0, title_channels: 0, foot_channels: 0, box_channels: 0)
       claim_plane!(plane)
       ctx = plane.context
       ctx.check_not_in_callback!('Selector.new', WidgetError)
@@ -80,11 +80,11 @@ module Notcurses
       opts[:items] = vec
       opts[:defidx] = Util.integer!(default, 'default', 0..[pairs.size - 1, 0].max)
       opts[:maxdisplay] = Util.uint!(max_display, 'max_display')
-      opts[:opchannels] = Util.channels_value(opchannels, 'opchannels')
-      opts[:descchannels] = Util.channels_value(descchannels, 'descchannels')
-      opts[:titlechannels] = Util.channels_value(titlechannels, 'titlechannels')
-      opts[:footchannels] = Util.channels_value(footchannels, 'footchannels')
-      opts[:boxchannels] = Util.channels_value(boxchannels, 'boxchannels')
+      opts[:opchannels] = Util.channels_value(op_channels, 'op_channels')
+      opts[:descchannels] = Util.channels_value(desc_channels, 'desc_channels')
+      opts[:titlechannels] = Util.channels_value(title_channels, 'title_channels')
+      opts[:footchannels] = Util.channels_value(foot_channels, 'foot_channels')
+      opts[:boxchannels] = Util.channels_value(box_channels, 'box_channels')
       ptr = FFI.ncselector_create(plane.to_ptr, opts)
       if ptr.null?
         plane_destroyed_on_failure!(plane)

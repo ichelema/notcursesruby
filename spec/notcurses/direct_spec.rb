@@ -78,8 +78,8 @@ RSpec.describe Notcurses::Direct do
       calls = [
         [:set_fg_rgb, 1, 2, 3], [:set_bg_rgb, 1, 2, 3], [:set_fg_rgb24, 1], [:set_bg_rgb24, 1],
         [:set_fg_palindex, 1], [:set_bg_palindex, 1], [:set_fg_default], [:set_bg_default], [:palette_size],
-        [:supported_styles], [:styles], [:set_styles, :bold], [:on_styles, :bold], [:off_styles, :bold],
-        [:putstr, 'x'], [:putegc, 'x'], [:print_aligned, 'x'], [:flush], [:dims], [:clear], [:cursor_move],
+        [:supported_styles], [:styles], [:styles=, :bold], [:on_styles, :bold], [:off_styles, :bold],
+        [:putstr, 'x'], [:putegc, 'x'], [:print_aligned, 'x'], [:flush], [:dims], [:clear], [:move_cursor],
         [:cursor_enable], [:cursor_disable], [:cursor_up], [:cursor_down], [:cursor_left], [:cursor_right],
         [:cursor_yx], [:cursor_push], [:cursor_pop], [:hline, '-', 1], [:vline, '|', 1], [:box, 2, 2], [:get],
         [:inputready_fd], [:readline], [:render_image, png], [:render_frame, png], [:load_image, png],
@@ -176,7 +176,7 @@ RSpec.describe Notcurses::Direct do
         path = File.join(dir, 'out')
         start = nil
         open_direct(output: path) do |d|
-          d.set_fg_rgb(1, 2, 3).set_bg_palindex(4).set_styles(:bold).flush
+          d.set_fg_rgb(1, 2, 3).set_bg_palindex(4).on_styles(:bold).flush
           start = File.size(path)
         end
         expect(File.binread(path, nil, start)).to eq("\e[39m\e[49m\e[22m")
@@ -211,7 +211,7 @@ RSpec.describe Notcurses::Direct do
     end
 
     # ogni esempio parte da colori e stili di default
-    before { @d.putstr('', channels: 0).set_styles(0) }
+    before { @d.putstr('', channels: 0).styles = 0 }
 
     let(:d) { @d }
 
@@ -263,23 +263,29 @@ RSpec.describe Notcurses::Direct do
         expect(d.supported_styles).to contain_exactly(:italic, :underline, :bold, :struck)
       end
 
-      it 'set_styles, on_styles e off_styles cambiano gli stili attivi letti da styles' do
-        expect(written { expect(d.set_styles(:bold)).to equal(d) }).to eq("\e[1m")
+      it 'styles=, on_styles e off_styles cambiano gli stili attivi letti da styles, come in Plane' do
+        expect(written { d.styles = :bold }).to eq("\e[1m")
         expect(d.styles).to eq([:bold])
-        expect(written { expect(d.on_styles(%i[italic])).to equal(d) }).to eq("\e[3m")
+        expect(written { expect(d.on_styles(:italic)).to equal(d) }).to eq("\e[3m")
         expect(d.styles).to eq(%i[italic bold])
         expect(written { expect(d.off_styles(:bold)).to equal(d) }).to eq("\e[22m")
         expect(d.styles).to eq([:italic])
-        expect(d.set_styles([]).styles).to eq([])
-        expect(d.set_styles(ffi::NCSTYLE_UNDERLINE).styles).to eq([:underline])
+        d.styles = []
+        expect(d.styles).to eq([])
+        d.styles = ffi::NCSTYLE_UNDERLINE
+        expect(d.styles).to eq([:underline])
+        expect(d.on_styles(:bold, %i[italic]).styles).to contain_exactly(:underline, :bold, :italic)
+        expect(d.off_styles(:bold, :italic).styles).to eq([:underline])
+        expect(d).not_to respond_to(:set_styles)
       end
 
       it 'rifiuta gli stili non supportati prima della chiamata C' do
         allow(ffi).to receive(:ncdirect_set_styles).and_call_original
-        expect { d.set_styles(:undercurl) }.to raise_error(ArgumentError, /undercurl/)
+        expect { d.styles = :undercurl }.to raise_error(ArgumentError, /undercurl/)
         expect { d.on_styles(0x8000) }.to raise_error(ArgumentError, /0x8000/)
-        expect { d.set_styles(:lampeggiante) }.to raise_error(ArgumentError)
-        expect { d.set_styles('bold') }.to raise_error(TypeError)
+        expect { d.on_styles(:bold, :undercurl) }.to raise_error(ArgumentError, /undercurl/)
+        expect { d.styles = :lampeggiante }.to raise_error(ArgumentError)
+        expect { d.styles = 'bold' }.to raise_error(TypeError)
         expect(ffi).not_to have_received(:ncdirect_set_styles)
         expect(d.off_styles(:undercurl)).to equal(d)
       end
@@ -341,28 +347,28 @@ RSpec.describe Notcurses::Direct do
         expect(written { expect(d.clear).to equal(d) }).to eq("\e[H\e[2J")
       end
 
-      it 'cursor_move sposta il cursore su uno o due assi; senza argomenti non fa nulla' do
-        expect(written { expect(d.cursor_move(y: 3, x: 4)).to equal(d) }).to eq("\e[4;5H")
-        expect(written { d.cursor_move(x: 7) }).to eq("\e[8G")
+      it 'move_cursor sposta il cursore su uno o due assi; senza argomenti non fa nulla' do
+        expect(written { expect(d.move_cursor(y: 3, x: 4)).to equal(d) }).to eq("\e[4;5H")
+        expect(written { d.move_cursor(x: 7) }).to eq("\e[8G")
         allow(ffi).to receive(:ncdirect_cursor_move_yx).and_call_original
-        expect(written { expect(d.cursor_move).to equal(d) }).to eq('')
+        expect(written { expect(d.move_cursor).to equal(d) }).to eq('')
         expect(ffi).not_to have_received(:ncdirect_cursor_move_yx)
       end
 
-      it 'cursor_move(y:) senza un terminale che riporti il cursore solleva invece di perdere la colonna' do
-        expect { d.cursor_move(y: 5) }.to raise_error(Notcurses::DirectError, /colonna/)
-        expect { d.cursor_move(y: -1, x: 0) }.to raise_error(ArgumentError)
-        expect { d.cursor_move(x: 2**31) }.to raise_error(ArgumentError)
-        expect { d.cursor_move(x: 'a') }.to raise_error(TypeError)
+      it 'move_cursor(y:) senza un terminale che riporti il cursore solleva invece di perdere la colonna' do
+        expect { d.move_cursor(y: 5) }.to raise_error(Notcurses::DirectError, /colonna/)
+        expect { d.move_cursor(y: -1, x: 0) }.to raise_error(ArgumentError)
+        expect { d.move_cursor(x: 2**31) }.to raise_error(ArgumentError)
+        expect { d.move_cursor(x: 'a') }.to raise_error(TypeError)
       end
 
       it 'cursor_up, cursor_down, cursor_left e cursor_right spostano di count (default 1)' do
-        expect(written { expect(d.cursor_up(3)).to equal(d) }).to eq("\e[3A")
+        expect(written { expect(d.cursor_up(count: 3)).to equal(d) }).to eq("\e[3A")
         expect(written { d.cursor_up }).to eq("\e[1A")
-        expect(written { d.cursor_left(2).cursor_right(2) }).to eq("\e[2D\e[2C")
-        expect(written { d.cursor_down(2) }).to eq("\v\v")
+        expect(written { d.cursor_left(count: 2).cursor_right(count: 2) }).to eq("\e[2D\e[2C")
+        expect(written { d.cursor_down(count: 2) }).to eq("\v\v")
         expect(written { d.cursor_down.cursor_left.cursor_right }).to eq("\v\e[1D\e[1C")
-        expect(written { d.cursor_up(0).cursor_down(0).cursor_left(0).cursor_right(0) }).to eq('')
+        expect(written { d.cursor_up(count: 0).cursor_down(count: 0).cursor_left(count: 0).cursor_right(count: 0) }).to eq('')
         %i[cursor_up cursor_down cursor_left cursor_right].each do |m|
           expect { d.public_send(m, -1) }.to raise_error(ArgumentError), m.to_s
         end
@@ -410,31 +416,31 @@ RSpec.describe Notcurses::Direct do
       end
 
       it 'box disegna gli stili predefiniti' do
-        { light: '┌──┐', heavy: '┏━━┓', rounded: '╭──╮', double: '╔══╗', ascii: '/--\\' }.each do |style, top|
-          out = written { expect(d.box(3, 4, style: style)).to equal(d) }
-          expect(out).to start_with(top), style.to_s
+        { light: '┌──┐', heavy: '┏━━┓', rounded: '╭──╮', double: '╔══╗', ascii: '/--\\' }.each do |set, top|
+          out = written { expect(d.box(3, 4, set: set)).to equal(d) }
+          expect(out).to start_with(top), set.to_s
         end
         expect(written { d.box(3, 4) }).to eq("┌──┐\e[4D\v│\e[2C│\e[4D\v└──┘")
       end
 
       it 'box accetta 6 caratteri, colori degli angoli, lati omessi e soglia degli angoli' do
-        expect(written { d.box(3, 4, style: 'abcdef') }).to eq("aeeb\e[4D\vf\e[2Cf\e[4D\vceed")
+        expect(written { d.box(3, 4, set: 'abcdef') }).to eq("aeeb\e[4D\vf\e[2Cf\e[4D\vceed")
         expect(written { d.box(2, 2, ul: red, lr: blue) }).to eq("\e[38;2;255;0;0m┌┐\e[2D\v└\e[38;2;0;0;255m┘")
-        out = written { d.box(3, 4, omit: :top, corners: 2) }
+        out = written { d.box(3, 4, hide: :top, corners: 2) }
         expect(out).not_to include('┌', '┐', '──┐')
         expect(out).to end_with('└──┘')
         expect(written { d.box(3, 4, corners: 3) }).not_to match(/[┌┐└┘]/)
-        expect(written { d.box(3, 4, omit: %i[left right]) }).not_to include('│')
+        expect(written { d.box(3, 4, hide: %i[left right]) }).not_to include('│')
       end
 
       it 'box valida gli argomenti' do
         expect { d.box(1, 4) }.to raise_error(ArgumentError)
         expect { d.box(3, Notcurses::Direct::MAX_LINE + 1) }.to raise_error(ArgumentError)
-        expect { d.box(3, 4, style: :tratteggiato) }.to raise_error(ArgumentError, /style/)
-        expect { d.box(3, 4, style: 'abc') }.to raise_error(ArgumentError)
-        expect { d.box(3, 4, style: 'ab中def') }.to raise_error(ArgumentError)
-        expect { d.box(3, 4, style: "abcde\n") }.to raise_error(ArgumentError)
-        expect { d.box(3, 4, omit: [:centro]) }.to raise_error(ArgumentError)
+        expect { d.box(3, 4, set: :tratteggiato) }.to raise_error(ArgumentError, /set/)
+        expect { d.box(3, 4, set: 'abc') }.to raise_error(ArgumentError)
+        expect { d.box(3, 4, set: 'ab中def') }.to raise_error(ArgumentError)
+        expect { d.box(3, 4, set: "abcde\n") }.to raise_error(ArgumentError)
+        expect { d.box(3, 4, hide: [:centro]) }.to raise_error(ArgumentError)
         expect { d.box(3, 4, corners: 4) }.to raise_error(ArgumentError)
         expect { d.box(3, 4, ul: Notcurses::Channels.new.with_fg_palindex(1)) }.to raise_error(ArgumentError)
         expect { d.box(3, 4, lr: 'blu') }.to raise_error(TypeError)
@@ -523,13 +529,13 @@ RSpec.describe Notcurses::Direct do
         expect { frame.raster }.to raise_error(Notcurses::ClosedError)
       end
 
-      it 'load_image carica un\'immagine riusabile con render e geom' do
+      it 'load_image carica un\'immagine riusabile con render e geometry' do
         image = d.load_image(data_file('worldmap.png'))
         expect(image).to be_a(Notcurses::Direct::Image)
-        geom = image.geom(d, blitter: :half)
+        geom = image.geometry(d, blitter: :half)
         # rcelly/rcellx dipendono da LINES/COLUMNS senza un tty: non si controllano
-        expect(geom).to include(pixy: 475, pixx: 860, scaley: 2, scalex: 1, blitter: :half)
-        expect(geom.keys).to eq(Notcurses::Direct::Image::GEOM_FIELDS + [:blitter])
+        expect(geom.to_h).to include(pixy: 475, pixx: 860, scaley: 2, scalex: 1, blitter: :half)
+        expect(geom).to be_a(Notcurses::Visual::Geometry)
         first = image.render(d, blitter: :half)
         second = image.render(d, blitter: :ascii, scale: :stretch)
         expect(first.dims).to eq([22, 80])
@@ -545,7 +551,7 @@ RSpec.describe Notcurses::Direct do
       it 'load_image con un blocco chiude l\'immagine; Image.open fa lo stesso' do
         kept = d.load_image(data_file('onedot.png')) { |image| image }
         expect(kept).to be_closed
-        result = Notcurses::Direct::Image.open(d, data_file('onedot.png')) { |image| image.geom(d)[:pixx] }
+        result = Notcurses::Direct::Image.open(d, data_file('onedot.png')) { |image| image.geometry(d).pixx }
         expect(result).to eq(1)
       end
 
@@ -555,7 +561,7 @@ RSpec.describe Notcurses::Direct do
         d.load_image(data_file('onedot.png')) do |image|
           expect { image.render(d, scale: :none) }.to raise_error(Notcurses::DirectError)
           expect { image.render(nil) }.to raise_error(TypeError)
-          expect { image.geom(d, blitter: :quadrato) }.to raise_error(ArgumentError)
+          expect { image.geometry(d, blitter: :quadrato) }.to raise_error(ArgumentError)
         end
       end
 

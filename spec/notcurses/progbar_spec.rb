@@ -103,15 +103,15 @@ RSpec.describe Notcurses::ProgBar do
 
     it 'con i colori dei quattro angoli come Channel o Integer' do
       green = Notcurses::Channel.rgb(0, 255, 0)
-      described_class.open(new_plane(1, 4), ulchannel: green, urchannel: green.value,
-                                            blchannel: Notcurses::Channel.rgb(0, 80, 0), brchannel: green) do |bar|
+      described_class.open(new_plane(1, 4), ul_channel: green, ur_channel: green.value,
+                                            bl_channel: Notcurses::Channel.rgb(0, 80, 0), br_channel: green) do |bar|
         bar.progress = 1
         expect(filled(bar.plane)).to all(be true)
       end
     end
 
     it 'colori incoerenti per il gradiente: progress= solleva WidgetError' do
-      described_class.open(new_plane(1, 4), ulchannel: Notcurses::Channel.palindex(3)) do |bar|
+      described_class.open(new_plane(1, 4), ul_channel: Notcurses::Channel.palindex(3)) do |bar|
         expect { bar.progress = 0.5 }.to raise_error(Notcurses::WidgetError, /ncprogbar_set_progress/)
         expect(bar.progress).to eq(0.5)
       end
@@ -120,8 +120,8 @@ RSpec.describe Notcurses::ProgBar do
     it 'valida gli argomenti e rifiuta lo stdplane e il piano di un altro widget' do
       plane = new_plane(1, 4)
       expect { described_class.new('piano') }.to raise_error(TypeError)
-      expect { described_class.new(plane, ulchannel: Notcurses::Channels.new) }.to raise_error(TypeError)
-      expect { described_class.new(plane, brchannel: 2**32) }.to raise_error(ArgumentError)
+      expect { described_class.new(plane, ul_channel: Notcurses::Channels.new) }.to raise_error(TypeError)
+      expect { described_class.new(plane, br_channel: 2**32) }.to raise_error(ArgumentError)
       expect { described_class.new(plane, retrograde: :si) }.to raise_error(TypeError)
       expect { described_class.new(std) }.to raise_error(Notcurses::WidgetError, /stdplane/)
       described_class.open(plane) do |bar|

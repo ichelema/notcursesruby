@@ -60,8 +60,8 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     Notcurses::Direct.open(**opts) do |d|
       puts "can_get_cursor #{d.can_get_cursor?}"
       puts "cursor_yx #{d.cursor_yx.join(',')}"
-      d.cursor_move(y: 2) # con x: nil il C chiede la colonna al terminale
-      puts 'cursor_move ok'
+      d.move_cursor(y: 2) # con x: nil il C chiede la colonna al terminale
+      puts 'move_cursor ok'
       Thread.new do
         sleep 0.01 until lock.synchronize { log.include?('RL> ') }
         sleep 0.3
@@ -74,11 +74,149 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     puts 'fine'
   RUBY
 
-  it 'init, cursor_yx, cursor_move e readline lasciano girare i thread Ruby mentre aspettano il terminale' do
+  it 'init, cursor_yx, move_cursor e readline lasciano girare i thread Ruby mentre aspettano il terminale' do
     out, status, timed_out = run_child(child_script, timeout: 15)
     expect(timed_out).to be(false), "processo figlio bloccato (GVL tenuto durante un'attesa?):\n#{out}"
     expect(status.exitstatus).to eq(0), out
-    expect(out).to include('context 24x80', 'can_get_cursor true', 'cursor_yx 4,6', 'cursor_move ok', 'fine')
+    expect(out).to include('context 24x80', 'can_get_cursor true', 'cursor_yx 4,6', 'move_cursor ok', 'fine')
     expect(out[/readline "ab" ticks (\d+)/, 1].to_i).to be >= 10 # readline attende circa 0,3 s
+  end
+
+  # Ctrl-C mentre l'init attende il terminale: Ruby consegna l'Interrupt al
+  # ritorno della chiamata bloccante, dove il puntatore del contesto andrebbe
+  # perso (contesto C orfano, registro occupato, SIGSEGV all'uscita).
+  def interrupt_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        data.scan(/\e\[6n|\e\[c/) do |q|
+          sleep 0.6 if q == "\e[c" # risposta a DA1 in ritardo: l'init attende nel C
+          master.write(q == "\e[6n" ? "\e[5;7R" : "\e[?62;22c")
+        end
+      end
+    rescue IOError, Errno::EIO
+    end
+    opts = { output: slave.path, termtype: 'xterm-256color' }
+    [[Notcurses::Context, { suppress_banners: true }], [Notcurses::Direct, {}]].each do |klass, extra|
+      Thread.new { sleep 0.2; Process.kill(:INT, Process.pid) }
+      begin
+        klass.new(**opts, **extra)
+        puts "#{klass}: nessuna Interrupt"
+      rescue Interrupt
+        puts "#{klass}: Interrupt, active_context=#{Notcurses.active_context.inspect}"
+      end
+      klass.open(**opts, **extra) { |c| puts "#{klass}: riaperto #{c.class}" }
+    end
+    puts 'fine'
+  RUBY
+
+  it "un Ctrl-C durante l'attesa dell'init ferma il contesto, libera il registro ed esce pulito" do
+    out, status, timed_out = run_child(interrupt_script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('Notcurses::Context: Interrupt, active_context=nil', 'Notcurses::Context: riaperto',
+                           'Notcurses::Direct: Interrupt, active_context=nil', 'Notcurses::Direct: riaperto', 'fine')
+    expect(status.exitstatus).to eq(0), out
+  end
+
+  # Context#get e #getvec con eventi veri scritti sul pty.
+  def get_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        data.scan(/\e\[6n|\e\[c/) { |q| master.write(q == "\e[6n" ? "\e[5;7R" : "\e[?62;22c") }
+      end
+    rescue IOError, Errno::EIO
+    end
+    ticks = 0
+    Thread.new { loop { ticks += 1; sleep 0.005 } }
+    clock = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      t0 = clock.call
+      puts "timeout #{nc.get(timeout: 0.3).inspect} #{(clock.call - t0).round(1)}"
+      Thread.new { sleep 0.5; master.write('ab') }
+      before = ticks
+      ev = nc.get(timeout: 5)
+      puts "get #{ev.utf8} ticks #{ticks - before}"
+      puts "get2 #{nc.get(timeout: 1).utf8}"
+      Thread.new { sleep 0.3; master.write("xyz\e[A") }
+      events = nc.getvec(10, timeout: 5)
+      puts "getvec #{events.map { |e| e.id == Notcurses::Key::UP ? 'UP' : e.utf8 }.join(',')}"
+      puts "getvec_vuoto #{nc.getvec(3, timeout: 0.2).inspect}"
+      Thread.new { sleep 0.3; Process.kill(:INT, Process.pid) }
+      begin
+        nc.get
+      rescue Interrupt
+        puts 'interrupt ok'
+      end
+      puts "dopo_interrupt #{nc.get(timeout: 0.1).inspect}"
+    end
+    puts 'fine'
+  RUBY
+
+  it 'get attende senza GVL, getvec legge più eventi, il timeout scade con nil e un Interrupt esce da get' do
+    out, status, timed_out = run_child(get_script, timeout: 20)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(status.exitstatus).to eq(0), out
+    expect(out).to match(/^timeout nil 0\.3$/)
+    expect(out[/^get a ticks (\d+)$/, 1].to_i).to be > 20 # 0,5 s di attesa: gli altri thread girano
+    expect(out).to include("get2 b\n", "getvec x,y,z,UP\n", "getvec_vuoto []\n", "interrupt ok\n",
+                           "dopo_interrupt nil\n")
+    expect(out).to end_with("fine\n")
+  end
+
+  # Con il blitter :pixel ncdirect_render_image e ncdirect_raster_frame chiedono
+  # la posizione del cursore al terminale (direct.c:439). Il terminale finto
+  # dichiara sixel in DA1 e risponde alle query della grafica.
+  def pixel_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [24, 80, 640, 384]
+    STDIN.reopen(slave)
+    replies = {
+      "\e[6n" => "\e[5;1R", "\e[c" => "\e[?62;4;22c", "\e[14t" => "\e[4;384;640t", "\e[18t" => "\e[8;24;80t",
+      "\e[?2;1;0S" => "\e[?2;0;640;384S", "\e[?1;1;0S" => "\e[?1;0;256S"
+    }
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        data.scan(Regexp.union(replies.keys)) { |q| master.write(replies[q]) }
+      end
+    rescue IOError, Errno::EIO
+    end
+    Notcurses::Direct.open(output: slave.path, termtype: 'xterm-256color') do |d|
+      puts "can_pixel #{d.can_pixel?}"
+      d.render_image(PNG, blitter: :pixel)
+      puts 'render_image ok'
+      d.render_frame(PNG, blitter: :pixel).raster(align: :center)
+      puts 'raster ok'
+      d.stream(PNG, blitter: :pixel)
+      puts 'stream ok'
+    end
+    puts 'fine'
+  RUBY
+
+  it 'render_image, Frame#raster e stream con il blitter :pixel lasciano girare i thread Ruby' do
+    png = File.expand_path('../../notcurses/data/onedot.png', __dir__)
+    out, status, timed_out = run_child("PNG = #{png.dump}\n#{pixel_script}", timeout: 20)
+    expect(timed_out).to be(false), "processo figlio bloccato (GVL tenuto durante un'attesa?):\n#{out}"
+    expect(out).to include('can_pixel true', 'render_image ok', 'raster ok', 'stream ok', 'fine')
+    expect(status.exitstatus).to eq(0), out
   end
 end

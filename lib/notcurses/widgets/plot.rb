@@ -47,7 +47,7 @@ module Notcurses
   #
   # @example
   #   plane = nc.stdplane.create_child(rows: 5, cols: 40)
-  #   plot = Notcurses::Plot.new(plane, type: :double, grid: :braille, label_ticks: true, title: 'CPU')
+  #   plot = Notcurses::Plot.new(plane, type: :double, blitter: :braille, label_ticks: true, title: 'CPU')
   #   plot.add_sample(0, 12.5)
   #   plot.add_sample(1, 40.0)
   #   nc.render
@@ -83,7 +83,7 @@ module Notcurses
     # @param min [Integer, Float] minimo del dominio fisso (0 con max 0 = dominio
     #   automatico)
     # @param max [Integer, Float] massimo del dominio fisso, >= min
-    # @param grid [Symbol, Integer] blitter (vedi {Util::BLITTERS}): :default
+    # @param blitter [Symbol, Integer] blitter (vedi {Util::BLITTERS}): :default
     #   (8x1 con UTF-8, altrimenti ASCII), :ascii, :half, :quad, :sextant,
     #   :octant, :braille, :pixel, :four_by_one, :eight_by_one
     # @param range_x [Integer] slot richiesti, 0..INT_MAX: 0, o più delle
@@ -106,17 +106,17 @@ module Notcurses
     # @param print_sample [Boolean] NCPLOT_OPTION_PRINTSAMPLE: stampa un
     #   campione recente in alto a destra
     # @raise [WidgetError] se il blitter non è disponibile con no_degrade
+    #   (piano intatto); con label_ticks su un piano di 7 colonne o meno
     #   (piano intatto); se il C restituisce NULL (il piano risulta
     #   distrutto); se il piano è lo stdplane, è già di un widget o non è
     #   posseduto; dentro un callback chiamato da notcurses
     # @raise [TypeError, ArgumentError] se un'opzione non è valida: type,
     #   valori del dominio (min == max diverso da 0, max < min,
-    #   detect_max_only con il dominio fisso), grid, label_ticks su un piano di
-    #   7 colonne o meno
+    #   detect_max_only con il dominio fisso), blitter
     # @raise [ClosedError] se il piano è chiuso
     # @raise [Exception] l'eccezione di un callback Ruby di resize di un figlio
     #   del piano
-    def initialize(plane, type: :uint64, min: 0, max: 0, grid: :default, range_x: 0, title: nil,
+    def initialize(plane, type: :uint64, min: 0, max: 0, blitter: :default, range_x: 0, title: nil,
                    max_channels: 0, min_channels: 0, legend_style: 0, label_ticks: false,
                    exponential: false, no_degrade: false, detect_max_only: false, print_sample: false)
       raise ArgumentError, "type = #{type.inspect} non valido: usa :uint64 o :double" unless TYPES.include?(type)
@@ -137,14 +137,14 @@ module Notcurses
               Util.flag(exponential, FFI::NCPLOT_OPTION_EXPONENTIALD, 'exponential') |
               Util.flag(detect_max_only, FFI::NCPLOT_OPTION_DETECTMAXONLY, 'detect_max_only') |
               Util.flag(print_sample, FFI::NCPLOT_OPTION_PRINTSAMPLE, 'print_sample')
-      requested = Util.blitter_value(grid)
+      requested = Util.blitter_value(blitter)
       Util.bool!(no_degrade, 'no_degrade')
       claim_plane!(plane)
       ctx = plane.context
       ctx.check_not_in_callback!('Plot.new', WidgetError)
       cols = plane.dim_x
       if @label_ticks && cols <= FFI::NCPREFIXCOLUMNS
-        raise ArgumentError,
+        raise WidgetError,
               "label_ticks: richiede un piano di almeno #{FFI::NCPREFIXCOLUMNS + 1} colonne (ne ha #{cols})"
       end
 

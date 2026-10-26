@@ -131,6 +131,21 @@ RSpec.describe Notcurses::Tree do
       expect(plane).to be_closed
       expect(nc.callback_errors).to be_empty
     end
+
+    it 'break e throw nel blocco non attraversano il C: LocalJumpError, senza piani orfani' do
+      before = nc.stats.planes
+      plane = new_plane
+      expect { described_class.new(plane, items: items) { |_p, _v, _d| break :uscita } }.to raise_error(LocalJumpError)
+      expect(plane).to be_closed
+      expect(nc.stats.planes).to eq(before)
+      expect(nc.callback_errors).to be_empty
+      draw = ->(_p, _v, _d) { 1 }
+      tree = described_class.new(new_plane, items: items, draw: ->(pl, v, d) { draw.call(pl, v, d) })
+      draw = ->(_p, _v, _d) { throw :fuori }
+      expect { catch(:fuori) { tree.redraw } }.to raise_error(LocalJumpError)
+      expect(nc.callback_errors).to be_empty
+      tree.close
+    end
   end
 
   describe 'navigazione' do
@@ -229,6 +244,13 @@ RSpec.describe Notcurses::Tree do
       expect(tree.count).to eq(4)
       tree.redraw
       expect(item_layout(tree.plane).map(&:last)).to eq(%w[a.0 b.0 b0.0 c.0])
+      tree.close
+      tree = new_tree(['a', { 'b' => %w[b0 b1 b2] }])
+      tree.delete([1, 0]) # una voce non ultima a profondità 2: il C sposta i fratelli successivi
+      expect(walk(tree)).to eq(%w[a b b1 b2])
+      expect(tree.count).to eq(4)
+      tree.delete([1, 1])
+      expect(walk(tree)).to eq(%w[a b b1])
       tree.close
     end
 

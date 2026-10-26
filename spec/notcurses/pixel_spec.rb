@@ -41,7 +41,7 @@ RSpec.describe Notcurses::Pixel do
     expect { described_class.rgb(0, 0, -1) }.to raise_error(ArgumentError)
     expect { described_class.rgb(0, 0.5, 0) }.to raise_error(TypeError)
     expect { described_class.rgb(0, 0, 0).with_a(300) }.to raise_error(ArgumentError)
-    expect { described_class.new(0x1_0000_0000) }.to raise_error(ArgumentError)
+    expect { described_class.new(value: 0x1_0000_0000) }.to raise_error(ArgumentError)
   end
 
   it 'uguaglianza e hash per valore' do

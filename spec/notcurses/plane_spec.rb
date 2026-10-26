@@ -20,6 +20,17 @@ RSpec.describe Notcurses::Plane do
     parent.family_destroy if parent && !parent.closed?
   end
 
+  # Piani della pila dello stdplane, dall'alto in basso.
+  def z_order
+    planes = []
+    plane = nc.top
+    while plane
+      planes << plane
+      plane = plane.below
+    end
+    planes
+  end
+
   # Testo della riga y letto con le funzioni raw (l'output di Plane è provato altrove).
   def raw_put(plane, y, x, text) = Notcurses::FFI.ncplane_putstr_yx(plane.to_ptr, y, x, text)
 
@@ -191,7 +202,7 @@ RSpec.describe Notcurses::Plane do
         expect(m.yx).to eq([1, 4])
         other = p.create_child(rows: 1, cols: 1)
         expect { other.resize_marginalized }.to raise_error(Notcurses::PlaneError)
-        expect { other.set_resize_callback(:marginalized) }.to raise_error(Notcurses::PlaneError)
+        expect { other.set_resize_callback(callback: :marginalized) }.to raise_error(Notcurses::PlaneError)
       end
     end
 
@@ -220,19 +231,19 @@ RSpec.describe Notcurses::Plane do
         seen = []
         c = p.create_child(rows: 1, cols: 1)
         cb = ->(plane) { seen << plane }
-        expect(c.set_resize_callback(cb)).to equal(c)
+        expect(c.set_resize_callback(callback: cb)).to equal(c)
         expect(c.resize_callback).to equal(cb)
         p.resize(11, 21)
         expect(seen).to eq([c])
         c.set_resize_callback { |plane| seen << plane.dims }
         p.resize(10, 20)
         expect(seen.last).to eq([1, 1])
-        c.set_resize_callback(:maximize)
+        c.set_resize_callback(callback: :maximize)
         expect(c.resize_callback).to eq(:maximize)
-        c.set_resize_callback(nil)
+        c.set_resize_callback(callback: nil)
         expect(c.resize_callback).to be_nil
-        expect { c.set_resize_callback(cb) { nil } }.to raise_error(ArgumentError)
-        expect { std.set_resize_callback(:maximize) }.to raise_error(Notcurses::PlaneError)
+        expect { c.set_resize_callback(callback: cb) { nil } }.to raise_error(ArgumentError)
+        expect { std.set_resize_callback(callback: :maximize) }.to raise_error(Notcurses::PlaneError)
       end
     end
 
@@ -242,6 +253,36 @@ RSpec.describe Notcurses::Plane do
         expect { p.resize(11, 21) }.to raise_error(ArgumentError, 'dal callback')
         expect(p.dims).to eq([11, 21])
       end
+    end
+
+    it 'l\'eccezione di un callback non interrompe a metà il callback di un fratello' do
+      with_parent(rows: 10, cols: 20) do |p|
+        b = p.create_child(margins: [1, 1, 1, 1], resize: :marginalized) # creato prima: nella lista viene dopo
+        b.move(5, 5)
+        p.create_child(rows: 1, cols: 1, resize: ->(_) { raise 'A fallisce' })
+        expect { p.resize(12, 30) }.to raise_error(RuntimeError, 'A fallisce')
+        expect(b.dims).to eq([10, 28])
+        expect(b.yx).to eq([1, 1])
+        expect(nc.callback_errors).to be_empty
+      end
+    end
+
+    it 'throw e return nel callback non attraversano il C: LocalJumpError dal metodo che ha causato il resize' do
+      with_parent do |p|
+        calls = []
+        p.create_child(rows: 2, cols: 2, resize: ->(_) { calls << :a; throw :fuori })
+        p.create_child(rows: 2, cols: 2, resize: ->(_) { calls << :b })
+        expect { catch(:fuori) { p.resize(11, 21) } }.to raise_error(LocalJumpError, /callback/)
+        expect(calls).to eq(%i[b a])
+        expect(nc.callback_errors).to be_empty
+      end
+      runner = Object.new
+      def runner.go(parent)
+        parent.create_child(rows: 1, cols: 1, resize: proc { |_| return :dal_callback })
+        parent.resize(12, 22)
+        :normale
+      end
+      with_parent { |p| expect { runner.go(p) }.to raise_error(LocalJumpError) }
     end
 
     it 'dentro un callback non si possono distruggere o riparentare piani' do
@@ -260,9 +301,9 @@ RSpec.describe Notcurses::Plane do
       with_parent do |p|
         c = p.create_child(rows: 1, cols: 1)
         borrowed = described_class.new(c.address_ptr, owned: false, context: nc, tracked: false)
-        expect { borrowed.set_resize_callback(->(_) {}) }.to raise_error(Notcurses::PlaneError)
-        expect { borrowed.set_resize_callback(:placewithin) }.to raise_error(Notcurses::PlaneError)
-        borrowed.set_resize_callback(:realign)
+        expect { borrowed.set_resize_callback(callback: ->(_) {}) }.to raise_error(Notcurses::PlaneError)
+        expect { borrowed.set_resize_callback(callback: :placewithin) }.to raise_error(Notcurses::PlaneError)
+        borrowed.set_resize_callback(callback: :realign)
         expect(c.resize_callback).to eq(:realign)
       end
     end
@@ -365,7 +406,7 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
-    it 'move_top, move_bottom e le varianti family' do
+    it 'move_top, move_bottom e le varianti family (ordine esatto di 3.0.17)' do
       with_parent do |p|
         a = p.create_child(rows: 1, cols: 1)
         b = p.create_child(rows: 1, cols: 1)
@@ -373,10 +414,11 @@ RSpec.describe Notcurses::Plane do
         expect(nc.top).to equal(a)
         expect(a.move_bottom).to equal(a)
         expect(nc.bottom).to equal(a)
+        expect(z_order).to eq([b, p, std, a])
         expect(p.move_family_top).to equal(p)
-        expect(nc.top).to equal(p).or equal(b).or equal(a)
+        expect(z_order).to eq([b, p, a, std])
         expect(p.move_family_bottom).to equal(p)
-        expect(nc.bottom).to eq(p).or eq(a).or eq(b)
+        expect(z_order).to eq([std, b, p, a])
       end
     end
 
@@ -419,11 +461,11 @@ RSpec.describe Notcurses::Plane do
       with_parent(rows: 3, cols: 4, vscroll: true) do |p|
         raw_put(p, 2, 0, 'end')
         p.home
-        expect(p.scrollup(1)).to equal(p)
+        expect(p.scrollup(lines: 1)).to equal(p)
         egc = Notcurses::FFI.ncplane_at_yx(p.to_ptr, 1, 0, nil, nil)
         expect(Notcurses::Util.take_string(egc)).to eq('e')
         expect(p.cursor).to eq([2, 0])
-        expect { p.scrollup(0) }.to raise_error(ArgumentError)
+        expect { p.scrollup(lines: 0) }.to raise_error(ArgumentError)
         p.scrolling = false
         expect { p.scrollup }.to raise_error(Notcurses::PlaneError)
       end
@@ -455,8 +497,11 @@ RSpec.describe Notcurses::Plane do
     it 'move_cursor, move_cursor_rel, home, cursor' do
       with_parent(rows: 3, cols: 4) do |p|
         expect(p.move_cursor(1, 2)).to equal(p)
-        expect([p.cursor, p.cursor_y, p.cursor_x]).to eq([[1, 2], 1, 2])
-        expect(p.move_cursor(-1, 3).cursor).to eq([1, 3])
+        expect([p.cursor, p.cursor_yx, p.cursor_y, p.cursor_x]).to eq([[1, 2], [1, 2], 1, 2])
+        expect(p.move_cursor(nil, 3).cursor).to eq([1, 3])
+        expect(p.move_cursor(2, nil).cursor).to eq([2, 3])
+        expect(p.move_cursor(nil, nil).cursor).to eq([2, 3])
+        expect(p.move_cursor(1, 3).cursor).to eq([1, 3])
         expect(p.move_cursor_rel(1, -3).cursor).to eq([2, 0])
         expect(p.home.cursor).to eq([0, 0])
       end
@@ -468,6 +513,7 @@ RSpec.describe Notcurses::Plane do
         expect { p.move_cursor(3, 0) }.to raise_error(Notcurses::PlaneError)
         expect { p.move_cursor(0, 4) }.to raise_error(Notcurses::PlaneError)
         expect { p.move_cursor(-2, 0) }.to raise_error(Notcurses::PlaneError)
+        expect { p.move_cursor(-1, 0) }.to raise_error(Notcurses::PlaneError) # -1 non vuol dire «resta»: usa nil
         expect { p.move_cursor_rel(-2, 0) }.to raise_error(Notcurses::PlaneError)
         expect(p.cursor).to eq([1, 2])
         expect { p.move_cursor('1', 0) }.to raise_error(TypeError)
@@ -499,6 +545,32 @@ RSpec.describe Notcurses::Plane do
     it 'rifiuta un puntatore NULL' do
       expect { described_class.new(::FFI::Pointer::NULL, context: nc) }.to raise_error(Notcurses::PlaneError)
     end
+
+    it 'un piano chiuso non è == al piano nuovo che riusa il suo indirizzo' do
+      with_parent do |p|
+        old = p.create_child(rows: 1, cols: 1)
+        addr = old.address
+        old.close
+        # glibc riusa subito il blocco liberato della stessa dimensione
+        fresh = Array.new(50) { p.create_child(rows: 1, cols: 1) }.find { |pl| pl.address == addr }
+        skip "malloc non ha riusato l'indirizzo" unless fresh
+        expect(old).to eq(old)
+        expect(old).not_to eq(fresh)
+        expect(old.eql?(fresh)).to be(false)
+        expect({ old => :vecchio }[fresh]).to be_nil
+      end
+    end
+
+    it 'rifiuta un secondo wrapper tracciato o posseduto di un piano che ha già un wrapper aperto' do
+      with_parent do |p|
+        c = p.create_child(rows: 1, cols: 1, resize: ->(_) {})
+        # tracciato sfratterebbe c e il suo trampolino di resize; posseduto distruggerebbe il piano sotto c
+        expect { described_class.new(c.to_ptr, owned: false, context: nc) }.to raise_error(ArgumentError, /già/)
+        expect { described_class.new(c.to_ptr, context: nc, tracked: false) }.to raise_error(ArgumentError, /già/)
+        expect(c).not_to be_closed
+        expect(c.resize_callback).to be_a(Proc)
+      end
+    end
   end
 
   describe 'testo' do
@@ -519,8 +591,8 @@ RSpec.describe Notcurses::Plane do
       with_parent(rows: 3, cols: 10) do |p|
         p.putstr('ab', y: 0, align: :right)
         p.putstr('ab', y: 1, align: :center)
-        expect(p.at(0, 9).egc).to eq('b')
-        expect(p.at(1, 4).egc).to eq('a')
+        expect(p.at(y: 0, x: 9).egc).to eq('b')
+        expect(p.at(y: 1, x: 4).egc).to eq('a')
         expect { p.putstr('a', x: 0, align: :left) }.to raise_error(ArgumentError)
         expect { p.putstr('a', align: :top) }.to raise_error(ArgumentError)
         expect { p.putstr('x' * 11, align: :left) }.to raise_error(Notcurses::PlaneError)
@@ -549,6 +621,18 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    it 'contents e at non espongono la cella "\n" che notcurses lascia dopo una riga vuota' do
+      with_parent(rows: 3, cols: 5) do |p|
+        p.scrolling = true
+        expect(p.putstr("a\n\nb", y: 0, x: 0)).to eq(4)
+        expect(p.contents).to eq('ab')
+        expect(p.at(y: 1, x: 0)).to be_empty
+        expect(p.at(y: 1, x: 0)).to eq(Notcurses::Cell.new(egc: ''))
+        nc.render
+        expect(nc.at(4, 4)).to be_empty # il C la disegna come uno spazio (render.c:619)
+      end
+    end
+
     it 'putstr con autogrow allarga il piano' do
       with_parent(rows: 1, cols: 3) do |p|
         p.autogrow = true
@@ -569,7 +653,17 @@ RSpec.describe Notcurses::Plane do
         expect { p.putstr(:a) }.to raise_error(TypeError)
         expect(p.contents).to eq('')
         expect(p.putstr("éx", y: 0, x: 0)).to eq(2)
-        expect(p.at(0, 0).egc).to eq("é")
+        expect(p.at(y: 0, x: 0).egc).to eq("é")
+      end
+    end
+
+    it 'una String non convertibile in UTF-8 è ArgumentError, anche in una codifica senza convertitore' do
+      with_parent(rows: 1, cols: 10) do |p|
+        expect { p.putstr("\x80".dup.force_encoding(Encoding::Shift_JIS)) }.to raise_error(ArgumentError, /UTF-8/)
+        expect { p.create_child(rows: 1, cols: 1, name: 'abc'.dup.force_encoding('UTF-7')) }
+          .to raise_error(ArgumentError, /UTF-8/)
+        expect(p.putstr('ü'.encode(Encoding::ISO_8859_1), y: 0, x: 0)).to eq(1)
+        expect(p.at(y: 0, x: 0).egc).to eq('ü')
       end
     end
 
@@ -577,7 +671,7 @@ RSpec.describe Notcurses::Plane do
       with_parent(rows: 1, cols: 10) do |p|
         astronaut = "\u{1F469}‍\u{1F680}"
         expect(p.putstr("x#{astronaut}z", y: 0, x: 0)).to eq(4)
-        expect([p.at(0, 0).egc, p.at(0, 1).egc, p.at(0, 3).egc]).to eq(['x', astronaut, 'z'])
+        expect([p.at(y: 0, x: 0).egc, p.at(y: 0, x: 1).egc, p.at(y: 0, x: 3).egc]).to eq(['x', astronaut, 'z'])
       end
     end
 
@@ -598,8 +692,8 @@ RSpec.describe Notcurses::Plane do
         p.putstr('abc', y: 0, x: 0)
         p.set_fg_rgb24(0x445566)
         expect(p.putstr('XY', y: 0, x: 0, stained: true)).to eq(2)
-        expect(p.at(0, 0).egc).to eq('X')
-        expect(p.at(0, 0).channels.fg_rgb24).to eq(0x112233)
+        expect(p.at(y: 0, x: 0).egc).to eq('X')
+        expect(p.at(y: 0, x: 0).channels.fg_rgb24).to eq(0x112233)
         expect(p.fg_rgb24).to eq(0x445566)
         expect { p.putstr('123456', y: 1, x: 0, stained: true) }.to raise_error(Notcurses::PlaneError)
         p.scrolling = true
@@ -631,10 +725,10 @@ RSpec.describe Notcurses::Plane do
 
     it 'putc scrive una Cell con il suo stile e i suoi colori' do
       with_parent(rows: 1, cols: 10) do |p|
-        cell = Notcurses::Cell.new('★', styles: :bold, channels: red)
+        cell = Notcurses::Cell.new(egc: '★', styles: :bold, channels: red)
         expect(p.putc(cell, y: 0, x: 0)).to eq(1)
-        expect(p.at(0, 0)).to eq(cell)
-        expect(p.putc(Notcurses::Cell.new(''))).to eq(1)
+        expect(p.at(y: 0, x: 0)).to eq(cell)
+        expect(p.putc(Notcurses::Cell.new(egc: ''))).to eq(1)
         expect { p.putc('a') }.to raise_error(TypeError)
       end
     end
@@ -645,7 +739,7 @@ RSpec.describe Notcurses::Plane do
         expect((0..3).map { |y| p.contents(y: y, rows: 1) }).to eq(['uno due', 'tre', 'quattro', 'cinque'])
         p.erase
         p.puttext("ab\n\ncd", y: 0, align: :right)
-        expect([p.at(0, 9).egc, p.at(2, 9).egc]).to eq(%w[b d])
+        expect([p.at(y: 0, x: 9).egc, p.at(y: 2, x: 9).egc]).to eq(%w[b d])
         expect(p.contents(y: 1, rows: 1)).to eq('')
       end
     end
@@ -742,8 +836,8 @@ RSpec.describe Notcurses::Plane do
 
     it 'hline con from: e to: sfuma i colori senza raggiungere to' do
       with_parent(rows: 1, cols: 10) do |p|
-        p.hline(Notcurses::Cell.new('='), 5, y: 0, x: 0, from: black, to: red)
-        expect((0..4).map { |x| p.at(0, x).channels.fg_rgb.first }).to eq([0, 50, 100, 150, 200])
+        p.hline(Notcurses::Cell.new(egc: '='), 5, y: 0, x: 0, from: black, to: red)
+        expect((0..4).map { |x| p.at(y: 0, x: x).channels.fg_rgb.first }).to eq([0, 50, 100, 150, 200])
       end
     end
 
@@ -751,10 +845,10 @@ RSpec.describe Notcurses::Plane do
       with_parent(rows: 4, cols: 3) do |p|
         p.scrolling = true
         expect(p.vline('|', 4, y: 0, x: 1).cursor).to eq([3, 2])
-        expect((0..3).map { |y| p.at(y, 1).egc }).to eq(%w[| | | |])
+        expect((0..3).map { |y| p.at(y: y, x: 1).egc }).to eq(%w[| | | |])
         expect { p.vline('|', 2, y: 3, x: 0) }.to raise_error(ArgumentError)
         p.vline('!', 3, y: 0, x: 0, from: black, to: red)
-        expect(p.at(2, 0).channels.fg_rgb.first).to be > p.at(0, 0).channels.fg_rgb.first
+        expect(p.at(y: 2, x: 0).channels.fg_rgb.first).to be > p.at(y: 0, x: 0).channels.fg_rgb.first
       end
     end
 
@@ -767,7 +861,7 @@ RSpec.describe Notcurses::Plane do
         p.box(2, 3, y: 0, x: 0, set: '+-+-=!')
         expect(p.contents(rows: 2, cols: 3)).to eq('+=-+=-')
         p.erase
-        cells = %w[a b c d e f].map { |g| Notcurses::Cell.new(g) }
+        cells = %w[a b c d e f].map { |g| Notcurses::Cell.new(egc: g) }
         p.box(3, 3, y: 0, x: 0, set: cells, hide: :left)
         expect(p.contents(rows: 3, cols: 3)).to eq('aebfced')
       end
@@ -783,7 +877,7 @@ RSpec.describe Notcurses::Plane do
         expect { p.box(2, 2, y: 0, x: 0, set: :fancy) }.to raise_error(ArgumentError)
         expect { p.box(2, 2, y: 0, x: 0, hide: :up) }.to raise_error(ArgumentError)
         expect { p.box(2, 2, y: 0, x: 0, corners: 4) }.to raise_error(ArgumentError)
-        cells = Array.new(6) { Notcurses::Cell.new('#') }
+        cells = Array.new(6) { Notcurses::Cell.new(egc: '#') }
         expect { p.box(2, 2, y: 0, x: 0, set: cells, styles: :bold) }.to raise_error(ArgumentError)
       end
     end
@@ -811,8 +905,8 @@ RSpec.describe Notcurses::Plane do
       with_parent(rows: 4, cols: 10) do |p|
         blue = Notcurses::Channels.rgb(0, 0, 255, 0, 0, 0)
         expect(p.gradient('x', red, blue, red, blue)).to eq(40)
-        expect(p.at(0, 0).channels.fg_rgb).to eq([250, 0, 0])
-        expect(p.at(3, 9).channels.fg_rgb).to eq([0, 0, 255])
+        expect(p.at(y: 0, x: 0).channels.fg_rgb).to eq([250, 0, 0])
+        expect(p.at(y: 3, x: 9).channels.fg_rgb).to eq([0, 0, 255])
         p.erase
         expect { p.gradient('x', 0, red, 0, 0) }.to raise_error(ArgumentError, /default/)
         expect { p.gradient('x', red, blue, blue, red, rows: 1) }.to raise_error(ArgumentError)
@@ -833,7 +927,7 @@ RSpec.describe Notcurses::Plane do
         a = Notcurses::Channel.rgb(255, 0, 0)
         b = Notcurses::Channel.rgb(0, 0, 255)
         expect(p.gradient2x1(a, b, a, b)).to eq(8)
-        expect(p.at(0, 0).egc).to eq('▀')
+        expect(p.at(y: 0, x: 0).egc).to eq('▀')
         expect { p.gradient2x1(a, b, a, b, cols: 1) }.to raise_error(ArgumentError)
       end
     end
@@ -843,8 +937,8 @@ RSpec.describe Notcurses::Plane do
         p.putstr('ab', y: 0, x: 0)
         grey = Notcurses::Channels.rgb(9, 9, 9, 0, 0, 0)
         expect(p.stain(grey, grey, grey, grey)).to eq(8)
-        expect(p.at(0, 0).channels.fg_rgb).to eq([9, 9, 9])
-        expect(p.at(0, 0).egc).to eq('a')
+        expect(p.at(y: 0, x: 0).channels.fg_rgb).to eq([9, 9, 9])
+        expect(p.at(y: 0, x: 0).egc).to eq('a')
         expect { p.stain(grey, grey, grey, grey, y: 2) }.to raise_error(ArgumentError)
       end
     end
@@ -853,9 +947,85 @@ RSpec.describe Notcurses::Plane do
       with_parent(rows: 2, cols: 4) do |p|
         p.putstr('abcd', y: 0, x: 0)
         expect(p.restyle(:bold, rows: 1, cols: 2)).to eq(2)
-        expect(p.at(0, 0).styles).to eq([:bold])
-        expect(p.at(0, 2).styles).to eq([])
+        expect(p.at(y: 0, x: 0).styles).to eq([:bold])
+        expect(p.at(y: 0, x: 2).styles).to eq([])
         expect { p.restyle(:bold, cols: 5) }.to raise_error(ArgumentError)
+      end
+    end
+
+    it 'merge_down fonde nel piano di destinazione; se stesso e un\'altra pila sono PlaneError, come i -1 del C' do
+      with_parent(rows: 4, cols: 8) do |p|
+        c = p.create_child(rows: 2, cols: 4, y: 1, x: 1)
+        c.putstr('ab', y: 0, x: 0)
+        expect(c.merge_down(p)).to equal(c)
+        expect(p.contents(y: 1, x: 1, rows: 1, cols: 4)).to eq('ab')
+        expect(c.contents).to eq('ab')
+        expect { c.merge_down(c) }.to raise_error(Notcurses::PlaneError, /stesso/)
+        nc.create_pile(rows: 2, cols: 2) do |pile|
+          expect { c.merge_down(pile) }.to raise_error(Notcurses::PlaneError, /pila/)
+        end
+        expect { c.merge_down(:std) }.to raise_error(TypeError)
+      end
+    end
+
+    it 'erase_region cancella la regione, la taglia al bordo e non muove il cursore' do
+      with_parent(rows: 2, cols: 4) do |c|
+        c.putstr('ab', y: 0, x: 0)
+        c.putstr('cd', y: 1, x: 0)
+        expect(c.erase_region(0, 0, 1, 1)).to equal(c)
+        expect(c.contents).to eq('bcd')
+        expect(c.cursor).to eq([1, 2])
+        expect(c.erase_region(1, 1, 5, 5).contents).to eq('bc')
+        expect { c.erase_region(2, 0, 1, 1) }.to raise_error(ArgumentError)
+        expect { c.erase_region(0, 0, 0, 1) }.to raise_error(ArgumentError)
+      end
+    end
+
+    it 'greyscale converte i colori delle celle, non quelli del piano' do
+      with_parent(rows: 1, cols: 1) do |g|
+        g.set_fg_rgb24(0xff0000)
+        g.putstr('x', y: 0, x: 0)
+        expect(g.greyscale).to equal(g)
+        expect(g.at(y: 0, x: 0).channels.fg.rgb).to eq([0x4c, 0x4c, 0x4c])
+        expect(g.fg_rgb24).to eq(0xff0000)
+      end
+    end
+
+    it 'as_rgba legge le celle come glifi del blitter' do
+      with_parent(rows: 1, cols: 2) do |q|
+        q.set_fg_rgb24(0xff0000)
+        q.set_bg_rgb24(0x0000ff)
+        q.putstr('  ', y: 0, x: 0)
+        bytes, height, width = q.as_rgba(:half, y: 0, x: 0)
+        expect([height, width, bytes.bytesize]).to eq([2, 2, 16])
+        expect(bytes.unpack('C*')).to eq([0, 0, 0xff, 0xff] * 4)
+        q.putstr('▀ ', y: 0, x: 0)
+        expect(q.as_rgba(:half, y: 0, x: 0)[0].byteslice(0, 8).unpack('C*')).to eq([0xff, 0, 0, 0xff, 0, 0, 0xff, 0xff])
+        expect(q.as_rgba(:half, y: 0, x: 0, rows: nil, cols: 1)[1, 2]).to eq([2, 1])
+        q.move_cursor(0, 1)
+        expect(q.as_rgba(:half, rows: 1, cols: nil)[1, 2]).to eq([2, 1]) # y: e x: nil = cursore
+        expect { q.as_rgba(:half, y: -1, x: 0) }.to raise_error(ArgumentError) # -1 non è il cursore: usa nil
+        expect { q.as_rgba(:half, y: 0, x: 0, rows: 0) }.to raise_error(ArgumentError)
+        q.putstr('▀ ', y: 0, x: 0)
+        expect { q.as_rgba(:half) }.to raise_error(Notcurses::PlaneError) # cursore in (0, 2): oltre il bordo
+        q.putstr('ab', y: 0, x: 0)
+        expect { q.as_rgba(:half, y: 0, x: 0) }.to raise_error(Notcurses::PlaneError)
+        expect { q.as_rgba(:pixel) }.to raise_error(ArgumentError)
+      end
+    end
+
+    it 'qrcode controlla gli argomenti prima del C' do
+      with_parent(rows: 20, cols: 40) do |c|
+        expect { c.qrcode('', rows: 20, cols: 40) }.to raise_error(ArgumentError)
+        expect { c.qrcode(1, rows: 20, cols: 40) }.to raise_error(TypeError)
+        expect { c.qrcode('ciao', rows: 0, cols: 40) }.to raise_error(ArgumentError)
+        # senza qrcodegen (la build di Arch) lo stub del C fallisce sempre
+        result = begin
+          c.qrcode('ciao', rows: 20, cols: 40)
+        rescue Notcurses::PlaneError
+          :senza_qrcodegen
+        end
+        expect(result).to eq(:senza_qrcodegen).or match([Integer, Integer, Integer])
       end
     end
   end
@@ -875,7 +1045,7 @@ RSpec.describe Notcurses::Plane do
         steps = 0
         expect(p.fadeout(0.05) { steps += 1; sleep 0.01; nil }).to equal(p)
         expect(steps).to be_between(2, 10)
-        expect(p.at(0, 0).channels.fg_rgb24).to eq(0)
+        expect(p.at(y: 0, x: 0).channels.fg_rgb24).to eq(0)
       end
     end
 
@@ -885,8 +1055,8 @@ RSpec.describe Notcurses::Plane do
       with_parent(rows: 1, cols: 5) do |p|
         colored_plane(p)
         p.fadein(0.02)
-        expect(p.at(0, 0).channels.fg_rgb24).to eq(0xc86432)
-        expect(p.at(0, 0).channels.bg_rgb24).to eq(0x102030)
+        expect(p.at(y: 0, x: 0).channels.fg_rgb24).to eq(0xc86432)
+        expect(p.at(y: 0, x: 0).channels.bg_rgb24).to eq(0x102030)
         calls = 0
         p.fadein(5) { calls += 1; :stop }
         expect(calls).to eq(1)

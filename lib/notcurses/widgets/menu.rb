@@ -83,14 +83,14 @@ module Notcurses
     #   buffer della descrizione, da U+10000 (e per ogni {Key}) il processo
     #   termina (menu.c:103-124)
     # @param bottom [Boolean] NCMENU_OPTION_BOTTOM: barra in fondo a parent
-    # @param headerchannels [Channels, Integer] colori della barra e dei bordi
-    # @param sectionchannels [Channels, Integer] colori delle voci (la voce
+    # @param header_channels [Channels, Integer] colori della barra e dei bordi
+    # @param section_channels [Channels, Integer] colori delle voci (la voce
     #   selezionata li inverte)
     # @raise [WidgetError] se +ncmenu_create+ fallisce, o dentro un callback
     #   chiamato da notcurses
     # @raise [TypeError, ArgumentError] se un'opzione non è valida
     # @raise [ClosedError] se parent è chiuso
-    def initialize(parent, sections:, bottom: false, headerchannels: 0, sectionchannels: 0)
+    def initialize(parent, sections:, bottom: false, header_channels: 0, section_channels: 0)
       raise TypeError, "parent deve essere Notcurses::Plane, non #{parent.class}" unless parent.is_a?(Plane)
 
       parent_ptr = parent.to_ptr
@@ -111,8 +111,8 @@ module Notcurses
       opts = FFI::NcMenuOptions.new
       opts[:sections] = secs
       opts[:sectioncount] = @sections.size
-      opts[:headerchannels] = Util.channels_value(headerchannels, 'headerchannels')
-      opts[:sectionchannels] = Util.channels_value(sectionchannels, 'sectionchannels')
+      opts[:headerchannels] = Util.channels_value(header_channels, 'header_channels')
+      opts[:sectionchannels] = Util.channels_value(section_channels, 'section_channels')
       opts[:flags] = Util.flag(bottom, FFI::NCMENU_OPTION_BOTTOM, 'bottom')
       ptr = Util.check_ptr!(FFI.ncmenu_create(parent_ptr, opts), WidgetError, 'ncmenu_create')
       # il piano del menu lo crea il C e lo distrugge ncmenu_destroy

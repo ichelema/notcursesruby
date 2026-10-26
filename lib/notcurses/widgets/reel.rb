@@ -26,7 +26,8 @@ module Notcurses
   # Disegno. Il blocco di un tablet riceve +(tablet, draw_from_top)+ e
   # disegna in {Tablet#plane} a partire dalla prima riga; il piano è alto
   # quanto lo spazio dati del reel. Restituisce le righe usate (Integer,
-  # ridotto a 0..righe del piano; 0 = il tablet non ha piano dati). Il tablet
+  # ridotto a 0..righe del piano; 0 = il tablet non ha piano dati e occupa
+  # solo i suoi bordi orizzontali, o una riga vuota se non ne ha). Il tablet
   # con il fuoco è disegnato per primo e ha tutta l'altezza; draw_from_top è
   # false per i tablet sopra il fuoco: se il reel li taglia, resta visibile la
   # loro parte bassa (mettila in fondo), mentre ai tablet sotto il fuoco resta
@@ -163,7 +164,8 @@ module Notcurses
     # @return [Tablet]
     # @raise [ArgumentError] senza blocco, se after o before non sono tablet
     #   aperti di questo reel o non sono adiacenti
-    # @raise [TypeError] se after o before non sono Tablet
+    # @raise [TypeError] se after o before non sono Tablet, o se un blocco non
+    #   restituisce un Integer
     # @raise [WidgetError] dentro il blocco di un tablet
     # @raise [Exception] l'eccezione di un blocco durante il ridisegno (il
     #   tablet resta aggiunto; nessun tablet resta disegnato)
@@ -191,7 +193,8 @@ module Notcurses
     # @param tablet [Tablet] tablet aperto di questo reel
     # @return [self]
     # @raise [ArgumentError] se tablet non è un tablet aperto di questo reel
-    # @raise [TypeError] se tablet non è un Tablet
+    # @raise [TypeError] se tablet non è un Tablet, o se un blocco non
+    #   restituisce un Integer
     # @raise [WidgetError] dentro il blocco di un tablet, o se un piano del
     #   tablet ospita un altro widget aperto
     # @raise [Exception] l'eccezione di un blocco durante il ridisegno (il
@@ -232,6 +235,7 @@ module Notcurses
     # fuoco resta lì, oppure passa al primo con infinite_scroll: true.
     #
     # @return [Tablet, nil] il tablet con il fuoco, nil se il reel è vuoto
+    # @raise [TypeError] se un blocco non restituisce un Integer
     # @raise [WidgetError] dentro il blocco di un tablet
     # @raise [Exception] l'eccezione di un blocco durante il ridisegno
     # @raise [ClosedError] se il reel è chiuso
@@ -243,6 +247,7 @@ module Notcurses
     # fuoco resta lì, oppure passa all'ultimo con infinite_scroll: true.
     #
     # @return [Tablet, nil] il tablet con il fuoco, nil se il reel è vuoto
+    # @raise [TypeError] se un blocco non restituisce un Integer
     # @raise [WidgetError] dentro il blocco di un tablet
     # @raise [Exception] l'eccezione di un blocco durante il ridisegno
     # @raise [ClosedError] se il reel è chiuso
@@ -256,7 +261,8 @@ module Notcurses
     # @param input [Input] evento
     # @return [Boolean] true se l'evento è stato consumato (anche con il reel
     #   vuoto); false per i rilasci e per gli altri eventi
-    # @raise [TypeError] se input non è un Input
+    # @raise [TypeError] se input non è un Input, o se un blocco non restituisce
+    #   un Integer
     # @raise [WidgetError] dentro il blocco di un tablet
     # @raise [Exception] l'eccezione di un blocco durante il ridisegno
     # @raise [ClosedError] se il reel è chiuso
@@ -395,7 +401,7 @@ module Notcurses
     # alto e, se in basso resta spazio, i tablet di sopra che non entravano.
     def arrange_all(geo)
       ups, downs = sequences
-      focus_rows = measure(@focused, true, geo) + geo.tbv
+      focus_rows = rows_of(@focused, true, geo)
       want = @focused.y || (@direction == :up ? geo.top : geo.bottom - focus_rows + 1)
       top = want.clamp(geo.top, geo.bottom - focus_rows + 1)
       plan = arrange(top, focus_rows, geo, ups, downs)
@@ -437,7 +443,7 @@ module Notcurses
         up_done = false
         break if space < geo.tb_bottom + 1
 
-        rows = measure(tablet, false, geo) + geo.tbv
+        rows = rows_of(tablet, false, geo)
         if rows > space
           slots.unshift(Slot.new(tablet, geo.top, space, :top))
           break
@@ -453,7 +459,7 @@ module Notcurses
         down_done = false
         break if space < geo.tb_top + 1
 
-        rows = measure(tablet, true, geo) + geo.tbv
+        rows = rows_of(tablet, true, geo)
         if rows > space
           slots.push(Slot.new(tablet, frontier, space, :bottom))
           break
@@ -481,6 +487,10 @@ module Notcurses
         @heights[tablet] = rows.clamp(0, [geo.data_rows, data.dim_y].min)
       end
     end
+
+    # Righe del tablet con i bordi: almeno una, perché senza bordi orizzontali
+    # un tablet con 0 righe usate occupa una riga vuota (Plane#resize rifiuta 0).
+    def rows_of(tablet, from_top, geo) = [measure(tablet, from_top, geo) + geo.tbv, 1].max
 
     # Porta i piani dei tablet al loro posto e disegna i bordi.
     def apply(slots, geo)

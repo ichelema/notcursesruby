@@ -216,7 +216,8 @@ module Notcurses
     # @param name [String] nome usato nel messaggio d'errore
     # @return [String] stringa UTF-8
     # @raise [TypeError] se value non è String
-    # @raise [ArgumentError] se value contiene NUL o non è UTF-8 valido
+    # @raise [ArgumentError] se value contiene NUL, non è UTF-8 valido o non è
+    #   convertibile in UTF-8
     def string!(value, name)
       raise TypeError, "#{name} deve essere String, non #{value.class}" unless value.is_a?(String)
 
@@ -231,6 +232,8 @@ module Notcurses
       raise ArgumentError, "#{name} contiene un byte NUL" if s.include?("\0")
 
       s
+    rescue EncodingError => e
+      raise ArgumentError, "#{name} non è convertibile in UTF-8 (#{e.message})"
     end
 
     # Come {string!}, ma accetta nil (NULL).
@@ -419,20 +422,6 @@ module Notcurses
       end
     end
 
-    # Un solo grapheme cluster UTF-8 ("" ammesso), senza caratteri di
-    # controllo (tranne "\t" e "\n", che notcurses accetta).
-    # @param value [String] testo da controllare
-    # @param name [String] nome usato nel messaggio d'errore
-    # @return [String]
-    # @raise [TypeError] se value non è String
-    def egc!(value, name = 'egc')
-      text = string!(value, name)
-      raise ArgumentError, "#{name} = #{value.inspect} contiene più di un grapheme cluster" if text.grapheme_clusters.size > 1
-      raise ArgumentError, "#{name} = #{value.inspect} contiene un carattere di controllo" if text.match?(/[\x00-\x08\x0b-\x1f\x7f]/)
-
-      text
-    end
-
     # Allineamento usato per calcolare una posizione: rifiuta :unaligned, per
     # cui notcurses_align restituisce -INT_MAX.
     # @param align [Symbol, Integer] simbolo o costante NCALIGN_*
@@ -468,6 +457,13 @@ module Notcurses
       end
     end
 
+    # Stili di più argomenti (on_styles(*styles), off_styles(*styles)) in una
+    # sola maschera.
+    # @param list [Array<Integer, Symbol, Array<Symbol>>] stili
+    # @return [Integer]
+    # @raise [TypeError, ArgumentError] se uno stile non è valido
+    def styles_mask(list) = list.reduce(0) { |mask, s| mask | styles_value(s) }
+
     # @param mask [Integer] maschera di stili
     # @return [Array<Symbol>] stili attivi nella maschera
     def styles_symbols(mask)
@@ -479,14 +475,26 @@ module Notcurses
     # Esegue il blocco di un callback chiamato dal C. Un'eccezione Ruby non deve
     # attraversare i frame C: viene salvata in box (solo la prima) e il C riceve
     # fallback. Il wrapper la rilancia con {reraise!} dopo il ritorno al Ruby.
+    # Anche break, return e throw, che non sono eccezioni, si fermano qui: in box
+    # finisce una LocalJumpError. Thread#kill invece passa (FdPlane e
+    # Subprocess fermano così il thread di lettura).
     # @param box [Array<Exception>] contenitore della prima eccezione
     # @param fallback [Object] valore restituito al C se il blocco solleva
     # @return [Object] il valore del blocco, o fallback se solleva
     def guard(box, fallback)
-      yield
+      state = :running
+      result = yield
+      state = :done
+      result
     rescue Exception => e # rubocop:disable Lint/RescueException
+      state = :raised
       box << e if box.empty?
       fallback
+    ensure
+      if state == :running && Thread.current.status != 'aborting'
+        box << LocalJumpError.new('break, return o throw non possono uscire da un callback chiamato da notcurses') if box.empty?
+        return fallback # rubocop:disable Lint/EnsureReturn
+      end
     end
 
     # Rilancia la prima eccezione salvata da {guard} e svuota box.

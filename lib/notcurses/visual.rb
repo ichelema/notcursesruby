@@ -407,7 +407,7 @@ module Notcurses
     # @param linesize [Integer, nil] byte per riga, multiplo di 4 e >= cols * 4;
     #   nil = cols * 4
     # @param options [Hash] y:, x:, scale:, blitter:, pxoffy:, pxoffx:,
-    #   nodegrade:, blend:, nointerpolate:, transcolor:, come in {#blit}
+    #   no_degrade:, blend:, no_interpolate:, transcolor:, come in {#blit}
     # @return [Plane] plane
     # @raise [VisualError] se +ncblit_rgba+ fallisce
     # @raise [TypeError, ArgumentError] se un argomento non è valido
@@ -569,7 +569,7 @@ module Notcurses
     # @param options [Hash] le altre opzioni di {#blit}
     # @return [Geometry]
     # @raise [VisualError] se +ncvisual_geom+ fallisce (per esempio blitter non
-    #   disponibile con nodegrade: true)
+    #   disponibile con no_degrade: true)
     # @raise [TypeError, ArgumentError] se un'opzione non è valida
     # @raise [ClosedError] se il visual, il piano o il contesto sono chiusi
     def geometry(plane: nil, child: false, begy: 0, begx: 0, leny: 0, lenx: 0, **options)
@@ -704,7 +704,7 @@ module Notcurses
       point!(y, x)
       out = ::FFI::MemoryPointer.new(:uint32)
       Util.check!(FFI.ncvisual_at_yx(to_ptr, y, x, out), VisualError, 'ncvisual_at_yx')
-      Pixel.new(out.read_uint32)
+      Pixel.new(value: out.read_uint32)
     end
 
     # Cambia il pixel in (y, x) (+ncvisual_set_yx+).
@@ -736,7 +736,7 @@ module Notcurses
     #
     # Bug di 3.0.17 aggirato: con una regione diversa dall'immagine intera il C
     # ridimensiona dall'inizio dei dati ignorando begy/begx, poi legge oltre il
-    # buffer ridimensionato (ffmpeg.c:586); con nointerpolate o senza ffmpeg la
+    # buffer ridimensionato (ffmpeg.c:586); con no_interpolate o senza ffmpeg la
     # regione viene ignorata. Il wrapper copia la regione in un visual
     # temporaneo, pixel per pixel (costo proporzionale all'area), e disegna quello.
     #
@@ -759,17 +759,17 @@ module Notcurses
     #   prima cella (solo :pixel)
     # @option options [Integer] :pxoffx (0) offset orizzontale in pixel nella
     #   prima cella (solo :pixel)
-    # @option options [Boolean] :nodegrade (false) NCVISUAL_OPTION_NODEGRADE:
+    # @option options [Boolean] :no_degrade (false) NCVISUAL_OPTION_NODEGRADE:
     #   errore invece di ripiegare su un blitter più semplice
     # @option options [Boolean] :blend (false) NCVISUAL_OPTION_BLEND: colori in
     #   NCALPHA_BLEND
-    # @option options [Boolean] :nointerpolate (false)
+    # @option options [Boolean] :no_interpolate (false)
     #   NCVISUAL_OPTION_NOINTERPOLATE: scaling senza interpolazione
     # @option options [Integer, nil] :transcolor (nil) colore 0xRRGGBB da
     #   rendere trasparente (NCVISUAL_OPTION_ADDALPHA)
     # @return [Plane] plane, oppure il piano nuovo
     # @raise [VisualError] se +ncvisual_blit+ restituisce NULL (blitter non
-    #   disponibile con nodegrade: true, :pixel sullo stdplane senza child:,
+    #   disponibile con no_degrade: true, :pixel sullo stdplane senza child:,
     #   pxoffy/pxoffx con un blitter di celle, ...)
     # @raise [Exception] l'eccezione di un callback Ruby di resize (il blitter
     #   :pixel ridimensiona il piano)
@@ -785,7 +785,7 @@ module Notcurses
       if ptr.null?
         ctx.planes_destroyed! if created # il C distrugge il piano che aveva creato
         ctx.raise_callback_errors!
-        raise VisualError, 'ncvisual_blit ha restituito NULL (blitter non disponibile con nodegrade? :pixel ' \
+        raise VisualError, 'ncvisual_blit ha restituito NULL (blitter non disponibile con no_degrade? :pixel ' \
                            'sullo stdplane? pxoffy/pxoffx con un blitter di celle?)'
       end
       result = created ? Plane.new(ptr, owned: true, context: ctx) : plane
@@ -814,8 +814,8 @@ module Notcurses
     # @param begx [Integer] regione, come in {#blit}
     # @param leny [Integer] regione, come in {#blit}
     # @param lenx [Integer] regione, come in {#blit}
-    # @param options [Hash] scale:, blitter:, pxoffy:, pxoffx:, nodegrade:,
-    #   blend:, nointerpolate:, transcolor:, come in {#blit}
+    # @param options [Hash] scale:, blitter:, pxoffy:, pxoffx:, no_degrade:,
+    #   blend:, no_interpolate:, transcolor:, come in {#blit}
     # @yieldparam plane [Plane] (facoltativo) il piano, distrutto alla fine del blocco
     # @return [Plane] il piano; con un blocco, il valore del blocco
     # @raise [VisualError] se la creazione del piano o il blit falliscono
@@ -879,10 +879,11 @@ module Notcurses
     #
     # Il blocco riceve il piano del frame e l'istante in cui mostrarlo, in
     # secondi di Process::CLOCK_MONOTONIC. Per fermare lo stream restituisce
-    # :stop (anche con next :stop); non usare break, return o throw, che
-    # uscirebbero attraverso i frame C di notcurses. Dentro il blocco non si
-    # possono distruggere piani né chiudere visual. Un'eccezione del blocco
-    # ferma lo stream ed esce da questo metodo.
+    # :stop (anche con next :stop); break, return e throw non possono uscire
+    # attraverso i frame C di notcurses: diventano una LocalJumpError, che
+    # ferma lo stream come un'eccezione. Dentro il blocco non si possono
+    # distruggere piani né chiudere visual. Un'eccezione del blocco ferma lo
+    # stream ed esce da questo metodo.
     #
     # Thread: il blocco gira sul thread chiamante. La chiamata C rilascia il
     # GVL (decodifica, disegno e attese dello streamer di notcurses) e lo
@@ -893,7 +894,7 @@ module Notcurses
     # @param timescale [Numeric] moltiplicatore delle durate dei frame, > 0
     #   (0.5 = velocità doppia)
     # @param options [Hash] y:, x:, scale:, blitter:, pxoffy:, pxoffx:,
-    #   nodegrade:, blend:, nointerpolate:, transcolor:, come in {#blit}
+    #   no_degrade:, blend:, no_interpolate:, transcolor:, come in {#blit}
     # @yieldparam plane [Plane] piano del frame (preso in prestito se l'ha
     #   creato notcurses: valido solo dentro il blocco)
     # @yieldparam deadline [Float] istante del frame, CLOCK_MONOTONIC
@@ -992,7 +993,7 @@ module Notcurses
 
       # ncvisual_options da opzioni Ruby; plane resta referenziato dal chiamante.
       def options(ctx, plane, y: 0, x: 0, scale: :none, blitter: :default, pxoffy: 0, pxoffx: 0,
-                  nodegrade: false, blend: false, nointerpolate: false, transcolor: nil)
+                  no_degrade: false, blend: false, no_interpolate: false, transcolor: nil)
         vopts = FFI::NcVisualOptions.new
         unless plane.nil?
           raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
@@ -1009,9 +1010,9 @@ module Notcurses
         vopts[:pxoffy] = Util.uint!(pxoffy, 'pxoffy')
         vopts[:pxoffx] = Util.uint!(pxoffx, 'pxoffx')
         flags = vflag | hflag |
-                Util.flag(nodegrade, FFI::NCVISUAL_OPTION_NODEGRADE, 'nodegrade') |
+                Util.flag(no_degrade, FFI::NCVISUAL_OPTION_NODEGRADE, 'no_degrade') |
                 Util.flag(blend, FFI::NCVISUAL_OPTION_BLEND, 'blend') |
-                Util.flag(nointerpolate, FFI::NCVISUAL_OPTION_NOINTERPOLATE, 'nointerpolate')
+                Util.flag(no_interpolate, FFI::NCVISUAL_OPTION_NOINTERPOLATE, 'no_interpolate')
         unless transcolor.nil?
           vopts[:transcolor] = Util.integer!(transcolor, 'transcolor', 0..0xffffff)
           flags |= FFI::NCVISUAL_OPTION_ADDALPHA

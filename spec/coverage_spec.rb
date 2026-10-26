@@ -29,7 +29,7 @@ RSpec.describe 'Copertura delle funzioni FFI' do
     ruby_resize: 'bug di 3.0.17 (sposta il piano fuori dal genitore): reimplementata in Ruby, Plane#resize_marginalized/#resize_placewithin',
     context: 'Plane#context restituisce il Context Ruby',
     at_cursor: 'Plane#at senza coordinate legge la cella del cursore',
-    set_base_cell: 'Plane#set_base(egc, styles:, channels:) usa ncplane_set_base',
+    set_base_cell: 'Plane#set_base(egc:, styles:, channels:) usa ncplane_set_base',
     contents: 'bug di 3.0.17 (ogni chiamata lascia copie nell\'egcpool): Plane#contents è scritto in Ruby',
     userptr: 'userptr è usato da notcurses per i widget (il menu): in Ruby si associa un oggetto al Plane con le strutture Ruby',
     mergedown: 'bug di 3.0.17 (ignora la regione): Plane#merge_down usa ncplane_mergedown_simple',
