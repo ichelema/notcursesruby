@@ -104,6 +104,20 @@ RSpec.describe Notcurses::Context do
     it 'core: true avvia notcurses senza multimedia' do
       NcHelpers.open_context(core: true) { |nc| expect(nc.stdplane.dims).to eq([24, 80]) }
     end
+
+    it 'drain_input? e no_winch_sighandler? riportano le opzioni del contesto' do
+      NcHelpers.open_context do |nc|
+        expect(nc.drain_input?).to be(true)
+        expect(nc.no_winch_sighandler?).to be(true) # default del wrapper
+      end
+      NcHelpers.open_context(drain_input: false, no_winch_sighandler: false) do |nc|
+        expect(nc.drain_input?).to be(false)
+        expect(nc.no_winch_sighandler?).to be(false)
+        nc.close
+        expect { nc.drain_input? }.to raise_error(Notcurses::ClosedError)
+        expect { nc.no_winch_sighandler? }.to raise_error(Notcurses::ClosedError)
+      end
+    end
   end
 
   describe 'con un contesto aperto' do

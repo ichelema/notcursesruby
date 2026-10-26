@@ -286,6 +286,8 @@ module Notcurses
         @callback_errors_seen = 0
         @cursor_enabled = false
         @mice_enabled = false
+        @drain_input = drain_input
+        @no_winch_sighandler = no_winch_sighandler
         @stdplane = Plane.new(FFI.notcurses_stdplane(ptr), owned: false, context: self)
         @closed = false
       rescue Exception # rubocop:disable Lint/RescueException
@@ -646,6 +648,24 @@ module Notcurses
 
       eof = result.index { |ev| ev.id == Key::EOF }
       eof ? result[0..eof] : result
+    end
+
+    # @return [Boolean] true se il contesto scarta l'input (drain_input: true):
+    #   {#get} e {#getvec} sollevano InputError
+    # @raise [ClosedError] se il contesto è chiuso
+    def drain_input?
+      to_ptr
+      @drain_input
+    end
+
+    # @return [Boolean] true se notcurses non ha installato il proprio gestore
+    #   di SIGWINCH (no_winch_sighandler: true, il default del wrapper): per
+    #   reagire subito al resize serve +trap('WINCH')+ (vedi "Resize del
+    #   terminale" nella descrizione della classe)
+    # @raise [ClosedError] se il contesto è chiuso
+    def no_winch_sighandler?
+      to_ptr
+      @no_winch_sighandler
     end
 
     # Descrittore che diventa leggibile quando c'è input
