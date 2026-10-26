@@ -318,26 +318,27 @@ module Notcurses
 
     # Visual dal contenuto di un piano (+ncvisual_from_plane+): ogni cella
     # diventa i pixel del blitter (per esempio 2 righe per cella con :half). Le
-    # celle devono contenere solo spazi o i blocchi del blitter.
+    # celle devono contenere solo spazi o i blocchi del blitter. Senza
+    # argomenti converte tutto il piano, come {Plane#as_rgba}.
     #
     # @param plane [Plane]
     # @param blitter [Symbol, Integer] blitter con cui leggere le celle (:ascii,
     #   :half, ...; non :default né :pixel)
-    # @param begy [Integer] prima riga, >= 0; -1 = riga del cursore
-    # @param begx [Integer] prima colonna, >= 0; -1 = colonna del cursore
-    # @param leny [Integer] righe, 0 = fino al bordo
-    # @param lenx [Integer] colonne, 0 = fino al bordo
+    # @param y [Integer, nil] riga di partenza, >= 0; nil = riga del cursore
+    # @param x [Integer, nil] colonna di partenza, >= 0; nil = colonna del cursore
+    # @param rows [Integer, nil] righe, >= 1; nil = fino al bordo
+    # @param cols [Integer, nil] colonne, >= 1; nil = fino al bordo
     # @yieldparam visual [Visual] (facoltativo) il visual, chiuso alla fine del blocco
     # @return [Visual] il visual; con un blocco, il valore del blocco
     # @raise [VisualError] se il C restituisce NULL: blitter :default, :pixel o
     #   non disponibile, regione fuori dal piano, celle con altri glifi o mai scritte
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il piano è chiuso
-    def self.from_plane(plane, blitter:, begy: 0, begx: 0, leny: 0, lenx: 0, &block)
+    def self.from_plane(plane, blitter:, y: 0, x: 0, rows: nil, cols: nil, &block)
       raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
 
-      ptr = FFI.ncvisual_from_plane(plane.to_ptr, Util.blitter_value(blitter), Util.int!(begy, 'begy'),
-                                    Util.int!(begx, 'begx'), Util.uint!(leny, 'leny'), Util.uint!(lenx, 'lenx'))
+      begy, begx, leny, lenx = Util.c_region(y, x, rows, cols)
+      ptr = FFI.ncvisual_from_plane(plane.to_ptr, Util.blitter_value(blitter), begy, begx, leny, lenx)
       wrap(plane.context, ptr, 'ncvisual_from_plane (blitter :default o :pixel? regione fuori dal piano? celle ' \
                                'con glifi diversi da spazi e blocchi?)', &block)
     end
@@ -400,11 +401,11 @@ module Notcurses
 
     # Disegna pixel RGBA su un piano senza creare un Visual (+ncblit_rgba+).
     #
-    # @param data [String] pixel R, G, B, A; almeno rows * linesize byte
+    # @param data [String] pixel R, G, B, A; almeno rows * rowstride byte
     # @param plane [Plane] piano su cui disegnare (non se ne crea uno nuovo)
     # @param rows [Integer] righe dell'immagine, >= 1
     # @param cols [Integer] colonne dell'immagine, >= 1
-    # @param linesize [Integer, nil] byte per riga, multiplo di 4 e >= cols * 4;
+    # @param rowstride [Integer, nil] byte per riga, multiplo di 4 e >= cols * 4;
     #   nil = cols * 4
     # @param options [Hash] y:, x:, scale:, blitter:, pxoffy:, pxoffx:,
     #   no_degrade:, blend:, no_interpolate:, transcolor:, come in {#blit}
@@ -412,38 +413,38 @@ module Notcurses
     # @raise [VisualError] se +ncblit_rgba+ fallisce
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il piano è chiuso
-    def self.blit_rgba(data, plane:, rows:, cols:, linesize: nil, **options)
-      buf = Internal.pixel_buffer(data, rows, cols, 4, linesize, 'linesize')
+    def self.blit_rgba(data, plane:, rows:, cols:, rowstride: nil, **options)
+      buf = Internal.pixel_buffer(data, rows, cols, 4, rowstride)
       blit_buffer(plane, rows, cols, 'ncblit_rgba', options) { |vopts| FFI.ncblit_rgba(buf, cols * 4, vopts) }
     end
 
     # Disegna pixel BGRx su un piano (+ncblit_bgrx+): 4 byte per pixel, B, G,
     # R e un byte ignorato; i pixel sono opachi.
     #
-    # @param data [String] pixel, almeno rows * linesize byte
+    # @param data [String] pixel, almeno rows * rowstride byte
     # @param plane [Plane] piano su cui disegnare
     # @param rows [Integer] righe, >= 1
     # @param cols [Integer] colonne, >= 1
-    # @param linesize [Integer, nil] byte per riga, multiplo di 4 e >= cols * 4;
+    # @param rowstride [Integer, nil] byte per riga, multiplo di 4 e >= cols * 4;
     #   nil = cols * 4
     # @param options [Hash] come in {.blit_rgba}
     # @return [Plane] plane
     # @raise [VisualError] se +ncblit_bgrx+ fallisce
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il piano è chiuso
-    def self.blit_bgrx(data, plane:, rows:, cols:, linesize: nil, **options)
-      buf = Internal.pixel_buffer(data, rows, cols, 4, linesize, 'linesize')
+    def self.blit_bgrx(data, plane:, rows:, cols:, rowstride: nil, **options)
+      buf = Internal.pixel_buffer(data, rows, cols, 4, rowstride)
       blit_buffer(plane, rows, cols, 'ncblit_bgrx', options) { |vopts| FFI.ncblit_bgrx(buf, cols * 4, vopts) }
     end
 
     # Disegna pixel RGBx su un piano (+ncblit_rgb_loose+): 4 byte per pixel,
     # R, G, B e un byte ignorato, sostituito da alpha.
     #
-    # @param data [String] pixel, almeno rows * linesize byte
+    # @param data [String] pixel, almeno rows * rowstride byte
     # @param plane [Plane] piano su cui disegnare
     # @param rows [Integer] righe, >= 1
     # @param cols [Integer] colonne, >= 1
-    # @param linesize [Integer, nil] byte per riga, multiplo di 4 e >= cols * 4;
+    # @param rowstride [Integer, nil] byte per riga, multiplo di 4 e >= cols * 4;
     #   nil = cols * 4
     # @param alpha [Integer] alpha dei pixel, 0..255
     # @param options [Hash] come in {.blit_rgba}
@@ -451,9 +452,9 @@ module Notcurses
     # @raise [VisualError] se +ncblit_rgb_loose+ fallisce
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il piano è chiuso
-    def self.blit_rgb_loose(data, plane:, rows:, cols:, linesize: nil, alpha: 255, **options)
+    def self.blit_rgb_loose(data, plane:, rows:, cols:, rowstride: nil, alpha: 255, **options)
       Util.uint8!(alpha, 'alpha')
-      buf = Internal.pixel_buffer(data, rows, cols, 4, linesize, 'linesize')
+      buf = Internal.pixel_buffer(data, rows, cols, 4, rowstride)
       blit_buffer(plane, rows, cols, 'ncblit_rgb_loose', options) do |vopts|
         FFI.ncblit_rgb_loose(buf, cols * 4, vopts, alpha)
       end
@@ -466,11 +467,11 @@ module Notcurses
     # la usa: crea un visual temporaneo con +ncvisual_from_rgb_packed+, che è
     # corretta, e lo disegna con +ncvisual_blit+.
     #
-    # @param data [String] pixel, almeno rows * linesize byte
+    # @param data [String] pixel, almeno rows * rowstride byte
     # @param plane [Plane] piano su cui disegnare
     # @param rows [Integer] righe, >= 1
     # @param cols [Integer] colonne, >= 1
-    # @param linesize [Integer, nil] byte per riga, multiplo di 3 e >= cols * 3;
+    # @param rowstride [Integer, nil] byte per riga, multiplo di 3 e >= cols * 3;
     #   nil = cols * 3
     # @param alpha [Integer] alpha dei pixel, 0..255
     # @param options [Hash] come in {.blit_rgba}
@@ -478,10 +479,10 @@ module Notcurses
     # @raise [VisualError] se il visual temporaneo o +ncvisual_blit+ falliscono
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il piano è chiuso
-    def self.blit_rgb_packed(data, plane:, rows:, cols:, linesize: nil, alpha: 255, **options)
+    def self.blit_rgb_packed(data, plane:, rows:, cols:, rowstride: nil, alpha: 255, **options)
       raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
 
-      from_rgb_packed(data, rows: rows, cols: cols, rowstride: linesize, alpha: alpha) do |visual|
+      from_rgb_packed(data, rows: rows, cols: cols, rowstride: rowstride, alpha: alpha) do |visual|
         blit_buffer(plane, rows, cols, 'ncvisual_blit', options) do |vopts|
           FFI.ncvisual_blit(plane.context.to_ptr, visual.to_ptr, vopts).null? ? -1 : 0
         end
@@ -1041,15 +1042,15 @@ module Notcurses
       # Copia compatta (stride cols * bpp) delle righe di data: il C non legge
       # mai oltre il buffer e non riceve stride che gestisce male.
       # @return [::FFI::MemoryPointer]
-      def pixel_buffer(data, rows, cols, bpp, stride, name = 'rowstride')
+      def pixel_buffer(data, rows, cols, bpp, stride)
         raise TypeError, "data deve essere String, non #{data.class}" unless data.is_a?(String)
 
         dims!(rows, cols, bpp)
         line = cols * bpp
-        stride = Util.integer!(stride || line, name, line..Util::INT32.max)
-        raise ArgumentError, "#{name} = #{stride} non è un multiplo di #{bpp}" unless (stride % bpp).zero?
+        stride = Util.integer!(stride || line, 'rowstride', line..Util::INT32.max)
+        raise ArgumentError, "rowstride = #{stride} non è un multiplo di #{bpp}" unless (stride % bpp).zero?
         if data.bytesize < rows * stride
-          raise ArgumentError, "data ha #{data.bytesize} byte: ne servono rows * #{name} = #{rows * stride}"
+          raise ArgumentError, "data ha #{data.bytesize} byte: ne servono rows * rowstride = #{rows * stride}"
         end
 
         bytes = if stride == line

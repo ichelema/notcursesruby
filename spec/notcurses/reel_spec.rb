@@ -71,6 +71,17 @@ RSpec.describe Notcurses::Reel do
       reel.close
     end
 
+    it 'empty? vale true senza tablet, come Tree#empty?' do
+      reel = described_class.new(new_plane(rows: 4, cols: 6))
+      expect(reel).to be_empty
+      tablet = reel.add(&writer('a'))
+      expect(reel).not_to be_empty
+      reel.delete(tablet)
+      expect(reel).to be_empty
+      reel.close
+      expect { reel.empty? }.to raise_error(Notcurses::ClosedError)
+    end
+
     it 'border_mask: e tablet_mask: accettano una maschera o un Array di lati' do
       reel = described_class.new(new_plane(rows: 4, cols: 6), border_mask: %i[top right bottom left],
                                                               tablet_mask: Notcurses::FFI::NCBOXMASK_TOP | 0xe)

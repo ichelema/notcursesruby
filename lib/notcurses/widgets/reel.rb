@@ -302,6 +302,10 @@ module Notcurses
     end
     alias size tablet_count
 
+    # @return [Boolean] true se il reel non ha tablet
+    # @raise [ClosedError] se il reel è chiuso
+    def empty? = tablet_count.zero?
+
     private
 
     def destroy_native

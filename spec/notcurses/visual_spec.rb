@@ -183,9 +183,30 @@ RSpec.describe Notcurses::Visual do
             expect(v.dims).to eq([2, 3])
             expect(v.at(1, 2).to_a).to eq([0x10, 0x20, 0x30, 255])
           end
-          described_class.from_plane(plane, blitter: :half, begy: 1, begx: 1, lenx: 1) do |v|
+          described_class.from_plane(plane, blitter: :half, y: 1, x: 1, cols: 1) do |v|
             expect(v.dims).to eq([2, 1])
           end
+        end
+      end
+
+      it 'legge la regione con y:, x:, rows: e cols:, come Plane#as_rgba' do
+        nc.stdplane.create_child(rows: 2, cols: 3) do |plane|
+          ffi.ncplane_set_bg_rgb(plane.to_ptr, 0x102030)
+          2.times { |y| ffi.ncplane_putstr_yx(plane.to_ptr, y, 0, '   ') }
+          plane.move_cursor(1, 2)
+          # senza argomenti tutto il piano, anche con il cursore altrove
+          described_class.from_plane(plane, blitter: :ascii) { |v| expect(v.dims).to eq([2, 3]) }
+          described_class.from_plane(plane, blitter: :ascii, x: 1, rows: 1) { |v| expect(v.dims).to eq([1, 2]) }
+          # nil = cursore per y: e x:, fino al bordo per rows: e cols:
+          described_class.from_plane(plane, blitter: :ascii, y: nil, x: nil) { |v| expect(v.dims).to eq([1, 1]) }
+          described_class.from_plane(plane, blitter: :ascii, y: 0, x: nil, rows: nil) { |v| expect(v.dims).to eq([2, 1]) }
+          # -1 e 0, i valori speciali del C, sono rifiutati
+          expect { described_class.from_plane(plane, blitter: :ascii, y: -1) }.to raise_error(ArgumentError)
+          expect { described_class.from_plane(plane, blitter: :ascii, x: -1) }.to raise_error(ArgumentError)
+          expect { described_class.from_plane(plane, blitter: :ascii, rows: 0) }.to raise_error(ArgumentError)
+          expect { described_class.from_plane(plane, blitter: :ascii, cols: 0) }.to raise_error(ArgumentError)
+          expect { described_class.from_plane(plane, blitter: :ascii, begy: 0) }.to raise_error(ArgumentError)
+          expect { described_class.from_plane(plane, blitter: :ascii, rows: 3) }.to raise_error(Notcurses::VisualError)
         end
       end
 
@@ -201,7 +222,8 @@ RSpec.describe Notcurses::Visual do
       it 'valida gli argomenti' do
         expect { described_class.from_plane(:plane, blitter: :ascii) }.to raise_error(TypeError)
         expect { described_class.from_plane(nc.stdplane, blitter: :nessuno) }.to raise_error(ArgumentError)
-        expect { described_class.from_plane(nc.stdplane, blitter: :ascii, leny: -1) }.to raise_error(ArgumentError)
+        expect { described_class.from_plane(nc.stdplane, blitter: :ascii, rows: -1) }.to raise_error(ArgumentError)
+        expect { described_class.from_plane(nc.stdplane, blitter: :ascii, y: 0.5) }.to raise_error(TypeError)
       end
     end
 
@@ -593,11 +615,21 @@ RSpec.describe Notcurses::Visual do
         end
       end
 
-      it 'accettano linesize con padding' do
+      it 'accettano rowstride con padding, come i metodi from_*' do
         nc.stdplane.create_child(rows: 2, cols: 1) do |plane|
           px = rgba([1, 2, 3, 255], [0, 0, 0, 0], [4, 5, 6, 255], [0, 0, 0, 0])
-          described_class.blit_rgba(px, plane: plane, rows: 2, cols: 1, linesize: 8, blitter: :ascii)
+          described_class.blit_rgba(px, plane: plane, rows: 2, cols: 1, rowstride: 8, blitter: :ascii)
           expect(cell(plane, 1, 0)[1]).to eq(0x040506)
+          described_class.blit_bgrx(px, plane: plane, rows: 2, cols: 1, rowstride: 8, blitter: :ascii)
+          expect(cell(plane, 1, 0)[1]).to eq(0x060504)
+          described_class.blit_rgb_loose(px, plane: plane, rows: 2, cols: 1, rowstride: 8, blitter: :ascii)
+          expect(cell(plane, 1, 0)[1]).to eq(0x040506)
+          packed = rgba([7, 8, 9], [0, 0, 0], [10, 11, 12], [0, 0, 0])
+          described_class.blit_rgb_packed(packed, plane: plane, rows: 2, cols: 1, rowstride: 6, blitter: :ascii)
+          expect(cell(plane, 1, 0)[1]).to eq(0x0a0b0c)
+          expect do
+            described_class.blit_rgba(px, plane: plane, rows: 2, cols: 1, linesize: 8, blitter: :ascii)
+          end.to raise_error(ArgumentError, /linesize/)
         end
       end
 
@@ -606,7 +638,7 @@ RSpec.describe Notcurses::Visual do
         expect { described_class.blit_rgb_packed(rgbw, plane: nil, rows: 1, cols: 2) }.to raise_error(TypeError)
         expect { described_class.blit_bgrx(rgbw, plane: nc.stdplane, rows: 4, cols: 2, child: true) }.to raise_error(ArgumentError)
         expect { described_class.blit_rgb_loose(rgbw, plane: nc.stdplane, rows: 4, cols: 2, alpha: 256) }.to raise_error(ArgumentError)
-        expect { described_class.blit_rgba(rgbw, plane: nc.stdplane, rows: 4, cols: 2, linesize: 6) }.to raise_error(ArgumentError, /linesize/)
+        expect { described_class.blit_rgba(rgbw, plane: nc.stdplane, rows: 4, cols: 2, rowstride: 6) }.to raise_error(ArgumentError, /rowstride/)
       end
 
       it 'sollevano VisualError se il C fallisce' do

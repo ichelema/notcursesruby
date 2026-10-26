@@ -217,6 +217,17 @@ RSpec.describe Notcurses::Tabbed do
       tabbed.close
     end
 
+    it 'empty? vale true senza tab, come Tree#empty?' do
+      tabbed = described_class.new(new_plane)
+      expect(tabbed).to be_empty
+      tab = tabbed.add('a')
+      expect(tabbed).not_to be_empty
+      tabbed.delete(tab)
+      expect(tabbed).to be_empty
+      tabbed.close
+      expect { tabbed.empty? }.to raise_error(Notcurses::ClosedError)
+    end
+
     it 'select, next e prev seguono la lista circolare; size è tab_count' do
       tabbed = abc
       a, b, c = tabbed.tabs

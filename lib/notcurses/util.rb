@@ -173,6 +173,23 @@ module Notcurses
     # @raise [ArgumentError] se value è fuori dall'intervallo
     def nonneg_int!(value, name) = integer!(value, name, NONNEG_INT)
 
+    # Regione per le funzioni C con begy, begx (-1 = cursore) e leny, lenx (0
+    # = fino al bordo). In Ruby nil vale cursore o «fino al bordo», e i valori
+    # speciali del C sono rifiutati.
+    # @param y [Integer, nil] riga di partenza, >= 0; nil = riga del cursore
+    # @param x [Integer, nil] colonna di partenza, >= 0; nil = colonna del cursore
+    # @param rows [Integer, nil] righe, >= 1; nil = fino al bordo
+    # @param cols [Integer, nil] colonne, >= 1; nil = fino al bordo
+    # @return [Array(Integer, Integer, Integer, Integer)] begy, begx, leny, lenx del C
+    # @raise [TypeError] se un valore non è Integer né nil
+    # @raise [ArgumentError] se y o x sono negativi, o rows o cols valgono meno di 1
+    def c_region(y, x, rows, cols)
+      [y.nil? ? -1 : nonneg_int!(y, 'y'),
+       x.nil? ? -1 : nonneg_int!(x, 'x'),
+       rows.nil? ? 0 : integer!(rows, 'rows', 1..UINT32.max),
+       cols.nil? ? 0 : integer!(cols, 'cols', 1..UINT32.max)]
+    end
+
     # @param value [Object] valore da controllare
     # @param name [String] nome usato nel messaggio d'errore
     # @param range [Range, nil] intervallo ammesso, o nil per nessun limite

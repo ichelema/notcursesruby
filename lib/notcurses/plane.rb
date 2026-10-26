@@ -1322,7 +1322,8 @@ module Notcurses
     # leggendo ogni cella come un glifo del blitter: ogni cella deve contenere
     # uno spazio o un blocco del blitter (un altro carattere, o una cella mai
     # scritta con la base vuota, fanno fallire la conversione). Le celle con
-    # alpha non opaco danno pixel trasparenti (0).
+    # alpha non opaco danno pixel trasparenti (0). Senza argomenti converte
+    # tutto il piano; le regole della regione sono quelle di {Visual.from_plane}.
     #
     # @param blitter [Symbol, Integer] blitter di lettura (non :pixel né :default)
     # @param y [Integer, nil] riga di partenza, >= 0; nil = riga del cursore
@@ -1334,21 +1335,17 @@ module Notcurses
     # @raise [PlaneError] se la conversione fallisce
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il piano è chiuso
-    def as_rgba(blitter, y: nil, x: nil, rows: nil, cols: nil)
+    def as_rgba(blitter, y: 0, x: 0, rows: nil, cols: nil)
       ptr = to_ptr
       blit = Util.blitter_value(blitter)
       if [FFI::NCBLIT_PIXEL, FFI::NCBLIT_DEFAULT].include?(blit)
         raise ArgumentError, 'as_rgba: i blitter :pixel e :default non sono ammessi'
       end
 
-      # il C usa -1 per il cursore e 0 per «fino al bordo»
-      y = y.nil? ? -1 : Util.nonneg_int!(y, 'y')
-      x = x.nil? ? -1 : Util.nonneg_int!(x, 'x')
-      rows = rows.nil? ? 0 : Util.integer!(rows, 'rows', 1..Util::UINT32.max)
-      cols = cols.nil? ? 0 : Util.integer!(cols, 'cols', 1..Util::UINT32.max)
+      begy, begx, leny, lenx = Util.c_region(y, x, rows, cols)
       pxy = ::FFI::MemoryPointer.new(:uint)
       pxx = ::FFI::MemoryPointer.new(:uint)
-      buf = FFI.ncplane_as_rgba(ptr, blit, y, x, rows, cols, pxy, pxx)
+      buf = FFI.ncplane_as_rgba(ptr, blit, begy, begx, leny, lenx, pxy, pxx)
       Util.check_ptr!(buf, PlaneError, 'ncplane_as_rgba')
       begin
         height = pxy.read_uint
@@ -1413,9 +1410,14 @@ module Notcurses
     #   cursore a fine riga, fuori dalla riga; U+2028 e U+2029 (il C li tronca a
     #   un byte).
     #
-    # Bug di 3.0.17 aggirato: dopo uno ZWJ (U+200D) il C unisce tutto il resto
-    # del testo allo stesso carattere; il wrapper spezza il testo dopo ogni
-    # grapheme cluster con uno ZWJ.
+    # Bug di 3.0.17 aggirati:
+    # - dopo uno ZWJ (U+200D) il C unisce tutto il resto del testo allo stesso
+    #   carattere; il wrapper spezza il testo dopo ogni grapheme cluster con
+    #   uno ZWJ;
+    # - dopo una riga piena il cursore resta oltre l'ultima colonna, e lì il C
+    #   esegue "\n" con due a capo (notcurses.c:1888 e 1903), lasciando una
+    #   riga vuota; il wrapper porta prima il cursore sull'ultima colonna, così
+    #   "\n" passa sempre alla riga successiva.
     #
     # @param text [String] testo UTF-8 senza caratteri di controllo, tranne
     #   "\n" sui piani che scorrono
@@ -1446,12 +1448,16 @@ module Notcurses
         raise PlaneError, 'un carattere largo 2 colonne non entra in un piano largo 1'
       end
 
-      segments = zwj_segments(str)
+      segments = zwj_segments(str).flat_map { |seg| seg.split(/(?=\n)/) }
       widths = segments.map { |seg| Notcurses.strwidth(seg) }
       first = Notcurses.strwidth(str.grapheme_clusters.first)
       ty, tx = text_target!(str, widths.sum, first, y: y, x: x, align: align, stained: stained)
       written = 0
       segments.each_with_index do |seg, i|
+        # "\n" con il cursore oltre l'ultima colonna: due a capo nel C (vedi il YARD)
+        if seg.start_with?("\n") && (i.positive? || tx == -1) && cursor_x == dim_x
+          Util.check!(FFI.ncplane_cursor_move_yx(ptr, i.zero? ? ty : -1, dim_x - 1), PlaneError, 'ncplane_cursor_move_yx')
+        end
         rc = if stained then FFI.ncplane_putstr_stained(ptr, seg)
              elsif i.zero? then FFI.ncplane_putstr_yx(ptr, ty, tx, seg)
              else FFI.ncplane_putstr(ptr, seg)

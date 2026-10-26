@@ -621,6 +621,26 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    it 'putstr: "\n" dopo una riga piena va a capo una volta sola' do
+      with_parent(rows: 5, cols: 4) do |p|
+        p.scrolling = true
+        lines = ->(n) { (0...n).map { |y| p.contents(y: y, rows: 1) } }
+        expect(p.putstr("abcd\nefgh", y: 0, x: 0)).to eq(9)
+        expect(p.cursor).to eq([1, 4])
+        expect(p.putstr("\n")).to eq(1)
+        expect(p.cursor).to eq([2, 0])
+        expect(p.putstr("ab字\nx")).to eq(6)
+        expect(p.cursor).to eq([3, 1])
+        expect(p.putstr("wxyz\nq", y: 4, x: 0)).to eq(6) # sull'ultima riga: un solo scroll
+        expect(p.cursor).to eq([4, 1])
+        expect(lines.call(5)).to eq(%w[efgh ab字 x wxyz q])
+        p.putstr('1234', y: 4, x: 0)
+        expect(p.putstr("\n", y: 4)).to eq(1) # con y: e il cursore a fine riga
+        expect(p.cursor).to eq([4, 0])
+        expect(lines.call(4)).to eq(%w[ab字 x wxyz 1234])
+      end
+    end
+
     it 'contents e at non espongono la cella "\n" che notcurses lascia dopo una riga vuota' do
       with_parent(rows: 3, cols: 5) do |p|
         p.scrolling = true
@@ -1003,11 +1023,12 @@ RSpec.describe Notcurses::Plane do
         expect(q.as_rgba(:half, y: 0, x: 0)[0].byteslice(0, 8).unpack('C*')).to eq([0xff, 0, 0, 0xff, 0, 0, 0xff, 0xff])
         expect(q.as_rgba(:half, y: 0, x: 0, rows: nil, cols: 1)[1, 2]).to eq([2, 1])
         q.move_cursor(0, 1)
-        expect(q.as_rgba(:half, rows: 1, cols: nil)[1, 2]).to eq([2, 1]) # y: e x: nil = cursore
+        expect(q.as_rgba(:half)[1, 2]).to eq([2, 2]) # senza argomenti tutto il piano, anche con il cursore altrove
+        expect(q.as_rgba(:half, y: nil, x: nil, rows: 1, cols: nil)[1, 2]).to eq([2, 1]) # y: e x: nil = cursore
         expect { q.as_rgba(:half, y: -1, x: 0) }.to raise_error(ArgumentError) # -1 non è il cursore: usa nil
         expect { q.as_rgba(:half, y: 0, x: 0, rows: 0) }.to raise_error(ArgumentError)
         q.putstr('▀ ', y: 0, x: 0)
-        expect { q.as_rgba(:half) }.to raise_error(Notcurses::PlaneError) # cursore in (0, 2): oltre il bordo
+        expect { q.as_rgba(:half, y: nil, x: nil) }.to raise_error(Notcurses::PlaneError) # cursore in (0, 2): oltre il bordo
         q.putstr('ab', y: 0, x: 0)
         expect { q.as_rgba(:half, y: 0, x: 0) }.to raise_error(Notcurses::PlaneError)
         expect { q.as_rgba(:pixel) }.to raise_error(ArgumentError)

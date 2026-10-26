@@ -221,6 +221,10 @@ module Notcurses
     def tab_count = FFI.nctabbed_tabcount(to_ptr)
     alias size tab_count
 
+    # @return [Boolean] true se il widget non ha tab
+    # @raise [ClosedError] se il widget è chiuso
+    def empty? = tab_count.zero?
+
     # Tab nell'ordine dell'intestazione, da {#leftmost}.
     #
     # @return [Array<Tab>]
