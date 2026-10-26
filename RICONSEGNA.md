@@ -5,9 +5,10 @@
 - **Data di completamento:** 2026-10-25
 - **Versione mappata:** notcurses 3.0.17 (`version.h`)
 - **Log dettagliato:** `memory/fase1-ffi-raw.md` (decisioni, problemi e soluzioni, lista completa delle inline, funzioni saltate)
-- **Modifica successiva (2026-10-26):** `blocking: true` su 8 funzioni di `functions.rb` che aspettano il terminale o
+- **Modifiche successive (2026-10-26):** `blocking: true` su 8 funzioni di `functions.rb` che aspettano il terminale o
   il tempo (gli init, `ncdirect_cursor_yx`, `ncdirect_cursor_move_yx`, `ncdirect_readline`, `ncvisual_stream`);
-  decisione 20 di `memory/fase1-ffi-raw.md`.
+  decisione 20 di `memory/fase1-ffi-raw.md`. Nella review della Fase 2, su autorizzazione dell'utente, anche su
+  `ncdirect_render_image` e `ncdirect_raster_frame` (finding A3-02).
 
 ### File generati
 
@@ -18,7 +19,7 @@
 | `lib/notcurses/ffi/enums.rb` | 58 | 6 enum, 39 enumeratori |
 | `lib/notcurses/ffi/constants.rb` | 461 | 301 costanti: `version.h`, `#define` di `notcurses.h`/`direct.h`, `NCKEY_*` di `nckeys.h`, stringhe di `ncseqs.h` |
 | `lib/notcurses/ffi/structs.rb` | 313 | 26 struct `::FFI::Struct` |
-| `lib/notcurses/ffi/functions.rb` | 638 | 383 `attach_function`, divise per area |
+| `lib/notcurses/ffi/functions.rb` | 646 | 383 `attach_function`, divise per area |
 | `lib/notcurses/ffi/inline_reimpl.rb` | 3171 | 248 metodi Ruby (236 `static inline` e 12 macro funzione), ognuno con il C originale in commento |
 | `spec/ffi_sanity_spec.rb` | 27 | spec di sanità (codice del prompt più le due righe di intestazione) |
 | `spec/inline_reimpl_spec.rb` | 1970 | spec differenziale: ogni reimplementazione contro l'inline C vera |
@@ -43,12 +44,12 @@ Nessuna funzione saltata: ogni funzione pubblica di `notcurses.h` e `direct.h` �
 
 | File e riga | Funzione | Motivo |
 | --- | --- | --- |
-| `lib/notcurses/ffi/functions.rb:43` | `ncpile_render_to_buffer` | bug di 3.0.17: senza postpaint non emette testo; `*buf` è il buffer interno di notcurses e non va liberato con `free()`, anche se l'header lo chiede |
-| `lib/notcurses/ffi/functions.rb:45` | `ncpile_render_to_file` | bug di 3.0.17: non scrive su `fp` e causa un double free in `notcurses_stop` |
-| `lib/notcurses/ffi/functions.rb:175` | `ncplane_vprintf_aligned` | `va_list` non costruibile da Ruby |
-| `lib/notcurses/ffi/functions.rb:177` | `ncplane_vprintf_yx` | `va_list` non costruibile da Ruby |
-| `lib/notcurses/ffi/functions.rb:179` | `ncplane_vprintf_stained` | `va_list` non costruibile da Ruby |
-| `lib/notcurses/ffi/functions.rb:529` | `ncnmetric` | il C restituisce `buf` (memoria del chiamante) o NULL; `:string` ne restituisce una copia (`nil` se NULL) |
+| `lib/notcurses/ffi/functions.rb:50` | `ncpile_render_to_buffer` | bug di 3.0.17: senza postpaint non emette testo; `*buf` è il buffer interno di notcurses e non va liberato con `free()`, anche se l'header lo chiede |
+| `lib/notcurses/ffi/functions.rb:52` | `ncpile_render_to_file` | bug di 3.0.17: non scrive su `fp` e causa un double free in `notcurses_stop` |
+| `lib/notcurses/ffi/functions.rb:182` | `ncplane_vprintf_aligned` | `va_list` non costruibile da Ruby |
+| `lib/notcurses/ffi/functions.rb:184` | `ncplane_vprintf_yx` | `va_list` non costruibile da Ruby |
+| `lib/notcurses/ffi/functions.rb:186` | `ncplane_vprintf_stained` | `va_list` non costruibile da Ruby |
+| `lib/notcurses/ffi/functions.rb:537` | `ncnmetric` | il C restituisce `buf` (memoria del chiamante) o NULL; `:string` ne restituisce una copia (`nil` se NULL) |
 | `lib/notcurses/ffi/inline_reimpl.rb:802` | `ncplane_vprintf` | `va_list` non costruibile da Ruby; da Ruby si usa `ncplane_printf` |
 
 ### `# UNION:` da verificare a mano
@@ -128,9 +129,9 @@ NC_SPEC_SEED=1234 bundle exec rspec spec/inline_reimpl_spec.rb < /dev/null    # 
 - **Log dettagliato:** `memory/fase2-wrapper-idiomatico.md` (decisioni di design, ciclo di vita, memoria e callback,
   tabelle dei bug aggirati, funzioni escluse, differenze dai pattern del prompt, verifiche)
 - **Fase 1:** nessun file modificato durante la Fase 2. Il 2026-10-26, su richiesta, `blocking: true` su 8 funzioni
-  di `lib/notcurses/ffi/functions.rb` (vedi il punto 6 di "Cosa serve alla Fase 3").
-- **Dimensioni:** 28 file in `lib/` (12 482 righe, Fase 1 esclusa); 30 file di spec e helper (7 614 righe) più 2
-  fixture (`spec/fixtures/visual/rgbw.png`, `frames.mkv`).
+  di `lib/notcurses/ffi/functions.rb`, e nella review su altre 2 (vedi il punto 6 di "Cosa serve alla Fase 3").
+- **Dimensioni** (dopo la review): 28 file in `lib/` (12 594 righe, Fase 1 esclusa); 31 file di spec e helper
+  (8 109 righe) più 2 fixture (`spec/fixtures/visual/rgbw.png`, `frames.mkv`).
 - **Uso:** `require 'notcurses'`; il punto di ingresso è `Notcurses::Context.open { |nc| ... }` (o
   `Notcurses::Direct.open`).
 
@@ -139,9 +140,9 @@ NC_SPEC_SEED=1234 bundle exec rspec spec/inline_reimpl_spec.rb < /dev/null    # 
 | Classe o modulo | File | Metodi d'istanza | Metodi di classe | di cui `@api private` |
 | --- | --- | ---: | ---: | ---: |
 | `Notcurses` | `notcurses.rb`, `version.rb`, `format.rb`, `context.rb` | 0 | 20 | 2 |
-| `Notcurses::Context` | `context.rb` | 64 | 1 | 14 |
+| `Notcurses::Context` | `context.rb` | 65 | 1 | 15 |
 | `Notcurses::Capabilities` | `context.rb` | 10 | 0 | 0 |
-| `Notcurses::Plane` | `plane.rb` | 138 | 7 | 14 |
+| `Notcurses::Plane` | `plane.rb` | 139 | 7 | 14 |
 | `Notcurses::FadeContext` | `plane.rb` | 9 | 0 | 0 |
 | `Notcurses::Cell` | `cell.rb` | 13 | 2 | 3 |
 | `Notcurses::Channel` | `channel.rb` | 22 | 4 | 0 |
@@ -163,7 +164,7 @@ NC_SPEC_SEED=1234 bundle exec rspec spec/inline_reimpl_spec.rb < /dev/null    # 
 | `Notcurses::Reader` | `widgets/reader.rb` | 15 | 1 | 0 |
 | `Notcurses::Reel` | `widgets/reel.rb` | 17 | 1 | 0 |
 | `Notcurses::Tablet` | `widgets/reel.rb` | 9 | 0 | 6 |
-| `Notcurses::Tabbed` | `widgets/tabbed.rb` | 32 | 3 | 5 |
+| `Notcurses::Tabbed` | `widgets/tabbed.rb` | 33 | 3 | 5 |
 | `Notcurses::Tab` | `widgets/tabbed.rb` | 17 | 0 | 4 |
 | `Notcurses::Tree` | `widgets/tree.rb` | 19 | 1 | 0 |
 | `Notcurses::Plot` | `widgets/plot.rb` | 14 | 1 | 0 |
@@ -179,7 +180,7 @@ NC_SPEC_SEED=1234 bundle exec rspec spec/inline_reimpl_spec.rb < /dev/null    # 
   `PlaneError`, `CellError`, `VisualError`, `InputError`, `WidgetError`, `DirectError`, `ContextError`.
 - Conteggio per riflessione (`public_instance_methods`, `singleton_methods`): comprende alias, `attr_reader` e i
   metodi che una classe riceve dai moduli del wrapper (`Resource`, `Widget`, `Resource::ClassMethods#open`).
-  Contando ogni definizione una sola volta i metodi pubblici sono 723. La colonna `@api private` conta i metodi
+  Contando ogni definizione una sola volta i metodi pubblici sono 726. La colonna `@api private` conta i metodi
   pubblici per Ruby ma interni al wrapper (registro del contesto, collegamenti tra classi).
 
 ### Copertura delle funzioni FFI (383 + 248)
@@ -201,18 +202,18 @@ se un'esclusione riguarda una funzione chiamata o inesistente, o se manca il mot
 
 | Spec | Esempi |
 | --- | ---: |
-| `spec/notcurses/` (25 file, uno per classe o area) | 521 |
-| `spec/integration/` (`lifecycle_spec.rb` 8, `visual_spec.rb` 12, `pty_spec.rb` 1) | 21 |
+| `spec/notcurses/` (26 file, uno per classe o area) | 542 |
+| `spec/integration/` (`lifecycle_spec.rb` 8, `visual_spec.rb` 12, `pty_spec.rb` 4) | 24 |
 | `spec/coverage_spec.rb` | 3 |
-| Totale Fase 2 | 545 |
+| Totale Fase 2 | 569 |
 | Fase 1 (`ffi_sanity_spec.rb`, `inline_reimpl_spec.rb`) | 257 |
-| **Totale** | **802, 0 fallimenti (100% pass)** |
+| **Totale** | **826, 0 fallimenti (100% pass)** |
 
-- Stesso risultato in ordine casuale (semi `1234`, `4242`, `7`; prima della modifica del 2026-10-26 anche `1`,
-  `31337`, `2026`); durata circa 9 s.
-- Esempi per file: plane 68, visual 73, direct 56, context 28, tabbed 28, tree 26, reel 25, plot 24, menu 23,
-  reader 22, selector 19, channel 16, fd_plane 16, subprocess 15, progbar 14, multiselector 13, input 11, format 10,
-  cell 8, palette 6, pixel 6, version 5, fade_context 4, stats 4, error 1.
+- Numeri dopo la review della Fase 2 (prima: 802 esempi). Stesso risultato in ordine casuale (semi `1234`, `4242`,
+  `7`; prima della modifica del 2026-10-26 anche `1`, `31337`, `2026`); durata circa 15 s su Ruby 4.0.7.
+- Esempi per file: plane 79, visual 73, direct 56, tabbed 29, context 28, reel 27, tree 27, plot 24, reader 24,
+  menu 23, selector 19, channel 16, fd_plane 16, subprocess 15, progbar 14, multiselector 13, input 11, format 10,
+  cell 9, palette 6, pixel 6, version 5, fade_context 4, stats 4, api 3, error 1.
 - YARD: ogni metodo pubblico ha commento, `@param` per ogni parametro e `@return`; i metodi che possono sollevare
   hanno `@raise` (controlli euristici con script fuori dal progetto).
 
@@ -248,7 +249,8 @@ corto e sicuro, altrimenti si documenta nel YARD. I più importanti:
 - **blocchi dell'interprete**: `ncfdplane_destroy` dentro un callback, `ncsubproc_destroy` con il figlio vivo,
   `notcurses_get` con il GVL: `FdPlane`, `Subprocess` e le attese dell'input sono in Ruby;
 - **segnali**: `NCOPTION_NO_QUIT_SIGHANDLERS` e `NCOPTION_NO_WINCH_SIGHANDLER` per default (con i gestori di notcurses
-  Ctrl-C termina Ruby senza `ensure` e SIGWINCH resta bloccato per sempre).
+  Ctrl-C termina Ruby senza `ensure` e SIGWINCH resta bloccato per sempre; dopo la review solo nel thread interno
+  dell'init, vedi il punto 2 di "Cosa serve alla Fase 3").
 
 Bug noti **non** aggirati (documentati nel YARD): dopo il primo scroll di un piano `duplicate`, i resize (anche
 l'autogrow), `rotate_*`, il merge sulla destinazione e `FadeContext` permutano o perdono righe (`logrow`);
@@ -281,21 +283,29 @@ Reimplementate in Ruby (stessa funzionalità, senza i bug): `ncreel`/`nctablet` 
 2. **Resize.** Con il default `no_winch_sighandler: true` serve `trap('WINCH')` più `Context#refresh`; i piani
    reagiscono con `resize:`/`set_resize_callback` (`:maximize`, `:realign`, `:marginalized`, `:placewithin` o un
    blocco). Limiti da gestire: l'intestazione di `Tabbed` non segue il resize; un `Reader` il cui piano cambia
-   dimensioni solleva `WidgetError` e va ricreato.
+   dimensioni solleva `WidgetError` e va ricreato. Dalla review l'init gira in un thread interno: con
+   `no_winch_sighandler: false` notcurses blocca SIGWINCH e SIGCONT solo in quel thread, non nei thread di Ruby, ma
+   l'evento `Key::RESIZE` arriva comunque solo insieme all'input successivo.
 3. **Composizione.** I widget avanzati si possono scrivere sopra `Plane`, come `Reel` (Ruby puro: piani figli, `box`,
    `putstr`, callback di disegno). Utili: `create_child(margins:)`, gli allineamenti, le pile separate
    (`Context#create_pile`, `Plane#render_pile`), `FadeContext` per le animazioni, `Visual#stream` con un blocco.
+   Vincoli dalla review: `break`, `return` e `throw` in un blocco chiamato dal C (disegno, resize, callback dei
+   widget) diventano una `LocalJumpError`; `Plane.new` su un piano che ha già un `Plane` aperto solleva
+   `ArgumentError` (un secondo wrapper si crea con `owned: false, tracked: false`).
 4. **Thread.** Nessun lock interno: serve una politica (per esempio un solo thread UI, e i blocchi di `FdPlane` e
    `Subprocess` che passano i dati con una `Queue`).
 5. **Bug `logrow` dopo lo scroll** (non aggirato): evitare `duplicate`, resize e `rotate` sui piani che hanno fatto
    scroll, oppure ricrearli.
 6. **GVL nella Fase 1 (risolto il 2026-10-26).** `notcurses_init`, `notcurses_core_init`, `ncdirect_init`,
-   `ncdirect_core_init`, `ncdirect_cursor_yx`, `ncdirect_cursor_move_yx`, `ncdirect_readline` e `ncvisual_stream` ora
-   hanno `blocking: true`: durante le loro attese gli altri thread Ruby girano, e un terminale finto in un thread dello
-   stesso processo (un pty nei test) può rispondere. Prove: `spec/integration/pty_spec.rb` e l'esempio sul GVL in
-   `spec/notcurses/visual_spec.rb`, entrambi falliti prima della modifica. Da gestire nella Fase 3: durante quelle
-   attese un altro thread può chiamare notcurses insieme al C (il YARD lo vieta per lo stesso contesto, e vieta ENV
-   durante l'init).
+   `ncdirect_core_init`, `ncdirect_cursor_yx`, `ncdirect_cursor_move_yx`, `ncdirect_readline`, `ncvisual_stream` e,
+   dalla review, `ncdirect_render_image` e `ncdirect_raster_frame` (con il blitter `:pixel`, o un allineamento su un
+   terminale senza `hpa`, chiedono la posizione del cursore) ora hanno `blocking: true`: durante le loro attese gli
+   altri thread Ruby girano, e un terminale finto in un thread dello stesso processo (un pty nei test) può
+   rispondere. Prove: in `spec/integration/pty_spec.rb` gli esempi "init, cursor_yx, move_cursor e readline ..." e
+   "render_image, Frame#raster e stream con il blitter :pixel ...", e l'esempio sul GVL in
+   `spec/notcurses/visual_spec.rb`, tutti falliti prima della modifica che provano. Da gestire nella Fase 3:
+   durante quelle attese un altro thread può chiamare notcurses insieme al C (il YARD lo vieta per lo stesso
+   contesto, e vieta ENV durante l'init).
 7. **Test grafici.** Blitter a pixel (sixel, kitty), quadranti, sestanti e ottanti non si provano su `/dev/null`:
    serve un emulatore di terminale vero su un pty (per esempio in CI).
 8. **Ruby 3.1.** Sintassi controllata con `Parser::Ruby31` su tutti i file di `lib`, ma la suite non è mai stata
@@ -303,3 +313,144 @@ Reimplementate in Ruby (stessa funzionalità, senza i bug): `ncreel`/`nctablet` 
    una matrice CI 3.1–4.0).
 9. **Pacchetto.** Non c'è ancora un gemspec né la documentazione YARD generata (la gem `yard` non è tra le
    dipendenze).
+10. **Finding aperti della review.** Prima di costruire sopra l'API, decidi i punti aperti della sezione "Review della
+    Fase 2 e Ruby 3.1": i nomi `from:`/`channels:` di `hline` e `rowstride:`/`linesize:` di `Visual`,
+    `print_aligned` contro `putstr(align:)`, i valori `-1` e `0` di `Visual.from_plane`, `empty?` in `Reel` e
+    `Tabbed`.
+
+## Review della Fase 2 e Ruby 3.1
+
+- **Data:** 2026-10-26
+- **Log dettagliato:** `memory/fase2-review.md` (metodo, tabella dei 22 finding con il fix o il motivo, decisioni,
+  cambi dell'API, finding aperti, controlli)
+- **Fix:** commit `553aa1d`. Per ogni finding confermato prima una spec, fallita sul codice di allora, poi il fix e la
+  suite completa. I 3 finding sui soli test aggiungono spec che passano subito.
+- **Metodo:** 12 agenti. 6 finder in sola lettura, uno per area (nucleo e valori; piani; Direct e Visual; Selector,
+  MultiSelector, Menu, Reader, ProgBar, Plot; Reel, Tree, Tabbed e processi; API di tutte le classi), senza la
+  memoria della Fase 2. 6 agenti di controllo, uno per area, hanno provato a smentire ogni finding con uno script,
+  una spec o le righe del C.
+- **Fase 1:** un solo cambio, autorizzato dall'utente: `blocking: true` su `ncdirect_render_image` e
+  `ncdirect_raster_frame` (A3-02).
+- Le dimensioni, la tabella delle classi e i numeri dei test della sezione "Fase 2" descrivono lo stato dopo la
+  review.
+
+### Finding per severità e verdetto
+
+I 6 finder hanno trovato 27 finding, 22 dopo l'unione dei doppioni. I 21 finding confermati sono tutti corretti.
+
+| Severità | CONFERMATO | PLAUSIBILE | SMENTITO | Totale |
+| --- | ---: | ---: | ---: | ---: |
+| alta | 4 | 0 | 0 | 4 |
+| media | 6 | 0 | 0 | 6 |
+| bassa | 11 | 0 | 1 | 12 |
+| **Totale** | **21** | **0** | **1** | **22** |
+
+Alta:
+
+- **R2:** un Ctrl-C, o un'altra eccezione asincrona, durante l'init di `Context` o `Direct` lasciava un contesto C
+  attivo e irraggiungibile. Ora l'init gira in un thread interno e il wrapper ferma il contesto prima di rilanciare.
+- **R1:** `break`, `return` e `throw` in un blocco chiamato dal C saltavano i frame C con il `pilelock` di notcurses
+  tenuto. Ora diventano una `LocalJumpError`.
+- **A2-01:** `Plane.new` su un piano con un wrapper aperto sostituiva quel wrapper nel registro del contesto, e il GC
+  poteva raccogliere il callback di resize ancora registrato nel C (SIGSEGV al resize del genitore). Ora `Plane.new`
+  solleva `ArgumentError`.
+- **A4-01:** Backspace, Ctrl+U e Ctrl+W del `Reader` su un glifo largo lasciavano nella vista la sua metà destra, e il
+  glifo largo successivo in fondo alla riga scriveva oltre il framebuffer (abort al `free`). Ora il wrapper svuota la
+  vista prima di quei tasti.
+
+Media:
+
+- **A2-02:** `raise_callback_errors!` dentro un callback rilanciava le eccezioni di un altro callback, e un resize
+  `:marginalized` si fermava a metà.
+- **A2-03:** `Plane#set_base` accettava TAB e `"\n"`; il TAB arrivava crudo al terminale.
+- **A2-04:** `Plane#==` dava true fra un piano chiuso e il piano nuovo creato allo stesso indirizzo.
+- **A3-02:** `Direct#render_image` e `Direct::Frame#raster`, con il blitter `:pixel` o un allineamento senza `hpa`,
+  bloccavano per sempre un terminale servito da un thread Ruby.
+- **A5-01:** in `Reel` un tablet senza bordi orizzontali e con 0 righe usate faceva fallire ogni ridisegno.
+- **A6-05:** `Plane#merge_down`, `Tabbed.new` e `Plot.new(label_ticks: true)` sollevavano `ArgumentError` dove le
+  altre classi usano `PlaneError` o `WidgetError`.
+
+Bassa: 6 finding di nomi e firme (R3, A6-02, A6-03, A6-04, A6-06, A6-07: vedi "Cambi dell'API pubblica"); 2 di
+errori (A1-03: una String non convertibile in UTF-8 dava `EncodingError`; A2-05: la cella `"\n"` che `ncplane_put`
+lascia dopo un a capo ora si legge vuota); 3 di test (A1-05, A2-07, A5-03: spec nuove per `Context#get` e `#getvec`
+con eventi veri, lo z-order delle varianti `family`, `merge_down`, `erase_region`, `greyscale`, `as_rgba`, `qrcode`,
+`Tree#delete` a profondità 2).
+
+Smentito: A3-04. `Direct#readline` restituisce nil sia a fine input sia per un errore, come dice il YARD. Il wrapper
+non può distinguere i due casi: il NULL del C non porta `errno` e il campo `eof` è privato di `struct ncdirect`.
+
+### Cambi dell'API pubblica
+
+| Prima | Dopo | Finding |
+| --- | --- | --- |
+| `Plane#at(y = nil, x = nil)` | `at(y: nil, x: nil)` | R3 |
+| `Plane#set_base(egc = ' ', styles:, channels:)` | `set_base(egc: ' ', styles:, channels:)`; TAB e `"\n"` rifiutati | R3, A2-03 |
+| `Plane#scrollup(lines = 1)` | `scrollup(lines: 1)` | R3 |
+| `Plane#set_resize_callback(callback = nil, &block)` | `set_resize_callback(callback: nil, &block)` | R3 |
+| `Cell.new(egc = ' ', ...)` | `Cell.new(egc: ' ', ...)` | R3 |
+| `Channel.new(value = 0)`, `Channels.new(value = 0)`, `Pixel.new(value = 0)` | `new(value: 0)` | R3 |
+| `Context#cursor_enable(y = 0, x = 0)` | `cursor_enable(y: 0, x: 0)` | R3 |
+| `Context#mice_enable(events = :all)` | `mice_enable(events: :all)` | R3 |
+| `Direct#cursor_up/down/left/right(count = 1)` | `cursor_*(count: 1)` | R3 |
+| `Direct#set_styles(styles)` | `Direct#styles=(styles)` | A6-02 |
+| `Direct#on_styles(styles)`, `off_styles(styles)` | `on_styles(*styles)`, `off_styles(*styles)` | A6-02 |
+| `Direct#box(..., style:, omit:)` | `box(..., set:, hide:)` | A6-02 |
+| `Direct#cursor_move(y: nil, x: nil)` | `Direct#move_cursor(y: nil, x: nil)` | A6-02 |
+| `Plane#move_cursor(y, x)` con `-1` = asse invariato | `nil` = asse invariato; `-1` solleva `PlaneError` | A6-02 |
+| — | `Plane#cursor_yx` (alias di `cursor`) | A6-02 |
+| `Context.new(margins: String)` | anche `margins: [alto, destra, basso, sinistra]` | A6-03 |
+| `Plot.new(grid:)` | `Plot.new(blitter:)` | A6-03 |
+| `Visual` (`blit`, `geometry`, `blit_*`, `create_plane`, ...) `nodegrade:`, `nointerpolate:` | `no_degrade:`, `no_interpolate:` | A6-03 |
+| `Plane#as_rgba(y: -1, x: -1, rows: 0, cols: 0)` | `as_rgba(y: nil, x: nil, rows: nil, cols: nil)`; `-1` e `0` sollevano `ArgumentError` | A6-03 |
+| `Selector`, `MultiSelector`: `opchannels:`, `descchannels:`, `titlechannels:`, `footchannels:`, `boxchannels:` | `op_channels:`, `desc_channels:`, `title_channels:`, `foot_channels:`, `box_channels:` | A6-04 |
+| `Menu`: `headerchannels:`, `sectionchannels:` | `header_channels:`, `section_channels:` | A6-04 |
+| `ProgBar`: `ulchannel:`, `urchannel:`, `blchannel:`, `brchannel:` | `ul_channel:`, `ur_channel:`, `bl_channel:`, `br_channel:` | A6-04 |
+| `Tabbed#select_next`, `#select_prev` | `Tabbed#next`, `#prev`; nuovo `Tabbed#size` | A6-06 |
+| `Direct::Image#geom` → `Hash`, `Direct::Image::GEOM_FIELDS` | `Direct::Image#geometry` → `Visual::Geometry` | A6-07 |
+| `Plane#merge_down`: `ArgumentError` per `dst` stesso o in un'altra pila | `PlaneError` | A6-05 |
+| `Tabbed.new` (meno di 2 righe), `Plot.new(label_ticks: true)` (7 colonne o meno): `ArgumentError` | `WidgetError` | A6-05 |
+| `Plane.new` su un piano con un wrapper aperto, tracciato o posseduto | `ArgumentError` | A2-01 |
+| `String` non convertibile in UTF-8: `EncodingError` | `ArgumentError` | A1-03 |
+
+I nomi vecchi sono rimossi, senza alias di compatibilità: la gem non ha ancora utenti.
+
+### Finding aperti
+
+PLAUSIBILI: parti di A6-02 e A6-03 con due letture valide, non cambiate.
+
+- `Plane#hline(from:, to:)` contro `Direct#hline(channels:, to:)`: in `Plane` `from:` sono i colori della prima cella
+  della sfumatura (nil = i colori della cella), in `Direct` `channels:` è il nome usato in tutta la classe per i
+  colori di scrittura.
+- `Direct#print_aligned` contro `Plane#putstr(align:)`: `Direct#putstr` rispecchia `ncdirect_putstr`, che non ha
+  allineamento; `Plane#putstr` ha assorbito `ncplane_putstr_aligned`.
+- In `Visual` `rowstride:` (5 metodi `from_*`) contro `linesize:` (4 metodi `blit_*`): i nomi seguono il C, ma il
+  concetto è lo stesso.
+
+Emersi dal controllo, fuori dai finding confermati (serve una decisione):
+
+- `Visual.from_plane(begy:, begx:, leny:, lenx:)` usa ancora i valori speciali del C (`-1` = posizione del
+  cursore, `0` = fino al bordo) e nomi diversi da `Plane#as_rgba(y:, x:, rows:, cols:)`, che avvolge una funzione C
+  con gli stessi parametri: è la stessa correzione fatta per `as_rgba`.
+- `empty?` esiste in `Tree` ma non in `Reel` e `Tabbed`.
+
+Limiti residui di R2:
+
+- un secondo Ctrl-C, mentre il wrapper ferma un contesto il cui terminale non risponde, lascia il registro del
+  contesto occupato (l'oggetto resta chiuso, nessun crash);
+- `Thread#kill` del thread chiamante durante l'init non passa dal `rescue`;
+- il thread interno dell'init ha `report_on_exception` attivo (il thread non solleva eccezioni).
+
+Note dei verificatori, da controllare:
+
+- su un piano che scorre, un testo largo quanto la riga e seguito da `"\n"` lascia il cursore due righe sotto
+  (`notcurses.c:1888-1890` e `1903-1904`), contro il YARD di `Plane#putstr`;
+- la causa radice di A4-01 (`cellcmp_and_dupfar` non confronta la width, `internal.h:1512-1519`) può toccare altre
+  copie fra piani: nessun altro caso trovato.
+
+### Controlli
+
+- Suite completa su Ruby 4.0.7: 826 esempi, 0 fallimenti, anche con i semi `1234`, `4242` e `7`.
+- `ruby -w -Ilib -e 'require "notcurses"'`: nessun warning.
+- `spec/coverage_spec.rb` passa: la review non aggiunge e non toglie chiamate FFI (477 chiamate, 154 escluse).
+- YARD: 0 problemi con `yard_check.rb`; `yard_raise_check.rb` controlla 605 metodi e segnala solo il falso positivo
+  noto `input.rb:300 to_ffi`, presente anche prima della review.
