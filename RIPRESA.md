@@ -82,6 +82,13 @@ grafico. La Fase 5 gira sulla **macchina dell'utente**, in una sessione di Claud
 - Il percorso del checkout, la distribuzione Linux, la versione di macOS e l'architettura (Apple Silicon o Intel) non
   sono noti: controllali all'inizio e scrivili nel log.
 - Sixel resta non provato (nessuno dei due terminali lo supporta): scrivilo nei risultati.
+- **Prova preliminare del 2026-10-27** sul VPS, dentro herdr (multiplexer con Ghostty come backend, `TERM=xterm-256color`,
+  `LANG=it_IT.UTF-8`), con uno script che disegna `notcurses/data/worldmap.png` con ogni blitter e `no_degrade: true`:
+  `detected_terminal` = `XTerm` (herdr risponde all'interrogazione come XTerm), `can_pixel?` true e blit `:pixel` riuscito
+  (celle 16×35 pixel); `:half`, `:braille`, `:ascii` riusciti; `:quad`, `:sextant`, `:octant` non disponibili, perché le
+  euristiche di XTerm (`termdesc.c:844-857`) non li attivano. Con Ghostty riconosciuto direttamente
+  (`apply_ghostty_heuristics`, `termdesc.c:930-933`) ci si aspettano quadranti e sestanti, non ottanti. Senza
+  `no_degrade: true` un blitter non supportato ripiega in silenzio e il blit sembra riuscito.
 - Il server Hindsight (`127.0.0.1:8888`) e lo scratchpad del VPS potrebbero non esistere sulla macchina dell'utente: se
   il recall non risponde, prosegui con `RICONSEGNA.md` e i file `memory/`, e dillo in una riga.
 - La CI non cambia (scelta dell'utente): niente job grafico headless.
