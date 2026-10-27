@@ -125,9 +125,9 @@ RSpec.describe 'Copertura delle funzioni FFI' do
     expect(excluded.values - reasons.keys).to be_empty
   end
 
-  it 'conta 631 funzioni, senza nomi doppi' do
-    expect(attached.size).to eq(383)
+  it 'conta 633 funzioni, senza nomi doppi' do
+    expect(attached.size).to eq(385)
     expect(inline.size).to eq(248)
-    expect((attached + inline).uniq.size).to eq(631)
+    expect((attached + inline).uniq.size).to eq(633)
   end
 end
