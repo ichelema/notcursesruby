@@ -88,6 +88,8 @@ NC_SPEC_SEED=1234 bundle exec rspec spec/inline_reimpl_spec.rb < /dev/null    # 
 - La spec di sanità chiama `notcurses_init` con `termtype` NULL, quindi notcurses legge `TERM`. Se `TERM` manca o vale
   `dumb`, l'esempio `can init and stop without crash` fallisce perché `notcurses_init` restituisce NULL. In CI usa
   `TERM=xterm-256color bundle exec rspec`.
+- Le spec dei colori RGB (`context_spec.rb`, `direct_spec.rb`, 10 esempi) richiedono `COLORTERM=truecolor`:
+  notcurses abilita i 24 bit solo con quella variabile (`termdesc.c:191`). Trovato dalla CI nella Fase 4.
 - La spec differenziale usa sempre `termtype = "xterm-256color"` e non dipende da `TERM`. Alcuni esempi vanno in skip
   con una locale non UTF-8 o su un host big-endian, perché i valori attesi sono calcolati con UTF-8 su little-endian.
 - Ho eseguito i test senza terminale di controllo (stdin da `/dev/null`, nessun `/dev/tty`). Da un terminale
@@ -703,3 +705,141 @@ comune (`Util.c_region`); la copertura FFI non cambia (477 chiamate, 154 escluse
 - Con stdin che non è un tty, notcurses 3.0.17 (build con gli assert) abortisce a ogni tasto letto da `/dev/tty`
   (`in.c:2308`), anche senza le opzioni: il ramo `/dev/tty` di `Context#flow_control_disable` oggi non ha un caso
   d'uso.
+
+## Fase 4 — pacchetto, YARD generato, coverage e CI
+
+- **Data:** 2026-10-27. **Design:** `memory/fase4-design.md`, approvato dall'utente (scelte nella sezione 0).
+  **Log:** `memory/fase4-pacchetto-ci.md` (ricerca, decisioni, problemi della CI, controlli).
+- **Commit:** `015633a` (design), `9ebad2f` (pacchetto), `50aa38d` (YARD), `b188bfb` (coverage), `b84aa96` (CI),
+  `3e31692` e `1aff846` (correzioni della CI), poi questa documentazione.
+- **Fase 1:** nessun cambio. `git diff 4906a35 -- lib/notcurses/ffi lib/notcurses/ffi.rb` è vuoto.
+- **`lib/`:** `Notcurses::VERSION` da `0.2.0` a `0.1.0` (scelta dell'utente); per il resto solo commenti YARD
+  (`input.rb`, `format.rb`, `visual.rb`).
+
+### File
+
+| File | Contenuto |
+| --- | --- |
+| `notcursesruby.gemspec` | gem `notcursesruby` 0.1.0, Apache-2.0, Ruby >= 3.1, dipendenza runtime solo `ffi ~> 1.15`, `requirements` notcurses 3.0.17, `rubygems_mfa_required`; file da `Dir.glob` |
+| `README.md`, `CHANGELOG.md` | per gli utenti: requisiti, installazione di notcurses per sistema, esempi, limiti, sviluppo; changelog Keep a Changelog con la 0.1.0 |
+| `LICENSE`, `NOTICE` | testo di Apache-2.0; attribuzione a notcurses per il layer FFI e il C nei commenti |
+| `.yardopts` | README e file extra, `--hide-api private`, `--exclude lib/notcurses/ffi/`, uscita in `doc/` |
+| `spec/gemspec_spec.rb` | file della gem, dipendenze, versione uguale a `Notcurses::VERSION` e al changelog |
+| `spec/support/coverage.rb` | SimpleCov, caricato con `rspec --require` |
+| `.github/workflows/ci.yml` | CI su GitHub Actions |
+| `.gitignore` | più `/doc/`, `/.yardoc/`, `/coverage/`, `/*.gem` |
+
+La gem contiene 52 file: i 46 di `lib/`, `examples/demo.rb`, `README.md`, `LICENSE`, `NOTICE`, `CHANGELOG.md`,
+`.yardopts`. Nessun submodule, spec o documento interno.
+
+### Come costruire la gem, la documentazione e la coverage
+
+Dalla radice del progetto:
+
+```sh
+gem build notcursesruby.gemspec                       # notcursesruby-0.1.0.gem, senza warning
+gem install ./notcursesruby-0.1.0.gem
+bundle exec yard doc --fail-on-warning                # documentazione in doc/
+bundle exec yard stats --list-undoc                   # 100.00% documented
+TERM=xterm-256color COLORTERM=truecolor timeout -k 5 -s KILL 600 \
+  bundle exec rspec --require ./spec/support/coverage.rb < /dev/null   # report in coverage/
+```
+
+- Sulla macchina di sviluppo ogni comando `gem` stampa warning di `rdoc` (`already initialized constant`): Ruby 4.0.7
+  ha `rdoc` 7.2.0 e 8.1.0 installate. Non dipendono dalla gem; per controllare i warning di `gem build` usa
+  `RUBYOPT=-W0 gem build notcursesruby.gemspec`.
+- La coverage con una sola spec fallisce per la soglia (exit 2): le soglie valgono per la suite completa.
+
+### YARD
+
+- `yard doc --fail-on-warning`: 0 warning. `yard stats --list-undoc`: 100.00% (6 moduli, 51 classi, 164 costanti,
+  101 attributi, 613 metodi). Gli script euristici delle fasi precedenti non servono più.
+- Il layer FFI non è nella documentazione: le sue 251 costanti non hanno commento e la regola 1 vieta di aggiungerlo.
+  Il modulo `Notcurses::FFI` resta documentato da `ffi.rb`.
+- Gli oggetti `@api private` (`Util`, `Visual::Internal`, i metodi interni) non compaiono.
+
+### Coverage
+
+| Misura | Righe | Branch |
+| --- | ---: | ---: |
+| Locale, Ruby 4.0.7 | 98,32 % (5321/5412) | 91,26 % |
+| CI, Ruby 4.0.9 (run `40449066107`) | 98,23 % (5316/5412) | 90,99 % |
+
+- Soglie: righe 98 %, ogni file 90 %. Il layer FFI (`ffi.rb`, `ffi/`) è fuori dal totale.
+- Il risultato varia di qualche riga tra le esecuzioni (thread e tempi): la soglia chiede 5304 righe, il margine è di
+  17 righe in locale e 12 in CI.
+- Non contano le righe eseguite nei processi figli delle spec (`pty_spec.rb`, `ui_pty_spec.rb`, `lifecycle_spec.rb`,
+  `direct_spec.rb`, `reader_spec.rb`), per esempio `EventLoop#run` su un pty vero.
+- **Codice morto:** `Util.timespec` (`util.rb:340`) non ha chiamanti; non rimosso e non coperto. Per questo `util.rb`
+  è il file più basso (91,2 %).
+
+### CI
+
+- **Workflow:** `.github/workflows/ci.yml`, su push a `master` e pull request; un push nuovo ferma il run in corso
+  sullo stesso ref.
+- **Ambiente:** container `archlinux:base` fissato per digest; `pacman -Syuu` sullo snapshot `2026/10/26` dell'Arch
+  Linux Archive: `notcurses 3.0.17-3` e `ffmpeg 2:9.0.2-2`, come sulla macchina di sviluppo. Ruby da mise: 3.2.11,
+  3.3.13, 3.4.12 e 4.0.9 precompilati (`jdx/ruby`), 3.1.7 compilato con `RUBY_CFLAGS=-std=gnu17`.
+- **Matrice:** Ruby 3.1.7, 3.2.11, 3.3.13, 3.4.12, 4.0.9. Ogni job: `ruby -w`, suite in ordine normale, suite con
+  `--order rand` (il seme è nel log: «Randomized with seed N»). La voce 4.0.9 fa anche coverage (riepilogo nel job
+  summary, artifact `coverage`), upload su Codecov se il secret `CODECOV_TOKEN` esiste, `gem build`, prova della gem
+  installata da fuori del repository, YARD (artifact `doc`).
+- **Ambiente delle spec:** `TERM=xterm-256color`, `COLORTERM=truecolor`, `LANG=C.UTF-8`, `timeout -k 5 -s KILL 600`,
+  stdin da `/dev/null`.
+- **Lockfile:** Ruby 3.2–4.0 usano `Gemfile.lock` con `BUNDLE_FROZEN` e Bundler 4.0.22; Ruby 3.1 una copia del
+  `Gemfile` in `$RUNNER_TEMP`, senza lockfile.
+- **Cache:** pacchetti (`/var/cache/pacman/pkg`, chiave = snapshot), Ruby (`/opt/mise/installs/ruby/<versione>`),
+  gem (`/opt/bundle`, chiave = versione e hash di `Gemfile` e `Gemfile.lock`).
+- **Primo run verde:** https://github.com/ichelema/notcursesruby/actions/runs/40449066107 (commit `1aff846`). Senza
+  cache: job 3.2–4.0 circa 2,5 minuti (66 s per scaricare 339 MiB di pacchetti), job 3.1.7 circa 10 minuti (6 min 15 s
+  per compilare Ruby). Suite: circa 60 s su 3.1.7, 21–26 s su 4.0.9.
+- **Codecov:** lo step c'è ma è saltato finché non esistono il repository su Codecov e il secret `CODECOV_TOKEN`
+  (azione dell'utente).
+
+### Cambi a `Gemfile` e `Gemfile.lock`
+
+| File | Cambio |
+| --- | --- |
+| `Gemfile` | gruppo `:development` con `yard ~> 0.9`; gruppo `:test` con `rspec ~> 3.12` (prima senza blocco), `simplecov ~> 0.22`, `simplecov-cobertura ~> 3.0`. `gem 'ffi', '~> 1.15'` invariato, niente `gemspec` |
+| `Gemfile.lock` | nuove: `yard 0.9.45`, `simplecov 0.22.0`, `simplecov-cobertura 3.2.0`, `simplecov-html 0.13.2`, `simplecov_json_formatter 0.1.4`, `docile 1.4.1`, `rexml 3.4.4`. `ffi`, `rspec` e `BUNDLED WITH 4.0.22` invariati |
+
+### Test
+
+| Spec | Esempi |
+| --- | ---: |
+| Fase 1, Fase 2 e Fase 3 dopo ICH-229 | 914 |
+| `spec/gemspec_spec.rb` (nuova) | 3 |
+| Spec nuove per la coverage (`event_loop_spec.rb` 2, `context_spec.rb` 1, `plane_spec.rb` 1, `subprocess_spec.rb` 1) | 5 |
+| **Totale** | **922, 0 fallimenti** |
+
+- Locale: Ruby 4.0.7 in ordine normale e con `rand:1234`, `rand:4242`, `rand:7`; Ruby 3.1.7 con gli stessi tre semi.
+- CI: le cinque versioni, in ordine normale e casuale. Nessun esempio in skip: la spec differenziale trova
+  `libnotcurses-ffi.so.3` anche in CI.
+
+### Problemi trovati
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| 10 esempi dei colori RGB falliscono in CI | notcurses abilita i 24 bit solo con `COLORTERM=truecolor` o `24bit` (`termdesc.c:191`); il terminale di sviluppo la imposta, il container no | `COLORTERM: truecolor` nel workflow; vincolo nel README e in "Come eseguire i test" |
+| `git submodule` esce con 128 nel container | «dubious ownership»: `actions/checkout` toglie l'eccezione `safe.directory` alla fine dello step | `git config --global --add safe.directory` prima del submodule |
+| Riepilogo della coverage senza `.last_run.json` | con spec fallite SimpleCov scrive solo il report HTML | riepilogo solo dopo una suite riuscita |
+| `gem build` segnala `homepage_uri` uguale a `source_code_uri` | metadati duplicati | tolto `homepage_uri` |
+| Ubuntu inadatto alla CI | 24.04 ha notcurses 3.0.7; 26.04 ha 3.0.17 senza `libnotcurses-ffi` e setup-ruby non ha Ruby 3.1 su 26.04 | container Arch (scelta dell'utente) |
+
+Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è provato solo su GitHub Actions, con
+`actionlint` 1.7.12 prima di ogni push.
+
+### Cosa serve alla fase successiva
+
+1. **Test grafici su un terminale vero** (rimandati dall'utente): xterm su Xvfb con `-ti vt340` annuncia sixel nella
+   risposta DA1; uno script Ruby dentro xterm può controllare `pixel_impl` e un blit `:pixel`. kitty richiede OpenGL
+   (Mesa llvmpipe con Xvfb), esito incerto.
+2. **Codecov:** attivare il repository su Codecov e creare il secret `CODECOV_TOKEN` (utente); il primo upload va
+   controllato nel run successivo.
+3. **`Util.timespec`:** codice morto; serve una decisione dell'utente (rimuoverlo è un cambio di `lib/`).
+4. **Pubblicazione:** rubygems.org, tag `v0.1.0` e release su GitHub sono fuori scope e richiedono la conferma
+   dell'utente; `CHANGELOG.md` ha già i link a `v0.1.0`.
+5. **Aggiornare lo snapshot di Arch** quando cambia notcurses: `ARCH_SNAPSHOT` e il digest dell'immagine nel workflow;
+   la chiave della cache dei pacchetti cambia da sola.
+6. **macOS** resta non provato: un job `macos-14` con Homebrew (notcurses 3.0.17) è possibile, ma i minuti macOS
+   costano 10 volte quelli Linux su un repository privato.
