@@ -110,3 +110,5 @@ di `pacman` scarica 338,65 MiB (66 s senza cache). Il job 3.1.7 dura circa 6 min
   Artifact `doc` (458 kB) e `coverage` (506 kB). Upload su Codecov saltato: il secret non esiste ancora.
 - Nel log di `pacman` compare «journal-nocow.conf: Failed to resolve specifier»: hook di systemd-tmpfiles in un
   container senza systemd, innocuo.
+- CI, run `40450186267` (commit `8ec60ad`), con le cache piene: verde; job da 1 min 40 s (3.2.11) a 2 min 47 s (3.1.7),
+  `pacman` circa 25 s, Ruby e gem circa 5 s.

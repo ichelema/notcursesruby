@@ -793,6 +793,9 @@ TERM=xterm-256color COLORTERM=truecolor timeout -k 5 -s KILL 600 \
 - **Primo run verde:** https://github.com/ichelema/notcursesruby/actions/runs/40449066107 (commit `1aff846`). Senza
   cache: job 3.2–4.0 circa 2,5 minuti (66 s per scaricare 339 MiB di pacchetti), job 3.1.7 circa 10 minuti (6 min 15 s
   per compilare Ruby). Suite: circa 60 s su 3.1.7, 21–26 s su 4.0.9.
+- **Con le cache piene** (run https://github.com/ichelema/notcursesruby/actions/runs/40450186267): job da 1 min 40 s
+  (3.2.11) a 2 min 47 s (3.1.7); `pacman` circa 25 s, Ruby e gem circa 5 s. Circa 11 minuti fatturati per push (ogni job
+  si arrotonda al minuto), su un repository privato con minuti limitati.
 - **Codecov:** lo step c'è ma è saltato finché non esistono il repository su Codecov e il secret `CODECOV_TOKEN`
   (azione dell'utente).
 
