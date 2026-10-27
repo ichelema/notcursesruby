@@ -63,9 +63,13 @@ jobs:
 
       - uses: actions/checkout@v7
 
-      # serve solo notcurses/data (immagini delle spec); libnotcurses-sys no
+      # serve solo notcurses/data (immagini delle spec); libnotcurses-sys no.
+      # Il workspace appartiene a un altro utente del container: checkout toglie
+      # la sua eccezione safe.directory alla fine dello step.
       - name: Submodule notcurses
-        run: git submodule update --init --depth 1 notcurses
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init --depth 1 notcurses
 
       - name: Cache di Ruby
         uses: actions/cache@v6
@@ -111,6 +115,7 @@ jobs:
           if [[ -s "$RUNNER_TEMP/warnings.log" ]]; then cat "$RUNNER_TEMP/warnings.log"; exit 1; fi
 
       - name: Suite in ordine normale${{ matrix.full && ', con la coverage' || '' }}
+        id: suite
         run: |
           args=()
           [[ "${{ matrix.full }}" == true ]] && args=(--require ./spec/support/coverage.rb)
@@ -121,7 +126,7 @@ jobs:
         run: timeout -k 5 -s KILL 600 bundle exec rspec --order rand < /dev/null
 
       - name: Riepilogo della coverage
-        if: matrix.full && !cancelled()
+        if: matrix.full && !cancelled() && steps.suite.outcome != 'skipped'
         run: |
           ruby -rjson -e '
             r = JSON.parse(File.read("coverage/.last_run.json"))["result"]
@@ -130,7 +135,7 @@ jobs:
           ' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Artifact della coverage
-        if: matrix.full && !cancelled()
+        if: matrix.full && !cancelled() && steps.suite.outcome != 'skipped'
         uses: actions/upload-artifact@v7
         with:
           name: coverage
