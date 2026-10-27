@@ -123,6 +123,85 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     end
   RUBY
 
+  # Quattro run sullo stesso pty: ognuno stampa il motivo d'uscita, i tasti
+  # arrivati a on_key e se stty -g dopo run è uguale a prima.
+  def ctrl_keys_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+
+    def wait_for(what)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+      sleep 0.01 until yield || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+      raise "attesa scaduta: #{what}" unless yield
+    end
+
+    Process.setsid
+    master, slave = PTY.open
+    slave.ioctl(0x540E, 0) # TIOCSCTTY (Linux): il pty diventa il terminale di controllo
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    lock = Mutex.new
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        data.scan(/\e\[6n|\e\[c/) { |q| lock.synchronize { master.write(q == "\e[6n" ? "\e[5;7R" : "\e[?62;22c") } }
+      end
+    rescue IOError, Errno::EIO
+    end
+    type = ->(keys) { lock.synchronize { master.write(keys) } }
+    stty = ->(flag) { IO.popen(['stty', flag], in: slave, &:read) }
+
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      app = Notcurses::UI::App.new(nc)
+      keys = []
+      %w[q s c].each { |k| app.on_key(k, ctrl: true) { keys << "^#{k}" } }
+      app.on_key('z') { keys << 'z' }
+      app.on_key('x') { raise 'boom' }
+      session = lambda do |name, opts, user|
+        keys.clear
+        before = stty.('-g')
+        failure = nil
+        thread = Thread.new do
+          wait_for('run') { app.running? }
+          user.()
+        rescue StandardError => e
+          failure = e
+          app.stop
+        end
+        reason = begin
+          app.run(**opts)
+        rescue RuntimeError => e
+          e.message
+        end
+        thread.join
+        same = before == stty.('-g') ? 'uguale' : 'diverso'
+        puts "#{name}: #{reason} #{keys.inspect} stty #{same}#{" failure #{failure.message}" if failure}"
+      end
+      on = { no_flow_control: true, no_linesigs: true }
+      session.('accese', on, lambda {
+        type.("\x11\x13\x03z") # Ctrl+Q, Ctrl+S, Ctrl+C, z
+        wait_for('tasti') { keys.include?('z') }
+        app.stop
+      })
+      session.('spente', {}, lambda {
+        type.("\x13\x11z") # il terminale consuma Ctrl+S e Ctrl+Q
+        wait_for('z') { keys.include?('z') }
+        type.("\x03") # Ctrl-C: SIGINT dal terminale
+      })
+      session.('eccezione', on, -> { type.('x') })
+      system('stty', '-ixon', in: slave)
+      session.('ixon spento prima', on, lambda {
+        type.("\x11z")
+        wait_for('z') { keys.include?('z') }
+        app.stop
+      })
+      puts "ixon dopo #{stty.('-a')[/-?ixon\b/]}"
+    end
+    puts 'fine'
+  RUBY
+
   it 'tasti veri, clic SGR, resize dal kernel, dati di FdPlane e Subprocess con post, Ctrl-C → :interrupt' do
     skip 'TIOCSCTTY e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
 
@@ -142,5 +221,20 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(timed_out).to be(false), out
     expect(status.exitstatus).to eq(0), out
     expect(out).to include('reason eof')
+  end
+
+  it 'no_flow_control e no_linesigs: Ctrl+Q, Ctrl+S e Ctrl+C arrivano a on_key, e stty -g torna quello di prima' do
+    skip 'TIOCSCTTY e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
+
+    out, status, timed_out = run_child(ctrl_keys_script, timeout: 30)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(status.exitstatus).to eq(0), out
+    expect(out).not_to include('failure'), out
+    expect(out).to include('accese: stop ["^q", "^s", "^c", "z"] stty uguale')
+    expect(out).to include('spente: interrupt ["z"] stty uguale')
+    expect(out).to include('eccezione: boom [] stty uguale')
+    expect(out).to include('ixon spento prima: stop ["^q", "z"] stty uguale')
+    expect(out).to include('ixon dopo -ixon')
+    expect(out).to end_with("fine\n")
   end
 end

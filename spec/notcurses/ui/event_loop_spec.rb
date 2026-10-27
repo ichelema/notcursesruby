@@ -200,6 +200,9 @@ RSpec.describe Notcurses::UI::EventLoop do
       expect { ev.on_input }.to raise_error(ArgumentError)
       expect { ev.on_resize }.to raise_error(ArgumentError)
       expect { ev.dispatch(:q) }.to raise_error(TypeError)
+      expect { ev.run(no_flow_control: 1) }.to raise_error(TypeError)
+      expect { ev.run(no_linesigs: 'true') }.to raise_error(TypeError)
+      expect(ev).not_to be_running
     end
 
     it "un'eccezione di un blocco esce da run, che ripristina il trap e chiude il pipe" do

@@ -75,14 +75,20 @@ module Notcurses
       # @return [Boolean] true dopo {#close}, o se il contesto è chiuso
       def closed? = @closed || context.closed?
 
-      # Come {EventLoop#run}.
+      # Come {EventLoop#run}, anche per i tasti di controllo.
       #
+      # @param no_flow_control [Boolean] disattiva IXON durante run: Ctrl+S e
+      #   Ctrl+Q arrivano come tasti
+      # @param no_linesigs [Boolean] disattiva ISIG durante run: Ctrl+C,
+      #   Ctrl+Z e Ctrl+\ arrivano come tasti
       # @return [Symbol] :stop, :eof o :interrupt
       # @raise [ClosedError] se l'App o il contesto sono chiusi
       # @raise [Error] se il ciclo è già in esecuzione
+      # @raise [ContextError] se il terminale rifiuta il cambio di IXON o ISIG
+      # @raise [TypeError] se un'opzione non è un Boolean
       # @raise [Exception] l'eccezione di un handler, di un componente, di un
       #   timer o di un blocco di {#post}
-      def run
+      def run(no_flow_control: false, no_linesigs: false)
         raise ClosedError, 'Notcurses::UI::App: applicazione già chiusa' if closed?
 
         super
