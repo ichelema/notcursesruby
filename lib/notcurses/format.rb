@@ -37,7 +37,7 @@ module Notcurses
       metric_result(FFI.ncnmetric(value, 63, decimal, buf, omit, base, uprefix), 'ncnmetric')
     end
 
-    # Prefisso metrico in base 1000, al massimo {FFI::NCPREFIXCOLUMNS} colonne
+    # Prefisso metrico in base 1000, al massimo +FFI::NCPREFIXCOLUMNS+ colonne
     # (+ncqprefix+).
     #
     # @param value [Integer] 0..2**64-1
@@ -51,7 +51,7 @@ module Notcurses
       metric_result(FFI.ncqprefix(value, decimal, buf, Util.c_bool(omit_decimal, 'omit_decimal')), 'ncqprefix')
     end
 
-    # Prefisso in base 1024 senza "i", al massimo {FFI::NCIPREFIXCOLUMNS}
+    # Prefisso in base 1024 senza "i", al massimo +FFI::NCIPREFIXCOLUMNS+
     # colonne (+nciprefix+): 1536 → "1.50K".
     #
     # @param value [Integer] 0..2**64-1
@@ -65,7 +65,7 @@ module Notcurses
       metric_result(FFI.nciprefix(value, decimal, buf, Util.c_bool(omit_decimal, 'omit_decimal')), 'nciprefix')
     end
 
-    # Prefisso in base 1024 con "i", al massimo {FFI::NCBPREFIXCOLUMNS}
+    # Prefisso in base 1024 con "i", al massimo +FFI::NCBPREFIXCOLUMNS+
     # colonne (+ncbprefix+): 1024 → "1.00Ki".
     #
     # @param value [Integer] 0..2**64-1

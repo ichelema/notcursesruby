@@ -2,4 +2,11 @@
 # Source: notcurses/include/notcurses/notcurses.h
 source 'https://rubygems.org'
 gem 'ffi', '~> 1.15'
-gem 'rspec', '~> 3.12', group: :test
+
+group :development do
+  gem 'yard', '~> 0.9'
+end
+
+group :test do
+  gem 'rspec', '~> 3.12'
+end

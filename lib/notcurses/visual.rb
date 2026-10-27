@@ -980,6 +980,8 @@ module Notcurses
     end
 
     # Funzioni interne condivise dai metodi di classe e di istanza.
+    #
+    # @api private
     module Internal
       module_function
 

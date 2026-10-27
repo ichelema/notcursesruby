@@ -13,7 +13,7 @@ RSpec.describe 'notcursesruby.gemspec' do
   it 'contiene ogni file di lib/ e nessun file interno' do
     lib = Dir.glob('lib/**/*.rb', base: root)
     expect(spec.files).to include(*lib)
-    expect(spec.files).to include('README.md', 'LICENSE', 'NOTICE', 'CHANGELOG.md', 'examples/demo.rb')
+    expect(spec.files).to include('README.md', 'LICENSE', 'NOTICE', 'CHANGELOG.md', '.yardopts', 'examples/demo.rb')
     internal = spec.files.grep(%r{\A(spec|memory|notcurses|libnotcurses-sys|\.github)/|\A(RICONSEGNA|RIPRESA|CLAUDE)})
     expect(internal).to be_empty
     expect(spec.files.reject { |f| File.file?(File.join(root, f)) }).to be_empty

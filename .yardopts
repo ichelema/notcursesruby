@@ -1,0 +1,10 @@
+--no-progress
+--readme README.md
+--hide-api private
+--exclude lib/notcurses/ffi/
+--output-dir doc
+lib/**/*.rb
+-
+CHANGELOG.md
+LICENSE
+NOTICE

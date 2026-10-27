@@ -30,7 +30,7 @@ Gem::Specification.new do |spec|
   # Elenco esplicito invece di git ls-files: la gem si costruisce anche fuori da
   # git, e restano fuori per costruzione submodule, spec/ e documentazione interna.
   spec.files = Dir.glob(%w[lib/**/*.rb examples/*.rb], base: __dir__).sort +
-               %w[README.md LICENSE NOTICE CHANGELOG.md]
+               %w[README.md LICENSE NOTICE CHANGELOG.md .yardopts]
   spec.require_paths = ['lib']
 
   spec.add_dependency 'ffi', '~> 1.15'
