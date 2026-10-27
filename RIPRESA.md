@@ -35,8 +35,8 @@
 
 ### Punti aperti dalla Fase 4
 
-1. **Codecov:** lo step di upload si avvia solo se il secret `CODECOV_TOKEN` esiste. Controlla con
-   `gh secret list --repo ichelema/notcursesruby`; se esiste, controlla il primo upload nel log del job 4.0.9.
+1. **Codecov:** attivo dal 2026-10-27 (GitHub App installata, secret `CODECOV_TOKEN`, primo upload riuscito nel run
+   `40450186267`). Controlla solo che gli upload continuino nel job 4.0.9.
 2. **`Util.timespec`** (`lib/notcurses/util.rb:340`): codice morto senza chiamanti. Chiedi all'utente se rimuoverlo;
    rimuoverlo è un cambio di `lib/` approvato dall'utente, non della regola 11.
 3. **Podman sul VPS:** installato dall'utente il 2026-10-27 (6.1.4, rootless, `crun`, `netavark`, socket utente

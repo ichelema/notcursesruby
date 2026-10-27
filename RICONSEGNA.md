@@ -796,8 +796,10 @@ TERM=xterm-256color COLORTERM=truecolor timeout -k 5 -s KILL 600 \
 - **Con le cache piene** (run https://github.com/ichelema/notcursesruby/actions/runs/40450186267): job da 1 min 40 s
   (3.2.11) a 2 min 47 s (3.1.7); `pacman` circa 25 s, Ruby e gem circa 5 s. Circa 11 minuti fatturati per push (ogni job
   si arrotonda al minuto), su un repository privato con minuti limitati.
-- **Codecov:** lo step c'è ma è saltato finché non esistono il repository su Codecov e il secret `CODECOV_TOKEN`
-  (azione dell'utente).
+- **Codecov:** attivo dal 2026-10-27. L'utente ha installato la GitHub App di Codecov sul repository privato (senza
+  l'app Codecov vede solo i repository pubblici); il secret `CODECOV_TOKEN` è stato creato con `gh secret set`. Primo
+  upload riuscito nel job 4.0.9 del run `40450186267` (secondo tentativo). Gli avvisi del CLI (`No gcov data found`,
+  `xcrun`, `coverage.py`, nessun `codecov.yml`) vengono dalla ricerca automatica di altri formati e sono innocui.
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
@@ -837,8 +839,8 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 1. **Test grafici su un terminale vero** (rimandati dall'utente): xterm su Xvfb con `-ti vt340` annuncia sixel nella
    risposta DA1; uno script Ruby dentro xterm può controllare `pixel_impl` e un blit `:pixel`. kitty richiede OpenGL
    (Mesa llvmpipe con Xvfb), esito incerto.
-2. **Codecov:** attivare il repository su Codecov e creare il secret `CODECOV_TOKEN` (utente); il primo upload va
-   controllato nel run successivo.
+2. **Codecov:** fatto (vedi CI). Il token è comparso nella chat della sessione: l'utente può rigenerarlo nella pagina
+   di configurazione di Codecov e aggiornare il secret.
 3. **`Util.timespec`:** codice morto; serve una decisione dell'utente (rimuoverlo è un cambio di `lib/`).
 4. **Pubblicazione:** rubygems.org, tag `v0.1.0` e release su GitHub sono fuori scope e richiedono la conferma
    dell'utente; `CHANGELOG.md` ha già i link a `v0.1.0`.
