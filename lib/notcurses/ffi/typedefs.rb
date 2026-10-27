@@ -47,5 +47,9 @@ module Notcurses
     # NcChannel/NcChannels. Le firme FFI usano i tipi C reali.
     typedef :uint32, :ncchannel
     typedef :uint64, :ncchannels
+
+    # --- libc (<termios.h>) ---
+    # unsigned long su macOS, unsigned int su Linux e BSD
+    typedef(::FFI::Platform::IS_MAC ? :ulong : :uint, :tcflag_t)
   end
 end

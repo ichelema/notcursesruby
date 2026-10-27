@@ -731,6 +731,53 @@ module Notcurses
       self
     end
 
+    # Disattiva il controllo di flusso (IXON), che notcurses lascia attivo:
+    # Ctrl+S e Ctrl+Q arrivano come input invece di fermare e riprendere
+    # l'output. Agisce sul terminale da cui notcurses legge i tasti (stdin se
+    # è un tty, altrimenti /dev/tty); senza terminale non fa nulla. Lo usa
+    # {UI::EventLoop#run}.
+    #
+    # @return [Boolean] true se IXON era attivo (da riattivare con
+    #   {#flow_control_enable})
+    # @raise [ContextError] se tcgetattr o tcsetattr falliscono, o se IXON non
+    #   è noto su questo sistema
+    # @raise [ClosedError] se il contesto è chiuso
+    # @api private
+    def flow_control_disable
+      to_ptr
+      input_tty { |fd| ixon!(fd, false) }
+    end
+
+    # Riattiva il controllo di flusso (IXON) sul terminale di
+    # {#flow_control_disable}.
+    #
+    # @return [self]
+    # @raise [ContextError] se tcgetattr o tcsetattr falliscono, o se IXON non
+    #   è noto su questo sistema
+    # @raise [ClosedError] se il contesto è chiuso
+    # @api private
+    def flow_control_enable
+      to_ptr
+      input_tty { |fd| ixon!(fd, true) }
+      self
+    end
+
+    # Legge ISIG sul terminale di {#flow_control_disable}: false se
+    # {#linesigs_disable} o +stty -isig+ hanno già tolto i segnali. Lo usa
+    # {UI::EventLoop#run}.
+    #
+    # @return [Boolean] true se ISIG è attivo; false anche senza terminale
+    # @raise [ContextError] se tcgetattr fallisce, o se ISIG non è noto su
+    #   questo sistema
+    # @raise [ClosedError] se il contesto è chiuso
+    # @api private
+    def linesigs?
+      to_ptr
+      raise ContextError, "segnali da tastiera: ISIG non noto su #{RUBY_PLATFORM}" unless FFI::ISIG
+
+      input_tty { |fd| termios(fd)[:c_lflag].anybits?(FFI::ISIG) }
+    end
+
     # --- capacità ---
 
     # @return [Boolean] colori RGB a 24 bit (+notcurses_cantruecolor+)
@@ -955,6 +1002,49 @@ module Notcurses
         first_error ||= e
       end
       first_error
+    end
+
+    # Il terminale da cui notcurses legge i tasti (init_inputlayer, in.c):
+    # stdin se è un tty, altrimenti /dev/tty.
+    # @return il valore del blocco, false senza terminale
+    def input_tty
+      return yield(STDIN.fileno) if STDIN.tty?
+
+      begin
+        tty = File.open('/dev/tty', 'r+')
+      rescue SystemCallError
+        return false # nessun terminale di controllo, come notcurses senza ttyfd
+      end
+      begin
+        yield(tty.fileno)
+      ensure
+        tty.close
+      end
+    end
+
+    # Porta IXON a on sul terminale fd.
+    # @return [Boolean] il valore precedente
+    def ixon!(fd, on)
+      raise ContextError, "controllo di flusso: IXON non noto su #{RUBY_PLATFORM}" unless FFI::IXON
+
+      tios = termios(fd)
+      was = tios[:c_iflag].anybits?(FFI::IXON)
+      return was if was == on
+
+      tios[:c_iflag] ^= FFI::IXON
+      termios_check!(FFI.tcsetattr(fd, FFI::TCSANOW, tios), 'tcsetattr')
+      was
+    end
+
+    # @return [FFI::Termios] lo stato del terminale fd
+    def termios(fd)
+      tios = FFI::Termios.new
+      termios_check!(FFI.tcgetattr(fd, tios), 'tcgetattr')
+      tios
+    end
+
+    def termios_check!(rc, what)
+      raise ContextError, "#{what} fallita (#{SystemCallError.new(nil, ::FFI.errno).message})" if rc.negative?
     end
 
     def open_output(output)

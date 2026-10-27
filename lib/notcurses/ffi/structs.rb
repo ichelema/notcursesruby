@@ -309,5 +309,17 @@ module Notcurses
              :tattrword, :uint32,
              :flags,     :uint64 # NCREADER_OPTION_*
     end
+
+    # C: struct termios (libc, <termios.h>). I quattro flag aprono la struct su
+    # Linux, macOS e BSD, in quest'ordine; il resto è opaco e più grande del
+    # layout più grande noto (72 byte su macOS), così tcgetattr non scrive mai
+    # fuori dalla struct.
+    class Termios < ::FFI::Struct
+      layout :c_iflag, :tcflag_t,
+             :c_oflag, :tcflag_t,
+             :c_cflag, :tcflag_t,
+             :c_lflag, :tcflag_t,
+             :opaque,  [:uint8, 128]
+    end
   end
 end

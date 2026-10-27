@@ -457,5 +457,22 @@ module Notcurses
     NCBOXDOUBLE = "╔╗╚╝═║"
     NCBOXASCII = "/\\\\/-|"
     NCBOXOUTER = "🭽🭾🭼🭿▁🭵🭶🭰"
+
+    # ═══════════════════════════════════════
+    # libc <termios.h>
+    # ═══════════════════════════════════════
+    # Valori dei flag: :bsd su macOS, BSD e Linux powerpc/alpha, :linux sugli
+    # altri Linux (asm-generic/termbits.h), nil dove non sono noti (Windows non
+    # ha termios). Provati solo su Linux x86_64.
+    TERMIOS = if ::FFI::Platform::IS_MAC || ::FFI::Platform::IS_BSD then :bsd
+              elsif ::FFI::Platform::IS_LINUX then ::FFI::Platform::ARCH.match?(/\A(powerpc|alpha)/) ? :bsd : :linux
+              end
+    private_constant :TERMIOS
+    # IXON (c_iflag): controllo di flusso, Ctrl+S e Ctrl+Q; nil dove non è noto
+    IXON = { bsd: 0x200, linux: 0o2000 }[TERMIOS]
+    # ISIG (c_lflag): segnali da tastiera, Ctrl+C, Ctrl+Z e Ctrl+\; nil dove non è noto
+    ISIG = { bsd: 0x80, linux: 0o1 }[TERMIOS]
+    # tcsetattr: il cambio vale subito (0 su Linux, macOS e BSD)
+    TCSANOW = 0
   end
 end

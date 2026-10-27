@@ -141,19 +141,48 @@ module Notcurses
       # esce da run dopo aver tolto il trap e chiuso il pipe di risveglio. Se
       # un handler chiude il contesto, run esce alla fine del giro.
       #
+      # Tasti di controllo. Di default il terminale consuma Ctrl+S e Ctrl+Q
+      # (controllo di flusso, IXON) e trasforma Ctrl+C, Ctrl+Z e Ctrl+\ in
+      # segnali (ISIG): Ctrl-C fa uscire run con :interrupt. Con
+      # no_flow_control: true Ctrl+S e Ctrl+Q arrivano a {#on_key}; con
+      # no_linesigs: true arrivano Ctrl+C, Ctrl+Z e Ctrl+\, e Ctrl-C non ferma
+      # più il ciclo: serve un tasto di uscita dell'applicazione. run tocca
+      # solo i flag attivi all'avvio e alla fine, anche dopo un'eccezione, li
+      # riattiva ({Context#linesigs_enable} per ISIG): il terminale torna com'era
+      # prima di run. Se un handler ha chiuso il contesto, notcurses ha già
+      # ripristinato il terminale e run non lo tocca. run legge e cambia IXON,
+      # e legge ISIG, sul terminale da cui notcurses legge i tasti (stdin se è
+      # un tty, altrimenti /dev/tty).
+      #
+      # @param no_flow_control [Boolean] disattiva IXON durante run
+      # @param no_linesigs [Boolean] disattiva ISIG durante run
+      #   ({Context#linesigs_disable})
       # @return [Symbol] :stop, :eof o :interrupt
       # @raise [Error] se il ciclo è già in esecuzione
       # @raise [ClosedError] se il contesto è chiuso
+      # @raise [ContextError] se il terminale rifiuta il cambio di IXON o ISIG;
+      #   un errore del ripristino finale non sostituisce l'eccezione di un
+      #   handler, che resta quella sollevata
+      # @raise [TypeError] se un'opzione non è un Boolean
       # @raise [Exception] l'eccezione di un handler, di un timer o di un blocco
       #   di {#post}
-      def run
+      def run(no_flow_control: false, no_linesigs: false)
+        no_flow_control = Util.bool!(no_flow_control, 'no_flow_control')
+        no_linesigs = Util.bool!(no_linesigs, 'no_linesigs')
         raise Error, 'EventLoop#run: il ciclo è già in esecuzione' if @running
 
         @context.to_ptr
         @running = true
         wake_r = nil
         winch = false
+        ixon = false
+        linesigs = false
         begin
+          ixon = @context.flow_control_disable if no_flow_control
+          if no_linesigs && @context.linesigs?
+            @context.linesigs_disable
+            linesigs = true
+          end
           wake_r, @wake_w = IO.pipe
           # il descrittore è di notcurses: autoclose false, lo chiude notcurses_stop
           @input = @context.drain_input? ? nil : IO.for_fd(@context.inputready_fd, autoclose: false)
@@ -182,6 +211,7 @@ module Notcurses
           @input = nil
           @stop_requested = false
           @running = false
+          restore_terminal(ixon, linesigs, $!)
         end
       end
 
@@ -258,9 +288,12 @@ module Notcurses
       # carattere stampabile Shift non conta (è già nel carattere, per esempio
       # 'Q'); conta per gli altri codici, come {Key::TAB} (Shift+Tab).
       #
-      # Tasti che non arrivano: notcurses 3.0.17 toglie al terminale solo
-      # ECHO, ICANON e ICRNL, quindi Ctrl+C, Ctrl+Z e Ctrl+\ restano
-      # segnali (ISIG) e Ctrl+S e Ctrl+Q restano il controllo di flusso (IXON).
+      # Tasti di controllo: notcurses 3.0.17 toglie al terminale solo ECHO,
+      # ICANON e ICRNL, quindi di default Ctrl+C, Ctrl+Z e Ctrl+\ restano
+      # segnali (ISIG) e Ctrl+S e Ctrl+Q restano il controllo di flusso (IXON):
+      # non arrivano qui. Arrivano con {#run}(no_flow_control: true) per
+      # Ctrl+S e Ctrl+Q e con {#run}(no_linesigs: true) per Ctrl+C, Ctrl+Z e
+      # Ctrl+\.
       #
       # @param key [String, Integer] un carattere (String di un codepoint) o
       #   un codice: codepoint o costante {Key}
@@ -375,6 +408,26 @@ module Notcurses
       def resize_signal
         @resize_requested = true
         wake
+      end
+
+      # Riattiva IXON e ISIG tolti da run, tentando entrambi. Con il contesto
+      # chiuso notcurses_stop ha già ripristinato il terminale di prima dell'init.
+      # Un errore non sostituisce pending, l'eccezione che sta uscendo da run.
+      def restore_terminal(ixon, linesigs, pending)
+        return if @context.closed?
+
+        error = nil
+        begin
+          @context.flow_control_enable if ixon
+        rescue ContextError => e
+          error = e
+        end
+        begin
+          @context.linesigs_enable if linesigs
+        rescue ContextError => e
+          error ||= e
+        end
+        raise error if error && !pending
       end
 
       def wake
