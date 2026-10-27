@@ -201,6 +201,12 @@ RSpec.describe Notcurses::Context do
       expect(nc.linesigs_enable).to equal(nc)
     end
 
+    # Con stdin su /dev/null legge ISIG da /dev/tty; senza terminale di
+    # controllo (CI, shell senza tty) restituisce false invece di sollevare.
+    it 'linesigs? senza tty su stdin restituisce un Boolean' do
+      expect([true, false]).to include(nc.linesigs?)
+    end
+
     it 'con drain_input l\'input solleva InputError' do
       expect { nc.get(timeout: 0) }.to raise_error(Notcurses::InputError)
       expect { nc.getvec(2, timeout: 0) }.to raise_error(Notcurses::InputError)

@@ -902,6 +902,14 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    it 'box con set: :heavy e TypeError per un set che non è Symbol, String o Array' do
+      with_parent(rows: 4, cols: 10) do |p|
+        p.box(3, 5, y: 0, x: 0, set: :heavy)
+        expect(p.contents(rows: 3, cols: 5)).to eq('┏━━━┓┃┃┗━━━┛')
+        expect { p.box(2, 2, y: 0, x: 0, set: 42) }.to raise_error(TypeError, /set deve essere/)
+      end
+    end
+
     it 'perimeter disegna il bordo del piano' do
       with_parent(rows: 3, cols: 4) do |p|
         expect(p.perimeter(set: :double)).to equal(p)

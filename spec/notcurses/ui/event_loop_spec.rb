@@ -144,6 +144,22 @@ RSpec.describe Notcurses::UI::EventLoop do
       expect(never).not_to be_active
     end
 
+    it 'inspect di un Timer mostra il tipo e se è fermo' do
+      ev = new_loop
+      once = ev.after(1) { nil }
+      every = ev.every(0.5) { nil }
+      expect(once.inspect).to eq('#<Notcurses::UI::Timer una volta>')
+      expect(every.inspect).to eq('#<Notcurses::UI::Timer ogni 0.5s>')
+      every.cancel
+      expect(every.inspect).to eq('#<Notcurses::UI::Timer ogni 0.5s (fermo)>')
+    end
+
+    it 'run restituisce :interrupt se un blocco solleva Interrupt' do
+      ev = new_loop
+      ev.post { raise Interrupt }
+      expect(run_loop(ev)).to eq(:interrupt)
+    end
+
     it 'un timer di after diventa inattivo prima del blocco; a pari scadenza vale l\'ordine di creazione' do
       ev = new_loop
       log = []

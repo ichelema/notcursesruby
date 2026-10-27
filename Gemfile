@@ -9,4 +9,6 @@ end
 
 group :test do
   gem 'rspec', '~> 3.12'
+  gem 'simplecov', '~> 0.22'
+  gem 'simplecov-cobertura', '~> 3.0'
 end

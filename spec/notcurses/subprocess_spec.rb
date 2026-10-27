@@ -235,6 +235,20 @@ RSpec.describe Notcurses::Subprocess do
       expect(sub).to be_closed
       expect(process_exists?(pid)).to be(false)
     end
+
+    it 'se l\'avvio della lettura fallisce uccide e raccoglie il figlio e rilancia l\'errore' do
+      pids = []
+      allow_any_instance_of(described_class).to receive(:start!) do |sub, *|
+        pids << sub.pid
+        raise 'avvio fallito'
+      end
+      before = open_fds
+      expect { described_class.new(plane, 'sleep', '30') { nil } }.to raise_error(RuntimeError, 'avvio fallito')
+      expect(pids.size).to eq(1)
+      expect(process_exists?(pids.first)).to be(false)
+      expect(open_fds).to eq(before)
+      expect(plane).not_to be_closed
+    end
   end
 
   describe 'chiusura del contesto' do
