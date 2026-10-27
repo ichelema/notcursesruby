@@ -146,13 +146,13 @@ module Notcurses
       # segnali (ISIG): Ctrl-C fa uscire run con :interrupt. Con
       # no_flow_control: true Ctrl+S e Ctrl+Q arrivano a {#on_key}; con
       # no_linesigs: true arrivano Ctrl+C, Ctrl+Z e Ctrl+\, e Ctrl-C non ferma
-      # più il ciclo: serve un tasto di uscita dell'applicazione. Alla fine di
-      # run, anche dopo un'eccezione, IXON torna attivo solo se lo era prima e
-      # ISIG torna attivo ({Context#linesigs_enable}, anche se era spento prima
-      # di run); se un handler ha chiuso il contesto, notcurses ha già
-      # ripristinato il terminale e run non lo tocca. IXON cambia sul terminale
-      # da cui notcurses legge i tasti (stdin se è un tty, altrimenti
-      # /dev/tty).
+      # più il ciclo: serve un tasto di uscita dell'applicazione. run tocca
+      # solo i flag attivi all'avvio e alla fine, anche dopo un'eccezione, li
+      # riattiva ({Context#linesigs_enable} per ISIG): il terminale torna com'era
+      # prima di run. Se un handler ha chiuso il contesto, notcurses ha già
+      # ripristinato il terminale e run non lo tocca. run legge e cambia IXON,
+      # e legge ISIG, sul terminale da cui notcurses legge i tasti (stdin se è
+      # un tty, altrimenti /dev/tty).
       #
       # @param no_flow_control [Boolean] disattiva IXON durante run
       # @param no_linesigs [Boolean] disattiva ISIG durante run
@@ -160,7 +160,9 @@ module Notcurses
       # @return [Symbol] :stop, :eof o :interrupt
       # @raise [Error] se il ciclo è già in esecuzione
       # @raise [ClosedError] se il contesto è chiuso
-      # @raise [ContextError] se il terminale rifiuta il cambio di IXON o ISIG
+      # @raise [ContextError] se il terminale rifiuta il cambio di IXON o ISIG;
+      #   un errore del ripristino finale non sostituisce l'eccezione di un
+      #   handler, che resta quella sollevata
       # @raise [TypeError] se un'opzione non è un Boolean
       # @raise [Exception] l'eccezione di un handler, di un timer o di un blocco
       #   di {#post}
@@ -177,7 +179,7 @@ module Notcurses
         linesigs = false
         begin
           ixon = @context.flow_control_disable if no_flow_control
-          if no_linesigs
+          if no_linesigs && @context.linesigs?
             @context.linesigs_disable
             linesigs = true
           end
@@ -209,7 +211,7 @@ module Notcurses
           @input = nil
           @stop_requested = false
           @running = false
-          restore_terminal(ixon, linesigs)
+          restore_terminal(ixon, linesigs, $!)
         end
       end
 
@@ -410,14 +412,22 @@ module Notcurses
 
       # Riattiva IXON e ISIG tolti da run, tentando entrambi. Con il contesto
       # chiuso notcurses_stop ha già ripristinato il terminale di prima dell'init.
-      def restore_terminal(ixon, linesigs)
+      # Un errore non sostituisce pending, l'eccezione che sta uscendo da run.
+      def restore_terminal(ixon, linesigs, pending)
         return if @context.closed?
 
+        error = nil
         begin
           @context.flow_control_enable if ixon
-        ensure
-          @context.linesigs_enable if linesigs
+        rescue ContextError => e
+          error = e
         end
+        begin
+          @context.linesigs_enable if linesigs
+        rescue ContextError => e
+          error ||= e
+        end
+        raise error if error && !pending
       end
 
       def wake

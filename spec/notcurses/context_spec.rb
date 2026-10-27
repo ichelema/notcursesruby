@@ -121,11 +121,12 @@ RSpec.describe Notcurses::Context do
 
     # Con il contesto aperto i due metodi toccherebbero il terminale di chi esegue
     # la suite: li prova spec/integration/ui_pty_spec.rb su un pty.
-    it 'flow_control_disable e flow_control_enable sollevano ClosedError con il contesto chiuso' do
+    it 'flow_control_disable, flow_control_enable e linesigs? sollevano ClosedError con il contesto chiuso' do
       NcHelpers.open_context do |nc|
         nc.close
         expect { nc.flow_control_disable }.to raise_error(Notcurses::ClosedError)
         expect { nc.flow_control_enable }.to raise_error(Notcurses::ClosedError)
+        expect { nc.linesigs? }.to raise_error(Notcurses::ClosedError)
       end
     end
   end

@@ -123,7 +123,7 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     end
   RUBY
 
-  # Quattro run sullo stesso pty: ognuno stampa il motivo d'uscita, i tasti
+  # Otto run sullo stesso pty: ognuno stampa il motivo d'uscita, i tasti
   # arrivati a on_key e se stty -g dopo run è uguale a prima.
   def ctrl_keys_script = <<~'RUBY'
     require 'notcurses'
@@ -191,6 +191,27 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
         type.("\x03") # Ctrl-C: SIGINT dal terminale
       })
       session.('eccezione', on, -> { type.('x') })
+      session.('solo no_linesigs', { no_linesigs: true }, lambda {
+        type.("\x13\x11\x03z") # Ctrl+S e Ctrl+Q restano controllo di flusso, Ctrl+C arriva
+        wait_for('z') { keys.include?('z') }
+        app.stop
+      })
+      session.('solo no_flow_control', { no_flow_control: true }, lambda {
+        type.("\x11z")
+        wait_for('z') { keys.include?('z') }
+        type.("\x03") # ISIG resta: Ctrl-C manda SIGINT
+      })
+      ctrl_c = lambda {
+        type.("\x03z")
+        wait_for('z') { keys.include?('z') }
+        app.stop
+      }
+      nc.linesigs_disable
+      session.('isig spento prima con linesigs_disable', on, ctrl_c)
+      nc.linesigs_enable
+      system('stty', '-isig', in: slave)
+      session.('isig spento prima con stty', on, ctrl_c)
+      system('stty', 'isig', in: slave)
       system('stty', '-ixon', in: slave)
       session.('ixon spento prima', on, lambda {
         type.("\x11z")
@@ -233,6 +254,10 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(out).to include('accese: stop ["^q", "^s", "^c", "z"] stty uguale')
     expect(out).to include('spente: interrupt ["z"] stty uguale')
     expect(out).to include('eccezione: boom [] stty uguale')
+    expect(out).to include('solo no_linesigs: stop ["^c", "z"] stty uguale')
+    expect(out).to include('solo no_flow_control: interrupt ["^q", "z"] stty uguale')
+    expect(out).to include('isig spento prima con linesigs_disable: stop ["^c", "z"] stty uguale')
+    expect(out).to include('isig spento prima con stty: stop ["^c", "z"] stty uguale')
     expect(out).to include('ixon spento prima: stop ["^q", "z"] stty uguale')
     expect(out).to include('ixon dopo -ixon')
     expect(out).to end_with("fine\n")

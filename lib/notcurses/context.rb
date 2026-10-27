@@ -762,6 +762,22 @@ module Notcurses
       self
     end
 
+    # Legge ISIG sul terminale di {#flow_control_disable}: false se
+    # {#linesigs_disable} o +stty -isig+ hanno già tolto i segnali. Lo usa
+    # {UI::EventLoop#run}.
+    #
+    # @return [Boolean] true se ISIG è attivo; false anche senza terminale
+    # @raise [ContextError] se tcgetattr fallisce, o se ISIG non è noto su
+    #   questo sistema
+    # @raise [ClosedError] se il contesto è chiuso
+    # @api private
+    def linesigs?
+      to_ptr
+      raise ContextError, "segnali da tastiera: ISIG non noto su #{RUBY_PLATFORM}" unless FFI::ISIG
+
+      input_tty { |fd| termios(fd)[:c_lflag].anybits?(FFI::ISIG) }
+    end
+
     # --- capacità ---
 
     # @return [Boolean] colori RGB a 24 bit (+notcurses_cantruecolor+)
@@ -1011,14 +1027,20 @@ module Notcurses
     def ixon!(fd, on)
       raise ContextError, "controllo di flusso: IXON non noto su #{RUBY_PLATFORM}" unless FFI::IXON
 
-      tios = FFI::Termios.new
-      termios_check!(FFI.tcgetattr(fd, tios), 'tcgetattr')
+      tios = termios(fd)
       was = tios[:c_iflag].anybits?(FFI::IXON)
       return was if was == on
 
       tios[:c_iflag] ^= FFI::IXON
       termios_check!(FFI.tcsetattr(fd, FFI::TCSANOW, tios), 'tcsetattr')
       was
+    end
+
+    # @return [FFI::Termios] lo stato del terminale fd
+    def termios(fd)
+      tios = FFI::Termios.new
+      termios_check!(FFI.tcgetattr(fd, tios), 'tcgetattr')
+      tios
     end
 
     def termios_check!(rc, what)

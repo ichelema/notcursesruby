@@ -224,6 +224,28 @@ RSpec.describe Notcurses::UI::EventLoop do
       expect(ev).not_to be_running
     end
 
+    # Gli stub evitano di toccare il terminale di chi esegue la suite.
+    it "un errore del ripristino del terminale non sostituisce l'eccezione di un handler; ISIG si riattiva comunque" do
+      allow(nc).to receive_messages(flow_control_disable: true, linesigs?: true, linesigs_disable: nc)
+      allow(nc).to receive(:flow_control_enable).and_raise(Notcurses::ContextError, 'tcsetattr fallita')
+      expect(nc).to receive(:linesigs_enable).twice.and_return(nc)
+      ev = new_loop
+      ev.post { raise ArgumentError, 'boom' }
+      expect { ev.run(no_flow_control: true, no_linesigs: true) }.to raise_error(ArgumentError, 'boom')
+      ev.post { ev.stop }
+      expect { ev.run(no_flow_control: true, no_linesigs: true) }.to raise_error(Notcurses::ContextError, 'tcsetattr fallita')
+      expect(ev).not_to be_running
+    end
+
+    it 'con ISIG già spento prima di run, no_linesigs non lo tocca' do
+      allow(nc).to receive(:linesigs?).and_return(false)
+      expect(nc).not_to receive(:linesigs_disable)
+      expect(nc).not_to receive(:linesigs_enable)
+      ev = new_loop
+      ev.post { ev.stop }
+      expect(ev.run(no_linesigs: true)).to eq(:stop)
+    end
+
     it 'run dentro run solleva Notcurses::Error' do
       ev = new_loop
       error = nil

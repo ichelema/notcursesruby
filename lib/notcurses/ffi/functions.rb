@@ -625,7 +625,8 @@ module Notcurses
     # ═══════════════════════════════════════
     # fopen/fclose servono per il FILE* di notcurses_init/ncdirect_init, free per la
     # memoria ALLOC, tcgetattr/tcsetattr per il controllo di flusso (IXON), che
-    # notcurses non tocca, le altre per le reimplementazioni inline.
+    # notcurses non tocca, e per leggere ISIG, le altre per le reimplementazioni
+    # inline.
 
     # --- stdio ---
     attach_function :fopen, [:string, :string], :pointer
@@ -645,7 +646,7 @@ module Notcurses
     attach_function :wcrtomb, [:pointer, :wchar_t, :pointer], :size_t
 
     # --- terminale (<termios.h>) ---
-    # termios: struct Termios di structs.rb; IXON e TCSANOW in constants.rb
+    # termios: struct Termios di structs.rb; IXON, ISIG e TCSANOW in constants.rb
     attach_function :tcgetattr, [:int, :pointer], :int
     attach_function :tcsetattr, [:int, :int, :pointer], :int
   end

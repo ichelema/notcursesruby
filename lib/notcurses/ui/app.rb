@@ -85,6 +85,7 @@ module Notcurses
       # @raise [ClosedError] se l'App o il contesto sono chiusi
       # @raise [Error] se il ciclo è già in esecuzione
       # @raise [ContextError] se il terminale rifiuta il cambio di IXON o ISIG
+      #   (non sostituisce l'eccezione di un handler)
       # @raise [TypeError] se un'opzione non è un Boolean
       # @raise [Exception] l'eccezione di un handler, di un componente, di un
       #   timer o di un blocco di {#post}
