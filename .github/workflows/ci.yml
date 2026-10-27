@@ -23,6 +23,8 @@ env:
   MISE_DATA_DIR: /opt/mise
   BUNDLE_PATH: /opt/bundle
   TERM: xterm-256color
+  # notcurses abilita i colori a 24 bit solo con COLORTERM (termdesc.c:191): le spec lo richiedono
+  COLORTERM: truecolor
   LANG: C.UTF-8
   LC_ALL: C.UTF-8
 
@@ -125,8 +127,9 @@ jobs:
       - name: Suite in ordine casuale
         run: timeout -k 5 -s KILL 600 bundle exec rspec --order rand < /dev/null
 
+      # con spec fallite SimpleCov non scrive .last_run.json (il report HTML sì)
       - name: Riepilogo della coverage
-        if: matrix.full && !cancelled() && steps.suite.outcome != 'skipped'
+        if: matrix.full && steps.suite.outcome == 'success'
         run: |
           ruby -rjson -e '
             r = JSON.parse(File.read("coverage/.last_run.json"))["result"]

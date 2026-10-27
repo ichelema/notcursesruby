@@ -125,10 +125,11 @@ generata: segue l'API C, descritta nelle man page di notcurses.
 git clone --recurse-submodules https://github.com/ichelema/notcursesruby
 cd notcursesruby
 bundle install
-TERM=xterm-256color bundle exec rspec < /dev/null
+TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 bundle exec rspec < /dev/null
 ```
 
 - Le spec aprono un contesto su `/dev/null` con `termtype: 'xterm-256color'`: non serve un terminale.
+- `COLORTERM=truecolor` serve alle spec dei colori RGB: senza, notcurses non abilita i 24 bit e 10 esempi falliscono.
 - Il submodule `notcurses/` serve alle spec delle immagini (`notcurses/data`).
 - La spec differenziale del layer FFI usa `libnotcurses-ffi.so.3`; se la libreria manca, va in skip.
 - Coverage: `bundle exec rspec --require ./spec/support/coverage.rb`, report in `coverage/`.
