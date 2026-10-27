@@ -1,7 +1,8 @@
 # RIPRESA — prompt per la prossima sessione
 
 > Avvio: incolla questo file nella nuova sessione di Claude Code, oppure scrivi «Leggi RIPRESA.md ed esegui il
-> prompt». Scritto il 2026-10-26, con il repository su `92fc27d`.
+> prompt». Scritto il 2026-10-26, con il repository su `92fc27d`; aggiornato il 2026-10-27 dopo ICH-229 (merge
+> `4906a35`).
 
 ## Contesto
 
@@ -13,9 +14,14 @@
 - **Fase 3** (`Notcurses::UI`: ciclo degli eventi, focus, resize, widget composti; `lib/notcurses/ui.rb` e
   `lib/notcurses/ui/`, 2 107 righe; `examples/demo.rb`): completa, commit `e710a92` (Parte 0), `6c55106`…`692c455`
   (implementazione), `92fc27d` (documentazione).
-- **Stato:** 910 esempi e 0 fallimenti su Ruby 4.0.7 e 3.1.7, anche con `--order rand:1234`, `rand:4242`, `rand:7`;
-  `ruby -w` senza warning; 0 problemi YARD secondo due script euristici; il wrapper chiama 477 delle 631 funzioni FFI
-  (le altre 154 sono escluse con un motivo in `spec/coverage_spec.rb`).
+- **ICH-229** (dopo la Fase 3, PR #1, merge `4906a35`): `EventLoop#run` e `App#run` accettano `no_flow_control:` e
+  `no_linesigs:` per ricevere Ctrl+S, Ctrl+Q, Ctrl+C, Ctrl+Z e Ctrl+\. Unico cambio della Fase 1 dopo la Fase 3,
+  approvato dall'utente: `tcgetattr`/`tcsetattr` della libc, struct `Termios`, `:tcflag_t`, `IXON`, `ISIG`, `TCSANOW`.
+  Dettagli nella sezione "ICH-229" di `RICONSEGNA.md`.
+- **Stato:** 914 esempi e 0 fallimenti su Ruby 4.0.7 e 3.1.7 con `--order rand:1234` (i semi `rand:4242` e `rand:7`
+  sono provati solo su `92fc27d`); `ruby -w` senza warning su entrambe le versioni; `yard doc` senza avvisi (409
+  costanti della Fase 1 e 6 metodi senza documentazione); il wrapper chiama 479 delle 633 funzioni FFI (le altre 154
+  sono escluse con un motivo in `spec/coverage_spec.rb`).
 - **Pacchetto:** non esistono ancora gemspec, `README.md`, `LICENSE`, `CHANGELOG.md`, `Rakefile`, `.github/`.
   Esiste `Notcurses::VERSION = '0.2.0'` in `lib/notcurses/version.rb` (versione del binding; `HEADER_VERSION` e
   `lib_version` sono quelle di notcurses).
@@ -23,7 +29,9 @@
   `libnotcurses-core.so.3`, `libnotcurses-ffi.so.3`). Il submodule `notcurses/` è su `v3.0.17-22-gb26048eeb`, cioè
   22 commit dopo il tag: per compilare notcurses in CI usa il tag `v3.0.17`, non lo HEAD del submodule.
 - `notcurses/` (sorgenti C) e `libnotcurses-sys/` (binding Rust) sono submodule git. Usa `notcurses/src/` per la
-  semantica del C; non usare `libnotcurses-sys/` come riferimento.
+  semantica del C; non usare `libnotcurses-sys/` come riferimento. In un git worktree il submodule non è
+  inizializzato e le spec delle immagini non trovano `notcurses/data`: usa un link temporaneo al checkout principale e
+  non inizializzare il submodule (`git worktree remove` rifiuta i worktree con submodule).
 
 ## Obiettivo
 
@@ -37,15 +45,15 @@ La Fase 4 rende il progetto installabile e controllato in automatico. Non aggiun
 5. **Parte 5:** controlli finali e documentazione.
 
 Fuori scope, salvo una richiesta esplicita dell'utente: la pubblicazione su rubygems.org, nuove funzionalità o
-widget (tra cui un'opzione per togliere IXON e ISIG durante `EventLoop#run`), cambi all'API pubblica.
+widget, cambi all'API pubblica.
 
 ## Prima di iniziare
 
 1. Fai il recall in Hindsight, bank `notcursesruby`, via REST (comando in "Comandi").
 2. Leggi `RICONSEGNA.md`: "Dipendenze di sistema" e "Come eseguire i test" (Fase 1), "Test" della Fase 2, la
-   sezione "Review della Fase 2 e Ruby 3.1" (build di Ruby 3.1.7, Bundler 4 e `Gemfile.lock`) e la sezione "Fase 3",
-   soprattutto "Cosa serve alla fase successiva".
-3. Controlla `git status` e `git log --oneline -3`. Il working tree deve essere pulito, su `92fc27d` o dopo.
+   sezione "Review della Fase 2 e Ruby 3.1" (build di Ruby 3.1.7, Bundler 4 e `Gemfile.lock`), la sezione "Fase 3",
+   soprattutto "Cosa serve alla fase successiva", e la sezione "ICH-229".
+3. Controlla `git status` e `git log --oneline -3`. Il working tree deve essere pulito, su `4906a35` o dopo.
 4. Controlla che Ruby 3.1.7 sia installato: `MISE_EXEC_AUTO_INSTALL=false mise exec ruby@3.1.7 -- ruby -v`. Se manca,
    avvia in background il build con i comandi della sezione "Ruby 3.1" di `RICONSEGNA.md`.
 5. Controlla l'accesso a GitHub, in sola lettura: `gh auth status` e
@@ -92,7 +100,7 @@ Scrivi `memory/fase4-design.md` prima del codice. Il design copre:
    e con `Notcurses::UI::App`, limiti noti, compatibilità), `LICENSE`, `CHANGELOG.md` (le fasi 1–3 come prima
    versione). `RICONSEGNA.md` resta la documentazione interna.
 3. **YARD generato.** `yard` come dipendenza di sviluppo, `.yardopts`, la cartella di uscita (in `.gitignore`), il
-   trattamento del layer FFI (383 `attach_function` che YARD non vede, 248 reimplementazioni con il C in commento) e
+   trattamento del layer FFI (385 `attach_function` che YARD non vede, 248 reimplementazioni con il C in commento) e
    dei metodi `@api private`. Obiettivo: `yard stats --list-undoc` senza metodi pubblici non documentati e
    `yard doc` senza warning (tag sconosciuti, riferimenti `{...}` rotti). I controlli sostituiscono gli script
    euristici.
@@ -163,7 +171,7 @@ strada per notcurses in CI, politica del lockfile, test grafici in questa fase, 
 - `spec/coverage_spec.rb` e `spec/notcurses/api_spec.rb` passano.
 - `gem build` senza warning; la gem installata si carica da fuori del repository.
 - `yard stats --list-undoc` e `yard doc` senza warning.
-- `git diff 92fc27d -- lib/notcurses/ffi lib/notcurses/ffi.rb` non mostra cambi; i cambi a `Gemfile` e `Gemfile.lock`
+- `git diff 4906a35 -- lib/notcurses/ffi lib/notcurses/ffi.rb` non mostra cambi; i cambi a `Gemfile` e `Gemfile.lock`
   sono solo quelli approvati.
 
 ## Comandi
@@ -204,6 +212,14 @@ dentro.
 Gli script euristici di YARD delle fasi precedenti stavano negli scratchpad delle sessioni (per esempio
 `/home/ichelema/.claude/tmp/claude-1001/-mnt-data-Sviluppo-Progetti-notcursesruby/3c9f344a-e514-4332-93c2-fa5285670fb0/scratchpad/scripts/`):
 usali solo se esistono ancora; la Parte 3 li sostituisce con `yard stats`.
+
+`yard` 0.9.45 è già installato nel Ruby 4.0.7 di mise, ma non nel `Gemfile`: `bundle exec yard` fallisce finché la
+Parte 3 non lo aggiunge (regola 12). Fino ad allora, senza file nel repository (Y = una cartella dello scratchpad):
+
+```sh
+RUBYOPT=-W0 yard doc -q --no-progress -b "$Y/.yardoc" -o "$Y/doc" "$PWD/lib/**/*.rb"
+RUBYOPT=-W0 yard stats --list-undoc -b "$Y/.yardoc" --use-cache
+```
 
 Formato di `retain.json`:
 
