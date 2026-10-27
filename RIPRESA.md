@@ -37,8 +37,11 @@
    `gh secret list --repo ichelema/notcursesruby`; se esiste, controlla il primo upload nel log del job 4.0.9.
 2. **`Util.timespec`** (`lib/notcurses/util.rb:340`): codice morto senza chiamanti. Chiedi all'utente se rimuoverlo;
    rimuoverlo è un cambio di `lib/` approvato dall'utente, non della regola 11.
-3. **Docker o Podman in locale:** se l'utente li ha installati, prova i job della CI in locale prima del push (comandi
-   in "Comandi").
+3. **Podman in locale:** installato dall'utente il 2026-10-27 (6.1.4, rootless, `crun`, `netavark`, socket utente
+   attivo; anche `act` 0.2.89). Provato: i passi del job 4.0.9 nel container della CI danno 922 esempi, 0 fallimenti
+   (anche le spec del pty). Usalo per provare i job prima del push (comandi in "Comandi").
+   `archive.archlinux.org` è lento: un download può fermarsi con «Operation too slow»; ripeti, la cache montata tiene i
+   pacchetti già scaricati.
 
 ### Albero del progetto
 
@@ -87,8 +90,9 @@ pubblicazione della gem, macOS.
 4. Controlla `git status` e `git log --oneline -3`: working tree pulito (a parte i file `CLAUDE_*.md` non tracciati
    dell'utente), su `707e9e8` o dopo.
 5. Controlla Ruby 3.1.7: `MISE_EXEC_AUTO_INSTALL=false mise exec ruby@3.1.7 -- ruby -v`.
-6. Controlla gli strumenti locali: `command -v Xvfb xterm kitty foot podman docker act`. Se mancano, chiedi
-   all'utente di installarli (`sudo` chiede la password).
+6. Controlla gli strumenti locali: `command -v Xvfb xterm kitty foot podman act`. Al 2026-10-27 ci sono `podman`,
+   `act` e `kitty`; mancano `Xvfb`, `xterm` e `foot`. Se mancano, chiedi all'utente di installarli
+   (`sudo -A pacman -S --needed xorg-server-xvfb xterm foot`; `sudo` chiede la password).
 7. Controlla i punti aperti della Fase 4 (sezione sopra).
 
 ## Regole vincolanti
@@ -225,10 +229,27 @@ gh run watch <id> --exit-status --interval 30
 gh run view <id> --log-failed
 gh secret list --repo ichelema/notcursesruby
 
-# CI in locale con Podman (se installato): stesso container della CI
-podman run --rm -it -v "$PWD":/w:Z -w /w \
-  docker.io/library/archlinux:base@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0 bash
-# dentro il container: gli stessi comandi degli step di .github/workflows/ci.yml (mirrorlist, pacman, mise, bundle)
+# CI in locale con Podman: passi del job 4.0.9 nel container della CI (provato il 2026-10-27, 922 esempi).
+# P = cartella delle cache, fuori dal progetto; ci-local.sh = lo script sotto, salvato nello scratchpad.
+P="$S/podman-cache"; mkdir -p "$P/pacman" "$P/mise" "$P/bundle"
+podman run --rm -v "$PWD":/w:ro -w /w -v "$S/ci-local.sh":/ci-local.sh:ro \
+  -v "$P/pacman":/var/cache/pacman/pkg -v "$P/mise":/opt/mise -v "$P/bundle":/opt/bundle \
+  -e ARCH_SNAPSHOT=2026/10/26 -e RUBY=4.0.9 -e MISE_DATA_DIR=/opt/mise -e BUNDLE_PATH=/opt/bundle \
+  -e TERM=xterm-256color -e COLORTERM=truecolor -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 -e MISE_GITHUB_TOKEN="$(gh auth token)" \
+  docker.io/library/archlinux:base@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0 /ci-local.sh
+# ci-local.sh (chmod +x):
+#   #!/usr/bin/env bash
+#   set -euo pipefail
+#   echo "Server = https://archive.archlinux.org/repos/${ARCH_SNAPSHOT}/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
+#   pacman-key --init > /dev/null; pacman-key --populate archlinux > /dev/null
+#   pacman -Syuu --noconfirm --needed notcurses git mise base-devel libyaml openssl zlib libffi > /tmp/pacman.log 2>&1 \
+#     || { tail -20 /tmp/pacman.log; exit 1; }
+#   mise install "ruby@${RUBY}" > /tmp/mise.log 2>&1 || { tail -20 /tmp/mise.log; exit 1; }
+#   export PATH="$(mise where "ruby@${RUBY}")/bin:$PATH"
+#   gem install --no-document bundler -v "$(tail -n 1 Gemfile.lock | tr -d ' ')" > /dev/null
+#   BUNDLE_FROZEN=true bundle install --jobs 4 --quiet
+#   BUNDLE_FROZEN=true timeout -k 5 -s KILL 600 bundle exec rspec --order rand < /dev/null
+# Per Ruby 3.1.7 servono RUBY_CFLAGS=-std=gnu17 e una copia del Gemfile senza lockfile, come nel workflow.
 
 # recall dal bank notcursesruby
 curl -s -m 30 -X POST http://127.0.0.1:8888/v1/default/banks/notcursesruby/memories/recall \
