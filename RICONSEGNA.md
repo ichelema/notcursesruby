@@ -9,17 +9,20 @@
   il tempo (gli init, `ncdirect_cursor_yx`, `ncdirect_cursor_move_yx`, `ncdirect_readline`, `ncvisual_stream`);
   decisione 20 di `memory/fase1-ffi-raw.md`. Nella review della Fase 2, su autorizzazione dell'utente, anche su
   `ncdirect_render_image` e `ncdirect_raster_frame` (finding A3-02).
+- **Modifiche successive (2026-10-27, ICH-229):** su autorizzazione dell'utente, `tcgetattr` e `tcsetattr` della libc,
+  la struct `Termios` (i quattro flag e una coda opaca), la typedef `:tcflag_t` e le costanti `IXON`, `ISIG` e
+  `TCSANOW`, con i valori per sistema. Dettagli nella sezione "ICH-229" in fondo.
 
 ### File generati
 
 | File | Righe | Contenuto |
 | --- | ---: | --- |
 | `lib/notcurses/ffi.rb` | 28 | modulo `Notcurses::FFI`, `ffi_lib` (libnotcurses, libnotcurses-core, libc), `require` dei sotto-file |
-| `lib/notcurses/ffi/typedefs.rb` | 51 | 14 typedef: 6 enum (`:int`), 6 callback (`:pointer`), 2 alias `:ncchannel`/`:ncchannels` |
+| `lib/notcurses/ffi/typedefs.rb` | 55 | 15 typedef: 6 enum (`:int`), 6 callback (`:pointer`), 2 alias `:ncchannel`/`:ncchannels`, `:tcflag_t` della libc |
 | `lib/notcurses/ffi/enums.rb` | 58 | 6 enum, 39 enumeratori |
-| `lib/notcurses/ffi/constants.rb` | 461 | 301 costanti: `version.h`, `#define` di `notcurses.h`/`direct.h`, `NCKEY_*` di `nckeys.h`, stringhe di `ncseqs.h` |
-| `lib/notcurses/ffi/structs.rb` | 313 | 26 struct `::FFI::Struct` |
-| `lib/notcurses/ffi/functions.rb` | 646 | 383 `attach_function`, divise per area |
+| `lib/notcurses/ffi/constants.rb` | 478 | 304 costanti: `version.h`, `#define` di `notcurses.h`/`direct.h`, `NCKEY_*` di `nckeys.h`, stringhe di `ncseqs.h`, `IXON`/`ISIG`/`TCSANOW` di `<termios.h>` |
+| `lib/notcurses/ffi/structs.rb` | 325 | 27 struct `::FFI::Struct` |
+| `lib/notcurses/ffi/functions.rb` | 653 | 385 `attach_function`, divise per area |
 | `lib/notcurses/ffi/inline_reimpl.rb` | 3171 | 248 metodi Ruby (236 `static inline` e 12 macro funzione), ognuno con il C originale in commento |
 | `spec/ffi_sanity_spec.rb` | 27 | spec di sanità (codice del prompt più le due righe di intestazione) |
 | `spec/inline_reimpl_spec.rb` | 1970 | spec differenziale: ogni reimplementazione contro l'inline C vera |
@@ -31,12 +34,12 @@
 
 | Voce | Numero | Dettaglio |
 | --- | ---: | --- |
-| Funzioni collegate (`attach_function`) | 383 | 373 API di notcurses (320 da `notcurses.h`, 53 da `direct.h`) più 10 della libc |
+| Funzioni collegate (`attach_function`) | 385 | 373 API di notcurses (320 da `notcurses.h`, 53 da `direct.h`) più 12 della libc |
 | Funzioni reimplementate in Ruby | 248 | 236 `static inline` più 12 macro funzione |
-| Struct | 26 | 25 struct pubbliche più `Timespec` |
+| Struct | 27 | 25 struct pubbliche più `Timespec` e `Termios` |
 | Enum | 6 | 39 enumeratori |
-| Costanti | 340 | 301 in `constants.rb` (244 intere, di cui 151 `NCKEY_*`, e 57 stringhe) più 39 enumeratori |
-| Typedef | 14 | 6 enum, 6 callback, 2 alias |
+| Costanti | 343 | 304 in `constants.rb` (247 intere, di cui 151 `NCKEY_*`, e 57 stringhe) più 39 enumeratori |
+| Typedef | 15 | 6 enum, 6 callback, 2 alias, `:tcflag_t` |
 
 Nessuna funzione saltata: ogni funzione pubblica di `notcurses.h` e `direct.h` è collegata o reimplementata.
 
@@ -65,7 +68,8 @@ e offset di ogni campo delle 26 struct contro il C compilato.
     cerca pure i nomi versionati (`libnotcurses.so.3`, `libnotcurses-core.so.3`).
   - macOS: i nomi `.dylib` sono in `ffi_lib`, ma non sono provati.
 - **Facoltativa:** `libnotcurses-ffi.so.3`, solo per la spec differenziale. Se manca, quella spec va in skip.
-- **libc** (glibc su Linux): `fopen`, `fclose`, `free` e le funzioni usate dalle reimplementazioni.
+- **libc** (glibc su Linux): `fopen`, `fclose`, `free`, `tcgetattr`, `tcsetattr` e le funzioni usate dalle
+  reimplementazioni.
 - **terminfo** (database di ncurses) con una voce per il terminale, per esempio `xterm-256color`.
 - **Ruby >= 3.1** (provato su Ruby 4.0.7 e 3.1.7), Bundler, le gem del `Gemfile`. Nessun compilatore: il progetto
   non ha C extension.
@@ -183,13 +187,13 @@ NC_SPEC_SEED=1234 bundle exec rspec spec/inline_reimpl_spec.rb < /dev/null    # 
   Contando ogni definizione una sola volta i metodi pubblici sono 726. La colonna `@api private` conta i metodi
   pubblici per Ruby ma interni al wrapper (registro del contesto, collegamenti tra classi).
 
-### Copertura delle funzioni FFI (383 + 248)
+### Copertura delle funzioni FFI (385 + 248)
 
 | Voce | Funzioni |
 | --- | ---: |
-| Funzioni della Fase 1 | 631 (383 `attach_function`, 248 inline e macro) |
-| Chiamate direttamente dal wrapper | 477 (75,6%): 317 `attach_function`, 160 inline |
-| Escluse, ognuna con un motivo | 154 (24,4%) |
+| Funzioni della Fase 1 | 633 (385 `attach_function`, 248 inline e macro) |
+| Chiamate direttamente dal wrapper | 479 (75,7%): 319 `attach_function`, 160 inline |
+| Escluse, ognuna con un motivo | 154 (24,3%) |
 | - raggruppate in un metodo più generale o sostituite da un valore Ruby | 97 |
 | - bug di 3.0.17: reimplementate in Ruby o non offerte | 41 |
 | - non applicabili da Ruby (libc, `wchar_t`, macro di formato e di byte order, `userptr`) | 14 |
@@ -635,12 +639,67 @@ comune (`Util.c_region`); la copertura FFI non cambia (477 chiamate, 154 escluse
 2. **Widget esclusi dal design** (sezione 8): `TextArea` a più righe, temi, scorciatoie per contenitore, drag del
    mouse, incolla con bracketed paste. I widget C della Fase 2 si ospitano in un componente dell'utente e vanno
    ricreati in `on_resize` (`Tabbed`, `Reader`).
-3. **Tasti consumati dal terminale.** Ctrl+S, Ctrl+Q, Ctrl+C, Ctrl+Z e Ctrl+\ non arrivano all'applicazione. Per
-   usarli serve togliere IXON (e ISIG) durante `run`: notcurses non ha una funzione per IXON, e `IO#raw` di
-   `io/console` cambia anche altri flag.
+3. **Tasti consumati dal terminale.** Risolto da ICH-229 (sezione in fondo): `run(no_flow_control: true,
+   no_linesigs: true)`.
 4. **Limiti del framework.** Una riga senza `"\n"` in un `LogView` cresce senza limite; la coda di `post` non ha
    limite; ogni figlio aggiunto rifà il layout dei fratelli (costo quadratico alla costruzione, trascurabile per un
    modulo, da rivedere con migliaia di componenti: un elenco lungo va in un `ListView`).
 5. **Controllo esatto del testo.** Per rifiutare alla creazione anche i grapheme che notcurses divide diversamente da
    Ruby serve un cambio dell'API della Fase 2: un controllo pubblico (o `@api private`) basato su
    `Plane#zero_width_egc!`.
+
+## ICH-229 — tasti di controllo (IXON e ISIG)
+
+- **Data:** 2026-10-27. **Issue:** ICH-229 su Linear. **PR:** https://github.com/ichelema/notcursesruby/pull/1
+  (branch `improvments/ICH-229-opus`).
+- **Commit:** `afb91c8` (Fase 1 e `Context`), `65cd277` (UI), `0a837d5` (correzioni della review), poi questa
+  documentazione.
+- **Uso:** `app.run(no_flow_control: true)` fa arrivare Ctrl+S e Ctrl+Q a `on_key`; `app.run(no_linesigs: true)` fa
+  arrivare Ctrl+C, Ctrl+Z e Ctrl+\, e Ctrl-C non ferma più il ciclo (serve un tasto di uscita). Le due opzioni valgono
+  `false` di default: senza opzioni il comportamento non cambia. Stesse opzioni in `EventLoop#run`.
+
+### Scelte
+
+| Scelta | Motivo |
+| --- | --- |
+| IXON con `tcgetattr`/`tcsetattr` della libc (cambio della Fase 1 approvato dall'utente) | notcurses non ha una funzione per IXON. `stty -ixon` avvia un processo (circa 300 volte più lento, dipende dal `PATH`); `IO#ioctl` usa codici diversi per architettura; `IO#raw` cambia anche altri flag |
+| Terminale: stdin se è un tty, altrimenti `/dev/tty` | è il terminale da cui notcurses legge i tasti (`init_inputlayer`, `in.c:1967,1974`) |
+| Ripristino dei soli flag tolti da `run`, solo se erano attivi, mai con il contesto chiuso | uno snapshot di tutto lo stato annullerebbe `linesigs_enable` e, dopo `notcurses_stop`, rimetterebbe ECHO e ICANON spenti |
+| ISIG letto con `tcgetattr` (`Context#linesigs?`) | `run` non riaccende ISIG se era già spento, anche dopo `stty -isig` (finding 1 della review) |
+| Un errore del ripristino non sostituisce l'eccezione di un handler | finding 2 della review |
+
+### Cambi all'API
+
+| Prima | Dopo |
+| --- | --- |
+| `EventLoop#run`, `App#run` senza argomenti | `run(no_flow_control: false, no_linesigs: false)` |
+| — | `Context#flow_control_disable`, `#flow_control_enable` e `#linesigs?`, `@api private`: li usa solo la UI |
+| — | Fase 1: `tcgetattr`, `tcsetattr`, `Termios`, `:tcflag_t`, `IXON`, `ISIG`, `TCSANOW` |
+
+`Gemfile` e `Gemfile.lock` non cambiano.
+
+### Test
+
+- `spec/integration/ui_pty_spec.rb`: otto `run` su un pty che è il terminale di controllo (`setsid` e `TIOCSCTTY`):
+  opzioni accese, spente, una sola alla volta, eccezione in un handler, ISIG già spento (con `linesigs_disable` e con
+  `stty -isig`), IXON già spento. Ogni `run` controlla che `stty -g` dopo sia uguale a prima.
+- `spec/notcurses/ui/event_loop_spec.rb`: `TypeError` per le opzioni; con stub, errore del ripristino durante
+  un'eccezione e ISIG già spento. `spec/notcurses/context_spec.rb`: `ClosedError` dei tre metodi nuovi.
+- Suite completa con `--order rand:1234`: 914 esempi, 0 fallimenti su Ruby 4.0.7 e su 3.1.7. Quattro mutazioni (i due
+  metodi di IXON resi inerti, `linesigs?` sempre vero, il vecchio ripristino) fanno fallire i test nuovi.
+- In un git worktree il sottomodulo `notcurses` non è inizializzato: le spec delle immagini (`direct_spec.rb`,
+  `pty_spec.rb` con il blitter `:pixel`) cercano `notcurses/data`. Provate con un link temporaneo al checkout
+  principale. Non inizializzare il sottomodulo nel worktree: `git worktree remove` rifiuta i worktree con sottomoduli.
+- Review indipendente: «approvabile con riserve»; i due finding sono corretti in `0a837d5`.
+- YARD: `yard doc` con lo `yard` 0.9.45 installato fuori dal `Gemfile` dà 0 avvisi e nessun oggetto nuovo non
+  documentato.
+
+### Limiti
+
+- I valori per macOS, BSD e Linux powerpc/alpha sono controllati solo sulle intestazioni. Su un sistema senza valori
+  noti (per esempio Solaris) le due opzioni sollevano `ContextError`.
+- Con stdin e output su due tty diversi, `run` legge IXON e ISIG sul terminale di input, mentre notcurses applica ISIG
+  a quello di output.
+- Con stdin che non è un tty, notcurses 3.0.17 (build con gli assert) abortisce a ogni tasto letto da `/dev/tty`
+  (`in.c:2308`), anche senza le opzioni: il ramo `/dev/tty` di `Context#flow_control_disable` oggi non ha un caso
+  d'uso.
