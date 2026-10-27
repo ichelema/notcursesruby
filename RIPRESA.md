@@ -32,6 +32,54 @@
   semantica del C; non usare `libnotcurses-sys/` come riferimento. In un git worktree il submodule non è
   inizializzato e le spec delle immagini non trovano `notcurses/data`: usa un link temporaneo al checkout principale e
   non inizializzare il submodule (`git worktree remove` rifiuta i worktree con submodule).
+- **Macchina di sviluppo:** Arch Linux x86_64; Ruby 4.0.7 (mise, versione globale); Ruby 3.1.7 (mise, compilato con
+  `RUBY_CFLAGS='-std=gnu17'` per gcc 16).
+- **Bug di notcurses 3.0.17:** già aggirati e documentati nelle tabelle "Bug di notcurses 3.0.17 aggirati" (Fase 2) e
+  "Bug e limiti di notcurses 3.0.17 trovati nella Fase 3" di `RICONSEGNA.md`. La Fase 4 non corregge bug: per uno
+  nuovo vale la regola 11.
+
+### Albero del progetto
+
+```
+notcursesruby/
+  Gemfile                # ffi ~> 1.15; rspec ~> 3.12 nel gruppo test
+  Gemfile.lock           # BUNDLED WITH 4.0.22: Bundler 4 richiede Ruby >= 3.2
+  .gitignore             # *.bak, /.bundle/
+  .gitmodules            # submodule notcurses/ e libnotcurses-sys/
+  lib/
+    notcurses.rb         # punto di ingresso                                    [F2]
+    notcurses/
+      ffi.rb, ffi/       # layer FFI raw: typedefs, enums, constants, structs,  [F1]
+                         # functions, inline_reimpl (con il C in commento)
+      version.rb         # Notcurses::VERSION = '0.2.0'                         [F2]
+      error.rb           # Error e 10 sottoclassi                               [F2]
+      resource.rb, util.rb, format.rb, context.rb, plane.rb, cell.rb,           [F2]
+      channel.rb, input.rb, palette.rb, pixel.rb, stats.rb, direct.rb,
+      visual.rb, fd_plane.rb, subprocess.rb
+      widgets/           # widget C: selector, multiselector, menu, reader,     [F2]
+                         # reel, tabbed, tree, plot, progbar
+      ui.rb, ui/         # Notcurses::UI: event_loop, component, container,     [F3]
+                         # app, label, button, text_input, list_view,
+                         # log_view, dialog
+  examples/demo.rb       # prova manuale su un terminale vero                   [F3]
+  spec/
+    support/             # nc_helpers.rb (contesto su /dev/null)                [F2]
+                         # nc_oracle.rb (inline C di libnotcurses-ffi.so.3)     [F1]
+    fixtures/visual/     # rgbw.png, frames.mkv (serve notcurses con ffmpeg)    [F2]
+    ffi_sanity_spec.rb, inline_reimpl_spec.rb                                   [F1]
+    coverage_spec.rb     # ogni funzione FFI è chiamata o esclusa con motivo    [F2]
+    notcurses/           # una spec per classe, api_spec.rb (regole 5 e 7)      [F2]
+    notcurses/ui/        # una spec per classe di Notcurses::UI                 [F3]
+    integration/         # lifecycle, visual, pty [F2]; ui_pty [F3, ICH-229]
+  memory/                # design e log delle fasi 1-3
+  RICONSEGNA.md          # documentazione interna
+  RIPRESA.md             # questo prompt
+  notcurses/             # submodule: sorgenti C (v3.0.17-22-gb26048eeb)
+  libnotcurses-sys/      # submodule: binding Rust, non usarlo come riferimento
+```
+
+Non esistono `.rspec` né `spec/spec_helper.rb`: quasi tutte le spec caricano `spec/support/nc_helpers.rb` con
+`require_relative`.
 
 ## Obiettivo
 
@@ -91,37 +139,64 @@ Le regole 1–10 vengono dalle fasi precedenti. Le regole 11–14 sono nuove per
 Scrivi `memory/fase4-design.md` prima del codice. Il design copre:
 
 1. **Gemspec.** Nome della gem (controlla su rubygems.org se `notcurses` e `notcursesruby` sono liberi, per esempio
-   con `gem search --remote --exact notcurses`), versione (`Notcurses::VERSION`), licenza, `required_ruby_version`,
-   la dipendenza `ffi`, `metadata` (`source_code_uri`, `rubygems_mfa_required`), `requirements` (notcurses 3.0.x di
-   sistema). File inclusi: solo quelli che servono (`lib/`, `README.md`, `LICENSE`, `CHANGELOG.md`); mai i submodule,
-   `spec/`, `memory/`, `RICONSEGNA.md`, `RIPRESA.md`. Il gemspec non deve dipendere da `git ls-files` se la gem si
-   costruisce anche fuori da git: scegli e motiva.
-2. **File del pacchetto.** `README.md` per gli utenti (dipendenze di sistema, installazione, esempi con `Context.open`
-   e con `Notcurses::UI::App`, limiti noti, compatibilità), `LICENSE`, `CHANGELOG.md` (le fasi 1–3 come prima
-   versione). `RICONSEGNA.md` resta la documentazione interna.
-3. **YARD generato.** `yard` come dipendenza di sviluppo, `.yardopts`, la cartella di uscita (in `.gitignore`), il
-   trattamento del layer FFI (385 `attach_function` che YARD non vede, 248 reimplementazioni con il C in commento) e
-   dei metodi `@api private`. Obiettivo: `yard stats --list-undoc` senza metodi pubblici non documentati e
-   `yard doc` senza warning (tag sconosciuti, riferimenti `{...}` rotti). I controlli sostituiscono gli script
-   euristici.
-4. **CI.** `.github/workflows/`: trigger, matrice Ruby 3.1–4.0 (controlla quali versioni offre `ruby/setup-ruby`),
-   sistema operativo. notcurses 3.0.17: le distribuzioni Ubuntu hanno versioni più vecchie, quindi due strade da
-   proporre all'utente: (a) Ubuntu con notcurses compilato dal tag `v3.0.17` con cmake (con ffmpeg per le spec dei
-   visual, libunistring, libdeflate, ncurses; cache del prefisso di installazione); (b) un container Arch Linux con
-   `pacman -S notcurses` (lo stesso pacchetto della macchina di sviluppo) e Ruby da mise. Vincoli dei test da
-   rispettare in CI: `TERM=xterm-256color`, stdin da `/dev/null`, `timeout -k 5 -s KILL`, una locale UTF-8 (spec dei
-   tabbed), le fixture video (notcurses con ffmpeg), `libnotcurses-ffi.so.3` per la spec differenziale (altrimenti va
-   in skip), un pty e `setsid`/`TIOCSCTTY` per `spec/integration/ui_pty_spec.rb` (solo Linux), il comando `echo`.
+   con `gem search --remote --exact notcurses`), versione (`Notcurses::VERSION`), licenza, `required_ruby_version`
+   (`>= 3.1`, regola 10), la dipendenza `ffi` (`~> 1.15`, come nel `Gemfile`), `metadata` (`source_code_uri`,
+   `rubygems_mfa_required`), `requirements` (notcurses 3.0.x di sistema). File inclusi: solo quelli che servono
+   (`lib/`, `README.md`, `LICENSE`, `CHANGELOG.md`); mai i submodule, `spec/`, `memory/`, `RICONSEGNA.md`,
+   `RIPRESA.md`. Per `examples/` valuta e motiva. Il gemspec non deve dipendere da `git ls-files` se la gem si
+   costruisce anche fuori da git: scegli e motiva l'alternativa (per esempio `Dir.glob` con un pattern esplicito).
+2. **File del pacchetto.** `README.md` per gli utenti: dipendenze di sistema (come installare notcurses 3.0.x su
+   Arch, Debian, Fedora e macOS), installazione della gem, esempi con `Context.open` e con `Notcurses::UI::App`,
+   limiti noti, compatibilità (Ruby >= 3.1, notcurses 3.0.17), link alla documentazione YARD. `LICENSE`.
+   `CHANGELOG.md` con le fasi 1–3 e ICH-229 come prima versione (0.2.0). `RICONSEGNA.md` resta la documentazione
+   interna.
+3. **YARD generato.** `yard` come dipendenza di sviluppo (gruppo `:development` del `Gemfile`), `.yardopts`, la
+   cartella di uscita (in `.gitignore`), il trattamento del layer FFI (385 `attach_function` che YARD non vede, 248
+   reimplementazioni con il C in commento) e dei metodi `@api private` (non devono comparire nella documentazione
+   pubblica). Obiettivo: `yard stats --list-undoc` senza metodi pubblici non documentati e `yard doc` senza warning
+   (tag sconosciuti, riferimenti `{...}` rotti). I controlli sostituiscono gli script euristici.
+4. **CI.** `.github/workflows/`: trigger (push su `master` e pull request), matrice Ruby 3.1, 3.2, 3.3, 3.4 e 4.0
+   (controlla con una ricerca web quali versioni offre `ruby/setup-ruby`), sistema operativo. notcurses 3.0.17: le
+   distribuzioni Ubuntu hanno versioni più vecchie, quindi due strade da proporre all'utente:
+   - (a) Ubuntu con notcurses compilato dal tag `v3.0.17` con cmake (con ffmpeg per le spec dei visual,
+     libunistring, libdeflate, ncurses; cache del prefisso di installazione);
+   - (b) un container Arch Linux con `pacman -S notcurses` (lo stesso pacchetto della macchina di sviluppo) e Ruby da
+     mise.
+
+   Vincoli dei test da rispettare in CI:
+
+   | Vincolo | Motivo |
+   | --- | --- |
+   | `TERM=xterm-256color` | notcurses legge `TERM` |
+   | stdin da `/dev/null` | nessun terminale interattivo |
+   | `timeout -k 5 -s KILL` | dopo una corruzione dell'heap il crash handler di Ruby può restare bloccato |
+   | locale UTF-8 | spec dei tabbed (nomi non ASCII) |
+   | notcurses con ffmpeg | fixture video `spec/fixtures/visual/frames.mkv` |
+   | `libnotcurses-ffi.so.3` | spec differenziale, altrimenti va in skip |
+   | pty e `setsid`/`TIOCSCTTY` | `spec/integration/ui_pty_spec.rb`, solo Linux |
+   | comando `echo` | usato da `Subprocess` nelle spec |
+   | seme casuale stampato nel log | riprodurre un fallimento con `--order rand:N` |
+
    **Bundler e Ruby 3.1:** `Gemfile.lock` ha `BUNDLED WITH 4.0.22` e Bundler 4 richiede Ruby >= 3.2; sulla macchina
-   di sviluppo Ruby 3.1 usa una copia del `Gemfile` fuori dal progetto. Decidi con l'utente la politica del lockfile
-   (tenerlo, toglierlo come si fa spesso per una gem, o un job 3.1 senza lockfile).
+   di sviluppo Ruby 3.1 usa una copia del `Gemfile` fuori dal progetto. Decidi con l'utente la politica del lockfile:
+   - tenerlo: più riproducibile, ma il job 3.1 ha bisogno di un workaround;
+   - toglierlo, come si fa spesso per una gem: meno riproducibile;
+   - un job 3.1 senza lockfile, con il lockfile per le altre versioni.
 5. **Test grafici su un terminale vero** (punto 7 della Fase 2): blitter a pixel (sixel, kitty), quadranti, sestanti,
    ottanti non si provano su `/dev/null`. Cerca un emulatore che giri senza display fisico (per esempio xterm con
    Xvfb e `-ti vt340` per sixel) e proponi all'utente se farli in questa fase o dopo.
 
-Poi chiedi all'utente, con AskUserQuestion, le scelte con due letture valide: nome della gem, licenza, versione,
-strada per notcurses in CI, politica del lockfile, test grafici in questa fase, pubblicazione della documentazione
-(per esempio GitHub Pages, azione esterna). Non scrivere i file della Parte 2 prima dell'approvazione.
+Poi chiedi all'utente, con AskUserQuestion, le scelte con due letture valide:
+
+- nome della gem (`notcurses`, `notcursesruby` o altro) e versione;
+- licenza (per esempio MIT, BSD-2-Clause, Apache-2.0 come notcurses, LGPL-2.1);
+- strada per notcurses in CI, (a) o (b);
+- politica del lockfile per Ruby 3.1;
+- test grafici in questa fase o dopo;
+- pubblicazione della documentazione (per esempio GitHub Pages, azione esterna, o niente per ora);
+- `examples/` nella gem o no.
+
+Non scrivere i file della Parte 2 prima dell'approvazione.
 
 ## Parte 2 — gemspec e build
 
@@ -176,19 +251,39 @@ strada per notcurses in CI, politica del lockfile, test grafici in questa fase, 
 
 ## Comandi
 
+`S` è il percorso assoluto dello scratchpad della sessione, scritto nel prompt di sistema: assegnalo a mano. Non
+esiste una variabile d'ambiente `$SCRATCHPAD`, e con `S` vuota i comandi sotto scriverebbero nella radice
+(`/gemfile31`).
+
 ```sh
+S=/percorso/dello/scratchpad   # dal prompt di sistema della sessione
+
 # suite completa su Ruby 4.0.7 (dalla radice del progetto)
 TERM=xterm-256color timeout -k 5 -s KILL 600 bundle exec rspec < /dev/null
 TERM=xterm-256color timeout -k 5 -s KILL 600 bundle exec rspec --order rand:1234 < /dev/null
+TERM=xterm-256color timeout -k 5 -s KILL 600 bundle exec rspec --order rand:4242 < /dev/null
+TERM=xterm-256color timeout -k 5 -s KILL 600 bundle exec rspec --order rand:7 < /dev/null
 # una sola spec
 TERM=xterm-256color timeout -k 5 -s KILL 300 bundle exec rspec spec/notcurses/plane_spec.rb < /dev/null
 
-# Ruby 3.1.7: Gemfile copiato fuori dal progetto (S = scratchpad della sessione). Non cambiare la versione globale
-# di Ruby (4.0.7) e non usare il Gemfile.lock del progetto su 3.1.
+# Ruby 3.1.7: Gemfile copiato fuori dal progetto. Non cambiare la versione globale di Ruby (4.0.7) e non usare il
+# Gemfile.lock del progetto su 3.1.
 mkdir -p "$S/gemfile31" && cp Gemfile "$S/gemfile31/Gemfile"
 MISE_EXEC_AUTO_INSTALL=false BUNDLE_GEMFILE="$S/gemfile31/Gemfile" mise exec ruby@3.1.7 -- bundle install --quiet
 MISE_EXEC_AUTO_INSTALL=false BUNDLE_GEMFILE="$S/gemfile31/Gemfile" TERM=xterm-256color \
   mise exec ruby@3.1.7 -- timeout -k 5 -s KILL 600 bundle exec rspec --order rand:1234 < /dev/null
+# build di Ruby 3.1.7, solo se manca (circa 340 MB in TMPDIR)
+mkdir -p "$S/ruby-build-tmp"
+TMPDIR="$S/ruby-build-tmp" RUBY_CFLAGS='-std=gnu17' mise install ruby@3.1.7 > "$S/ruby31-install.log" 2>&1; echo "exit $?"
+
+# gem build e prova della gem installata, da fuori del repository (<nome> = nome scelto nel design)
+gem build <nome>.gemspec
+mkdir -p "$S/gem-test" && GEM_HOME="$S/gem-test" GEM_PATH="$S/gem-test" gem install --no-document ./<nome>-*.gem
+(cd "$S" && GEM_HOME="$S/gem-test" GEM_PATH="$S/gem-test" TERM=xterm-256color timeout -k 5 -s KILL 30 ruby -e '
+  require "notcurses"
+  Notcurses::Context.open(output: "/dev/null", termtype: "xterm-256color", suppress_banners: true) { }
+  puts "OK #{Notcurses::VERSION} da #{$LOADED_FEATURES.grep(/notcurses\.rb\z/).first}"
+' < /dev/null)
 
 # GitHub (sola lettura prima della conferma dell'utente)
 gh auth status
@@ -199,7 +294,7 @@ gh run view <id> --log-failed
 # recall dal bank notcursesruby
 curl -s -m 30 -X POST http://127.0.0.1:8888/v1/default/banks/notcursesruby/memories/recall \
   -H 'Content-Type: application/json' \
-  -d '{"query":"decisioni Fase 3, notcurses 3.0.17 terminale e input, Ruby 3.1 e Bundler, test su pty","budget":"high","max_tokens":6000}'
+  -d '{"query":"decisioni Fase 3 e ICH-229, notcurses 3.0.17 terminale e input, Ruby 3.1 e Bundler, test su pty, pacchetto e CI","budget":"high","max_tokens":6000}'
 
 # retain nel bank notcursesruby: il JSON sta in un file dello scratchpad
 curl -s -m 30 -X POST http://127.0.0.1:8888/v1/default/banks/notcursesruby/memories \
