@@ -1,2 +1,6 @@
 *.bak
 /.bundle/
+/doc/
+/.yardoc/
+/coverage/
+/*.gem

@@ -1,0 +1,42 @@
+<!--
+Generated from notcurses 3.0.17
+Source: notcurses/include/notcurses/notcurses.h
+-->
+# Changelog
+
+Tutti i cambi rilevanti di notcursesruby. Formato basato su
+[Keep a Changelog](https://keepachangelog.com/it/1.1.0/); le versioni seguono
+[Semantic Versioning](https://semver.org/lang/it/).
+
+## [Non rilasciato]
+
+## [0.1.0] - 2026-10-27
+
+Prima versione. Binding completo di notcurses 3.0.17.
+
+### Aggiunto
+
+- **Layer FFI raw** (`Notcurses::FFI`): mappatura 1:1 dell'API C di `notcurses.h` e `direct.h`. 385
+  `attach_function` (373 di notcurses, 12 della libc), 248 funzioni `static inline` e macro reimplementate in Ruby,
+  27 struct, 6 enum, 343 costanti. Le funzioni che aspettano il terminale rilasciano il GVL (`blocking: true`).
+- **Wrapper Ruby idiomatico:** `Context`, `Plane`, `Cell`, `Channel` e `Channels`, `Input` e `Key`, `Palette`,
+  `Pixel`, `Stats`, `Visual`, `Direct`, `FdPlane`, `Subprocess` e i widget C (`Selector`, `MultiSelector`, `Menu`,
+  `Reader`, `Reel`, `Tabbed`, `Tree`, `Plot`, `ProgBar`). Ogni puntatore C ha un distruttore (`close` o `destroy`),
+  ogni errore C diventa un'eccezione della gerarchia `Notcurses::Error`, le opzioni con un default sono keyword
+  arguments.
+- **`Notcurses::UI`:** ciclo degli eventi (`EventLoop`: `post`, `stop`, timer, `on_key`, `on_input`, `on_resize`),
+  `App` con focus, mouse e dialoghi modali, widget composti in Ruby (`Container`, `Label`, `Button`, `TextInput`,
+  `ListView`, `LogView`, `Dialog`).
+- `EventLoop#run` e `App#run` accettano `no_flow_control:` (Ctrl+S e Ctrl+Q arrivano come tasti) e `no_linesigs:`
+  (Ctrl+C, Ctrl+Z e Ctrl+\ arrivano come tasti).
+- `examples/demo.rb`: prova manuale di `Notcurses::UI` su un terminale vero.
+
+### Limiti noti
+
+- Diversi bug di notcurses 3.0.17 sono aggirati nel wrapper; alcune funzioni C non sono offerte perché non
+  funzionano in 3.0.17 (per esempio `ncpile_render_to_buffer` e `ncpile_render_to_file`).
+- notcurses non è thread-safe: un contesto va usato da un solo thread alla volta.
+- Provato solo su Linux x86_64. macOS non è provato; Windows non è supportato.
+
+[Non rilasciato]: https://github.com/ichelema/notcursesruby/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ichelema/notcursesruby/commits/master

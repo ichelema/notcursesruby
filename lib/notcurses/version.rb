@@ -4,7 +4,7 @@
 
 module Notcurses
   # Versione della gem (del binding Ruby, non della libreria C).
-  VERSION = '0.2.0'
+  VERSION = '0.1.0'
 
   # Versione degli header C da cui è stato generato il layer FFI.
   HEADER_VERSION = [FFI::NOTCURSES_VERSION_MAJOR, FFI::NOTCURSES_VERSION_MINOR,

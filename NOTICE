@@ -1,0 +1,17 @@
+notcursesruby
+Copyright 2026 Boscolo Michele
+
+This product includes software derived from notcurses
+(https://github.com/dankamongmen/notcurses), licensed under the Apache License,
+Version 2.0:
+
+  Copyright 2019-2026 Nick Black
+  Copyright 2019-2021 Marek Habersack
+  Copyright 2020-2021 José Luis Cruz
+  Copyright 2020-2021 igo95862
+  Copyright 2021 Łukasz Drukała
+
+The FFI layer in lib/notcurses/ffi.rb and lib/notcurses/ffi/ is generated from
+the notcurses 3.0.17 public headers. lib/notcurses/ffi/inline_reimpl.rb
+reimplements the static inline functions of those headers and quotes their C
+source in comments.
