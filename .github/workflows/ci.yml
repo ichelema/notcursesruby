@@ -1,0 +1,182 @@
+# Generated from notcurses 3.0.17
+# Source: notcurses/include/notcurses/notcurses.h
+#
+# CI in un container Arch Linux con i pacchetti di uno snapshot fisso dell'Arch
+# Linux Archive: notcurses 3.0.17-3 e ffmpeg 9.0.2-2, come sulla macchina di
+# sviluppo (con libnotcurses-ffi.so.3 e gli assert attivi). Ruby da mise.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ARCH_SNAPSHOT: 2026/10/26
+  MISE_DATA_DIR: /opt/mise
+  BUNDLE_PATH: /opt/bundle
+  TERM: xterm-256color
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    name: Ruby ${{ matrix.ruby }}${{ matrix.full && ' (coverage, gem, YARD)' || '' }}
+    runs-on: ubuntu-24.04
+    container:
+      image: archlinux:base@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # versioni esatte: binari precompilati di jdx/ruby per 3.2-4.0, 3.1.7 compilato
+        ruby: ['3.1.7', '3.2.11', '3.3.13', '3.4.12', '4.0.9']
+        include:
+          - ruby: '4.0.9'
+            full: true
+    steps:
+      - name: Cache dei pacchetti Arch
+        uses: actions/cache@v6
+        with:
+          path: /var/cache/pacman/pkg
+          key: pacman-${{ env.ARCH_SNAPSHOT }}-v1
+
+      - name: Pacchetti dello snapshot ${{ env.ARCH_SNAPSHOT }}
+        run: |
+          echo "Server = https://archive.archlinux.org/repos/${ARCH_SNAPSHOT}/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
+          pacman-key --init > /dev/null
+          pacman-key --populate archlinux > /dev/null
+          # -Syuu porta anche l'immagine alla data dello snapshot
+          pacman -Syuu --noconfirm --needed notcurses git mise base-devel libyaml openssl zlib libffi
+          pacman -Q notcurses ffmpeg glibc
+
+      - uses: actions/checkout@v7
+
+      # serve solo notcurses/data (immagini delle spec); libnotcurses-sys no
+      - name: Submodule notcurses
+        run: git submodule update --init --depth 1 notcurses
+
+      - name: Cache di Ruby
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.MISE_DATA_DIR }}/installs/ruby/${{ matrix.ruby }}
+          key: ruby-${{ matrix.ruby }}-${{ env.ARCH_SNAPSHOT }}-v1
+
+      - name: Ruby ${{ matrix.ruby }}
+        env:
+          MISE_GITHUB_TOKEN: ${{ github.token }}
+          # gcc 16 usa C23 di default: Ruby 3.1 compila solo con gnu17
+          RUBY_CFLAGS: -std=gnu17
+        run: |
+          mise install "ruby@${{ matrix.ruby }}"
+          echo "$(mise where "ruby@${{ matrix.ruby }}")/bin" >> "$GITHUB_PATH"
+
+      - name: Gemfile (Ruby 3.1 senza lockfile)
+        env:
+          RUBY_VERSION: ${{ matrix.ruby }}
+        run: |
+          if [[ "$RUBY_VERSION" == 3.1.* ]]; then
+            # Bundler 4 del lockfile richiede Ruby >= 3.2: copia del Gemfile, come in locale
+            mkdir -p "$RUNNER_TEMP/gemfile31"
+            cp Gemfile "$RUNNER_TEMP/gemfile31/Gemfile"
+            echo "BUNDLE_GEMFILE=$RUNNER_TEMP/gemfile31/Gemfile" >> "$GITHUB_ENV"
+          else
+            gem install --no-document bundler -v "$(tail -n 1 Gemfile.lock | tr -d ' ')"
+            echo "BUNDLE_FROZEN=true" >> "$GITHUB_ENV"
+          fi
+          ruby -v
+
+      - name: Cache delle gem
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.BUNDLE_PATH }}
+          key: gems-${{ matrix.ruby }}-${{ hashFiles('Gemfile', 'Gemfile.lock') }}
+
+      - run: bundle install --jobs 4
+
+      - name: ruby -w senza warning
+        run: |
+          bundle exec ruby -w -Ilib -e 'require "notcurses"' 2> "$RUNNER_TEMP/warnings.log"
+          if [[ -s "$RUNNER_TEMP/warnings.log" ]]; then cat "$RUNNER_TEMP/warnings.log"; exit 1; fi
+
+      - name: Suite in ordine normale${{ matrix.full && ', con la coverage' || '' }}
+        run: |
+          args=()
+          [[ "${{ matrix.full }}" == true ]] && args=(--require ./spec/support/coverage.rb)
+          timeout -k 5 -s KILL 600 bundle exec rspec "${args[@]}" < /dev/null
+
+      # il seme compare nel log ("Randomized with seed N"): rspec --order rand:N lo riproduce
+      - name: Suite in ordine casuale
+        run: timeout -k 5 -s KILL 600 bundle exec rspec --order rand < /dev/null
+
+      - name: Riepilogo della coverage
+        if: matrix.full && !cancelled()
+        run: |
+          ruby -rjson -e '
+            r = JSON.parse(File.read("coverage/.last_run.json"))["result"]
+            puts "### Coverage (layer FFI escluso)", "", "| Righe | Branch |", "| ---: | ---: |",
+                 "| #{r["line"]} % | #{r["branch"]} % |"
+          ' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Artifact della coverage
+        if: matrix.full && !cancelled()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage/
+
+      - name: Codecov configurato?
+        id: codecov
+        if: matrix.full
+        env:
+          TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: echo "enabled=${TOKEN:+true}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload su Codecov
+        if: steps.codecov.outputs.enabled == 'true'
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/coverage.xml
+          flags: unittests
+
+      - name: gem build senza warning e prova della gem installata
+        if: matrix.full
+        run: |
+          gem build notcursesruby.gemspec 2>&1 | tee "$RUNNER_TEMP/build.log"
+          if grep -qi warning "$RUNNER_TEMP/build.log"; then exit 1; fi
+          export GEM_HOME="$RUNNER_TEMP/gem-test" GEM_PATH="$RUNNER_TEMP/gem-test"
+          gem install --no-document ./notcursesruby-*.gem
+          cd "$RUNNER_TEMP"
+          env -u BUNDLE_GEMFILE -u BUNDLE_PATH -u BUNDLE_FROZEN timeout -k 5 -s KILL 30 ruby -e '
+            require "notcurses"
+            Notcurses::Context.open(output: "/dev/null", termtype: "xterm-256color", suppress_banners: true) { }
+            path = $LOADED_FEATURES.grep(/notcurses\.rb\z/).first
+            abort "caricata dal repository: #{path}" unless path.start_with?(ENV.fetch("GEM_HOME"))
+            puts "OK #{Notcurses::VERSION} da #{path}"
+          ' < /dev/null
+
+      - name: YARD senza warning e al 100%
+        if: matrix.full
+        run: |
+          bundle exec yard doc --fail-on-warning
+          bundle exec yard stats --list-undoc | tee "$RUNNER_TEMP/yard-stats.log"
+          grep -q '100.00% documented' "$RUNNER_TEMP/yard-stats.log"
+
+      - name: Artifact della documentazione
+        if: matrix.full
+        uses: actions/upload-artifact@v7
+        with:
+          name: doc
+          path: doc/
