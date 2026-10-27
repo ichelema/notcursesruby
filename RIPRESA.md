@@ -1,7 +1,8 @@
 # RIPRESA — prompt per la prossima sessione
 
 > Avvio: incolla questo file nella nuova sessione di Claude Code, oppure scrivi «Leggi RIPRESA.md ed esegui il
-> prompt». Scritto il 2026-10-27, con il repository su `707e9e8` (fine della Fase 4).
+> prompt». Scritto il 2026-10-27, con il repository su `fb53f07` (fine della Fase 4), per una sessione sulla
+> macchina dell'utente (Linux e macOS, terminali Kitty e Ghostty).
 
 ## Contesto
 
@@ -26,8 +27,9 @@
   fatturati per push. I commit di sola documentazione usano `[skip ci]` nel messaggio.
 - **notcurses sulla macchina di sviluppo:** pacchetto Arch `notcurses 3.0.17-3`. Il submodule `notcurses/` è su
   `v3.0.17-22-gb26048eeb`: usa `notcurses/src/` per la semantica del C, non `libnotcurses-sys/`.
-- **Macchina di sviluppo:** Arch Linux x86_64; Ruby 4.0.7 (mise, globale); Ruby 3.1.7 (mise, compilato con
-  `RUBY_CFLAGS='-std=gnu17'`). `sudo` chiede la password: i pacchetti di sistema li installa l'utente.
+- **VPS delle fasi 1–4:** Arch Linux x86_64; Ruby 4.0.7 (mise, globale); Ruby 3.1.7 (mise, compilato con
+  `RUBY_CFLAGS='-std=gnu17'`); Podman 6.1.4 rootless. `sudo` chiede la password: i pacchetti li installa
+  l'utente. La Fase 5 gira invece sulla macchina dell'utente (sezione "Dove gira questa fase").
 - **Bug di notcurses 3.0.17:** documentati nelle tabelle di `RICONSEGNA.md` (Fase 2 e Fase 3). Per uno nuovo vale la
   regola 11.
 
@@ -37,9 +39,10 @@
    `gh secret list --repo ichelema/notcursesruby`; se esiste, controlla il primo upload nel log del job 4.0.9.
 2. **`Util.timespec`** (`lib/notcurses/util.rb:340`): codice morto senza chiamanti. Chiedi all'utente se rimuoverlo;
    rimuoverlo è un cambio di `lib/` approvato dall'utente, non della regola 11.
-3. **Podman in locale:** installato dall'utente il 2026-10-27 (6.1.4, rootless, `crun`, `netavark`, socket utente
+3. **Podman sul VPS:** installato dall'utente il 2026-10-27 (6.1.4, rootless, `crun`, `netavark`, socket utente
    attivo; anche `act` 0.2.89). Provato: i passi del job 4.0.9 nel container della CI danno 922 esempi, 0 fallimenti
-   (anche le spec del pty). Usalo per provare i job prima del push (comandi in "Comandi").
+   (anche le spec del pty). Sul VPS serve a provare i job prima del push (comandi in "Comandi"); sulla macchina
+   dell'utente potrebbe mancare, e la Fase 5 non cambia la CI.
    `archive.archlinux.org` è lento: un download può fermarsi con «Operation too slow»; ripeti, la cache montata tiene i
    pacchetti già scaricati.
 
@@ -66,41 +69,58 @@ notcursesruby/
   libnotcurses-sys/      # submodule: binding Rust, non usarlo come riferimento
 ```
 
+## Dove gira questa fase
+
+Le fasi 1–4 sono state fatte su un **VPS** Arch Linux (`/mnt/data/Sviluppo/Progetti/notcursesruby`), senza terminale
+grafico. La Fase 5 gira sulla **macchina dell'utente**, in una sessione di Claude Code avviata dal suo terminale:
+
+| Sistema | Terminali | Protocollo grafico |
+| --- | --- | --- |
+| Linux | Kitty, Ghostty | kitty graphics (Kitty e Ghostty); niente sixel |
+| macOS | Kitty, Ghostty | kitty graphics; niente sixel |
+
+- Il percorso del checkout, la distribuzione Linux, la versione di macOS e l'architettura (Apple Silicon o Intel) non
+  sono noti: controllali all'inizio e scrivili nel log.
+- Sixel resta non provato (nessuno dei due terminali lo supporta): scrivilo nei risultati.
+- Il server Hindsight (`127.0.0.1:8888`) e lo scratchpad del VPS potrebbero non esistere sulla macchina dell'utente: se
+  il recall non risponde, prosegui con `RICONSEGNA.md` e i file `memory/`, e dillo in una riga.
+- La CI non cambia (scelta dell'utente): niente job grafico headless.
+
 ## Obiettivo
 
-La Fase 5 prova i blitter grafici su un terminale vero, senza display fisico: sixel, kitty, e il rilevamento di
-quadranti, sestanti e ottanti. Oggi le spec girano su `/dev/null` o su un pty finto, e i blitter a pixel non sono
-provati (punto 1 di "Cosa serve alla fase successiva" della Fase 4). La fase non aggiunge funzionalità al binding.
+La Fase 5 prova i blitter grafici su un terminale vero e porta il binding su macOS. Oggi le spec girano su `/dev/null`
+o su un pty finto, i blitter a pixel non sono provati e macOS non è mai stato provato. La fase non aggiunge funzionalità
+al binding.
 
-1. **Parte 1:** ricerca, design e approvazione dell'utente.
-2. **Parte 2:** harness e spec grafiche in locale.
-3. **Parte 3:** job della CI.
+1. **Parte 1 (Linux):** ambiente, prove grafiche in Kitty e Ghostty, design, approvazione dell'utente.
+2. **Parte 2 (Linux):** script e spec grafiche.
+3. **Parte 3 (macOS):** caricamento della gem e prove grafiche, poi la suite completa.
 4. **Parte 4:** controlli finali e documentazione.
 
 Fuori scope, salvo una richiesta esplicita dell'utente: nuove funzionalità o widget, cambi all'API pubblica,
-pubblicazione della gem, macOS.
+pubblicazione della gem, job grafici in CI, Windows.
 
 ## Prima di iniziare
 
-1. Fai il recall in Hindsight, bank `notcursesruby`, via REST (comando in "Comandi").
-2. Leggi `RICONSEGNA.md`: "Come eseguire i test" (Fase 1), "Test" della Fase 2, la sezione "Fase 4" (soprattutto CI e
-   "Cosa serve alla fase successiva") e `memory/fase4-design.md` (sezione 6, analisi dei test grafici).
+1. Fai il recall in Hindsight, bank `notcursesruby` (comando in "Comandi"), se il server risponde.
+2. Leggi `RICONSEGNA.md`: "Dipendenze di sistema" e "Come eseguire i test" (Fase 1), "Test" della Fase 2, la sezione
+   "Fase 4" (soprattutto "Cosa serve alla fase successiva") e `memory/fase4-design.md` (sezione 6).
 3. Leggi `spec/integration/pty_spec.rb` (blitter `:pixel` con `Direct` su un pty finto) e
-   `spec/integration/ui_pty_spec.rb` (pty come terminale di controllo, `setsid` e `TIOCSCTTY`).
-4. Controlla `git status` e `git log --oneline -3`: working tree pulito (a parte i file `CLAUDE_*.md` non tracciati
-   dell'utente), su `707e9e8` o dopo.
-5. Controlla Ruby 3.1.7: `MISE_EXEC_AUTO_INSTALL=false mise exec ruby@3.1.7 -- ruby -v`.
-6. Controlla gli strumenti locali: `command -v Xvfb xterm kitty foot podman act`. Al 2026-10-27 ci sono `podman`,
-   `act` e `kitty`; mancano `Xvfb`, `xterm` e `foot`. Se mancano, chiedi all'utente di installarli
-   (`sudo -A pacman -S --needed xorg-server-xvfb xterm foot`; `sudo` chiede la password).
+   `spec/integration/ui_pty_spec.rb` (pty come terminale di controllo).
+4. Controlla `git status` e `git log --oneline -3`: working tree pulito, su `fb53f07` o dopo. Il repository è privato:
+   serve l'accesso a GitHub per `git pull`.
+5. Controlla l'ambiente e scrivilo nel log: `uname -a`, `echo $TERM $TERM_PROGRAM $COLORTERM`, versione di notcurses
+   (`pkg-config --modversion notcurses` o il pacchetto), Ruby (`ruby -v`), dove sono le librerie
+   (`ldconfig -p | grep notcurses` su Linux, `ls "$(brew --prefix)/lib" | grep notcurses` su macOS).
+6. Il submodule `notcurses/` serve alle spec delle immagini: `git submodule update --init --depth 1 notcurses`.
 7. Controlla i punti aperti della Fase 4 (sezione sopra).
 
 ## Regole vincolanti
 
-Le regole 1–14 vengono dalle fasi precedenti. Le regole 15–17 sono nuove per la Fase 5.
+Le regole 1–14 vengono dalle fasi precedenti. Le regole 15–18 sono nuove per la Fase 5.
 
 1. Non cambiare la Fase 1 (`lib/notcurses/ffi/`, `lib/notcurses/ffi.rb`). Se un cambio serve, fermati e chiedi
-   all'utente.
+   all'utente. Vale anche per macOS: per esempio aggiungere percorsi di Homebrew alla ricerca di `ffi_lib`.
 2. Ogni puntatore opaco ha un distruttore (`close` o `destroy`). Il pattern `owned:` copre i puntatori non posseduti.
 3. notcurses non è thread-safe. Il wrapper lo documenta e non aggiunge lock interni.
 4. I metodi restituiscono `self` dove il chaining ha senso.
@@ -110,89 +130,96 @@ Le regole 1–14 vengono dalle fasi precedenti. Le regole 15–17 sono nuove per
 8. `define_method` e `method_missing` sono vietati.
 9. Ogni metodo pubblico ha un commento YARD con `@param`, `@return` e `@raise`.
 10. Dipendenze runtime: solo la gem `ffi`. Ruby >= 3.1.
-11. La fase non cambia il comportamento della libreria. Un cambio in `lib/` serve solo per un bug trovato dai test
-    nuovi: prima una spec che fallisce, poi il fix, poi la suite completa.
+11. La fase non cambia il comportamento della libreria. Un cambio in `lib/` serve solo per un bug trovato dalle prove:
+    prima una spec che fallisce, poi il fix, poi la suite completa.
 12. Una dipendenza di sviluppo nuova entra nel design e richiede l'approvazione dell'utente. Va in un gruppo del
     `Gemfile`. Elenca ogni cambio a `Gemfile` e `Gemfile.lock` in `RICONSEGNA.md`.
 13. Le azioni esterne o difficili da annullare richiedono la conferma esplicita dell'utente: pubblicazione, tag,
     release, impostazioni del repository, secret, GitHub Pages. Il push su `origin/master` resta autorizzato.
 14. Una scelta con due letture valide spetta all'utente: chiedi con AskUserQuestion. Se hai dubbi, fermati e chiarisci
-    con l'utente (richiesta esplicita dell'utente nella Fase 4).
-15. Le spec grafiche non devono rompere la suite normale: senza `Xvfb` o senza l'emulatore vanno in skip con un
-    messaggio chiaro, e non entrano nella suite di default se l'utente lo decide nel design.
-16. Ogni emulatore gira in un processo figlio con `timeout -k 5 -s KILL`; nessun processo X o emulatore resta vivo
-    dopo la spec (controlla con `pgrep`).
-17. La CI resta verde su tutta la matrice, con le soglie di coverage invariate. I minuti costano: un job grafico nuovo
-    va stimato nel design.
+    con l'utente (richiesta esplicita dell'utente).
+15. Le spec grafiche non rompono la suite normale né la CI: richiedono un terminale grafico vero, quindi stanno dietro
+    un tag RSpec o una variabile d'ambiente e vanno in skip con un messaggio chiaro fuori da un terminale adatto.
+16. Le prove grafiche scrivono sul terminale dell'utente: dopo ogni prova il terminale torna pulito (schermo
+    alternativo chiuso, immagini cancellate, cursore visibile). Chiedi all'utente di confermare a vista quando l'esito
+    del C non basta.
+17. Su macOS una spec legata a Linux (per esempio `/proc/self/fd`, `TIOCSCTTY`, `osversion` che inizia con `Linux`)
+    va in skip con il motivo, oppure diventa portabile se il cambio è piccolo; non indebolire i controlli su Linux.
+18. La CI resta verde su tutta la matrice, con le soglie di coverage invariate.
 
-## Parte 1 — ricerca e design
+## Parte 1 — ambiente, prove grafiche su Linux e design
 
-Scrivi `memory/fase5-design.md` prima del codice. Il design copre:
+1. Su Linux, in Kitty e poi in Ghostty, esegui uno script di prova (prima nello scratchpad, poi nel repository se
+   approvato) che apre un `Context` sul terminale vero e scrive in un file JSON:
+   - `can_pixel?`, l'implementazione dei pixel in `Capabilities`, `can_quadrant?`, `can_sextant?`, `can_octant?`,
+     `Plane#pixel_geom`, `detected_terminal`;
+   - l'esito di un blit di `spec/fixtures/visual/rgbw.png` con `blitter: :pixel`, `:quadrant`, `:sextant`, `:octant`,
+     `:braille`, `:half`, `:ascii`;
+   - `Direct#render_image(..., blitter: :pixel)`.
+   Lo script avvia con `timeout` e chiude sempre il contesto.
+2. Controlla nel C come notcurses 3.0.17 rileva il terminale e il protocollo grafico (`termdesc.c`, risposta DA1,
+   `XTGETTCAP`, `TERM`, `TERM_PROGRAM`, `KITTY_WINDOW_ID`) e confronta con quello che vedi in Kitty e Ghostty.
+3. Scrivi `memory/fase5-design.md`: risultati delle prove, come si controlla l'esito (solo il C, oppure anche un
+   controllo a vista dell'utente o una lettura del terminale), dove stanno script e spec grafiche, tag RSpec, piano
+   per macOS.
+4. Chiedi all'utente, con AskUserQuestion, le scelte con due letture valide (per esempio: script in `examples/` o
+   spec con un tag; quali blitter controllare; come trattare un rilevamento sbagliato di notcurses).
 
-1. **Emulatori senza display fisico.** Prova in locale e scegli, con motivi:
-   - xterm (Arch: `xterm` 411) su Xvfb (`xorg-server-xvfb`) con `-ti vt340` e le risorse `decTerminalID`,
-     `numColorRegisters`, `sixelScrolling`: sixel;
-   - kitty (Arch: `kitty` 0.49) su Xvfb con OpenGL software (Mesa llvmpipe, `LIBGL_ALWAYS_SOFTWARE=1`): protocollo
-     grafico kitty;
-   - foot (Arch: `foot` 1.28) con un compositor Wayland headless (per esempio `cage` o `sway` con
-     `WLR_BACKENDS=headless`): sixel su Wayland;
-   - controlla nel C come notcurses rileva il blitter (`termdesc.c`, `query_sixel`, risposta DA1, `XTGETTCAP`,
-     variabili come `TERM`, `TERM_PROGRAM`, `KITTY_WINDOW_ID`).
-2. **Cosa si controlla.** Per ogni emulatore: `Context#can_pixel?`, `Capabilities` (implementazione dei pixel),
-   `can_quadrant?`, `can_sextant?`, `can_octant?`, `Plane#pixel_geom`; un blit con `blitter: :pixel` di
-   `spec/fixtures/visual/rgbw.png`; `Direct` con `render_image(..., blitter: :pixel)`. Decidi se basta l'esito del C
-   (nessuna eccezione, valori sensati) o se serve uno screenshot (`xwd`, ImageMagick `import`) con il controllo del
-   colore in punti noti.
-3. **Harness.** Lo script Ruby gira dentro l'emulatore (`xterm -e ruby ...`), scrive i risultati in un file JSON e
-   termina; la spec avvia Xvfb e l'emulatore, aspetta con un timeout e legge il file. Display libero (`Xvfb
-   -displayfd`), cartella temporanea, pulizia dei processi.
-4. **Integrazione nella suite.** Tag RSpec (per esempio `:graphics`) e skip senza strumenti; se escluse di default,
-   come si avviano (variabile d'ambiente o `--tag graphics`).
-5. **CI.** Un job nuovo nel container Arch (pacchetti aggiuntivi nello stesso snapshot) o uno step nella voce 4.0.9;
-   stima dei minuti; cache.
-6. **Dipendenze:** nessuna gem nuova se possibile (regola 12).
+Non scrivere codice della Parte 2 nel repository prima dell'approvazione.
 
-Poi chiedi all'utente, con AskUserQuestion, le scelte con due letture valide (per esempio: quali emulatori, screenshot
-sì o no, spec grafiche nella suite di default o con un tag, job separato o step).
+## Parte 2 — script e spec grafiche (Linux)
 
-Non scrivere codice della Parte 2 prima dell'approvazione.
+- Ogni file nuovo ha l'intestazione di due righe (`# Generated from notcurses 3.0.17` e `# Source: ...`).
+- Se una prova trova un bug del wrapper, vale la regola 11; un bug di notcurses va nelle tabelle di `RICONSEGNA.md`.
+- Suite completa dopo ogni cambio, in ordine normale e con i semi.
 
-## Parte 2 — harness e spec
+## Parte 3 — macOS
 
-- Prima in locale, con gli strumenti installati dall'utente. Ogni file nuovo ha l'intestazione di due righe
-  (`# Generated from notcurses 3.0.17` e `# Source: ...`).
-- Se un test grafico trova un bug del wrapper, vale la regola 11; un bug di notcurses va nelle tabelle di
-  `RICONSEGNA.md`.
-- Suite completa dopo ogni cambio: le spec esistenti non cambiano comportamento.
+1. **notcurses:** `brew install notcurses` (Homebrew ha 3.0.17). Controlla se Homebrew installa anche
+   `libnotcurses-ffi` (serve solo alla spec differenziale) e con quale nome: l'oracolo `spec/support/nc_oracle.rb`
+   cerca `libnotcurses-ffi.so.3` e `notcurses-ffi`.
+2. **Caricamento:** `ruby -Ilib -e 'require "notcurses"'`. Su Apple Silicon Homebrew sta in `/opt/homebrew/lib`, che
+   `dlopen` potrebbe non cercare: prova prima `DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib"`. Un cambio di
+   `ffi_lib` tocca la Fase 1: chiedi all'utente (regola 1).
+3. **termios:** su macOS `tcflag_t` è `unsigned long` e `IXON`/`ISIG` hanno i valori BSD: finora controllati solo
+   sugli header. Prova `EventLoop#run(no_flow_control: true, no_linesigs: true)` nel terminale vero.
+4. **Prove grafiche:** le stesse della Parte 1 in Kitty e Ghostty su macOS.
+5. **Suite completa:** punti già noti che dipendono da Linux:
 
-## Parte 3 — CI
+   | Punto | Dove |
+   | --- | --- |
+   | `Dir.children('/proc/self/fd')` per contare i descrittori | `spec/notcurses/ui/event_loop_spec.rb:26`, `spec/notcurses/subprocess_spec.rb` |
+   | `osversion` che inizia con `Linux` | `spec/notcurses/stats_spec.rb:47` |
+   | comando `timeout` di coreutils (`gtimeout` con `brew install coreutils`) | `spec/notcurses/reader_spec.rb:195` e i comandi di test |
+   | `TIOCSCTTY` (`0x540E`), già in skip fuori da Linux | `spec/integration/ui_pty_spec.rb` |
+   | nome della libreria dell'oracolo | `spec/support/nc_oracle.rb:29` |
 
-- Scrivi il job come approvato, controlla con `actionlint`, fai il push e segui il run con
-  `gh run watch <id> --exit-status`; correggi fino a una matrice verde. Un fallimento solo in CI è un problema da
-  capire, non da saltare.
-- Se Podman o Docker sono installati, prova il container in locale prima del push.
+   Cerca gli altri con la suite. Su macOS lo stdin di `/dev/null`, `fopen("/dev/null")` e i pty si comportano in modo
+   simile, ma non è provato.
 
 ## Consegne
 
-1. Harness, spec grafiche, cambi al workflow.
-2. `memory/fase5-design.md` (design approvato) e il log `memory/fase5-<argomento>.md`.
-3. `RICONSEGNA.md`: sezione "Fase 5" con data, file, come avviare le spec grafiche in locale e in CI, emulatori e
-   versioni, risultati per blitter, problemi trovati, cambi a `Gemfile`/`Gemfile.lock` (se ci sono), "Cosa serve alla
-   fase successiva".
-4. Hindsight, bank `notcursesruby`: decisioni e cause radice.
+1. Script e spec grafiche, cambi alle spec per macOS.
+2. `memory/fase5-design.md` (design approvato) e il log `memory/fase5-<argomento>.md`: ambiente delle due macchine,
+   risultati per terminale e blitter, problemi e soluzioni.
+3. `RICONSEGNA.md`: sezione "Fase 5" con data, file, come avviare le prove grafiche, risultati per sistema, terminale e
+   blitter, stato di macOS (cosa passa, cosa è in skip e perché), problemi trovati, cambi a `Gemfile`/`Gemfile.lock`
+   (se ci sono), "Cosa serve alla fase successiva". Aggiorna "Dipendenze di sistema" (macOS provato) e il README
+   (tabella di installazione, limiti).
+4. Hindsight, bank `notcursesruby`, se il server risponde: decisioni e cause radice.
 5. Commit separati per area, Conventional Commits con scope in italiano, push su `origin/master`; `[skip ci]` per i
    commit di sola documentazione.
 6. Alla fine proponi il passo successivo e chiedi all'utente se scrivere in `RIPRESA.md` il prompt della fase dopo.
 
 ## Controlli finali
 
-- Suite completa in locale su Ruby 4.0.7 e 3.1.7: 0 fallimenti, anche con `rand:1234`, `rand:4242` e `rand:7`.
-- Spec grafiche verdi in locale e in CI con gli emulatori scelti; in skip pulito senza strumenti.
+- Suite completa su Linux (macchina dell'utente): 0 fallimenti, anche con `rand:1234`, `rand:4242` e `rand:7`.
+- Suite completa su macOS: 0 fallimenti; gli skip hanno un motivo scritto.
+- Prove grafiche in Kitty e Ghostty, su Linux e su macOS, con i risultati nel log.
 - CI verde su tutta la matrice; coverage >= 98 % e >= 90 % per file.
 - `ruby -w -Ilib -e 'require "notcurses"'` senza warning; `yard doc --fail-on-warning` e `yard stats --list-undoc` al
   100 %; `gem build` senza warning.
-- `git diff 707e9e8 -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto.
-- Nessun processo Xvfb o emulatore rimasto vivo (`pgrep -a 'Xvfb|xterm|kitty|foot'`).
+- `git diff fb53f07 -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto, salvo cambi approvati dall'utente.
 
 ## Comandi
 
@@ -205,6 +232,10 @@ S=/percorso/dello/scratchpad   # dal prompt di sistema della sessione
 # suite completa su Ruby 4.0.7 (dalla radice del progetto); COLORTERM serve alle 10 spec dei colori RGB
 TERM=xterm-256color COLORTERM=truecolor timeout -k 5 -s KILL 600 bundle exec rspec < /dev/null
 TERM=xterm-256color COLORTERM=truecolor timeout -k 5 -s KILL 600 bundle exec rspec --order rand:1234 < /dev/null
+# La suite non grafica forza TERM=xterm-256color anche dentro Kitty o Ghostty (TERM=xterm-kitty, xterm-ghostty):
+# i valori attesi delle spec sono calcolati per xterm-256color. Le prove grafiche usano invece il TERM del terminale.
+# macOS: timeout viene da coreutils di Homebrew (brew install coreutils) come gtimeout, oppure aggiungi
+# "$(brew --prefix)/opt/coreutils/libexec/gnubin" al PATH; libreria: DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib".
 # coverage (report in coverage/; con una sola spec fallisce per la soglia)
 TERM=xterm-256color COLORTERM=truecolor timeout -k 5 -s KILL 600 \
   bundle exec rspec --require ./spec/support/coverage.rb < /dev/null
@@ -254,7 +285,7 @@ podman run --rm -v "$PWD":/w:ro -w /w -v "$S/ci-local.sh":/ci-local.sh:ro \
 # recall dal bank notcursesruby
 curl -s -m 30 -X POST http://127.0.0.1:8888/v1/default/banks/notcursesruby/memories/recall \
   -H 'Content-Type: application/json' \
-  -d '{"query":"Fase 4 CI container Arch, COLORTERM, blitter pixel sixel kitty, pty e terminale, test grafici","budget":"high","max_tokens":6000}'
+  -d '{"query":"Fase 4 CI container Arch, COLORTERM, blitter pixel kitty, pty e terminale, macOS e termios, test grafici","budget":"high","max_tokens":6000}'
 
 # retain nel bank notcursesruby: il JSON sta in un file dello scratchpad
 curl -s -m 30 -X POST http://127.0.0.1:8888/v1/default/banks/notcursesruby/memories \
