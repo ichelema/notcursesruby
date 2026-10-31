@@ -4,3 +4,8 @@
 /.yardoc/
 /coverage/
 /*.gem
+
+CLAUDE_FABLE.md
+CLAUDE_GPT.md
+CLAUDE_OPUS.md
+CLAUDE_SONNET.md
