@@ -122,7 +122,9 @@ module Notcurses
   # Un solo contesto (Context o {Direct}) può essere attivo nel processo.
   # Chiudi sempre il contesto: {.open} con un blocco lo fa da solo, anche in caso
   # di eccezione. All'uscita del processo un contesto rimasto aperto viene chiuso
-  # da un hook +at_exit+.
+  # da un hook +at_exit+, solo nel processo che l'ha creato. In un figlio creato
+  # con +fork+ il contesto copiato resta del padre: {#close} lo segna chiuso
+  # senza chiamare notcurses e senza toccare il terminale.
   #
   # Ciclo di vita degli oggetti collegati: i piani ({Plane}), i widget e gli
   # altri oggetti creati dal contesto diventano inutilizzabili (ClosedError)
@@ -310,6 +312,11 @@ module Notcurses
     # il contesto chiuso, i piani invalidi e il registro libero: un close
     # successivo e l'hook +at_exit+ non richiamano lo stop.
     #
+    # In un processo figlio creato con +fork+ lo stato C appartiene al padre:
+    # close non chiama notcurses (né il close degli oggetti figli), non scrive
+    # sul terminale e non ne cambia il modo; segna solo il contesto chiuso,
+    # invalida i piani e libera il registro.
+    #
     # @return [nil]
     # @raise [ContextError] se +notcurses_stop+ restituisce un errore (il
     #   contesto risulta comunque chiuso)
@@ -317,6 +324,8 @@ module Notcurses
     #   figlio (per esempio quella del blocco di un {FdPlane}), dopo lo stop
     def close
       return nil if @closed
+      # niente fclose: svuoterebbe sul terminale del padre i dati rimasti nel buffer del FILE*
+      return mark_closed!(fclose: false) unless @pid == Process.pid
 
       check_not_in_callback!('Context#close', ContextError)
       first_error = close_children

@@ -259,11 +259,17 @@ module Notcurses
     # esce da close, ma lascia il contesto chiuso e il registro libero: un
     # close successivo e l'hook +at_exit+ non richiamano lo stop.
     #
+    # In un processo figlio creato con +fork+ lo stato C appartiene al padre:
+    # close non chiama notcurses e non scrive sul terminale; segna solo il
+    # contesto chiuso e libera il registro.
+    #
     # @return [nil]
     # @raise [DirectError] se +ncdirect_stop+ restituisce un errore (il
     #   contesto risulta comunque chiuso)
     def close
       return nil if @closed
+      # niente fclose: svuoterebbe sul terminale del padre i dati rimasti nel buffer del FILE*
+      return mark_closed!(fclose: false) unless @pid == Process.pid
 
       # ncdirect_stop non resetta il FILE* (solo stdout): lo fa il wrapper, prima, perché lo stop ne fa ancora il flush
       FFI.ncdirect_set_fg_default(@ptr)

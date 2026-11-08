@@ -266,4 +266,38 @@ RSpec.describe 'Ciclo di vita (integrazione)' do
                            'after drop closed=true,true,true', 'chiuso')
     expect(status).to be_success, out
   end
+
+  it 'in un figlio di fork Context#close e Direct#close non chiamano notcurses e non si bloccano' do
+    script = <<~'RUBY'
+      $parent = Process.pid
+      at_exit { puts "nipote active=#{Notcurses.active_context.inspect}" unless Process.pid == $parent }
+      require 'notcurses'
+      $stdout.sync = true
+      opts = { output: '/dev/null', termtype: 'xterm-256color', drain_input: true }
+      [[Notcurses::Context, { suppress_banners: true }], [Notcurses::Direct, {}]].each do |klass, extra|
+        klass.open(**opts, **extra) do
+          pid = fork
+          raise 'errore nel nipote' if pid.nil? # il nipote esce da open con il suo ensure, cioè close
+          deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 3
+          until (done = Process.wait2(pid, Process::WNOHANG))
+            break if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+            sleep 0.05
+          end
+          if done
+            puts "#{klass}: nipote uscito con #{done.last.exitstatus}"
+          else
+            puts "#{klass}: nipote bloccato"
+            Process.kill(:KILL, pid)
+            Process.wait(pid)
+          end
+        end
+      end
+      puts 'fine'
+    RUBY
+    out, status, timed_out = run_child(script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('Notcurses::Context: nipote uscito con 1', 'Notcurses::Direct: nipote uscito con 1', 'fine')
+    expect(out.scan('nipote active=nil').size).to eq(2), out
+    expect(status).to be_success, out
+  end
 end
