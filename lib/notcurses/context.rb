@@ -32,11 +32,16 @@ module Notcurses
       end
     end
 
-    # Toglie ctx dal registro (no-op se ctx non è il contesto attivo).
+    # Toglie ctx dal registro (no-op se ctx non è il contesto attivo). Funziona
+    # anche dentro un gestore +trap+.
     #
     # @api private
     def release_context(ctx)
       @context_lock.synchronize { @active_context = nil if @active_context.equal?(ctx) }
+    rescue ThreadError
+      # in un gestore trap Ruby vieta Mutex#lock: il gestore gira nel thread principale con il GVL, e
+      # solo il proprietario toglie la propria voce
+      @active_context = nil if @active_context.equal?(ctx)
     end
 
     # Allineamento di un oggetto largo u in uno spazio largo avail
@@ -122,7 +127,9 @@ module Notcurses
   # Un solo contesto (Context o {Direct}) può essere attivo nel processo.
   # Chiudi sempre il contesto: {.open} con un blocco lo fa da solo, anche in caso
   # di eccezione. All'uscita del processo un contesto rimasto aperto viene chiuso
-  # da un hook +at_exit+.
+  # da un hook +at_exit+, solo nel processo che l'ha creato. In un figlio creato
+  # con +fork+ il contesto copiato resta del padre: {#close} lo segna chiuso
+  # senza chiamare notcurses e senza toccare il terminale.
   #
   # Ciclo di vita degli oggetti collegati: i piani ({Plane}), i widget e gli
   # altri oggetti creati dal contesto diventano inutilizzabili (ClosedError)
@@ -305,6 +312,23 @@ module Notcurses
     # i widget e gli altri oggetti figli ancora aperti, in ordine inverso di
     # creazione; dopo la chiamata tutti i piani sono invalidi. Idempotente.
     #
+    # Un'eccezione sollevata durante la chiamata C (per esempio un Ctrl-C
+    # mentre +notcurses_stop+ ripristina il terminale) esce da close, ma lascia
+    # il contesto chiuso, i piani invalidi e il registro libero: un close
+    # successivo e l'hook +at_exit+ non richiamano lo stop.
+    #
+    # In un processo figlio creato con +fork+ lo stato C appartiene al padre:
+    # close non chiama notcurses (né il close degli oggetti figli), non scrive
+    # sul terminale e non ne cambia il modo; segna solo il contesto chiuso,
+    # invalida i piani e libera il registro Ruby. Nel figlio notcurses resta
+    # inutilizzabile anche dopo close (i segnali restano registrati per il
+    # contesto del padre, e un nuovo init solleva InitError): il figlio può
+    # solo uscire o fare +exec+.
+    #
+    # close si può chiamare da un gestore +trap+ (per esempio
+    # <tt>trap('TERM') { nc.close; exit }</tt>): il registro si libera anche
+    # lì, e un nuovo contesto si può aprire dopo.
+    #
     # @return [nil]
     # @raise [ContextError] se +notcurses_stop+ restituisce un errore (il
     #   contesto risulta comunque chiuso)
@@ -312,17 +336,18 @@ module Notcurses
     #   figlio (per esempio quella del blocco di un {FdPlane}), dopo lo stop
     def close
       return nil if @closed
+      # niente fclose: svuoterebbe sul terminale del padre i dati rimasti nel buffer del FILE*
+      return mark_closed!(fclose: false) unless @pid == Process.pid
 
       check_not_in_callback!('Context#close', ContextError)
       first_error = close_children
-      rc = FFI.notcurses_stop(@ptr)
+      # prima della chiamata: Ruby consegna un Ctrl-C al suo ritorno, quando il C ha già liberato il contesto
       @closed = true
-      @input_io = nil # il fd è di notcurses, che lo ha chiuso
-      @planes.each_value(&:invalidate!)
-      @planes.clear
-      @children.clear
-      FFI.fclose(@fp) if @own_fp
-      Notcurses.release_context(self)
+      begin
+        rc = FFI.notcurses_stop(@ptr)
+      ensure
+        mark_closed!(fclose: @own_fp)
+      end
       raise first_error if first_error
       # notcurses_stop restituisce l'OR di più ritorni: qualsiasi valore diverso da 0 è un errore
       raise ContextError, "notcurses_stop fallita (#{rc})" unless rc.zero?
@@ -437,6 +462,10 @@ module Notcurses
     # per piano, le pile che contengono un piano conosciuto; la funzione C
     # resta per il resto.
     #
+    # Un'eccezione sollevata durante una chiamata C (per esempio un Ctrl-C)
+    # esce da drop_planes: i piani già distrutti sono invalidi, gli altri
+    # restano usabili, e un drop_planes successivo distrugge il resto.
+    #
     # @return [self]
     # @raise [ContextError] dentro un callback chiamato da notcurses
     # @raise [ClosedError] se il contesto è chiuso
@@ -460,11 +489,19 @@ module Notcurses
           plane = FFI.ncplane_below(plane)
         end
       end
-      victims.each { |plane| FFI.ncplane_destroy(plane) }
-      FFI.notcurses_drop_planes(ptr)
-      @planes.each_value { |plane| plane.invalidate! unless plane.equal?(@stdplane) }
-      @planes.select! { |_addr, plane| plane.equal?(@stdplane) }
-      planes_destroyed!
+      # ogni wrapper diventa invalido prima della sua distruzione: Ruby consegna un Ctrl-C al ritorno della
+      # chiamata C, e un wrapper ancora aperto su un piano liberato farebbe un double free
+      begin
+        victims.each do |plane|
+          @planes[plane.address]&.invalidate!
+          FFI.ncplane_destroy(plane)
+        end
+        @planes.each_value { |plane| plane.invalidate! unless plane.equal?(@stdplane) }
+        @planes.select! { |_addr, plane| plane.equal?(@stdplane) }
+        FFI.notcurses_drop_planes(ptr)
+      ensure
+        planes_destroyed!
+      end
       raise first_error if first_error
 
       self
@@ -1002,6 +1039,20 @@ module Notcurses
         first_error ||= e
       end
       first_error
+    end
+
+    # Stato Ruby di un contesto chiuso: piani invalidi, FILE* chiuso (se
+    # fclose), registro libero.
+    # @return [nil]
+    def mark_closed!(fclose:)
+      @closed = true
+      @input_io = nil # il fd è di notcurses, che lo ha chiuso
+      @planes.each_value(&:invalidate!)
+      @planes.clear
+      @children.clear
+      FFI.fclose(@fp) if fclose
+      Notcurses.release_context(self)
+      nil
     end
 
     # Il terminale da cui notcurses legge i tasti (init_inputlayer, in.c):

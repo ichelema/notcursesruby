@@ -10,6 +10,17 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ## [Non rilasciato]
 
+### Corretto
+
+- `Context#close`, `Direct#close` e `Context#drop_planes`: un'eccezione durante la chiamata C (per esempio un
+  Ctrl-C) lascia l'oggetto chiuso, i piani distrutti invalidi e il registro libero; prima l'hook `at_exit`
+  richiamava lo stop su memoria liberata (SIGSEGV) (ICH-268).
+- `Context#close` e `Direct#close` in un figlio creato con `fork` non chiamano notcurses: il figlio non ripristina
+  più il terminale del padre e non si blocca nello stop (ICH-269).
+- `Context#close` e `Direct#close` funzionano dentro un gestore `trap` (ICH-270).
+- `fork` svuota prima il buffer dell'output di un `Direct` aperto: il testo non ancora svuotato non si duplica
+  all'uscita del figlio (ICH-433).
+
 ## [0.1.0] - 2026-10-27
 
 Prima versione. Binding completo di notcurses 3.0.17.

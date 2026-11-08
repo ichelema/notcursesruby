@@ -1,0 +1,11 @@
+# Le soglie vincolanti sono quelle di SimpleCov (spec/support/coverage.rb): Codecov
+# riporta i numeri senza segnare rosso. I rami che girano solo nei processi figli
+# delle spec (fork, trap, crash) non entrano nella coverage misurata.
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true

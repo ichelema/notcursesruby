@@ -26,6 +26,43 @@ RSpec.describe 'Ciclo di vita (integrazione)' do
     Notcurses::Visual.from_rgba(([255, 0, 0, 255] * 4).pack('C*'), rows: 2, cols: 2)
   end
 
+  # Esegue script in un processo Ruby figlio e lo uccide dopo timeout secondi:
+  # un crash (SIGSEGV, abort) o un blocco non fermano la suite.
+  # @return [Array(String, Process::Status, Boolean)] output, stato, true se scaduto
+  def run_child(script, timeout:)
+    reader, writer = IO.pipe
+    pid = spawn({ 'TERM' => 'xterm-256color' }, RbConfig.ruby, '-I', LIB, '-e', script,
+                in: File::NULL, out: writer, err: writer)
+    writer.close
+    output = Thread.new { reader.read }
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+    until (done = Process.wait2(pid, Process::WNOHANG))
+      if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+        Process.kill(:KILL, pid)
+        return [output.value, Process.wait2(pid).last, true]
+      end
+      sleep 0.05
+    end
+    [output.value, done.last, false]
+  ensure
+    reader&.close
+  end
+
+  # Inizio comune degli script figli: name è la funzione FFI che solleva
+  # Interrupt al ritorno, come Ruby consegna un SIGINT arrivato durante la
+  # chiamata C, quando $interrupt contiene :raise.
+  def interrupt_prelude(name) = <<~RUBY
+    at_exit { puts "calls at exit=\#{$calls}" } # gira dopo l'at_exit del wrapper
+    require 'notcurses'
+    $stdout.sync = true
+    $calls = 0
+    $interrupt = []
+    Notcurses::FFI.singleton_class.prepend(Module.new do
+      def #{name}(ptr) = super.tap { $calls += 1; raise Interrupt if $interrupt.delete(:raise) }
+    end)
+    OPTS = { output: '/dev/null', termtype: 'xterm-256color', drain_input: true }.freeze
+  RUBY
+
   it 'Context.open con un blocco chiude il contesto e invalida piani, pile e visual, anche dopo un\'eccezione' do
     kept = {}
     expect do
@@ -146,5 +183,235 @@ RSpec.describe 'Ciclo di vita (integrazione)' do
     out, status = Open3.capture2e({ 'TERM' => 'xterm-256color' }, RbConfig.ruby, '-I', LIB, '-e', script, stdin_data: '')
     expect(status).to be_success
     expect(out).to include('chiuso')
+  end
+
+  it 'Context#close interrotto al ritorno di notcurses_stop lascia il contesto chiuso e il registro libero' do
+    script = interrupt_prelude('notcurses_stop') + <<~'RUBY'
+      nc = Notcurses::Context.new(**OPTS, suppress_banners: true)
+      plane = nc.stdplane.create_child(rows: 1, cols: 1)
+      $interrupt << :raise
+      begin
+        nc.close
+        puts 'nessuna Interrupt'
+      rescue Interrupt
+        puts "closed=#{nc.closed?} active=#{Notcurses.active_context.inspect}"
+      end
+      [-> { nc.stdplane }, -> { plane.dims }].each do |use|
+        use.call
+        puts 'usabile'
+      rescue Notcurses::ClosedError
+        puts 'ClosedError'
+      end
+      nc.close
+      puts "calls after close=#{$calls}"
+      Notcurses::Context.open(**OPTS, suppress_banners: true) { puts 'riaperto' }
+    RUBY
+    out, status, timed_out = run_child(script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('closed=true active=nil', 'calls after close=1', 'riaperto', 'calls at exit=2')
+    expect(out.scan('ClosedError').size).to eq(2), out
+    expect(status).to be_success, out
+  end
+
+  it 'Direct#close interrotto al ritorno di ncdirect_stop lascia il contesto chiuso e il registro libero' do
+    script = interrupt_prelude('ncdirect_stop') + <<~'RUBY'
+      d = Notcurses::Direct.new(**OPTS)
+      $interrupt << :raise
+      begin
+        d.close
+        puts 'nessuna Interrupt'
+      rescue Interrupt
+        puts "closed=#{d.closed?} active=#{Notcurses.active_context.inspect}"
+      end
+      begin
+        d.dims
+        puts 'usabile'
+      rescue Notcurses::ClosedError
+        puts 'ClosedError'
+      end
+      d.close
+      puts "calls after close=#{$calls}"
+      Notcurses::Direct.open(**OPTS) { puts 'riaperto' }
+    RUBY
+    out, status, timed_out = run_child(script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('closed=true active=nil', 'ClosedError', 'calls after close=1', 'riaperto',
+                           'calls at exit=2')
+    expect(status).to be_success, out
+  end
+
+  it 'drop_planes interrotto dopo un ncplane_destroy invalida solo i piani distrutti' do
+    script = interrupt_prelude('ncplane_destroy') + <<~'RUBY'
+      nc = Notcurses::Context.new(**OPTS, suppress_banners: true)
+      planes = Array.new(3) { nc.stdplane.create_child(rows: 1, cols: 1) }
+      generation = nc.generation
+      $interrupt << :raise
+      begin
+        nc.drop_planes
+        puts 'nessuna Interrupt'
+      rescue Interrupt
+        puts "closed=#{planes.map(&:closed?).join(',')} generation grown=#{nc.generation > generation}"
+      end
+      planes.last.close # il piano distrutto: senza invalidazione è un double free
+      planes.first.dims
+      puts 'ancora usabile'
+      nc.drop_planes
+      puts "after drop closed=#{planes.map(&:closed?).join(',')}"
+      nc.close
+      puts 'chiuso'
+    RUBY
+    out, status, timed_out = run_child(script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('closed=false,false,true generation grown=true', 'ancora usabile',
+                           'after drop closed=true,true,true', 'chiuso')
+    expect(status).to be_success, out
+  end
+
+  it 'drop_planes interrotto al ritorno di notcurses_drop_planes considera distrutti tutti i piani' do
+    script = interrupt_prelude('notcurses_drop_planes') + <<~'RUBY'
+      nc = Notcurses::Context.new(**OPTS, suppress_banners: true)
+      planes = Array.new(3) { nc.stdplane.create_child(rows: 1, cols: 1) }
+      generation = nc.generation
+      $interrupt << :raise
+      begin
+        nc.drop_planes
+        puts 'nessuna Interrupt'
+      rescue Interrupt
+        puts "closed=#{planes.map(&:closed?).join(',')} generation grown=#{nc.generation > generation}"
+      end
+      nc.stdplane.dims
+      nc.drop_planes
+      nc.close
+      puts 'chiuso'
+    RUBY
+    out, status, timed_out = run_child(script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('closed=true,true,true generation grown=true', 'chiuso')
+    expect(status).to be_success, out
+  end
+
+  it 'in un figlio di fork Context#close e Direct#close non chiamano notcurses e non si bloccano' do
+    script = <<~'RUBY'
+      $parent = Process.pid
+      at_exit { puts "nipote active=#{Notcurses.active_context.inspect} calls=#{$calls}" unless Process.pid == $parent }
+      require 'notcurses'
+      $stdout.sync = true
+      # chiamate C che il close del nipote non deve fare
+      $calls = Hash.new(0)
+      Notcurses::FFI.singleton_class.prepend(Module.new do
+        def notcurses_stop(ptr) = super.tap { $calls[:notcurses_stop] += 1 }
+        def ncdirect_stop(ptr) = super.tap { $calls[:ncdirect_stop] += 1 }
+        def ncdirect_flush(ptr) = super.tap { $calls[:ncdirect_flush] += 1 }
+        def ncdirect_set_fg_default(ptr) = super.tap { $calls[:ncdirect_set_fg_default] += 1 }
+        def ncdirect_set_bg_default(ptr) = super.tap { $calls[:ncdirect_set_bg_default] += 1 }
+        def ncdirect_set_styles(ptr, styles) = super.tap { $calls[:ncdirect_set_styles] += 1 }
+      end)
+      opts = { output: '/dev/null', termtype: 'xterm-256color', drain_input: true }
+      [[Notcurses::Context, { suppress_banners: true }], [Notcurses::Direct, {}]].each do |klass, extra|
+        klass.open(**opts, **extra) do
+          t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          pid = fork
+          $calls.clear if pid.nil? # i conteggi copiati dal padre non contano
+          raise 'errore nel nipote' if pid.nil? # il nipote esce da open con il suo ensure, cioè close
+          deadline = t0 + 3
+          until (done = Process.wait2(pid, Process::WNOHANG))
+            break if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+            sleep 0.05
+          end
+          if done
+            elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0
+            puts "#{klass}: nipote uscito con #{done.last.exitstatus} #{elapsed < 1 ? 'entro 1 s' : "in #{elapsed.round(1)} s"}"
+          else
+            puts "#{klass}: nipote bloccato"
+            Process.kill(:KILL, pid)
+            Process.wait(pid)
+          end
+        end
+      end
+      puts 'fine'
+    RUBY
+    out, status, timed_out = run_child(script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('Notcurses::Context: nipote uscito con 1 entro 1 s', 'Notcurses::Direct: nipote uscito con 1 entro 1 s',
+                           'fine')
+    expect(out.scan('nipote active=nil calls={}').size).to eq(2), out
+    expect(status).to be_success, out
+  end
+
+  it 'con output nil il testo di Direct non svuotato prima di un fork esce una volta sola su stdout' do
+    script = <<~'RUBY'
+      require 'notcurses'
+      Notcurses::Direct.open(termtype: 'xterm-256color', drain_input: true) do |d|
+        d.flush
+        d.putstr('PENDING_TOKEN')
+        pid = fork
+        raise 'errore nel nipote' if pid.nil? # il nipote esce da open con il suo ensure, cioè close
+        Process.wait(pid)
+      end
+      puts 'fine'
+    RUBY
+    out, status, timed_out = run_child(script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out.scan('PENDING_TOKEN').size).to eq(1), out
+    expect(out).to include('fine')
+    expect(status).to be_success, out
+  end
+
+  it 'con fork annidati il testo di Direct scritto dal figlio intermedio esce una volta sola' do
+    script = <<~'RUBY'
+      require 'notcurses'
+      require 'tempfile'
+      path = Tempfile.create('direct') { |f| f.path }
+      Notcurses::Direct.open(output: path, termtype: 'xterm-256color', drain_input: true) do |d|
+        d.flush
+        d.putstr('FROM_ORIGINAL')
+        pid = fork
+        if pid.nil?
+          d.putstr('FROM_INTERMEDIATE')
+          inner = fork # il nipote e il figlio intermedio chiudono il Direct ereditato ed escono normalmente
+          d.close
+          Process.wait(inner) if inner
+          exit 0
+        end
+        Process.wait(pid)
+      end
+      text = File.read(path)
+      File.delete(path)
+      puts "FROM_ORIGINAL=#{text.scan('FROM_ORIGINAL').size} FROM_INTERMEDIATE=#{text.scan('FROM_INTERMEDIATE').size}"
+    RUBY
+    out, status, timed_out = run_child(script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('FROM_ORIGINAL=1 FROM_INTERMEDIATE=1')
+    expect(status).to be_success, out
+  end
+
+  # Ruby vieta Mutex#lock in un gestore trap: close deve liberare il registro lo stesso.
+  { 'Notcurses::Context' => '**OPTS, suppress_banners: true', 'Notcurses::Direct' => '**OPTS' }.each do |klass, args|
+    it "#{klass}#close funziona dentro un gestore trap e libera il registro" do
+      script = <<~RUBY
+        require 'notcurses'
+        $stdout.sync = true
+        OPTS = { output: '/dev/null', termtype: 'xterm-256color', drain_input: true }.freeze
+        first = #{klass}.new(#{args})
+        trap('USR1') { first.close }
+        Process.kill(:USR1, Process.pid)
+        sleep 0.3
+        puts "dopo USR1 closed=\#{first.closed?} active=\#{Notcurses.active_context.inspect}"
+        second = #{klass}.new(#{args})
+        trap('TERM') do
+          second.close
+          puts "active=\#{Notcurses.active_context.inspect}"
+          exit 0
+        end
+        Process.kill(:TERM, Process.pid)
+        sleep 5
+        puts 'il gestore non è uscito'
+      RUBY
+      out, status, timed_out = run_child(script, timeout: 30)
+      expect(timed_out).to be(false), out
+      expect(out).to include('dopo USR1 closed=true active=nil', 'active=nil')
+      expect(out).not_to include('il gestore non è uscito')
+      expect(status).to be_success, out
+    end
   end
 end

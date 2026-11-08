@@ -255,22 +255,45 @@ module Notcurses
     # (+\e[39;49m\e(B\e[m+) sullo stdout del processo anche quando output è
     # un file.
     #
+    # Un'eccezione sollevata durante +ncdirect_stop+ (per esempio un Ctrl-C)
+    # esce da close, ma lascia il contesto chiuso e il registro libero: un
+    # close successivo e l'hook +at_exit+ non richiamano lo stop.
+    #
+    # In un processo figlio creato con +fork+ lo stato C appartiene al padre:
+    # close non chiama notcurses e non scrive sul terminale; segna solo il
+    # contesto chiuso e libera il registro Ruby. Il testo non ancora svuotato
+    # non si duplica: +fork+ (anche +Process.fork+ e <tt>IO.popen('-')</tt>,
+    # non +Process.daemon+) svuota prima il buffer dell'output del Direct
+    # aperto, se il fork parte dal thread che usa il Direct. Nel figlio
+    # notcurses resta inutilizzabile anche dopo close (i segnali restano
+    # registrati per il contesto del padre, e un nuovo init solleva
+    # InitError): il figlio può solo uscire o fare +exec+.
+    #
+    # close si può chiamare da un gestore +trap+ (per esempio
+    # <tt>trap('TERM') { d.close; exit }</tt>): il registro si libera anche
+    # lì, e un nuovo contesto si può aprire dopo.
+    #
     # @return [nil]
     # @raise [DirectError] se +ncdirect_stop+ restituisce un errore (il
     #   contesto risulta comunque chiuso)
     def close
       return nil if @closed
+      # niente fclose: chiuderebbe il FILE* copiato dal padre (il suo buffer è vuoto: DirectForkFlush lo
+      # svuota nel padre prima del fork)
+      return mark_closed!(fclose: false) unless @pid == Process.pid
 
       # ncdirect_stop non resetta il FILE* (solo stdout): lo fa il wrapper, prima, perché lo stop ne fa ancora il flush
       FFI.ncdirect_set_fg_default(@ptr)
       FFI.ncdirect_set_bg_default(@ptr)
       FFI.ncdirect_set_styles(@ptr, 0)
       FFI.ncdirect_flush(@ptr)
-      @input_io = nil # il fd è di notcurses: lo chiude ncdirect_stop
-      rc = FFI.ncdirect_stop(@ptr)
+      # prima della chiamata: Ruby consegna un Ctrl-C al suo ritorno, quando il C ha già liberato il contesto
       @closed = true
-      FFI.fclose(@fp) if @own_fp
-      Notcurses.release_context(self)
+      begin
+        rc = FFI.ncdirect_stop(@ptr)
+      ensure
+        mark_closed!(fclose: @own_fp)
+      end
       # ncdirect_stop restituisce l'OR di più ritorni: qualsiasi valore diverso da 0 è un errore
       raise DirectError, "ncdirect_stop fallita (#{rc})" unless rc.zero?
 
@@ -1232,6 +1255,16 @@ module Notcurses
 
     private
 
+    # Stato Ruby di un contesto chiuso: FILE* chiuso (se fclose), registro libero.
+    # @return [nil]
+    def mark_closed!(fclose:)
+      @closed = true
+      @input_io = nil # il fd è di notcurses: lo chiude ncdirect_stop
+      FFI.fclose(@fp) if fclose
+      Notcurses.release_context(self)
+      nil
+    end
+
     def check_output!(output)
       case output
       when nil, String then nil
@@ -1306,4 +1339,26 @@ module Notcurses
       end
     end
   end
+
+  # Prima di ogni fork (Process._fork, Ruby >= 3.1, gira nel processo che fa il
+  # fork) svuota il buffer stdio del {Direct} aperto: altrimenti il figlio ne
+  # eredita una copia, e la libc la scrive quando il figlio esce (testo
+  # duplicato sul terminale). Vale anche per un Direct ereditato da un fork
+  # precedente (fork annidati): il buffer è quello del processo corrente.
+  # Process.daemon e spawn non passano da Process._fork.
+  # @api private
+  module DirectForkFlush
+    # @return [Integer] il valore di Process._fork (0 nel figlio, il pid del
+    #   figlio nel padre)
+    def _fork
+      ctx = Notcurses.active_context
+      # solo fflush della libc, nessuno stato di notcurses; il ritorno non conta: un fflush fallito non deve
+      # impedire il fork. Un altro thread che scrive con il Direct fra il flush e il fork lascia testo nel
+      # buffer copiato: come tutto notcurses, Direct va usato da un solo thread, fork compreso.
+      FFI.ncdirect_flush(ctx.to_ptr) if ctx.is_a?(Direct) && !ctx.closed?
+      super
+    end
+  end
+  private_constant :DirectForkFlush
+  Process.singleton_class.prepend(DirectForkFlush)
 end
