@@ -20,6 +20,10 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 - `Context#close` e `Direct#close` funzionano dentro un gestore `trap` (ICH-270).
 - `fork` svuota prima il buffer dell'output di un `Direct` aperto: il testo non ancora svuotato non si duplica
   all'uscita del figlio (ICH-433).
+- Un resize che taglia un glifo largo non lascia più una metà orfana sul bordo del piano: la scrittura successiva
+  su quella cella cancellava una cella della riga vicina o corrompeva l'heap. Vale per `Plane#resize`,
+  `#resize_region` e `#resize_maximize` e per i resize fatti da notcurses (stdplane quando il terminale si
+  restringe, figli con `resize: :maximize`) (ICH-271).
 
 ## [0.1.0] - 2026-10-27
 
