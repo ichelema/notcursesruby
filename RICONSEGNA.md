@@ -856,7 +856,8 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
   approvazione rimandata a dopo il lotto 16.
 - **Review di ogni lotto:** `/trinity:workflow:4_review-fix-loop`, due reviewer in parallelo (Fable e GPT via
   LiteLLM), al massimo 3 round. Log lotto per lotto in `memory/correzioni-review.md`. Lotto 2: solo Fable (limite
-  di utilizzo di GPT raggiunto), 3 round più una review singola dopo il loop.
+  di utilizzo di GPT raggiunto), 3 round più una review singola dopo il loop. Lotto 3: Fable e GPT, 1 round, nessun
+  finding.
 
 ### Lotti
 
@@ -864,6 +865,7 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 | --- | --- | --- | --- | --- |
 | 1 | [#2](https://github.com/ichelema/notcursesruby/pull/2) | `e22a117` | ICH-268, ICH-269, ICH-270; ICH-433 (nata dalla review) | nessuno |
 | 2 | [#3](https://github.com/ichelema/notcursesruby/pull/3) | `d4970c4` | ICH-271 | resize che taglia un glifo largo: la scrittura successiva va fuori dalla riga (`notcurses.c:991`, `1917-1927`, `1956-1962`); render dentro `ncplane_put` dopo un a capo su uno stdplane che scorre (`notcurses.c:1978-1981`); tabella "Piani" di `memory/fase2-wrapper-idiomatico.md` |
+| 3 | [#4](https://github.com/ichelema/notcursesruby/pull/4) | `29f5a41` | ICH-272 | i blitset dei plot `NCBLIT_4x1` e `NCBLIT_8x1` hanno `egcs` NULL (`blit.c:1279`, `1282`): con i quadranti `ncplane_as_rgba` e `ncvisual_from_plane` vanno in SIGSEGV (`notcurses.c:3114`), i blit tagliano l'immagine; tabella "Visual" di `memory/fase2-wrapper-idiomatico.md` |
 
 ### Cambi dell'API pubblica
 
@@ -884,6 +886,10 @@ Nessun metodo nuovo né rimosso. Comportamenti nuovi:
 - `Plane#putstr` e `#hline` su uno stdplane che scorre: prima di una scrittura che può andare a capo chiamano
   `ncpile_render`, che porta lo stdplane alle dimensioni del terminale; possono quindi sollevare `RenderError` e le
   eccezioni dei callback Ruby di resize (lotto 2).
+- `Visual.from_plane`, `Plane#as_rgba`, `Visual#blit`, `#geometry`, `#create_plane`, `#stream` e `Visual.blit_*`:
+  `:four_by_one` e `:eight_by_one` (e le costanti `NCBLIT_4x1`, `NCBLIT_8x1`) sollevano `ArgumentError` prima del C.
+  Una sola tabella, `Util::IMAGE_BLITTERS`, serve `Visual`, `Plane#as_rgba` e `Direct`; `Direct::Args::BLITTERS`
+  (privata) è rimossa. `Plot` e i metodi di formato accettano ancora i due blitter (lotto 3).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 

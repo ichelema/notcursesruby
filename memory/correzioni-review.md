@@ -101,3 +101,35 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 
 - `master` su `d4970c4`: 956 esempi, 0 fallimenti; CI verde su tutta la matrice sull'ultimo commit della PR.
 - `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+
+## Lotto 3 — ICH-272 (PR #4, merge `29f5a41`)
+
+### Fix
+
+- **Tabella unica.** `Util::IMAGE_BLITTERS` (`Util::BLITTERS` senza `:four_by_one` e `:eight_by_one`) e
+  `Util.image_blitter_value`. La usano `Visual.from_plane`, `Plane#as_rgba` e `Visual::Internal.options`, che serve
+  `#blit`, `#geometry`, `#create_plane`, `#stream` e i quattro `blit_*`: un solo cambio copre otto metodi.
+  `Direct::Args::BLITTERS` è rimossa, `Direct::Args.blitter` usa lo stesso helper. `Plot`, `parse_blitter`,
+  `blitter_name` e `Visual::Geometry#blitter` restano su `Util::BLITTERS`.
+- **Spec del crash.** Processo figlio con `termtype: 'rxvt-256color'`, che accende i quadranti anche su `/dev/null`;
+  su `master` il figlio va in core dump. Un commit solo (`d7eaf4f`).
+
+### Review (1 round, Fable e GPT)
+
+- Fable: nessun finding; crash riprodotto su `master` (exit 139) e assente sul branch.
+- GPT: nessun finding; probe con i quadranti su tutte le API delle immagini, con i simboli e le costanti intere.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| Reviewer GPT senza report (0 tool call, poi report perso dopo 46–50 tool call) | il tunnel SSH verso LiteLLM (porta 4000, host `litellm-vps`) cadeva dopo pochi minuti: `ssh` usciva con il codice 144, senza errori; non era il limite di utilizzo | l'utente ha riavviato LiteLLM; `SendMessage` all'agente dopo la caduta ha recuperato il report |
+| `/cd` della sessione nei worktree (implementazione, review GPT) e in Trinity, non chiesti da nessuno | funzione "Follow work" della mod filetree 0.8.2: dopo qualche minuto di letture e scritture in un altro repo git (un worktree conta come repo) esegue `/cd` da sola | `Follow work: off` in `/config` (sezione filetree); dopo un `/cd` la root resta fuori dalle directory di lavoro e il `cd` del tool Bash non ci torna |
+| `bundle install` su Ruby 3.1.7 fallisce in `rubygems/resolver/conflict.rb` | in Ruby 3.1.7 è installato anche Bundler 4.0.22, che `bundle` sceglie e che richiede Ruby >= 3.2 | `bundle _2.3.27_` con il `Gemfile` copiato fuori dal progetto (`BUNDLE_GEMFILE`, procedura di `RICONSEGNA.md`) |
+
+### Verifica finale
+
+- Branch: 958 esempi, 0 fallimenti, in ordine normale e con i semi 1234, 4242 e 7 (Ruby 4.0.7) e su Ruby 3.1.7;
+  coverage 98,19 % righe; CI verde su tutta la matrice.
+- `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+- `master` su `29f5a41`: 958 esempi, 0 fallimenti.
