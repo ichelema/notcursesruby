@@ -1454,8 +1454,10 @@ module Notcurses
     #   rifiutati, coordinate fuori dal piano, x: insieme ad align:)
     # @raise [PlaneError] se il testo non entra nel piano, o se notcurses
     #   rifiuta la scrittura (per esempio su un piano con un bitmap)
+    # @raise [RenderError] su uno stdplane che scorre, se fallisce il render
+    #   che prima della scrittura lo porta alle dimensioni del terminale
     # @raise [Exception] l'eccezione di un callback Ruby di resize (crescita
-    #   per autogrow)
+    #   per autogrow, render dello stdplane che scorre)
     # @raise [ClosedError] se il piano è chiuso
     def putstr(text, y: nil, x: nil, align: nil, stained: false)
       ptr = to_ptr
@@ -1472,6 +1474,7 @@ module Notcurses
       segments = zwj_segments(str).flat_map { |seg| seg.split(/(?=\n)/) }
       widths = segments.map { |seg| Notcurses.strwidth(seg) }
       first = Notcurses.strwidth(str.grapheme_clusters.first)
+      sync_scrolling_stdplane!(ptr, str.include?("\n") || widths.sum > dim_x - (x.is_a?(Integer) ? x : cursor_x))
       ty, tx = text_target!(str, widths.sum, first, y: y, x: x, align: align, stained: stained)
       written = 0
       segments.each_with_index do |seg, i|
@@ -1911,6 +1914,7 @@ module Notcurses
     # @raise [CellError] se notcurses non accetta il carattere
     # @raise [PlaneError] se il cursore è oltre il bordo, o se notcurses
     #   rifiuta la scrittura (la linea può restare disegnata in parte)
+    # @raise [RenderError] su uno stdplane che scorre, come in {#putstr}
     # @raise [Exception] l'eccezione di un callback Ruby di resize
     # @raise [ClosedError] se il piano è chiuso
     def hline(cell, len, y: nil, x: nil, from: nil, to: nil)
@@ -1921,6 +1925,7 @@ module Notcurses
       max = scrolling? || autogrow? ? rows * cols : cols - left
       Util.integer!(len, 'len', 1..max)
       c1, c2 = interp_channels!(from, to)
+      sync_scrolling_stdplane!(ptr, len > cols - left)
       move_cursor(top, left)
       rc = with_nccells(ptr, [line]) do |nc|
         c1.nil? ? FFI.ncplane_hline(ptr, nc, len) : FFI.ncplane_hline_interp(ptr, nc, len, c1, c2)
@@ -2358,6 +2363,20 @@ module Notcurses
         end
       end
       @cut_glyphs_dims = [rows, cols]
+    end
+
+    # Su uno stdplane che scorre ogni a capo ("\n" o a capo automatico) fa un
+    # render dentro ncplane_put (notcurses.c:1978-1981), che lo restringe se il
+    # terminale si è ristretto: il resto della stessa chiamata C scriverebbe su
+    # una metà orfana. Con wraps (la scrittura può andare a capo) ncpile_render
+    # porta prima lo stdplane alle dimensioni del terminale (render.c:1579).
+    def sync_scrolling_stdplane!(ptr, wraps)
+      return unless wraps && scrolling? && address == @context.stdplane.address
+
+      rc = FFI.ncpile_render(ptr)
+      @context.raise_callback_errors!
+      Util.check!(rc, RenderError, 'ncpile_render')
+      clear_cut_glyphs!(ptr)
     end
 
     # Cell con il contenuto di una nccell legata all'egcpool del piano ptr.
