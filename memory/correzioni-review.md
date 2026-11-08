@@ -10,7 +10,8 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 - Issue correlate (ICH-214…ICH-232): fuori dai lotti.
 - Lotto 17 (Fase 1, ICH-312 e ICH-313): decisione rimandata a dopo il lotto 16.
 - `--force` per `git worktree remove`: approvato per i worktree del lotto 1 che hanno in più solo il submodule
-  `notcurses` e `git status` vuoto. `git worktree remove` rifiuta i worktree con un submodule inizializzato.
+  `notcurses` e `git status` vuoto. `git worktree remove` rifiuta i worktree con un submodule inizializzato. Il
+  2026-11-08, prima del lotto 2, l'utente ha esteso l'approvazione a tutti i lotti, con le stesse condizioni.
 
 ## Lotto 1 — ICH-268, ICH-269, ICH-270 (PR #2, merge `e22a117`)
 
