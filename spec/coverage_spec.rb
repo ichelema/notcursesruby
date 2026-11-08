@@ -104,7 +104,7 @@ RSpec.describe 'Copertura delle funzioni FFI' do
     excluded[name] = :reel
   end
   %w[nccell_init nccell_set_styles nccell_styles nccell_on_styles nccell_off_styles nccell_double_wide_p
-     nccell_wide_left_p nccell_cols nccellcmp nccell_set_fg_default nccell_set_bg_default nccell_set_fg_alpha
+     nccell_cols nccellcmp nccell_set_fg_default nccell_set_bg_default nccell_set_fg_alpha
      nccell_set_bg_alpha nccell_set_bchannel nccell_set_fchannel nccell_set_channels nccell_channels nccell_bchannel
      nccell_fchannel nccell_fg_rgb nccell_bg_rgb nccell_fg_alpha nccell_bg_alpha nccell_fg_rgb8 nccell_bg_rgb8
      nccell_set_fg_rgb8 nccell_set_fg_rgb8_clipped nccell_set_fg_rgb nccell_set_fg_palindex nccell_fg_palindex

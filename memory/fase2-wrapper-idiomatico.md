@@ -191,6 +191,7 @@ copertura.
 | `ncplane_cursor_move_yx` cambia x anche quando poi rifiuta y | posizione controllata prima |
 | `ncplane_scrollup` tratta ogni riga come un "a capo" dal cursore | il cursore va prima sull'ultima riga |
 | `ncplane_at_yx` con la metà destra di un glifo largo isolata in colonna 0 può non tornare più | il wrapper cerca la metà sinistra; altrimenti restituisce la cella base |
+| Un resize che taglia un glifo largo lascia la metà sinistra (larga 2) nell'ultima colonna, o la metà destra in colonna 0 con `keep_x > 0` (`notcurses.c:991`), oppure nell'ultima colonna senza la metà sinistra con `x_off < 0`; la scrittura successiva su quella cella cancella una cella della riga vicina, o scrive fuori dal framebuffer (`notcurses.c:1917-1927`). Succede anche nei resize del C: lo stdplane quando il terminale si restringe (`render.c:108`), i figli con `:maximize` (ICH-271) | le tre `resize*` svuotano le metà orfane sui bordi; prima di ogni scrittura il wrapper fa lo stesso se le colonne del piano sono cambiate dall'ultima volta o se un `merge_down` lo ha toccato; su uno stdplane che scorre, prima di una scrittura che va a capo, `ncpile_render` lo porta alle dimensioni del terminale (il render dentro `ncplane_put` lo restringerebbe a metà chiamata) |
 | `ncplane_contents` lascia nell'egcpool una copia di ogni EGC lungo, a ogni chiamata (fino a 16 MiB) | `Plane#contents` legge le celle una per una e le rilascia |
 | `ncplane_mergedown` ignora la regione | solo `merge_down` completo (`ncplane_mergedown_simple`) |
 | `ncplane_puttext`: ciclo infinito, -1 dopo una scrittura completa, allineamento sbagliato | `Plane#puttext` in Ruby |
@@ -323,7 +324,10 @@ fino al ridisegno successivo. Bordi arrotondati, ASCII senza UTF-8; niente PgUp/
 - `Cell`: notcurses segmenta alcuni grapheme in modo diverso da Ruby (bandiere, sillabe hangul composte, coniugati
   devanagari); scrivere quelle celle solleva `CellError`.
 - Reader: Backspace, Ctrl+U e Ctrl+W non cancellano la colonna 0 (`notcurses.c:1883`); `tchannels` e `tattrword` non
-  hanno effetto (non offerti); ogni ridisegno accende il cursore del terminale.
+  hanno effetto (non offerti); ogni ridisegno accende il cursore del terminale. `ncreader_redraw` copia le celle
+  dell'area di testo nella vista con l'offset `xproject` (`reader.c:94-100`): può lasciare la metà destra di un
+  glifo largo in colonna 0 della vista senza un resize, e il controllo di ICH-271 (basato sulle dimensioni) non la
+  vede in una scrittura su `Reader#plane`.
 - Menu: un clic su un separatore può togliere la selezione (`menu.c:722`, flag non inizializzato); `mouse_selected` è
   impreciso per le sezioni allineate a destra.
 - Tabbed: l'intestazione non segue il resize del piano (`tabbed.c:35`, `39`); con `bottom: true` sta sulla penultima

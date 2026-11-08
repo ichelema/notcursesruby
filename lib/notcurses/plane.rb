@@ -376,6 +376,13 @@ module Notcurses
     # Ridimensiona il piano tenendo l'origine e il contenuto che ci sta
     # (+ncplane_resize_simple+). Chiama i callback di resize dei figli.
     #
+    # Un glifo largo tagliato dal nuovo bordo destro diventa una cella vuota:
+    # notcurses 3.0.17 ne lascia la metà sinistra nell'ultima colonna, e la
+    # scrittura successiva su quella cella andrebbe oltre la riga (oltre il
+    # framebuffer, sull'ultima riga). Lo stesso vale per i resize che fa il C:
+    # lo stdplane quando il terminale si restringe e i figli con
+    # resize: :maximize; lì la cella si svuota alla prima scrittura sul piano.
+    #
     # @param rows [Integer] nuove righe, >= 1
     # @param cols [Integer] nuove colonne, >= 1
     # @return [self]
@@ -387,7 +394,9 @@ module Notcurses
     def resize(rows, cols)
       Util.integer!(rows, 'rows', 1..Util::UINT32.max)
       Util.integer!(cols, 'cols', 1..Util::UINT32.max)
-      rc = FFI.ncplane_resize_simple(to_ptr, rows, cols)
+      ptr = to_ptr
+      rc = FFI.ncplane_resize_simple(ptr, rows, cols)
+      clear_cut_glyphs!(ptr, force: true)
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, 'ncplane_resize_simple')
       self
@@ -405,6 +414,14 @@ module Notcurses
     # conservata (il C sposta l'origine ma non il contenuto). Bug non
     # aggirato: con keep_x > 0 gli EGC di più di 4 byte nella regione
     # conservata possono risultare corrotti.
+    #
+    # Un glifo largo tagliato che resta sul bordo del piano diventa una cella
+    # vuota, come in {#resize}: con keep_x dentro un glifo largo ne resterebbe
+    # la metà destra in colonna 0, e la scrittura successiva andrebbe nella riga
+    # sopra (prima del framebuffer, sulla riga 0). Con x_off < 0 la metà destra
+    # può finire nell'ultima colonna, e anche lì diventa una cella vuota; dentro
+    # il piano resta finché una scrittura non la copre: lì il C non scrive fuori
+    # dalla riga.
     #
     # @param rows [Integer] righe dopo il resize, >= 1
     # @param cols [Integer] colonne dopo il resize, >= 1
@@ -445,7 +462,9 @@ module Notcurses
                              'y_off deve essere 0'
       end
 
-      rc = FFI.ncplane_resize(to_ptr, keep_y, keep_x, keep_rows, keep_cols, y_off, x_off, rows, cols)
+      ptr = to_ptr
+      rc = FFI.ncplane_resize(ptr, keep_y, keep_x, keep_rows, keep_cols, y_off, x_off, rows, cols)
+      clear_cut_glyphs!(ptr, force: true) # con keep_x > 0 il contenuto si sposta anche a dimensioni invariate
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, 'ncplane_resize')
       self
@@ -453,14 +472,17 @@ module Notcurses
 
     # Ridimensiona il piano alle dimensioni della pila, cioè del terminale
     # (+ncplane_resize_maximize+), tenendo l'origine. Anche per un figlio la
-    # misura è la pila, non il genitore.
+    # misura è la pila, non il genitore. Un glifo largo tagliato dal nuovo bordo
+    # diventa una cella vuota, come in {#resize}.
     #
     # @return [self]
     # @raise [PlaneError] se il resize fallisce o se fallisce un callback
     #   nativo di un figlio
     # @raise [ClosedError] se il piano è chiuso
     def resize_maximize
-      rc = FFI.ncplane_resize_maximize(to_ptr)
+      ptr = to_ptr
+      rc = FFI.ncplane_resize_maximize(ptr)
+      clear_cut_glyphs!(ptr, force: true)
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, 'ncplane_resize_maximize')
       self
@@ -1302,6 +1324,8 @@ module Notcurses
       raise PlaneError, "merge_down: dst è in un'altra pila" unless FFI.ncpile_top(ptr).address == FFI.ncpile_top(target).address
 
       Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
+      # glifi larghi nuovi senza le scritture: un resize del C li può tagliare a dimensioni già controllate
+      [dst, @context.tracked_plane(target.address)].compact.each { |plane| plane.forget_cut_glyphs! }
       self
     end
 
@@ -1433,8 +1457,10 @@ module Notcurses
     #   rifiutati, coordinate fuori dal piano, x: insieme ad align:)
     # @raise [PlaneError] se il testo non entra nel piano, o se notcurses
     #   rifiuta la scrittura (per esempio su un piano con un bitmap)
+    # @raise [RenderError] su uno stdplane che scorre, se fallisce il render
+    #   che prima della scrittura lo porta alle dimensioni del terminale
     # @raise [Exception] l'eccezione di un callback Ruby di resize (crescita
-    #   per autogrow)
+    #   per autogrow, render dello stdplane che scorre)
     # @raise [ClosedError] se il piano è chiuso
     def putstr(text, y: nil, x: nil, align: nil, stained: false)
       ptr = to_ptr
@@ -1451,9 +1477,12 @@ module Notcurses
       segments = zwj_segments(str).flat_map { |seg| seg.split(/(?=\n)/) }
       widths = segments.map { |seg| Notcurses.strwidth(seg) }
       first = Notcurses.strwidth(str.grapheme_clusters.first)
+      sync_scrolling_stdplane!(ptr, str.include?("\n") || widths.sum > dim_x - (x.is_a?(Integer) ? x : cursor_x))
       ty, tx = text_target!(str, widths.sum, first, y: y, x: x, align: align, stained: stained)
       written = 0
       segments.each_with_index do |seg, i|
+        # lo scroll dello stdplane fa un render, che può restringerlo a metà testo
+        clear_cut_glyphs!(ptr) if i.positive?
         # "\n" con il cursore oltre l'ultima colonna: due a capo nel C (vedi il YARD)
         if seg.start_with?("\n") && (i.positive? || tx == -1) && cursor_x == dim_x
           Util.check!(FFI.ncplane_cursor_move_yx(ptr, i.zero? ? ty : -1, dim_x - 1), PlaneError, 'ncplane_cursor_move_yx')
@@ -1888,6 +1917,7 @@ module Notcurses
     # @raise [CellError] se notcurses non accetta il carattere
     # @raise [PlaneError] se il cursore è oltre il bordo, o se notcurses
     #   rifiuta la scrittura (la linea può restare disegnata in parte)
+    # @raise [RenderError] su uno stdplane che scorre, come in {#putstr}
     # @raise [Exception] l'eccezione di un callback Ruby di resize
     # @raise [ClosedError] se il piano è chiuso
     def hline(cell, len, y: nil, x: nil, from: nil, to: nil)
@@ -1898,6 +1928,7 @@ module Notcurses
       max = scrolling? || autogrow? ? rows * cols : cols - left
       Util.integer!(len, 'len', 1..max)
       c1, c2 = interp_channels!(from, to)
+      sync_scrolling_stdplane!(ptr, len > cols - left)
       move_cursor(top, left)
       rc = with_nccells(ptr, [line]) do |nc|
         c1.nil? ? FFI.ncplane_hline(ptr, nc, len) : FFI.ncplane_hline_interp(ptr, nc, len, c1, c2)
@@ -2314,6 +2345,60 @@ module Notcurses
       FFI.nccell_release(ptr, cell)
     end
 
+    # Cancella le metà orfane che un resize lascia sul bordo tagliando un glifo
+    # largo: la metà sinistra (larga 2) nell'ultima colonna, la metà destra in
+    # colonna 0 o, senza la sua metà sinistra (resize_region con x_off < 0),
+    # nell'ultima colonna. Su quelle celle ncplane_put di 3.0.17 scrive fuori
+    # dalla riga (notcurses.c:1917-1927, 1956-1962). Senza force legge le righe
+    # solo se le colonne sono cambiate dall'ultima volta: così copre anche i
+    # resize fatti dal C (stdplane nel render, callback :maximize). Un cambio di
+    # sole righe non sposta le celle di bordo (le righe nuove sono vuote), e
+    # un piano che scorre con autogrow cresce di una riga a ogni a capo.
+    # Non le vede quando nascono senza resize: erase_region, gradient e
+    # polyfill su una sola metà di un glifo largo (ICH-450).
+    def clear_cut_glyphs!(ptr, force: false)
+      rows, cols = dims
+      return if !force && @cut_glyphs_cols == cols
+
+      cell = FFI::NcCell.new
+      rows.times do |y|
+        [0, cols - 1].uniq.each do |x|
+          next if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
+
+          right = FFI.nccell_wide_right_p(cell)
+          orphan = (x.zero? && right) ||
+                   (x == cols - 1 && (FFI.nccell_wide_left_p(cell) || (right && !wide_left?(ptr, y, x - 1))))
+          FFI.nccell_release(ptr, cell)
+          Util.check!(FFI.ncplane_erase_region(ptr, y, x, 1, 1), PlaneError, 'ncplane_erase_region') if orphan
+        end
+      end
+      @cut_glyphs_cols = cols
+    end
+
+    # Su uno stdplane che scorre ogni a capo ("\n" o a capo automatico) fa un
+    # render dentro ncplane_put (notcurses.c:1978-1981), che lo restringe se il
+    # terminale si è ristretto: il resto della stessa chiamata C scriverebbe su
+    # una metà orfana. Con wraps (la scrittura può andare a capo) ncpile_render
+    # porta prima lo stdplane alle dimensioni del terminale (render.c:1579).
+    def sync_scrolling_stdplane!(ptr, wraps)
+      return unless wraps && scrolling? && address == @context.stdplane.address
+
+      rc = FFI.ncpile_render(ptr)
+      @context.raise_callback_errors!
+      Util.check!(rc, RenderError, 'ncpile_render')
+      clear_cut_glyphs!(ptr)
+    end
+
+    # true se la cella (y, x) è la metà sinistra di un glifo largo.
+    def wide_left?(ptr, y, x)
+      cell = FFI::NcCell.new
+      return false if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
+
+      FFI.nccell_wide_left_p(cell)
+    ensure
+      FFI.nccell_release(ptr, cell)
+    end
+
     # Cell con il contenuto di una nccell legata all'egcpool del piano ptr.
     def cell_content(ptr, cell)
       Cell.from_c(FFI.nccell_extended_gcluster(ptr, cell) || +'', cell[:stylemask], cell[:channels], cell[:width])
@@ -2377,6 +2462,7 @@ module Notcurses
     # carattere largo first, e restituisce [y, x] per il C (-1 = cursore). Con
     # stained porta il cursore nella posizione di partenza.
     def text_target!(str, total, first, y:, x:, align:, stained:)
+      clear_cut_glyphs!(to_ptr)
       rows, cols = dims
       cy, cx = cursor
       newline = str.include?("\n")
@@ -2478,7 +2564,10 @@ module Notcurses
     end
 
     # Posizione di partenza di linee, box e riempimenti (nil = cursore).
-    def line_start!(y, x) = cell_coords!(y, x)
+    def line_start!(y, x)
+      clear_cut_glyphs!(to_ptr)
+      cell_coords!(y, x)
+    end
 
     # Canali di una linea sfumata: entrambi o nessuno.
     def interp_channels!(from, to)
@@ -2635,6 +2724,10 @@ module Notcurses
 
     # @return [Integer] generazione del contesto alla creazione del wrapper
     attr_reader :born
+
+    # La prossima scrittura controlla di nuovo i bordi (vedi clear_cut_glyphs!).
+    # @return [nil]
+    def forget_cut_glyphs! = (@cut_glyphs_cols = nil)
   end
 
   # Fotografia dei colori di un piano per una dissolvenza passo per passo

@@ -15,9 +15,9 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
 
   # Esegue script in un processo Ruby figlio e lo uccide dopo timeout secondi.
   # @return [Array(String, Process::Status, Boolean)] output, stato, true se scaduto
-  def run_child(script, timeout:)
+  def run_child(script, timeout:, env: {})
     reader, writer = IO.pipe
-    pid = spawn(RbConfig.ruby, '-I', lib_dir, '-e', script, in: File::NULL, out: writer, err: writer)
+    pid = spawn(env, RbConfig.ruby, '-I', lib_dir, '-e', script, in: File::NULL, out: writer, err: writer)
     writer.close
     output = Thread.new { reader.read }
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
@@ -311,6 +311,111 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     out, status, timed_out = run_child(direct_fork_script, timeout: 30)
     expect(timed_out).to be(false), out
     expect(out).to include('prima del fork 0', 'dopo il nipote 1 (stato 1)', 'dopo il padre 1', 'fine')
+    expect(status.exitstatus).to eq(0), out
+  end
+
+  # Il terminale perde una colonna: Context#refresh restringe lo stdplane e
+  # taglia il glifo largo delle colonne 10-11. Prima del fix la scrittura nella
+  # nuova ultima colonna cancellava la prima cella della riga sotto.
+  def shrink_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [3, 12]
+    STDIN.reopen(slave)
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        data.scan(/\e\[6n|\e\[c/) { |q| master.write(q == "\e[6n" ? "\e[1;1R" : "\e[?62;22c") }
+      end
+    rescue IOError, Errno::EIO
+    end
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      std = nc.stdplane
+      std.putstr('ab漢', y: 1, x: 8)
+      std.putstr('WXYZ', y: 2, x: 0)
+      slave.winsize = [3, 11]
+      puts "refresh #{nc.refresh.join('x')}"
+      std.putstr('x', y: 1, x: 10)
+      puts "riga 2 #{std.contents(y: 2, rows: 1).inspect}"
+    end
+    puts 'fine'
+  RUBY
+
+  it "dopo Context#refresh su un terminale più stretto la scrittura sul glifo tagliato lascia intatta la riga sotto" do
+    out, status, timed_out = run_child(shrink_script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('refresh 3x11', 'riga 2 "WXYZ"', 'fine')
+    expect(status.exitstatus).to eq(0), out
+  end
+
+  # Su uno stdplane che scorre ogni a capo ("\n" o a capo automatico) fa un
+  # render dentro ncplane_put (notcurses.c:1978-1981), e il render restringe lo
+  # stdplane se il terminale si è ristretto: prima del fix il resto della stessa
+  # chiamata C scriveva sulla metà orfana. Il glifo di riga 2 sta nelle colonne
+  # 10-11; la riga ROW è quella in cui il testo va a capo.
+  def scroll_shrink_script(text, row:, col:) = "TEXT = #{text.inspect}\nROW = #{row}\nCOL = #{col}\n" + <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [4, 12]
+    STDIN.reopen(slave)
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        data.scan(/\e\[6n|\e\[c/) { |q| master.write(q == "\e[6n" ? "\e[1;1R" : "\e[?62;22c") }
+      end
+    rescue IOError, Errno::EIO
+    end
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      std = nc.stdplane
+      std.scrolling = true
+      std.putstr('ab漢', y: ROW + 1, x: 8)
+      std.putstr('WXYZ', y: 3, x: 0) if ROW + 1 < 3
+      std.move_cursor(ROW, COL)
+      slave.winsize = [4, 11]
+      std.putstr(TEXT)
+      puts "stdplane #{std.dims.join('x')} riga 3 #{std.contents(y: 3, rows: 1).inspect}"
+    end
+    puts 'fine'
+  RUBY
+
+  it 'su uno stdplane che scorre il render dopo "\n" non lascia la metà orfana alla scrittura che segue' do
+    out, status, timed_out = run_child(scroll_shrink_script("a\n0123456789X", row: 1, col: 0), timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('stdplane 4x11 riga 3 "WXYZ"', 'fine')
+    expect(status.exitstatus).to eq(0), out
+  end
+
+  it 'su uno stdplane che scorre il render dopo un a capo automatico non lascia la metà orfana' do
+    # 11 colonne da (1, 1): la riga 1 tiene 10 "b", la riga 2 "b0123456789", "X" va a capo in (3, 0).
+    # Prima del fix la riga 1 teneva 11 "b" e "X" cadeva sulla metà orfana in (2, 10): riga 3 "XYZ".
+    out, status, timed_out = run_child(scroll_shrink_script("#{'b' * 11}0123456789X", row: 1, col: 1), timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('stdplane 4x11 riga 3 "XXYZ"', 'fine')
+    expect(status.exitstatus).to eq(0), out
+  end
+
+  it 'su uno stdplane che scorre il render dopo un a capo di hline non lascia la metà orfana' do
+    # 11 colonne da (1, 1): 10 "-" in riga 1, 11 in riga 2, l'ultimo va a capo in (3, 0).
+    # Prima del fix la riga 1 teneva 11 "-" e l'ultimo cadeva sulla metà orfana in (2, 10): riga 3 "XYZ".
+    script = scroll_shrink_script('', row: 1, col: 1).sub("std.putstr(TEXT)\n", "std.hline('-', 22, y: 1, x: 1)\n")
+    out, status, timed_out = run_child(script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('stdplane 4x11 riga 3 "-XYZ"', 'fine')
+    expect(status.exitstatus).to eq(0), out
+  end
+
+  it "su uno stdplane che scorre il render dopo \"\\n\" non corrompe l'heap sull'ultima riga (prima: abort di glibc)" do
+    skip 'serve libc_malloc_debug di glibc' unless File.exist?('/usr/lib/libc_malloc_debug.so.0')
+    env = { 'LD_PRELOAD' => '/usr/lib/libc_malloc_debug.so.0', 'MALLOC_CHECK_' => '3' }
+    out, status, timed_out = run_child(scroll_shrink_script("a\n0123456789X", row: 2, col: 0), timeout: 30, env: env)
+    expect(timed_out).to be(false), out
+    expect(out).to include('stdplane 4x11', 'fine')
     expect(status.exitstatus).to eq(0), out
   end
 end
