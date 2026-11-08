@@ -305,6 +305,11 @@ module Notcurses
     # i widget e gli altri oggetti figli ancora aperti, in ordine inverso di
     # creazione; dopo la chiamata tutti i piani sono invalidi. Idempotente.
     #
+    # Un'eccezione sollevata durante la chiamata C (per esempio un Ctrl-C
+    # mentre +notcurses_stop+ ripristina il terminale) esce da close, ma lascia
+    # il contesto chiuso, i piani invalidi e il registro libero: un close
+    # successivo e l'hook +at_exit+ non richiamano lo stop.
+    #
     # @return [nil]
     # @raise [ContextError] se +notcurses_stop+ restituisce un errore (il
     #   contesto risulta comunque chiuso)
@@ -315,14 +320,13 @@ module Notcurses
 
       check_not_in_callback!('Context#close', ContextError)
       first_error = close_children
-      rc = FFI.notcurses_stop(@ptr)
+      # prima della chiamata: Ruby consegna un Ctrl-C al suo ritorno, quando il C ha già liberato il contesto
       @closed = true
-      @input_io = nil # il fd è di notcurses, che lo ha chiuso
-      @planes.each_value(&:invalidate!)
-      @planes.clear
-      @children.clear
-      FFI.fclose(@fp) if @own_fp
-      Notcurses.release_context(self)
+      begin
+        rc = FFI.notcurses_stop(@ptr)
+      ensure
+        mark_closed!(fclose: @own_fp)
+      end
       raise first_error if first_error
       # notcurses_stop restituisce l'OR di più ritorni: qualsiasi valore diverso da 0 è un errore
       raise ContextError, "notcurses_stop fallita (#{rc})" unless rc.zero?
@@ -437,6 +441,10 @@ module Notcurses
     # per piano, le pile che contengono un piano conosciuto; la funzione C
     # resta per il resto.
     #
+    # Un'eccezione sollevata durante una chiamata C (per esempio un Ctrl-C)
+    # esce da drop_planes: i piani già distrutti sono invalidi, gli altri
+    # restano usabili, e un drop_planes successivo distrugge il resto.
+    #
     # @return [self]
     # @raise [ContextError] dentro un callback chiamato da notcurses
     # @raise [ClosedError] se il contesto è chiuso
@@ -460,11 +468,19 @@ module Notcurses
           plane = FFI.ncplane_below(plane)
         end
       end
-      victims.each { |plane| FFI.ncplane_destroy(plane) }
-      FFI.notcurses_drop_planes(ptr)
-      @planes.each_value { |plane| plane.invalidate! unless plane.equal?(@stdplane) }
-      @planes.select! { |_addr, plane| plane.equal?(@stdplane) }
-      planes_destroyed!
+      # ogni wrapper diventa invalido prima della sua distruzione: Ruby consegna un Ctrl-C al ritorno della
+      # chiamata C, e un wrapper ancora aperto su un piano liberato farebbe un double free
+      begin
+        victims.each do |plane|
+          @planes[plane.address]&.invalidate!
+          FFI.ncplane_destroy(plane)
+        end
+        @planes.each_value { |plane| plane.invalidate! unless plane.equal?(@stdplane) }
+        @planes.select! { |_addr, plane| plane.equal?(@stdplane) }
+        FFI.notcurses_drop_planes(ptr)
+      ensure
+        planes_destroyed!
+      end
       raise first_error if first_error
 
       self
@@ -1002,6 +1018,20 @@ module Notcurses
         first_error ||= e
       end
       first_error
+    end
+
+    # Stato Ruby di un contesto chiuso: piani invalidi, FILE* chiuso (se
+    # fclose), registro libero.
+    # @return [nil]
+    def mark_closed!(fclose:)
+      @closed = true
+      @input_io = nil # il fd è di notcurses, che lo ha chiuso
+      @planes.each_value(&:invalidate!)
+      @planes.clear
+      @children.clear
+      FFI.fclose(@fp) if fclose
+      Notcurses.release_context(self)
+      nil
     end
 
     # Il terminale da cui notcurses legge i tasti (init_inputlayer, in.c):

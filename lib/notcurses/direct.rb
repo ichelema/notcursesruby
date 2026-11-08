@@ -255,6 +255,10 @@ module Notcurses
     # (+\e[39;49m\e(B\e[m+) sullo stdout del processo anche quando output è
     # un file.
     #
+    # Un'eccezione sollevata durante +ncdirect_stop+ (per esempio un Ctrl-C)
+    # esce da close, ma lascia il contesto chiuso e il registro libero: un
+    # close successivo e l'hook +at_exit+ non richiamano lo stop.
+    #
     # @return [nil]
     # @raise [DirectError] se +ncdirect_stop+ restituisce un errore (il
     #   contesto risulta comunque chiuso)
@@ -266,11 +270,13 @@ module Notcurses
       FFI.ncdirect_set_bg_default(@ptr)
       FFI.ncdirect_set_styles(@ptr, 0)
       FFI.ncdirect_flush(@ptr)
-      @input_io = nil # il fd è di notcurses: lo chiude ncdirect_stop
-      rc = FFI.ncdirect_stop(@ptr)
+      # prima della chiamata: Ruby consegna un Ctrl-C al suo ritorno, quando il C ha già liberato il contesto
       @closed = true
-      FFI.fclose(@fp) if @own_fp
-      Notcurses.release_context(self)
+      begin
+        rc = FFI.ncdirect_stop(@ptr)
+      ensure
+        mark_closed!(fclose: @own_fp)
+      end
       # ncdirect_stop restituisce l'OR di più ritorni: qualsiasi valore diverso da 0 è un errore
       raise DirectError, "ncdirect_stop fallita (#{rc})" unless rc.zero?
 
@@ -1231,6 +1237,16 @@ module Notcurses
     end
 
     private
+
+    # Stato Ruby di un contesto chiuso: FILE* chiuso (se fclose), registro libero.
+    # @return [nil]
+    def mark_closed!(fclose:)
+      @closed = true
+      @input_io = nil # il fd è di notcurses: lo chiude ncdirect_stop
+      FFI.fclose(@fp) if fclose
+      Notcurses.release_context(self)
+      nil
+    end
 
     def check_output!(output)
       case output
