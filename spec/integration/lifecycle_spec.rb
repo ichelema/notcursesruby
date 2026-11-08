@@ -293,14 +293,25 @@ RSpec.describe 'Ciclo di vita (integrazione)' do
   it 'in un figlio di fork Context#close e Direct#close non chiamano notcurses e non si bloccano' do
     script = <<~'RUBY'
       $parent = Process.pid
-      at_exit { puts "nipote active=#{Notcurses.active_context.inspect}" unless Process.pid == $parent }
+      at_exit { puts "nipote active=#{Notcurses.active_context.inspect} calls=#{$calls}" unless Process.pid == $parent }
       require 'notcurses'
       $stdout.sync = true
+      # chiamate C che il close del nipote non deve fare
+      $calls = Hash.new(0)
+      Notcurses::FFI.singleton_class.prepend(Module.new do
+        def notcurses_stop(ptr) = super.tap { $calls[:notcurses_stop] += 1 }
+        def ncdirect_stop(ptr) = super.tap { $calls[:ncdirect_stop] += 1 }
+        def ncdirect_flush(ptr) = super.tap { $calls[:ncdirect_flush] += 1 }
+        def ncdirect_set_fg_default(ptr) = super.tap { $calls[:ncdirect_set_fg_default] += 1 }
+        def ncdirect_set_bg_default(ptr) = super.tap { $calls[:ncdirect_set_bg_default] += 1 }
+        def ncdirect_set_styles(ptr, styles) = super.tap { $calls[:ncdirect_set_styles] += 1 }
+      end)
       opts = { output: '/dev/null', termtype: 'xterm-256color', drain_input: true }
       [[Notcurses::Context, { suppress_banners: true }], [Notcurses::Direct, {}]].each do |klass, extra|
         klass.open(**opts, **extra) do
           t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
           pid = fork
+          $calls.clear if pid.nil? # i conteggi copiati dal padre non contano
           raise 'errore nel nipote' if pid.nil? # il nipote esce da open con il suo ensure, cioè close
           deadline = t0 + 3
           until (done = Process.wait2(pid, Process::WNOHANG))
@@ -323,7 +334,7 @@ RSpec.describe 'Ciclo di vita (integrazione)' do
     expect(timed_out).to be(false), out
     expect(out).to include('Notcurses::Context: nipote uscito con 1 entro 1 s', 'Notcurses::Direct: nipote uscito con 1 entro 1 s',
                            'fine')
-    expect(out.scan('nipote active=nil').size).to eq(2), out
+    expect(out.scan('nipote active=nil calls={}').size).to eq(2), out
     expect(status).to be_success, out
   end
 
@@ -343,6 +354,34 @@ RSpec.describe 'Ciclo di vita (integrazione)' do
     expect(timed_out).to be(false), out
     expect(out.scan('PENDING_TOKEN').size).to eq(1), out
     expect(out).to include('fine')
+    expect(status).to be_success, out
+  end
+
+  it 'con fork annidati il testo di Direct scritto dal figlio intermedio esce una volta sola' do
+    script = <<~'RUBY'
+      require 'notcurses'
+      require 'tempfile'
+      path = Tempfile.create('direct') { |f| f.path }
+      Notcurses::Direct.open(output: path, termtype: 'xterm-256color', drain_input: true) do |d|
+        d.flush
+        d.putstr('FROM_ORIGINAL')
+        pid = fork
+        if pid.nil?
+          d.putstr('FROM_INTERMEDIATE')
+          inner = fork # il nipote e il figlio intermedio chiudono il Direct ereditato ed escono normalmente
+          d.close
+          Process.wait(inner) if inner
+          exit 0
+        end
+        Process.wait(pid)
+      end
+      text = File.read(path)
+      File.delete(path)
+      puts "FROM_ORIGINAL=#{text.scan('FROM_ORIGINAL').size} FROM_INTERMEDIATE=#{text.scan('FROM_INTERMEDIATE').size}"
+    RUBY
+    out, status, timed_out = run_child(script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('FROM_ORIGINAL=1 FROM_INTERMEDIATE=1')
     expect(status).to be_success, out
   end
 

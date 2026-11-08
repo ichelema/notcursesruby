@@ -320,7 +320,10 @@ module Notcurses
     # In un processo figlio creato con +fork+ lo stato C appartiene al padre:
     # close non chiama notcurses (né il close degli oggetti figli), non scrive
     # sul terminale e non ne cambia il modo; segna solo il contesto chiuso,
-    # invalida i piani e libera il registro.
+    # invalida i piani e libera il registro Ruby. Nel figlio notcurses resta
+    # inutilizzabile anche dopo close (i segnali restano registrati per il
+    # contesto del padre, e un nuovo init solleva InitError): il figlio può
+    # solo uscire o fare +exec+.
     #
     # close si può chiamare da un gestore +trap+ (per esempio
     # <tt>trap('TERM') { nc.close; exit }</tt>): il registro si libera anche

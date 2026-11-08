@@ -261,9 +261,13 @@ module Notcurses
     #
     # In un processo figlio creato con +fork+ lo stato C appartiene al padre:
     # close non chiama notcurses e non scrive sul terminale; segna solo il
-    # contesto chiuso e libera il registro. Il testo non ancora svuotato non
-    # si duplica: +fork+ (anche +Process.fork+ e <tt>IO.popen('-')</tt>)
-    # svuota prima, nel padre, il buffer dell'output del contesto attivo.
+    # contesto chiuso e libera il registro Ruby. Il testo non ancora svuotato
+    # non si duplica: +fork+ (anche +Process.fork+ e <tt>IO.popen('-')</tt>,
+    # non +Process.daemon+) svuota prima il buffer dell'output del Direct
+    # aperto, se il fork parte dal thread che usa il Direct. Nel figlio
+    # notcurses resta inutilizzabile anche dopo close (i segnali restano
+    # registrati per il contesto del padre, e un nuovo init solleva
+    # InitError): il figlio può solo uscire o fare +exec+.
     #
     # close si può chiamare da un gestore +trap+ (per esempio
     # <tt>trap('TERM') { d.close; exit }</tt>): il registro si libera anche
@@ -1336,17 +1340,22 @@ module Notcurses
     end
   end
 
-  # Prima di ogni fork (Process._fork, Ruby >= 3.1, gira nel padre) svuota il
-  # buffer stdio del {Direct} attivo: altrimenti il figlio ne eredita una copia,
-  # e la libc la scrive quando il figlio esce (testo duplicato sul terminale).
+  # Prima di ogni fork (Process._fork, Ruby >= 3.1, gira nel processo che fa il
+  # fork) svuota il buffer stdio del {Direct} aperto: altrimenti il figlio ne
+  # eredita una copia, e la libc la scrive quando il figlio esce (testo
+  # duplicato sul terminale). Vale anche per un Direct ereditato da un fork
+  # precedente (fork annidati): il buffer è quello del processo corrente.
+  # Process.daemon e spawn non passano da Process._fork.
   # @api private
   module DirectForkFlush
     # @return [Integer] il valore di Process._fork (0 nel figlio, il pid del
     #   figlio nel padre)
     def _fork
       ctx = Notcurses.active_context
-      # il ritorno non conta: un fflush fallito non deve impedire il fork; fflush prende il lock del FILE*
-      FFI.ncdirect_flush(ctx.to_ptr) if ctx.is_a?(Direct) && !ctx.closed? && ctx.pid == Process.pid
+      # solo fflush della libc, nessuno stato di notcurses; il ritorno non conta: un fflush fallito non deve
+      # impedire il fork. Un altro thread che scrive con il Direct fra il flush e il fork lascia testo nel
+      # buffer copiato: come tutto notcurses, Direct va usato da un solo thread, fork compreso.
+      FFI.ncdirect_flush(ctx.to_ptr) if ctx.is_a?(Direct) && !ctx.closed?
       super
     end
   end
