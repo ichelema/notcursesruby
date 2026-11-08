@@ -1323,6 +1323,8 @@ module Notcurses
       raise PlaneError, "merge_down: dst è in un'altra pila" unless FFI.ncpile_top(ptr).address == FFI.ncpile_top(target).address
 
       Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
+      # glifi larghi nuovi senza le scritture: un resize del C li può tagliare a dimensioni già controllate
+      [dst, @context.tracked_plane(target.address)].compact.each { |plane| plane.forget_cut_glyphs! }
       self
     end
 
@@ -2704,6 +2706,10 @@ module Notcurses
 
     # @return [Integer] generazione del contesto alla creazione del wrapper
     attr_reader :born
+
+    # La prossima scrittura controlla di nuovo i bordi (vedi clear_cut_glyphs!).
+    # @return [nil]
+    def forget_cut_glyphs! = (@cut_glyphs_dims = nil)
   end
 
   # Fotografia dei colori di un piano per una dissolvenza passo per passo

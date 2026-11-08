@@ -359,6 +359,20 @@ RSpec.describe Notcurses::Plane do
         end
       end
 
+      it 'merge_down seguito da resize che riportano le dimensioni controllate: la scrittura lascia intatta la riga sotto' do
+        with_parent(rows: 2, cols: 4) do |p|
+          p.putstr('WXYZ', y: 1, x: 0) # prima scrittura: bordi controllati con il piano 2x4
+          Notcurses::FFI.ncplane_resize_simple(p.to_ptr, 2, 5) # resize fatto dal C, come lo stdplane nel render
+          src = std.create_child(rows: 1, cols: 5, y: p.yx[0], x: p.yx[1])
+          src.putstr('漢', y: 0, x: 3)
+          src.merge_down(p) # il glifo arriva nelle colonne 3-4 senza passare dalle scritture
+          src.close
+          Notcurses::FFI.ncplane_resize_simple(p.to_ptr, 2, 4) # di nuovo 2x4: metà sinistra orfana in (0, 3)
+          p.putstr('x', y: 0, x: 3)
+          expect(p.contents(y: 1, rows: 1)).to eq('WXYZ')
+        end
+      end
+
       it "le scritture sulla metà orfana non corrompono l'heap (prima: abort di glibc)" do
         skip 'serve libc_malloc_debug di glibc' unless File.exist?('/usr/lib/libc_malloc_debug.so.0')
         script = <<~'RUBY'
