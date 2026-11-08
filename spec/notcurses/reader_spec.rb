@@ -270,6 +270,14 @@ RSpec.describe Notcurses::Reader do
       end
     end
 
+    it "contents non fa crescere l'egcpool della vista" do
+      text = ("e#{"́" * 50}") * 10 # 10 EGC di 101 byte: stanno nell'egcpool della vista
+      new_reader(rows: 1, cols: 10) do |reader|
+        reader.write(text)
+        expect(20_000.times.count { reader.contents == text }).to eq(20_000) # prima: WidgetError dopo circa 16 450
+      end
+    end
+
     it 'uno spostamento fallito del cursore della vista solleva WidgetError prima della chiamata C' do
       new_reader(rows: 1, cols: 8) do |reader|
         reader.write('abc')

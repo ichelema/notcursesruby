@@ -209,14 +209,21 @@ module Notcurses
       self
     end
 
-    # Testo del reader (+ncreader_contents+): le righe della vista, unite senza
-    # separatori, saltando le celle vuote.
+    # Testo del reader: le righe della vista, unite senza separatori, saltando
+    # le celle vuote; un glifo largo compare una volta (come
+    # +ncreader_contents+).
+    #
+    # Bug di 3.0.17 aggirato: +ncreader_contents+ è +ncplane_contents+ sulla
+    # vista, che lascia nell'egcpool della vista una copia di ogni EGC di più
+    # di 4 byte a ogni chiamata (il pool cresce fino al limite di 16 MiB, poi
+    # la lettura fallisce): il wrapper legge la vista con {Plane#contents}.
     #
     # @return [String]
-    # @raise [WidgetError] se +ncreader_contents+ fallisce
+    # @raise [PlaneError] se la lettura di una cella fallisce
     # @raise [ClosedError] se il reader è chiuso
     def contents
-      Util.take_string(Util.check_ptr!(FFI.ncreader_contents(to_ptr), WidgetError, 'ncreader_contents'))
+      to_ptr
+      @plane.contents
     end
 
     # Cancella il testo e riporta il cursore in (0, 0) (+ncreader_clear+),

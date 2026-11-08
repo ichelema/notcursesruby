@@ -34,6 +34,9 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   della vista non torna al suo posto, i metodi del `Reader` sollevano `WidgetError` prima della chiamata C (ICH-273).
 - `Reader#write` non perde più la parte dei grapheme che notcurses divide in più EGC (il keycap "1️⃣", le bandiere, i
   congiunti devanagari): scrive i pezzi uno alla volta, ciascuno in una cella (ICH-274).
+- `Reader#contents` legge la vista con `Plane#contents`: `ncreader_contents` lasciava nell'egcpool della vista una
+  copia di ogni EGC lungo a ogni chiamata, e dopo qualche decina di migliaia di letture `contents` sollevava
+  `WidgetError`. Ora può sollevare `PlaneError` se la lettura di una cella fallisce (ICH-275).
 
 ## [0.1.0] - 2026-10-27
 
