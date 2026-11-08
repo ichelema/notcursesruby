@@ -10,7 +10,9 @@ module Notcurses
   # la vista del testo; il C tiene una copia nascosta del testo in un secondo
   # piano, figlio dello stdplane. Alla chiusura distrugge entrambi. Il testo
   # non va a capo: in fondo a una riga il cursore resta sull'ultima colonna e
-  # il carattere successivo la sovrascrive; si cambia riga con le frecce.
+  # il carattere successivo la sovrascrive; si cambia riga con le frecce. Un
+  # carattere di larghezza zero (U+FE0F, ZWJ, U+200B, un segno combinante
+  # isolato) scritto sull'ultima colonna viene scartato.
   #
   # Il wrapper protegge vista e copia nascosta, che il C tiene allineate senza
   # controlli (un disallineamento termina il processo con un'asserzione o
@@ -108,7 +110,11 @@ module Notcurses
     # per evitare due bug di 3.0.17: con 4 codepoint il C legge oltre l'array
     # eff_text, e un TAB nell'ultima colonna fa scrivere una cella oltre la
     # riga (oltre il piano sull'ultima riga, notcurses.c:1936, 1956-1957): lì il
-    # wrapper scrive uno spazio, il risultato che il C intende. Altro bug
+    # wrapper scrive uno spazio, il risultato che il C intende. Un carattere
+    # di larghezza zero nell'ultima colonna (per esempio U+FE0F di "❤️", che
+    # arriva da solo) viene scartato e conta come scritto: il C porterebbe il
+    # cursore oltre la riga, perdendo il testo successivo, e Backspace con una
+    # freccia sinistra terminerebbe il processo. Altro bug
     # aggirato: Backspace all'inizio di una riga successiva alla prima sposta
     # sulla riga sopra solo la copia nascosta (reader.c:265); il wrapper
     # sposta anche la vista, altrimenti la freccia sinistra successiva
@@ -127,7 +133,9 @@ module Notcurses
     # @param input [Input] evento, per esempio da {Context#get}
     # @return [Boolean] true se il reader ha consumato l'evento; false anche
     #   per un evento vuoto (id 0 o 0xffffffff)
-    # @raise [WidgetError] se il piano del reader è stato modificato dall'esterno
+    # @raise [WidgetError] se il piano del reader è stato modificato dall'esterno;
+    #   se il cursore della vista non torna al suo posto (+ncplane_cursor_move_yx+
+    #   fallisce), prima della chiamata C
     # @raise [TypeError] se input non è un Input
     # @raise [ClosedError] se il reader è chiuso
     def offer_input(input)
@@ -149,7 +157,7 @@ module Notcurses
       ctrl = !@no_cmd_keys && !input.release? && input.modifiers.anybits?(FFI::NCKEY_MOD_CTRL)
       if backspace || (ctrl && x.positive? && [0x55, 0x57].include?(input.id)) # 'U', 'W'
         FFI.ncplane_erase(@plane.to_ptr)
-        FFI.ncplane_cursor_move_yx(@plane.to_ptr, y, x)
+        move_view_cursor!(y, x)
       end
       consumed = FFI.ncreader_offer_input(ptr, ni)
       wrap_backspace(y - 1) if wrap
@@ -160,14 +168,17 @@ module Notcurses
     # Scrive del testo alla posizione del cursore (+ncreader_write_egc+, un
     # grapheme cluster alla volta) e ridisegna, senza render. In fondo alla
     # riga il cursore resta sull'ultima colonna e il testo successivo la
-    # sovrascrive.
+    # sovrascrive; un carattere di larghezza zero sull'ultima colonna viene
+    # scartato (vedi {#offer_input}).
     #
     # @param text [String] testo UTF-8, senza caratteri di controllo tranne
     #   "\t" (diventa spazi fino alla tabulazione successiva)
     # @return [self]
     # @raise [WidgetError] se +ncreader_write_egc+ fallisce (per esempio un
     #   glifo largo che non entra nell'ultima colonna): il testo precedente
-    #   resta scritto; o se il piano del reader è stato modificato dall'esterno
+    #   resta scritto; se il piano del reader è stato modificato dall'esterno;
+    #   se il cursore della vista non torna al suo posto
+    #   (+ncplane_cursor_move_yx+ fallisce), prima della chiamata C
     # @raise [TypeError, ArgumentError] se text non è una String valida
     # @raise [ClosedError] se il reader è chiuso
     def write(text)
@@ -206,7 +217,8 @@ module Notcurses
     # dalla colonna 0 va all'ultima colonna della riga sopra. Ridisegna.
     #
     # @return [Boolean] false se il cursore era in (0, 0)
-    # @raise [WidgetError] se il piano del reader è stato modificato dall'esterno
+    # @raise [WidgetError] se il piano del reader è stato modificato dall'esterno;
+    #   o se il cursore della vista non torna al suo posto
     # @raise [ClosedError] se il reader è chiuso
     def move_left = moved?(FFI.ncreader_move_left(prepare!))
 
@@ -215,7 +227,8 @@ module Notcurses
     # sotto. Ridisegna.
     #
     # @return [Boolean] false se il cursore era sull'ultima colonna dell'ultima riga
-    # @raise [WidgetError] se il piano del reader è stato modificato dall'esterno
+    # @raise [WidgetError] se il piano del reader è stato modificato dall'esterno;
+    #   o se il cursore della vista non torna al suo posto
     # @raise [ClosedError] se il reader è chiuso
     def move_right = moved?(FFI.ncreader_move_right(prepare!))
 
@@ -223,7 +236,8 @@ module Notcurses
     # (+ncreader_move_up+). Ridisegna.
     #
     # @return [Boolean] false se il cursore era sulla prima riga
-    # @raise [WidgetError] se il piano del reader è stato modificato dall'esterno
+    # @raise [WidgetError] se il piano del reader è stato modificato dall'esterno;
+    #   o se il cursore della vista non torna al suo posto
     # @raise [ClosedError] se il reader è chiuso
     def move_up = moved?(FFI.ncreader_move_up(prepare!))
 
@@ -231,7 +245,8 @@ module Notcurses
     # (+ncreader_move_down+). Ridisegna.
     #
     # @return [Boolean] false se il cursore era sull'ultima riga
-    # @raise [WidgetError] se il piano del reader è stato modificato dall'esterno
+    # @raise [WidgetError] se il piano del reader è stato modificato dall'esterno;
+    #   o se il cursore della vista non torna al suo posto
     # @raise [ClosedError] se il reader è chiuso
     def move_down = moved?(FFI.ncreader_move_down(prepare!))
 
@@ -258,17 +273,23 @@ module Notcurses
         raise WidgetError, 'il piano del reader è stato ridimensionato o ha attivato scrolling o autogrow'
       end
 
-      FFI.ncplane_cursor_move_yx(view, @cursor[0], @cursor[1])
+      move_view_cursor!(*@cursor)
       @context.cursor_state_unknown! # il ridisegno del C accende il cursore del terminale
       ptr
     end
 
-    # +ncreader_write_egc+ di un grapheme cluster. Un TAB nell'ultima colonna
-    # diventa uno spazio (vedi {#offer_input}).
+    # +ncreader_write_egc+ di un grapheme cluster. Nell'ultima colonna un TAB
+    # diventa uno spazio e un carattere di larghezza zero viene scartato: il
+    # C porterebbe vista e copia nascosta a x == colonne (reader.c:240-246),
+    # e da lì ogni scrittura fallisce e Backspace + freccia sinistra termina
+    # il processo (asserzione xproject >= 0, reader.c:90).
     #
-    # @return [Integer] il ritorno del C
+    # @return [Integer] il ritorno del C (0 per il carattere scartato)
     def put_egc(ptr, egc)
-      egc = ' ' if egc == "\t" && @cursor[1] == @dims[1] - 1
+      last = @cursor[1] == @dims[1] - 1
+      return 0 if last && FFI.ncstrwidth(egc, nil, nil).zero?
+
+      egc = ' ' if egc == "\t" && last
       rc = FFI.ncreader_write_egc(ptr, egc)
       @cursor = @plane.cursor
       rc
@@ -282,6 +303,12 @@ module Notcurses
       FFI.ncplane_cursor_move_yx(@plane.to_ptr, y, x)
       ay, ax = @plane.abs_yx
       FFI.notcurses_cursor_enable(@context.to_ptr, ay + y, ax + x) # come ncreader_redraw, esito ignorato
+    end
+
+    # Riporta il cursore della vista in (y, x): se fallisce, vista e copia
+    # nascosta non sono più allineate e il C non va chiamato.
+    def move_view_cursor!(y, x)
+      Util.check!(FFI.ncplane_cursor_move_yx(@plane.to_ptr, y, x), WidgetError, "ncplane_cursor_move_yx(#{y}, #{x})")
     end
 
     # Esito di uno spostamento (-1 = nessuno spostamento possibile, non un errore).

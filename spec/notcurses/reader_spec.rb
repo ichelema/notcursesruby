@@ -197,6 +197,69 @@ RSpec.describe Notcurses::Reader do
       expect([status.exitstatus, out]).to eq([0, "ok\n"])
     end
 
+    it "un carattere di larghezza zero nell'ultima colonna viene scartato (prima: cursore oltre la riga, testo perso)" do
+      new_reader(rows: 1, cols: 8) do |reader|
+        reader.write('Mi piace')
+        expect(reader.plane.cursor).to eq([0, 7])
+        expect([0x2764, 0xFE0F].map { |cp| reader.offer_input(ev(cp)) }).to eq([true, true]) # "❤️" digitato
+        expect([reader.plane.cursor, reader.contents]).to eq([[0, 7], 'Mi piac❤'])
+        expect(reader.offer_input(ev('x'.ord))).to be true
+        expect(reader.contents).to eq('Mi piacx')
+      end
+      ["​", "́"].each do |zw|
+        new_reader(rows: 1, cols: 8) do |reader|
+          reader.write('Mi piace').write(zw)
+          expect(reader.plane.cursor).to eq([0, 7]), zw.inspect
+          expect(reader.write('x').contents).to eq('Mi piacx')
+        end
+      end
+      new_reader(rows: 1, cols: 8) do |reader| # prima dell'ultima colonna ha una cella propria, come prima
+        expect(reader.write("ab​c").contents).to eq("ab​c")
+        expect(reader.plane.cursor).to eq([0, 4])
+      end
+    end
+
+    it "Backspace e un tasto verso sinistra dopo un carattere di larghezza zero nell'ultima colonna (prima: abort)" do
+      script = <<~'RUBY'
+        require 'notcurses'
+        ev = ->(id, **o) { Notcurses::Input.synthesize(id, **o) }
+        keys = { 'left' => ev.(Notcurses::Key::LEFT), 'ctrl_b' => ev.('B'.ord, modifiers: [:ctrl]),
+                 'ctrl_w' => ev.('W'.ord, modifiers: [:ctrl]) }
+        Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true) do |nc|
+          Notcurses::Reader.open(nc.stdplane.create_child(rows: 1, cols: 8)) do |reader|
+            reader.write('Mi piace')
+            [0x2764, 0xFE0F].each { |cp| reader.offer_input(ev.(cp)) }
+            reader.offer_input(ev.(Notcurses::Key::BACKSPACE))
+            ARGV[0] == 'move_left' ? reader.move_left : reader.offer_input(keys.fetch(ARGV[0]))
+            raise "cursore #{reader.plane.cursor}" unless ARGV[0] == 'ctrl_w' || reader.plane.cursor == [0, 5]
+          end
+        end
+        puts 'ok'
+      RUBY
+      lib = File.expand_path('../../lib', __dir__)
+      %w[left ctrl_b ctrl_w move_left].each do |final|
+        out, status = Open3.capture2e({ 'TERM' => 'xterm-256color' }, 'timeout', '-k', '5', '-s', 'KILL', '30',
+                                      RbConfig.ruby, '-I', lib, '-e', script, final, stdin_data: '')
+        expect([status.exitstatus, out]).to eq([0, "ok\n"]), final
+      end
+    end
+
+    it 'uno spostamento fallito del cursore della vista solleva WidgetError prima della chiamata C' do
+      new_reader(rows: 1, cols: 8) do |reader|
+        reader.write('abc')
+        allow(Notcurses::FFI).to receive(:ncplane_cursor_move_yx).and_return(-1)
+        expect(Notcurses::FFI).not_to receive(:ncreader_move_left)
+        expect { reader.move_left }.to raise_error(Notcurses::WidgetError, /ncplane_cursor_move_yx/)
+      end
+      allow(Notcurses::FFI).to receive(:ncplane_cursor_move_yx).and_call_original
+      new_reader(rows: 1, cols: 8) do |reader|
+        reader.write('abc')
+        allow(Notcurses::FFI).to receive(:ncplane_cursor_move_yx).and_return(0, -1) # prepare!, poi il workaround
+        expect(Notcurses::FFI).not_to receive(:ncreader_offer_input)
+        expect { reader.offer_input(ev(key::BACKSPACE)) }.to raise_error(Notcurses::WidgetError, /ncplane_cursor_move_yx/)
+      end
+    end
+
     it 'le scorciatoie con Ctrl e Alt' do
       new_reader(rows: 1, cols: 10) do |reader|
         reader.write('uno due')
