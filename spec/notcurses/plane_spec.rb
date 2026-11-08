@@ -2,6 +2,8 @@
 # Source: notcurses/include/notcurses/notcurses.h
 # frozen_string_literal: true
 
+require 'open3'
+require 'rbconfig'
 require_relative '../support/nc_helpers'
 
 RSpec.describe Notcurses::Plane do
@@ -305,6 +307,86 @@ RSpec.describe Notcurses::Plane do
         expect { borrowed.set_resize_callback(callback: :placewithin) }.to raise_error(Notcurses::PlaneError)
         borrowed.set_resize_callback(callback: :realign)
         expect(c.resize_callback).to eq(:realign)
+      end
+    end
+
+    # Un resize che taglia un glifo largo lascia una metà orfana sul bordo: la
+    # metà sinistra, larga 2, nell'ultima colonna, o la metà destra in colonna
+    # 0. Prima del fix la scrittura successiva su quella cella cancellava una
+    # cella della riga vicina o scriveva fuori dal framebuffer.
+    context 'con un glifo largo tagliato dal nuovo bordo' do
+      {
+        "putstr('x', y: 0, x: 2)" => ->(p) { p.putstr('x', y: 0, x: 2) },
+        "putstr('xyz', y: 0, x: 0)" => ->(p) { p.putstr('xyz', y: 0, x: 0) },
+        "putstr('中', y: 0, x: 1)" => ->(p) { p.putstr('中', y: 0, x: 1) },
+        "putegc('x', y: 0, x: 2)" => ->(p) { p.putegc('x', y: 0, x: 2) },
+        'putc in (0, 2)' => ->(p) { p.putc(Notcurses::Cell.new(egc: 'q'), y: 0, x: 2) },
+        "hline('-', 3, y: 0, x: 0)" => ->(p) { p.hline('-', 3, y: 0, x: 0) },
+        "vline('|', 1, y: 0, x: 2)" => ->(p) { p.vline('|', 1, y: 0, x: 2) },
+        "putstr('x') dal cursore in (0, 2)" => ->(p) { p.move_cursor(0, 2).putstr('x') }
+      }.each do |name, write|
+        it "#{name} dopo resize(2, 3) lascia intatta la riga sotto (prima: \"XY\")" do
+          with_parent(rows: 2, cols: 4) do |p|
+            p.putstr('ab漢', y: 0, x: 0)
+            p.putstr('WXYZ', y: 1, x: 0)
+            p.resize(2, 3)
+            write.call(p)
+            expect(p.contents(y: 1, rows: 1)).to eq('WXY')
+          end
+        end
+      end
+
+      it 'resize_region(keep_x: 1) con la metà destra in colonna 0: la scrittura lascia intatta la riga sopra' do
+        with_parent(rows: 2, cols: 4) do |p|
+          p.putstr('ZZZZ', y: 0, x: 0)
+          p.putstr('漢ab', y: 1, x: 0)
+          p.resize_region(rows: 2, cols: 3, keep_x: 1, keep_rows: 2, keep_cols: 3)
+          p.putstr('x', y: 1, x: 0)
+          expect(p.contents(y: 0, rows: 1)).to eq('ZZZ')
+        end
+      end
+
+      it 'un figlio resize: :maximize ristretto dalla cascata del genitore: la scrittura lascia intatta la riga sotto' do
+        cols = std.dim_x
+        with_parent(rows: 2, cols: 4, x: 0) do |p|
+          c = p.create_child(rows: 2, cols: cols + 1, x: 0, resize: :maximize)
+          c.putstr('漢', y: 0, x: cols - 1)
+          c.putstr('WXYZ', y: 1, x: 0)
+          p.resize(2, 5)
+          expect(c.dim_x).to eq(cols)
+          c.putstr('x', y: 0, x: c.dim_x - 1)
+          expect(c.contents(y: 1, rows: 1)).to eq('WXYZ')
+        end
+      end
+
+      it "le scritture sulla metà orfana non corrompono l'heap (prima: abort di glibc)" do
+        skip 'serve libc_malloc_debug di glibc' unless File.exist?('/usr/lib/libc_malloc_debug.so.0')
+        script = <<~'RUBY'
+          require 'notcurses'
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            std = nc.stdplane
+            planes = Array.new(20) { std.create_child(rows: 1, cols: 4).tap { |q| q.putstr('ab漢', y: 0, x: 0) } }
+            planes.each { |q| q.resize(1, 3) }
+            planes.each { |q| q.putstr('x', y: 0, x: 2) }
+            planes.each(&:close)
+            planes = Array.new(20) { std.create_child(rows: 1, cols: 4).tap { |q| q.putstr('漢ab', y: 0, x: 0) } }
+            planes.each { |q| q.resize_region(rows: 1, cols: 3, keep_x: 1, keep_rows: 1, keep_cols: 3) }
+            planes.each { |q| q.putstr('x', y: 0, x: 0) }
+            planes.each(&:close)
+            box = std.create_child(rows: 3, cols: 5)
+            box.putstr('漢', y: 2, x: 3)
+            box.resize(3, 4)
+            box.perimeter
+            box.close
+          end
+          puts 'ok'
+        RUBY
+        env = { 'TERM' => 'xterm-256color', 'LD_PRELOAD' => '/usr/lib/libc_malloc_debug.so.0', 'MALLOC_CHECK_' => '3' }
+        lib = File.expand_path('../../lib', __dir__)
+        out, status = Open3.capture2e(env, 'timeout', '-k', '5', '-s', 'KILL', '30', RbConfig.ruby, '-I', lib, '-e',
+                                      script, stdin_data: '')
+        expect([status.exitstatus, out]).to eq([0, "ok\n"])
       end
     end
   end
