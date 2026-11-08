@@ -400,6 +400,16 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(status.exitstatus).to eq(0), out
   end
 
+  it 'su uno stdplane che scorre il render dopo un a capo di hline non lascia la metà orfana' do
+    # 11 colonne da (1, 1): 10 "-" in riga 1, 11 in riga 2, l'ultimo va a capo in (3, 0).
+    # Prima del fix la riga 1 teneva 11 "-" e l'ultimo cadeva sulla metà orfana in (2, 10): riga 3 "XYZ".
+    script = scroll_shrink_script('', row: 1, col: 1).sub("std.putstr(TEXT)\n", "std.hline('-', 22, y: 1, x: 1)\n")
+    out, status, timed_out = run_child(script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('stdplane 4x11 riga 3 "-XYZ"', 'fine')
+    expect(status.exitstatus).to eq(0), out
+  end
+
   it "su uno stdplane che scorre il render dopo \"\\n\" non corrompe l'heap sull'ultima riga (prima: abort di glibc)" do
     skip 'serve libc_malloc_debug di glibc' unless File.exist?('/usr/lib/libc_malloc_debug.so.0')
     env = { 'LD_PRELOAD' => '/usr/lib/libc_malloc_debug.so.0', 'MALLOC_CHECK_' => '3' }
