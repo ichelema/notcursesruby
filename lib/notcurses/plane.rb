@@ -415,10 +415,12 @@ module Notcurses
     # aggirato: con keep_x > 0 gli EGC di più di 4 byte nella regione
     # conservata possono risultare corrotti.
     #
-    # Un glifo largo tagliato da un bordo della regione diventa una cella vuota,
-    # come in {#resize}: con keep_x dentro un glifo largo ne resterebbe la metà
-    # destra in colonna 0, e la scrittura successiva andrebbe nella riga sopra
-    # (prima del framebuffer, sulla riga 0).
+    # Un glifo largo tagliato che resta sul bordo del piano diventa una cella
+    # vuota, come in {#resize}: con keep_x dentro un glifo largo ne resterebbe
+    # la metà destra in colonna 0, e la scrittura successiva andrebbe nella riga
+    # sopra (prima del framebuffer, sulla riga 0). Con x_off < 0 la metà
+    # tagliata resta dentro il piano, finché una scrittura non la copre: lì il
+    # C non scrive fuori dalla riga.
     #
     # @param rows [Integer] righe dopo il resize, >= 1
     # @param cols [Integer] colonne dopo il resize, >= 1
