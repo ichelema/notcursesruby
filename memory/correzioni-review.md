@@ -57,3 +57,47 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 - `master` su `e22a117`: 933 esempi, 0 fallimenti, in ordine normale e con i semi 1234, 4242 e 7 (Ruby 4.0.7); la
   stessa suite su Ruby 3.1.7 in locale e in CI.
 - `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+
+## Lotto 2 — ICH-271 (PR #3, merge `d4970c4`)
+
+### Fix
+
+- **Design (scelta dell'utente, ibrido).** `clear_cut_glyphs!` svuota con `ncplane_erase_region` le metà orfane sui
+  bordi di ogni riga: la metà sinistra (larga 2) nell'ultima colonna, la metà destra in colonna 0, la metà destra
+  nell'ultima colonna senza la sua metà sinistra. Le tre `resize*` la chiamano subito (forzata, prima di
+  `raise_callback_errors!`: il resize resta applicato anche in errore); `text_target!`, `line_start!` e ogni segmento
+  di `putstr` la chiamano solo se le colonne sono cambiate dall'ultimo controllo. Copre i resize fatti dal C
+  (stdplane nel render, figli `:maximize`) e i callback Ruby che scrivono durante la cascata.
+- **Render dentro `ncplane_put`.** Su uno stdplane che scorre ogni a capo (`"\n"` o a capo automatico, anche fuori
+  dall'ultima riga: `scroll_down` fa solo `++y`) fa un `notcurses_render`, che restringe lo stdplane a metà della
+  chiamata C. `putstr` e `hline` chiamano prima `ncpile_render` (`render.c:1579`) se la scrittura può andare a capo.
+- **`merge_down`** porta glifi larghi senza passare dalle scritture: azzera la cache del piano di destinazione (metodo
+  `protected` `forget_cut_glyphs!`; `&:sym` non chiama un metodo protected, serve il blocco esplicito).
+- **Prestazioni.** La cache confronta solo le colonne: con le dimensioni intere un piano `scrolling + autogrow`
+  rileggeva tutti i bordi a ogni a capo (3000 scritture: da 0,05 s a 4,9 s).
+
+### Review (3 round + review singola, solo Fable)
+
+- Round 1: HIGH render dentro `ncplane_put` (fix più largo del report: vale anche per l'a capo automatico); LOW YARD
+  di `resize_region`; scartato l'ordine della pulizia prima di `raise_callback_errors!` (voluto).
+- Round 2: MEDIUM `merge_down` + resize che riportano le colonne controllate; test mancante di `hline`.
+- Round 3: HIGH metà destra orfana nell'ultima colonna (`resize_region` con `x_off < 0`): PR in draft, poi fix
+  (scelta dell'utente: fix e review singola fuori dal loop); MEDIUM stato per wrapper → ICH-448.
+- Review singola: MEDIUM scritture quadratiche con autogrow (regressione della PR); LOW commento sbagliato
+  sull'origine delle metà orfane.
+- Bug già presenti su `master`, issue aperte su richiesta dell'utente: ICH-449, ICH-450.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| Secondo parere GPT senza report (0 tool call, 2 volte) | limite di utilizzo di GPT | solo Fable per il lotto 2 (scelta dell'utente) |
+| `Refs ICH-215` nella PR ha portato ICH-215 a In Progress | l'automazione GitHub → Linear tratta anche i link non chiudenti | riga tolta, ICH-215 riportata a Backlog; nei lotti non collegare issue fuori dal lotto |
+| Worktree di review non rimovibile | la sessione era dentro il worktree (`/cd` dell'utente) | `/cd` alla root prima della rimozione |
+| Spec pty con heredoc interpolato | escape della regex rovinati | heredoc letterale con costanti in testa allo script |
+| Il double free di ICH-449 non si riproduce con 20 iterazioni | intermittente | 200 iterazioni con `libc_malloc_debug` |
+
+### Verifica finale
+
+- `master` su `d4970c4`: 956 esempi, 0 fallimenti; CI verde su tutta la matrice sull'ultimo commit della PR.
+- `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.

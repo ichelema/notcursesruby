@@ -855,13 +855,15 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
   che toccano lo stesso codice (ICH-214…ICH-232) restano fuori dai lotti (scelta dell'utente). Lotto 17 (Fase 1):
   approvazione rimandata a dopo il lotto 16.
 - **Review di ogni lotto:** `/trinity:workflow:4_review-fix-loop`, due reviewer in parallelo (Fable e GPT via
-  LiteLLM), al massimo 3 round. Log lotto per lotto in `memory/correzioni-review.md`.
+  LiteLLM), al massimo 3 round. Log lotto per lotto in `memory/correzioni-review.md`. Lotto 2: solo Fable (limite
+  di utilizzo di GPT raggiunto), 3 round più una review singola dopo il loop.
 
 ### Lotti
 
 | Lotto | PR | Merge | Issue | Bug di notcurses nuovi |
 | --- | --- | --- | --- | --- |
 | 1 | [#2](https://github.com/ichelema/notcursesruby/pull/2) | `e22a117` | ICH-268, ICH-269, ICH-270; ICH-433 (nata dalla review) | nessuno |
+| 2 | [#3](https://github.com/ichelema/notcursesruby/pull/3) | `d4970c4` | ICH-271 | resize che taglia un glifo largo: la scrittura successiva va fuori dalla riga (`notcurses.c:991`, `1917-1927`, `1956-1962`); render dentro `ncplane_put` dopo un a capo su uno stdplane che scorre (`notcurses.c:1978-1981`); tabella "Piani" di `memory/fase2-wrapper-idiomatico.md` |
 
 ### Cambi dell'API pubblica
 
@@ -876,6 +878,12 @@ Nessun metodo nuovo né rimosso. Comportamenti nuovi:
 - **Hook globale:** `Notcurses::DirectForkFlush` (privato) è anteposto a `Process._fork` (Ruby >= 3.1): prima di
   ogni `fork`, `Process.fork` e `IO.popen('-')` svuota il buffer stdio del `Direct` aperto. `Process.daemon` e
   `spawn` non passano da `_fork` (lotto 1, ICH-433).
+- `Plane#resize`, `#resize_region`, `#resize_maximize`: la metà di un glifo largo tagliata dal nuovo bordo diventa
+  una cella vuota. Per i resize fatti da notcurses (stdplane nel render, figli `:maximize`) la cella si svuota alla
+  prima scrittura del wrapper sul piano, se le colonne sono cambiate o dopo un `merge_down` (lotto 2).
+- `Plane#putstr` e `#hline` su uno stdplane che scorre: prima di una scrittura che può andare a capo chiamano
+  `ncpile_render`, che porta lo stdplane alle dimensioni del terminale; possono quindi sollevare `RenderError` e le
+  eccezioni dei callback Ruby di resize (lotto 2).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
@@ -896,3 +904,7 @@ Nessuno.
 
 - ICH-441 — `Process.daemon` con un `Context` o un `Direct` aperto lascia il terminale nel modo dell'init (lotto 1,
   review round 3).
+- ICH-448 — lo stato del controllo dei bordi è del singolo wrapper `Plane`, non del piano C (lotto 2, review round 3).
+- ICH-449 — double free dopo `merge_down` con glifi larghi seguito da `Plane#at` (lotto 2; esiste già su `master`).
+- ICH-450 — `polyfill`, `gradient` ed `erase_region` su metà di un glifo largo lasciano una metà orfana (lotto 2;
+  esiste già su `master`).
