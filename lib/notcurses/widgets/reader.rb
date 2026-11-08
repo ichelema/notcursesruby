@@ -182,7 +182,9 @@ module Notcurses
     # @return [self]
     # @raise [WidgetError] se +ncreader_write_egc+ fallisce (per esempio un
     #   glifo largo che non entra nell'ultima colonna): il testo precedente
-    #   resta scritto; se il piano del reader è stato modificato dall'esterno;
+    #   resta scritto; se +nccell_load+ non riesce a dividere il testo (per
+    #   esempio con l'egcpool della vista pieno), con il testo precedente
+    #   scritto; se il piano del reader è stato modificato dall'esterno;
     #   se il cursore della vista non torna al suo posto
     #   (+ncplane_cursor_move_yx+ fallisce), prima della chiamata C
     # @raise [TypeError, ArgumentError] se text non è una String valida
@@ -198,10 +200,11 @@ module Notcurses
         off = 0
         while off < g.bytesize
           len = FFI.nccell_load(view, cell, g.byteslice(off..))
-          FFI.nccell_release(view, cell) # nccell_load non rilascia il contenuto precedente
-          # se notcurses non lo legge (U+2028 dà 1 byte), il resto va al C, che lo rifiuta
-          egc = len.positive? ? g.byteslice(off, len) : nil
-          egc = g.byteslice(off..) unless egc&.valid_encoding?
+          FFI.nccell_release(view, cell) # serve solo la lunghezza: libera subito lo stash nel pool della vista
+          Util.check!(len, WidgetError, "nccell_load(#{g.byteslice(off..).inspect})") # -1: per esempio pool pieno
+          # un pezzo che taglia un codepoint (U+2028 dà 1 byte): il resto va al C, che lo rifiuta
+          egc = g.byteslice(off, len)
+          egc = g.byteslice(off..) if egc.empty? || !egc.valid_encoding?
           Util.check!(put_egc(ptr, egc), WidgetError, "ncreader_write_egc(#{egc.inspect})")
           off += egc.bytesize
         end

@@ -262,6 +262,25 @@ RSpec.describe Notcurses::Reader do
       end
     end
 
+    it 'write solleva WidgetError se nccell_load fallisce (per esempio con l\'egcpool della vista pieno)' do
+      new_reader(rows: 1, cols: 10) do |reader|
+        allow(Notcurses::FFI).to receive(:nccell_load).and_return(-1)
+        expect(Notcurses::FFI).not_to receive(:ncreader_write_egc)
+        expect { reader.write("1\u{FE0F}\u{20E3}x") }.to raise_error(Notcurses::WidgetError, /nccell_load/)
+      end
+    end
+
+    it 'se nccell_load fallisce a metà grapheme il primo pezzo resta scritto e il resto non arriva al C' do
+      new_reader(rows: 1, cols: 10) do |reader|
+        calls = 0
+        allow(Notcurses::FFI).to receive(:nccell_load).and_wrap_original { |m, *a| (calls += 1) == 1 ? m.call(*a) : -1 }
+        allow(Notcurses::FFI).to receive(:ncreader_write_egc).and_call_original
+        expect { reader.write("1\u{FE0F}\u{20E3}") }.to raise_error(Notcurses::WidgetError, /nccell_load/)
+        expect(Notcurses::FFI).to have_received(:ncreader_write_egc).once
+        expect(reader.contents).to eq("1\u{FE0F}")
+      end
+    end
+
     it "un pezzo di larghezza zero di un grapheme diviso, sull'ultima colonna, viene scartato" do
       new_reader(rows: 1, cols: 5) do |reader|
         reader.write("abcd1\u{FE0F}\u{20E3}") # U+20E3 resta da solo sull'ultima colonna
