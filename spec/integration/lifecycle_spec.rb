@@ -299,15 +299,17 @@ RSpec.describe 'Ciclo di vita (integrazione)' do
       opts = { output: '/dev/null', termtype: 'xterm-256color', drain_input: true }
       [[Notcurses::Context, { suppress_banners: true }], [Notcurses::Direct, {}]].each do |klass, extra|
         klass.open(**opts, **extra) do
+          t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
           pid = fork
           raise 'errore nel nipote' if pid.nil? # il nipote esce da open con il suo ensure, cioè close
-          deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 3
+          deadline = t0 + 3
           until (done = Process.wait2(pid, Process::WNOHANG))
             break if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
             sleep 0.05
           end
           if done
-            puts "#{klass}: nipote uscito con #{done.last.exitstatus}"
+            elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0
+            puts "#{klass}: nipote uscito con #{done.last.exitstatus} #{elapsed < 1 ? 'entro 1 s' : "in #{elapsed.round(1)} s"}"
           else
             puts "#{klass}: nipote bloccato"
             Process.kill(:KILL, pid)
@@ -319,7 +321,8 @@ RSpec.describe 'Ciclo di vita (integrazione)' do
     RUBY
     out, status, timed_out = run_child(script, timeout: 30)
     expect(timed_out).to be(false), out
-    expect(out).to include('Notcurses::Context: nipote uscito con 1', 'Notcurses::Direct: nipote uscito con 1', 'fine')
+    expect(out).to include('Notcurses::Context: nipote uscito con 1 entro 1 s', 'Notcurses::Direct: nipote uscito con 1 entro 1 s',
+                           'fine')
     expect(out.scan('nipote active=nil').size).to eq(2), out
     expect(status).to be_success, out
   end
