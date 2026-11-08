@@ -272,4 +272,45 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(out).to include('nipote uscito con 1', 'byte del nipote ""', 'echo false -> false', 'render 24x80', 'fine')
     expect(status.exitstatus).to eq(0), out
   end
+
+  # Testo di Direct non ancora svuotato al momento del fork: il figlio eredita
+  # una copia del buffer stdio, che la libc scriverebbe alla sua uscita.
+  def direct_fork_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    log = String.new(encoding: Encoding::BINARY)
+    lock = Mutex.new
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        lock.synchronize { log << data }
+        data.scan(/\e\[6n|\e\[c/) { |q| master.write(q == "\e[6n" ? "\e[5;7R" : "\e[?62;22c") }
+      end
+    rescue IOError, Errno::EIO
+    end
+    count = -> { sleep 0.3; lock.synchronize { log.scan('PENDING_TOKEN').size } }
+    Notcurses::Direct.open(output: slave.path, termtype: 'xterm-256color') do |d|
+      d.flush
+      d.putstr('PENDING_TOKEN')
+      puts "prima del fork #{count.call}"
+      pid = fork
+      raise 'errore nel nipote' if pid.nil? # il nipote esce da open con il suo ensure, cioè close
+      status = Process.wait2(pid).last
+      puts "dopo il nipote #{count.call} (stato #{status.exitstatus})"
+    end
+    puts "dopo il padre #{count.call}"
+    puts 'fine'
+  RUBY
+
+  it 'il testo di Direct non svuotato prima di un fork arriva al terminale una volta sola' do
+    out, status, timed_out = run_child(direct_fork_script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('prima del fork 0', 'dopo il nipote 1 (stato 1)', 'dopo il padre 1', 'fine')
+    expect(status.exitstatus).to eq(0), out
+  end
 end

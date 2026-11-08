@@ -327,6 +327,25 @@ RSpec.describe 'Ciclo di vita (integrazione)' do
     expect(status).to be_success, out
   end
 
+  it 'con output nil il testo di Direct non svuotato prima di un fork esce una volta sola su stdout' do
+    script = <<~'RUBY'
+      require 'notcurses'
+      Notcurses::Direct.open(termtype: 'xterm-256color', drain_input: true) do |d|
+        d.flush
+        d.putstr('PENDING_TOKEN')
+        pid = fork
+        raise 'errore nel nipote' if pid.nil? # il nipote esce da open con il suo ensure, cioè close
+        Process.wait(pid)
+      end
+      puts 'fine'
+    RUBY
+    out, status, timed_out = run_child(script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out.scan('PENDING_TOKEN').size).to eq(1), out
+    expect(out).to include('fine')
+    expect(status).to be_success, out
+  end
+
   # Ruby vieta Mutex#lock in un gestore trap: close deve liberare il registro lo stesso.
   { 'Notcurses::Context' => '**OPTS, suppress_banners: true', 'Notcurses::Direct' => '**OPTS' }.each do |klass, args|
     it "#{klass}#close funziona dentro un gestore trap e libera il registro" do
