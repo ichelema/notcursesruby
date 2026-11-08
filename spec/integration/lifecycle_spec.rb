@@ -300,4 +300,34 @@ RSpec.describe 'Ciclo di vita (integrazione)' do
     expect(out.scan('nipote active=nil').size).to eq(2), out
     expect(status).to be_success, out
   end
+
+  # Ruby vieta Mutex#lock in un gestore trap: close deve liberare il registro lo stesso.
+  { 'Notcurses::Context' => '**OPTS, suppress_banners: true', 'Notcurses::Direct' => '**OPTS' }.each do |klass, args|
+    it "#{klass}#close funziona dentro un gestore trap e libera il registro" do
+      script = <<~RUBY
+        require 'notcurses'
+        $stdout.sync = true
+        OPTS = { output: '/dev/null', termtype: 'xterm-256color', drain_input: true }.freeze
+        first = #{klass}.new(#{args})
+        trap('USR1') { first.close }
+        Process.kill(:USR1, Process.pid)
+        sleep 0.3
+        puts "dopo USR1 closed=\#{first.closed?} active=\#{Notcurses.active_context.inspect}"
+        second = #{klass}.new(#{args})
+        trap('TERM') do
+          second.close
+          puts "active=\#{Notcurses.active_context.inspect}"
+          exit 0
+        end
+        Process.kill(:TERM, Process.pid)
+        sleep 5
+        puts 'il gestore non è uscito'
+      RUBY
+      out, status, timed_out = run_child(script, timeout: 30)
+      expect(timed_out).to be(false), out
+      expect(out).to include('dopo USR1 closed=true active=nil', 'active=nil')
+      expect(out).not_to include('il gestore non è uscito')
+      expect(status).to be_success, out
+    end
+  end
 end

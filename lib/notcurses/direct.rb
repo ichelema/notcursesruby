@@ -263,6 +263,10 @@ module Notcurses
     # close non chiama notcurses e non scrive sul terminale; segna solo il
     # contesto chiuso e libera il registro.
     #
+    # close si può chiamare da un gestore +trap+ (per esempio
+    # <tt>trap('TERM') { d.close; exit }</tt>): il registro si libera anche
+    # lì, e un nuovo contesto si può aprire dopo.
+    #
     # @return [nil]
     # @raise [DirectError] se +ncdirect_stop+ restituisce un errore (il
     #   contesto risulta comunque chiuso)

@@ -32,11 +32,16 @@ module Notcurses
       end
     end
 
-    # Toglie ctx dal registro (no-op se ctx non è il contesto attivo).
+    # Toglie ctx dal registro (no-op se ctx non è il contesto attivo). Funziona
+    # anche dentro un gestore +trap+.
     #
     # @api private
     def release_context(ctx)
       @context_lock.synchronize { @active_context = nil if @active_context.equal?(ctx) }
+    rescue ThreadError
+      # in un gestore trap Ruby vieta Mutex#lock: il gestore gira nel thread principale con il GVL, e
+      # solo il proprietario toglie la propria voce
+      @active_context = nil if @active_context.equal?(ctx)
     end
 
     # Allineamento di un oggetto largo u in uno spazio largo avail
@@ -316,6 +321,10 @@ module Notcurses
     # close non chiama notcurses (né il close degli oggetti figli), non scrive
     # sul terminale e non ne cambia il modo; segna solo il contesto chiuso,
     # invalida i piani e libera il registro.
+    #
+    # close si può chiamare da un gestore +trap+ (per esempio
+    # <tt>trap('TERM') { nc.close; exit }</tt>): il registro si libera anche
+    # lì, e un nuovo contesto si può aprire dopo.
     #
     # @return [nil]
     # @raise [ContextError] se +notcurses_stop+ restituisce un errore (il
