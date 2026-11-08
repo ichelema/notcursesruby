@@ -261,7 +261,10 @@ module Notcurses
     #
     # In un processo figlio creato con +fork+ lo stato C appartiene al padre:
     # close non chiama notcurses e non scrive sul terminale; segna solo il
-    # contesto chiuso e libera il registro.
+    # contesto chiuso e libera il registro. Il FILE* di output resta aperto: il
+    # testo scritto e non ancora svuotato con {#flush} prima del fork sta anche
+    # nel buffer stdio del figlio, e la libc lo scrive quando il figlio esce.
+    # Chiama {#flush} prima di +fork+.
     #
     # close si può chiamare da un gestore +trap+ (per esempio
     # <tt>trap('TERM') { d.close; exit }</tt>): il registro si libera anche
@@ -272,7 +275,8 @@ module Notcurses
     #   contesto risulta comunque chiuso)
     def close
       return nil if @closed
-      # niente fclose: svuoterebbe sul terminale del padre i dati rimasti nel buffer del FILE*
+      # niente fclose: svuoterebbe subito sul terminale del padre il buffer del FILE* (l'uscita del figlio lo
+      # svuota comunque, se il padre non ha chiamato flush prima del fork)
       return mark_closed!(fclose: false) unless @pid == Process.pid
 
       # ncdirect_stop non resetta il FILE* (solo stdout): lo fa il wrapper, prima, perché lo stop ne fa ancora il flush
