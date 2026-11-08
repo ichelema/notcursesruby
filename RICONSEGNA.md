@@ -848,3 +848,51 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
    la chiave della cache dei pacchetti cambia da sola.
 6. **macOS** resta non provato: un job `macos-14` con Homebrew (notcurses 3.0.17) è possibile, ma i minuti macOS
    costano 10 volte quelli Linux su un repository privato.
+
+## Correzioni della revisione del 2026-11-06
+
+- **Inizio:** 2026-11-08. Modello passato ai comandi del workflow: `opus` (scelta dell'utente). Le issue già aperte
+  che toccano lo stesso codice (ICH-214…ICH-232) restano fuori dai lotti (scelta dell'utente). Lotto 17 (Fase 1):
+  approvazione rimandata a dopo il lotto 16.
+- **Review di ogni lotto:** `/trinity:workflow:4_review-fix-loop`, due reviewer in parallelo (Fable e GPT via
+  LiteLLM), al massimo 3 round. Log lotto per lotto in `memory/correzioni-review.md`.
+
+### Lotti
+
+| Lotto | PR | Merge | Issue | Bug di notcurses nuovi |
+| --- | --- | --- | --- | --- |
+| 1 | [#2](https://github.com/ichelema/notcursesruby/pull/2) | `e22a117` | ICH-268, ICH-269, ICH-270; ICH-433 (nata dalla review) | nessuno |
+
+### Cambi dell'API pubblica
+
+Nessun metodo nuovo né rimosso. Comportamenti nuovi:
+
+- `Context#close`, `Direct#close`, `Context#drop_planes`: un'eccezione al ritorno della chiamata C (Ctrl-C) lascia
+  l'oggetto chiuso, i piani distrutti invalidi e il registro libero (lotto 1).
+- `Context#close` e `Direct#close` in un figlio di `fork`: nessuna chiamata a notcurses, solo lo stato Ruby. Nel figlio
+  notcurses resta inutilizzabile anche dopo `close` (i segnali restano registrati per il contesto del padre): il
+  figlio può solo uscire o fare `exec` (lotto 1).
+- `Context#close` e `Direct#close` si possono chiamare da un gestore `trap` (lotto 1).
+- **Hook globale:** `Notcurses::DirectForkFlush` (privato) è anteposto a `Process._fork` (Ruby >= 3.1): prima di
+  ogni `fork`, `Process.fork` e `IO.popen('-')` svuota il buffer stdio del `Direct` aperto. `Process.daemon` e
+  `spawn` non passano da `_fork` (lotto 1, ICH-433).
+
+### Cambi a `Gemfile` e `Gemfile.lock`
+
+Nessuno.
+
+### CI
+
+- Lotto 1: la cache di Ruby 3.1.7 era scaduta (GitHub cancella le cache non usate da 7 giorni), e il nuovo build
+  falliva in `file.c`: mise 2026.10.19 dello snapshot non passa `RUBY_CFLAGS` a ruby-build 20261023, quindi gcc 16
+  compilava Ruby 3.1 in C23. Lo step «Ruby» ora imposta anche `CFLAGS: -std=gnu17`. `codecov.yml` rende
+  informativi gli status di Codecov: le soglie vincolanti restano quelle di SimpleCov, e i rami che girano solo nei
+  processi figli delle spec non sono misurati.
+- Podman 6.1.4 è ora installato sulla macchina di sviluppo: il container della CI si riproduce in locale (immagine
+  `docker.io/library/archlinux:base@sha256:52dfbd5a…`, mirror dello snapshot, poi `pacman -Syuu` con i pacchetti di
+  `ci.yml`).
+
+### Issue aperte nate dai lotti
+
+- ICH-441 — `Process.daemon` con un `Context` o un `Direct` aperto lascia il terminale nel modo dell'init (lotto 1,
+  review round 3).
