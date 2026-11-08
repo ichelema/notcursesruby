@@ -267,6 +267,29 @@ RSpec.describe 'Ciclo di vita (integrazione)' do
     expect(status).to be_success, out
   end
 
+  it 'drop_planes interrotto al ritorno di notcurses_drop_planes considera distrutti tutti i piani' do
+    script = interrupt_prelude('notcurses_drop_planes') + <<~'RUBY'
+      nc = Notcurses::Context.new(**OPTS, suppress_banners: true)
+      planes = Array.new(3) { nc.stdplane.create_child(rows: 1, cols: 1) }
+      generation = nc.generation
+      $interrupt << :raise
+      begin
+        nc.drop_planes
+        puts 'nessuna Interrupt'
+      rescue Interrupt
+        puts "closed=#{planes.map(&:closed?).join(',')} generation grown=#{nc.generation > generation}"
+      end
+      nc.stdplane.dims
+      nc.drop_planes
+      nc.close
+      puts 'chiuso'
+    RUBY
+    out, status, timed_out = run_child(script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('closed=true,true,true generation grown=true', 'chiuso')
+    expect(status).to be_success, out
+  end
+
   it 'in un figlio di fork Context#close e Direct#close non chiamano notcurses e non si bloccano' do
     script = <<~'RUBY'
       $parent = Process.pid
