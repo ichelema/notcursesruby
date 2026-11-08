@@ -2349,12 +2349,16 @@ module Notcurses
     # largo: la metà sinistra (larga 2) nell'ultima colonna, la metà destra in
     # colonna 0 o, senza la sua metà sinistra (resize_region con x_off < 0),
     # nell'ultima colonna. Su quelle celle ncplane_put di 3.0.17 scrive fuori
-    # dalla riga (notcurses.c:1917-1927, 1956-1962). Senza force legge le righe solo se le dimensioni
-    # sono cambiate dall'ultima volta: così copre anche i resize fatti dal C
-    # (stdplane nel render, callback :maximize). Solo un resize crea queste celle.
+    # dalla riga (notcurses.c:1917-1927, 1956-1962). Senza force legge le righe
+    # solo se le colonne sono cambiate dall'ultima volta: così copre anche i
+    # resize fatti dal C (stdplane nel render, callback :maximize). Un cambio di
+    # sole righe non sposta le celle di bordo (le righe nuove sono vuote), e
+    # un piano che scorre con autogrow cresce di una riga a ogni a capo.
+    # Non le vede quando nascono senza resize: erase_region, gradient e
+    # polyfill su una sola metà di un glifo largo (ICH-450).
     def clear_cut_glyphs!(ptr, force: false)
       rows, cols = dims
-      return if !force && @cut_glyphs_dims == [rows, cols]
+      return if !force && @cut_glyphs_cols == cols
 
       cell = FFI::NcCell.new
       rows.times do |y|
@@ -2368,7 +2372,7 @@ module Notcurses
           Util.check!(FFI.ncplane_erase_region(ptr, y, x, 1, 1), PlaneError, 'ncplane_erase_region') if orphan
         end
       end
-      @cut_glyphs_dims = [rows, cols]
+      @cut_glyphs_cols = cols
     end
 
     # Su uno stdplane che scorre ogni a capo ("\n" o a capo automatico) fa un
@@ -2723,7 +2727,7 @@ module Notcurses
 
     # La prossima scrittura controlla di nuovo i bordi (vedi clear_cut_glyphs!).
     # @return [nil]
-    def forget_cut_glyphs! = (@cut_glyphs_dims = nil)
+    def forget_cut_glyphs! = (@cut_glyphs_cols = nil)
   end
 
   # Fotografia dei colori di un piano per una dissolvenza passo per passo

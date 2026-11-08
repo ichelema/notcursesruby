@@ -364,6 +364,44 @@ RSpec.describe Notcurses::Plane do
         end
       end
 
+      it 'un glifo largo intero nelle ultime due colonne resta dopo i controlli dei bordi' do
+        with_parent(rows: 1, cols: 4) do |p|
+          p.putstr('ab漢', y: 0, x: 0)
+          p.resize(1, 4) # controllo forzato, nessun taglio
+          expect(p.contents).to eq('ab漢')
+        end
+        with_parent(rows: 1, cols: 5) do |p|
+          p.putstr('xa漢b', y: 0, x: 0)
+          p.resize_region(rows: 1, cols: 4, keep_x: 1, keep_rows: 1, keep_cols: 3, x_off: -1) # 漢 nelle colonne 2-3
+          expect(p.contents).to eq('a漢')
+          expect(p.at(y: 0, x: 2).egc).to eq('漢')
+        end
+      end
+
+      {
+        'resize(1, 1)' => ->(p) { p.resize(1, 1) },
+        'resize_region(cols: 1, keep_x: 1)' => ->(p) { p.resize_region(rows: 1, cols: 1, keep_x: 1, keep_rows: 1, keep_cols: 1) }
+      }.each do |name, cut|
+        it "#{name} su un glifo largo lascia un piano largo 1 in cui si scrive" do
+          with_parent(rows: 1, cols: 2) do |p|
+            p.putstr('漢', y: 0, x: 0)
+            cut.call(p)
+            p.putstr('x', y: 0, x: 0)
+            expect(p.contents).to eq('x')
+          end
+        end
+      end
+
+      it 'su un piano che scorre e cresce (autogrow) gli a capo non fanno rileggere i bordi a ogni scrittura' do
+        with_parent(rows: 1, cols: 20, autogrow: true) do |p|
+          p.scrolling = true
+          allow(Notcurses::FFI).to receive(:ncplane_at_yx_cell).and_call_original
+          50.times { p.putstr('x' * 20) } # ogni riga piena fa crescere il piano di una riga
+          expect(p.dim_y).to be > 40
+          expect(Notcurses::FFI).to have_received(:ncplane_at_yx_cell).at_most(2).times # solo il primo controllo
+        end
+      end
+
       it 'un figlio resize: :maximize ristretto dalla cascata del genitore: la scrittura lascia intatta la riga sotto' do
         cols = std.dim_x
         with_parent(rows: 2, cols: 4, x: 0) do |p|
