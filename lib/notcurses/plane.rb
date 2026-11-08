@@ -418,9 +418,10 @@ module Notcurses
     # Un glifo largo tagliato che resta sul bordo del piano diventa una cella
     # vuota, come in {#resize}: con keep_x dentro un glifo largo ne resterebbe
     # la metà destra in colonna 0, e la scrittura successiva andrebbe nella riga
-    # sopra (prima del framebuffer, sulla riga 0). Con x_off < 0 la metà
-    # tagliata resta dentro il piano, finché una scrittura non la copre: lì il
-    # C non scrive fuori dalla riga.
+    # sopra (prima del framebuffer, sulla riga 0). Con x_off < 0 la metà destra
+    # può finire nell'ultima colonna, e anche lì diventa una cella vuota; dentro
+    # il piano resta finché una scrittura non la copre: lì il C non scrive fuori
+    # dalla riga.
     #
     # @param rows [Integer] righe dopo il resize, >= 1
     # @param cols [Integer] colonne dopo il resize, >= 1
@@ -2346,8 +2347,9 @@ module Notcurses
 
     # Cancella le metà orfane che un resize lascia sul bordo tagliando un glifo
     # largo: la metà sinistra (larga 2) nell'ultima colonna, la metà destra in
-    # colonna 0. Su quelle celle ncplane_put di 3.0.17 scrive fuori dalla riga
-    # (notcurses.c:1917-1927). Senza force legge le righe solo se le dimensioni
+    # colonna 0 o, senza la sua metà sinistra (resize_region con x_off < 0),
+    # nell'ultima colonna. Su quelle celle ncplane_put di 3.0.17 scrive fuori
+    # dalla riga (notcurses.c:1917-1927, 1956-1962). Senza force legge le righe solo se le dimensioni
     # sono cambiate dall'ultima volta: così copre anche i resize fatti dal C
     # (stdplane nel render, callback :maximize). Solo un resize crea queste celle.
     def clear_cut_glyphs!(ptr, force: false)
@@ -2359,7 +2361,9 @@ module Notcurses
         [0, cols - 1].uniq.each do |x|
           next if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
 
-          orphan = (x.zero? && FFI.nccell_wide_right_p(cell)) || (x == cols - 1 && FFI.nccell_wide_left_p(cell))
+          right = FFI.nccell_wide_right_p(cell)
+          orphan = (x.zero? && right) ||
+                   (x == cols - 1 && (FFI.nccell_wide_left_p(cell) || (right && !wide_left?(ptr, y, x - 1))))
           FFI.nccell_release(ptr, cell)
           Util.check!(FFI.ncplane_erase_region(ptr, y, x, 1, 1), PlaneError, 'ncplane_erase_region') if orphan
         end
@@ -2379,6 +2383,16 @@ module Notcurses
       @context.raise_callback_errors!
       Util.check!(rc, RenderError, 'ncpile_render')
       clear_cut_glyphs!(ptr)
+    end
+
+    # true se la cella (y, x) è la metà sinistra di un glifo largo.
+    def wide_left?(ptr, y, x)
+      cell = FFI::NcCell.new
+      return false if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
+
+      FFI.nccell_wide_left_p(cell)
+    ensure
+      FFI.nccell_release(ptr, cell)
     end
 
     # Cell con il contenuto di una nccell legata all'egcpool del piano ptr.

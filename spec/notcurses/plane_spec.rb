@@ -346,6 +346,24 @@ RSpec.describe Notcurses::Plane do
         end
       end
 
+      {
+        'resize_region(x_off: -1)' => ->(p) { p.resize_region(rows: 2, cols: 2, keep_x: 1, keep_rows: 2, keep_cols: 1, x_off: -1) },
+        'resize_region(x_off: -1) e poi resize' => lambda { |p|
+          p.resize_region(rows: 2, cols: 4, keep_x: 1, keep_rows: 2, keep_cols: 3, x_off: -1) # metà destra in (0, 1)
+          p.resize(2, 2) # la metà destra finisce nell'ultima colonna
+        }
+      }.each do |name, cut|
+        it "#{name} con la metà destra nell'ultima colonna: una scrittura larga lascia intatta la riga sotto" do
+          with_parent(rows: 2, cols: 4) do |p|
+            p.putstr('漢ab', y: 0, x: 0)
+            cut.call(p)
+            p.putstr('W', y: 1, x: 0)
+            p.putstr('中', y: 0, x: 0) # il C cancellava la cella oltre la metà destra in (0, 1): la (1, 0)
+            expect(p.contents(y: 1, rows: 1)).to eq('W')
+          end
+        end
+      end
+
       it 'un figlio resize: :maximize ristretto dalla cascata del genitore: la scrittura lascia intatta la riga sotto' do
         cols = std.dim_x
         with_parent(rows: 2, cols: 4, x: 0) do |p|
@@ -387,6 +405,10 @@ RSpec.describe Notcurses::Plane do
             planes = Array.new(20) { std.create_child(rows: 1, cols: 4).tap { |q| q.putstr('漢ab', y: 0, x: 0) } }
             planes.each { |q| q.resize_region(rows: 1, cols: 3, keep_x: 1, keep_rows: 1, keep_cols: 3) }
             planes.each { |q| q.putstr('x', y: 0, x: 0) }
+            planes.each(&:close)
+            planes = Array.new(20) { std.create_child(rows: 1, cols: 4).tap { |q| q.putstr('漢ab', y: 0, x: 0) } }
+            planes.each { |q| q.resize_region(rows: 1, cols: 2, keep_x: 1, keep_rows: 1, keep_cols: 1, x_off: -1) }
+            planes.each { |q| q.putstr('中', y: 0, x: 0) }
             planes.each(&:close)
             box = std.create_child(rows: 3, cols: 5)
             box.putstr('漢', y: 2, x: 3)
