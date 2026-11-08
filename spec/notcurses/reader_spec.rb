@@ -244,6 +244,32 @@ RSpec.describe Notcurses::Reader do
       end
     end
 
+    it 'write non perde i grapheme che notcurses divide' do
+      # keycap, bandiera e congiunto devanagari: notcurses li divide, ogni pezzo ha una cella
+      ["1\u{FE0F}\u{20E3}x", "\u{1F1EE}\u{1F1F9}x", 'क्षx'].each do |text|
+        new_reader(rows: 1, cols: 10) do |reader|
+          expect([reader.write(text).contents, reader.plane.cursor]).to eq([text, [0, 3]]), text.inspect
+        end
+      end
+      { "\u{1F44D}\u{1F3FD}x" => [0, 3], "éx" => [0, 2], "❤\u{FE0F}x" => [0, 2] }.each do |text, cursor|
+        new_reader(rows: 1, cols: 10) do |reader|
+          expect([reader.write(text).contents, reader.plane.cursor]).to eq([text, cursor]), text.inspect
+        end
+      end
+      new_reader(rows: 1, cols: 10) do |reader| # nccell_load legge 1 byte di U+2028: il C riceve il carattere intero
+        expect { reader.write("a\u2028b") }.to raise_error(Notcurses::WidgetError, /"\\u2028"/)
+        expect(reader.contents).to eq('a')
+      end
+    end
+
+    it "un pezzo di larghezza zero di un grapheme diviso, sull'ultima colonna, viene scartato" do
+      new_reader(rows: 1, cols: 5) do |reader|
+        reader.write("abcd1\u{FE0F}\u{20E3}") # U+20E3 resta da solo sull'ultima colonna
+        expect(reader.plane.cursor).to eq([0, 4])
+        expect(reader.write('x').contents).to eq('abcdx')
+      end
+    end
+
     it 'uno spostamento fallito del cursore della vista solleva WidgetError prima della chiamata C' do
       new_reader(rows: 1, cols: 8) do |reader|
         reader.write('abc')

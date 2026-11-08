@@ -32,6 +32,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   combinante isolato) sull'ultima colonna: prima il cursore andava oltre la riga, il testo successivo si perdeva e
   Backspace seguito da una freccia sinistra terminava il processo (asserzione di `ncreader_redraw`). Se il cursore
   della vista non torna al suo posto, i metodi del `Reader` sollevano `WidgetError` prima della chiamata C (ICH-273).
+- `Reader#write` non perde più la parte dei grapheme che notcurses divide in più EGC (il keycap "1️⃣", le bandiere, i
+  congiunti devanagari): scrive i pezzi uno alla volta, ciascuno in una cella (ICH-274).
 
 ## [0.1.0] - 2026-10-27
 

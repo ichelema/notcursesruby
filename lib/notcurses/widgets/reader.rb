@@ -166,10 +166,16 @@ module Notcurses
     end
 
     # Scrive del testo alla posizione del cursore (+ncreader_write_egc+, un
-    # grapheme cluster alla volta) e ridisegna, senza render. In fondo alla
+    # EGC di notcurses alla volta) e ridisegna, senza render. In fondo alla
     # riga il cursore resta sull'ultima colonna e il testo successivo la
     # sovrascrive; un carattere di larghezza zero sull'ultima colonna viene
     # scartato (vedi {#offer_input}).
+    #
+    # notcurses divide alcuni grapheme di Ruby in più EGC (il keycap "1️⃣",
+    # le bandiere, i congiunti devanagari come "क्ष"), e +ncreader_write_egc+
+    # scrive solo il primo EGC della stringa: il wrapper passa i pezzi uno
+    # alla volta, secondo la segmentazione di notcurses (+nccell_load+). Un
+    # grapheme diviso occupa quindi più celle.
     #
     # @param text [String] testo UTF-8, senza caratteri di controllo tranne
     #   "\t" (diventa spazi fino alla tabulazione successiva)
@@ -186,8 +192,19 @@ module Notcurses
       str = Util.string!(text, 'text')
       raise ArgumentError, "text = #{text.inspect} contiene caratteri di controllo" if str.match?(/[\p{Cc}&&[^\t]]/)
 
-      str.each_grapheme_cluster do |egc|
-        Util.check!(put_egc(ptr, egc), WidgetError, "ncreader_write_egc(#{egc.inspect})")
+      view = @plane.to_ptr
+      cell = FFI::NcCell.new
+      str.each_grapheme_cluster do |g|
+        off = 0
+        while off < g.bytesize
+          len = FFI.nccell_load(view, cell, g.byteslice(off..))
+          FFI.nccell_release(view, cell) # nccell_load non rilascia il contenuto precedente
+          # se notcurses non lo legge (U+2028 dà 1 byte), il resto va al C, che lo rifiuta
+          egc = len.positive? ? g.byteslice(off, len) : nil
+          egc = g.byteslice(off..) unless egc&.valid_encoding?
+          Util.check!(put_egc(ptr, egc), WidgetError, "ncreader_write_egc(#{egc.inspect})")
+          off += egc.bytesize
+        end
       end
       self
     end
