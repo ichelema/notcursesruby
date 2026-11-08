@@ -24,6 +24,10 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   su quella cella cancellava una cella della riga vicina o corrompeva l'heap. Vale per `Plane#resize`,
   `#resize_region` e `#resize_maximize` e per i resize fatti da notcurses (stdplane quando il terminale si
   restringe, figli con `resize: :maximize`) (ICH-271).
+- `Visual.from_plane` e `Plane#as_rgba` non vanno più in SIGSEGV con i blitter dei plot `:four_by_one` e
+  `:eight_by_one` sui terminali con i quadranti (Kitty, Ghostty, rxvt): sollevano `ArgumentError`. Lo stesso vale per
+  `Visual#blit`, `#geometry`, `#create_plane`, `#stream` e `Visual.blit_*`, che prima tagliavano l'immagine senza
+  errore. `Plot` accetta ancora i due blitter (ICH-272).
 
 ## [0.1.0] - 2026-10-27
 

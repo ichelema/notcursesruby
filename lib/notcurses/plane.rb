@@ -1349,7 +1349,8 @@ module Notcurses
     # alpha non opaco danno pixel trasparenti (0). Senza argomenti converte
     # tutto il piano; le regole della regione sono quelle di {Visual.from_plane}.
     #
-    # @param blitter [Symbol, Integer] blitter di lettura (non :pixel né :default)
+    # @param blitter [Symbol, Integer] blitter di lettura (non :pixel né :default;
+    #   :four_by_one e :eight_by_one, solo per i plot, sollevano ArgumentError)
     # @param y [Integer, nil] riga di partenza, >= 0; nil = riga del cursore
     # @param x [Integer, nil] colonna di partenza, >= 0; nil = colonna del cursore
     # @param rows [Integer, nil] righe, >= 1; nil = fino al bordo
@@ -1361,7 +1362,7 @@ module Notcurses
     # @raise [ClosedError] se il piano è chiuso
     def as_rgba(blitter, y: 0, x: 0, rows: nil, cols: nil)
       ptr = to_ptr
-      blit = Util.blitter_value(blitter)
+      blit = Util.image_blitter_value(blitter)
       if [FFI::NCBLIT_PIXEL, FFI::NCBLIT_DEFAULT].include?(blit)
         raise ArgumentError, 'as_rgba: i blitter :pixel e :default non sono ammessi'
       end

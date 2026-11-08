@@ -2,6 +2,7 @@
 # Source: notcurses/include/notcurses/notcurses.h
 # frozen_string_literal: true
 
+require 'open3'
 require 'pathname'
 require_relative '../support/nc_helpers'
 
@@ -646,6 +647,58 @@ RSpec.describe Notcurses::Visual do
           described_class.blit_rgba(rgbw, plane: nc.stdplane, rows: 4, cols: 2, blitter: :pixel, no_degrade: true)
         end.to raise_error(Notcurses::VisualError)
       end
+    end
+
+    describe 'i blitter dei plot (:four_by_one, :eight_by_one)' do
+      # Senza quadranti il C li degrada a :half; con i quadranti taglia l'immagine.
+      it 'blit, geometry, create_plane, stream e i blit_* li rifiutano prima del C' do
+        %i[four_by_one eight_by_one].each do |b|
+          expect { visual.blit(blitter: b) }.to raise_error(ArgumentError, /blitter/)
+          expect { visual.geometry(blitter: b) }.to raise_error(ArgumentError, /blitter/)
+          expect { visual.create_plane(rows: 2, cols: 2, blitter: b) }.to raise_error(ArgumentError, /blitter/)
+          described_class.open(mkv) { |v| expect { v.stream(blitter: b) {} }.to raise_error(ArgumentError, /blitter/) }
+          nc.stdplane.create_child(rows: 4, cols: 2) do |plane|
+            args = { plane: plane, rows: 4, cols: 2, blitter: b }
+            expect { described_class.blit_rgba(rgbw, **args) }.to raise_error(ArgumentError, /blitter/)
+            expect { described_class.blit_bgrx(rgbw, **args) }.to raise_error(ArgumentError, /blitter/)
+            expect { described_class.blit_rgb_loose(rgbw, **args) }.to raise_error(ArgumentError, /blitter/)
+            expect { described_class.blit_rgb_packed("\0" * 24, **args) }.to raise_error(ArgumentError, /blitter/)
+          end
+        end
+      end
+    end
+  end
+
+  context 'con i quadranti (rxvt-256color, come Kitty e Ghostty)' do
+    it 'from_plane e as_rgba rifiutano i blitter dei plot invece di andare in SIGSEGV' do
+      # Il blitset 4x1/8x1 ha egcs NULL (blit.c:1279, 1282): prima del fix il figlio moriva con 139.
+      script = <<~'RUBY'
+        require 'notcurses'
+        Notcurses::Context.open(output: '/dev/null', termtype: 'rxvt-256color', suppress_banners: true,
+                                drain_input: true) do |nc|
+          abort 'niente quadranti' unless nc.can_quadrant?
+          nc.stdplane.create_child(rows: 1, cols: 1) do |pl|
+            pl.putstr(' ', y: 0, x: 0)
+            [:four_by_one, :eight_by_one, Notcurses::FFI::NCBLIT_4x1, Notcurses::FFI::NCBLIT_8x1].each do |b|
+              begin
+                Notcurses::Visual.from_plane(pl, blitter: b)
+                abort "from_plane(#{b.inspect}) non ha sollevato"
+              rescue ArgumentError
+              end
+              begin
+                pl.as_rgba(b)
+                abort "as_rgba(#{b.inspect}) non ha sollevato"
+              rescue ArgumentError
+              end
+            end
+          end
+        end
+        puts 'ok'
+      RUBY
+      lib = File.expand_path('../../lib', __dir__)
+      out, status = Open3.capture2e({ 'TERM' => 'xterm-256color' }, 'timeout', '-k', '5', '-s', 'KILL', '30',
+                                    RbConfig.ruby, '-I', lib, '-e', script, stdin_data: '')
+      expect([status.exitstatus, out]).to eq([0, "ok\n"])
     end
   end
 

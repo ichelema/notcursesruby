@@ -76,8 +76,6 @@ module Notcurses
       # ncdirect_align accetta solo questi: con gli altri valori restituisce
       # INT_MAX e il C scrive una sequenza spazzatura (direct.c:411-426).
       ALIGNS = Util::ALIGNS.slice(:left, :center, :right).freeze
-      # 4x1 e 8x1 servono solo ai plot.
-      BLITTERS = Util::BLITTERS.except(:four_by_one, :eight_by_one).freeze
 
       # Allineamento ammesso da ncdirect_align.
       # @param value [Symbol, Integer] :left, :center, :right o la costante C
@@ -89,7 +87,7 @@ module Notcurses
       # @param value [Symbol, Integer] simbolo o costante NCBLIT_*
       # @return [Integer] costante NCBLIT_*
       # @raise [ArgumentError] se value non è ammesso
-      def blitter(value) = Util.enum_value(BLITTERS, value, 'blitter')
+      def blitter(value) = Util.image_blitter_value(value)
 
       # Percorso di un file immagine.
       # @param value [String] percorso del file

@@ -247,6 +247,7 @@ copertura.
 | Il decoder di `ncvisual_from_sixel` scrive o legge fuori dai buffer con indici di colore >= 65535, definizioni troncate, "!" senza cifre, righe dell'ultima banda oltre `rows` (`sixel.h:131`, `167`, `180`) | sequenza controllata prima della chiamata: passa solo ciò che il decoder legge in sicurezza |
 | `ncvisual_resize_noninterpolative` con 0 righe o colonne | dimensioni controllate |
 | `ncvisual_simple_streamer` va in crash con `vopts->n` NULL | non esposta: è già lo streamer predefinito di `Visual#stream` |
+| I blitset dei plot `NCBLIT_4x1` e `NCBLIT_8x1` hanno `egcs` NULL (`blit.c:1279`, `1282`), e `lookup_blitset` li restituisce con i quadranti (Kitty, Ghostty, rxvt, Konsole; `blit.c:1329-1345`). `ncplane_as_rgba` e `ncvisual_from_plane` passano quel NULL a `wcsrchr` (`notcurses.c:3114`, `3175`): SIGSEGV. I blit li disegnano con `tria_blit` (2 righe di pixel per cella) su un piano calcolato per 4 o 8: l'immagine resta tagliata | `Util::IMAGE_BLITTERS` (senza `:four_by_one` e `:eight_by_one`) per `Visual`, `Plane#as_rgba` e `Direct`: `ArgumentError` prima del C; `Plot` usa ancora `Util::BLITTERS` (ICH-272) |
 
 ### Widget A (Selector, MultiSelector, Menu, Reader, ProgBar)
 
