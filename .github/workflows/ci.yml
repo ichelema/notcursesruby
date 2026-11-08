@@ -82,7 +82,9 @@ jobs:
       - name: Ruby ${{ matrix.ruby }}
         env:
           MISE_GITHUB_TOKEN: ${{ github.token }}
-          # gcc 16 usa C23 di default: Ruby 3.1 compila solo con gnu17
+          # gcc 16 usa C23 di default: Ruby 3.1 compila solo con gnu17. Con mise 2026.10.19
+          # RUBY_CFLAGS da solo non arriva a ruby-build: serve anche CFLAGS
+          CFLAGS: -std=gnu17
           RUBY_CFLAGS: -std=gnu17
         run: |
           mise install "ruby@${{ matrix.ruby }}"
