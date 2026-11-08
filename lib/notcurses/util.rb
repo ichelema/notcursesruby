@@ -57,6 +57,11 @@ module Notcurses
       eight_by_one: FFI::NCBLIT_8x1
     }.freeze
 
+    # Blitter delle immagini (Visual, Plane#as_rgba, Direct): 4x1 e 8x1 servono
+    # solo ai plot. Il loro blitset ha egcs NULL (blit.c:1279, 1282): con i
+    # quadranti ncplane_as_rgba va in SIGSEGV e i blit tagliano l'immagine.
+    IMAGE_BLITTERS = BLITTERS.except(:four_by_one, :eight_by_one).freeze
+
     SCALES = {
       none: FFI::NCSCALE_NONE,
       scale: FFI::NCSCALE_SCALE,
@@ -455,6 +460,11 @@ module Notcurses
     # @return [Integer]
     # @raise [ArgumentError] se blitter non è valido
     def blitter_value(blitter) = enum_value(BLITTERS, blitter, 'blitter')
+
+    # @param blitter [Symbol, Integer] simbolo o costante NCBLIT_* di {IMAGE_BLITTERS}
+    # @return [Integer]
+    # @raise [ArgumentError] se blitter non è valido o è :four_by_one o :eight_by_one
+    def image_blitter_value(blitter) = enum_value(IMAGE_BLITTERS, blitter, 'blitter')
 
     # @param scale [Symbol, Integer] simbolo o costante NCSCALE_*
     # @return [Integer]

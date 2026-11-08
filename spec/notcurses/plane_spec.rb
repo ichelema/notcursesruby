@@ -1196,6 +1196,9 @@ RSpec.describe Notcurses::Plane do
         q.putstr('ab', y: 0, x: 0)
         expect { q.as_rgba(:half, y: 0, x: 0) }.to raise_error(Notcurses::PlaneError)
         expect { q.as_rgba(:pixel) }.to raise_error(ArgumentError)
+        q.putstr('  ', y: 0, x: 0)
+        expect { q.as_rgba(:four_by_one) }.to raise_error(ArgumentError, /blitter/) # blitter dei plot
+        expect { q.as_rgba(:eight_by_one) }.to raise_error(ArgumentError, /blitter/)
       end
     end
 

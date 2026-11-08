@@ -323,7 +323,8 @@ module Notcurses
     #
     # @param plane [Plane]
     # @param blitter [Symbol, Integer] blitter con cui leggere le celle (:ascii,
-    #   :half, ...; non :default né :pixel)
+    #   :half, ...; non :default né :pixel). :four_by_one e :eight_by_one
+    #   (solo per i plot) sollevano ArgumentError
     # @param y [Integer, nil] riga di partenza, >= 0; nil = riga del cursore
     # @param x [Integer, nil] colonna di partenza, >= 0; nil = colonna del cursore
     # @param rows [Integer, nil] righe, >= 1; nil = fino al bordo
@@ -338,7 +339,7 @@ module Notcurses
       raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
 
       begy, begx, leny, lenx = Util.c_region(y, x, rows, cols)
-      ptr = FFI.ncvisual_from_plane(plane.to_ptr, Util.blitter_value(blitter), begy, begx, leny, lenx)
+      ptr = FFI.ncvisual_from_plane(plane.to_ptr, Util.image_blitter_value(blitter), begy, begx, leny, lenx)
       wrap(plane.context, ptr, 'ncvisual_from_plane (blitter :default o :pixel? regione fuori dal piano? celle ' \
                                'con glifi diversi da spazi e blocchi?)', &block)
     end
@@ -755,7 +756,8 @@ module Notcurses
     # @option options [Symbol] :scale (:none) :none, :scale, :stretch,
     #   :none_hires, :scale_hires
     # @option options [Symbol] :blitter (:default) :default, :ascii, :half,
-    #   :quad, :sextant, :octant, :braille, :pixel
+    #   :quad, :sextant, :octant, :braille, :pixel; :four_by_one e
+    #   :eight_by_one (solo per i plot) sollevano ArgumentError
     # @option options [Integer] :pxoffy (0) offset verticale in pixel nella
     #   prima cella (solo :pixel)
     # @option options [Integer] :pxoffx (0) offset orizzontale in pixel nella
@@ -1009,7 +1011,7 @@ module Notcurses
         raise ArgumentError, 'y: e x: simbolici richiedono plane:' if plane.nil? && (vflag | hflag).positive?
 
         vopts[:scaling] = Util.scale_value(scale)
-        vopts[:blitter] = Util.blitter_value(blitter)
+        vopts[:blitter] = Util.image_blitter_value(blitter)
         vopts[:pxoffy] = Util.uint!(pxoffy, 'pxoffy')
         vopts[:pxoffx] = Util.uint!(pxoffx, 'pxoffx')
         flags = vflag | hflag |
