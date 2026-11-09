@@ -197,6 +197,122 @@ RSpec.describe Notcurses::Reader do
       expect([status.exitstatus, out]).to eq([0, "ok\n"])
     end
 
+    it "un carattere di larghezza zero nell'ultima colonna viene scartato (prima: cursore oltre la riga, testo perso)" do
+      new_reader(rows: 1, cols: 8) do |reader|
+        reader.write('Mi piace')
+        expect(reader.plane.cursor).to eq([0, 7])
+        expect([0x2764, 0xFE0F].map { |cp| reader.offer_input(ev(cp)) }).to eq([true, true]) # "❤️" digitato
+        expect([reader.plane.cursor, reader.contents]).to eq([[0, 7], 'Mi piac❤'])
+        expect(reader.offer_input(ev('x'.ord))).to be true
+        expect(reader.contents).to eq('Mi piacx')
+      end
+      ["​", "́"].each do |zw|
+        new_reader(rows: 1, cols: 8) do |reader|
+          reader.write('Mi piace').write(zw)
+          expect(reader.plane.cursor).to eq([0, 7]), zw.inspect
+          expect(reader.write('x').contents).to eq('Mi piacx')
+        end
+      end
+      new_reader(rows: 1, cols: 8) do |reader| # prima dell'ultima colonna ha una cella propria, come prima
+        expect(reader.write("ab​c").contents).to eq("ab​c")
+        expect(reader.plane.cursor).to eq([0, 4])
+      end
+    end
+
+    it "Backspace e un tasto verso sinistra dopo un carattere di larghezza zero nell'ultima colonna (prima: abort)" do
+      script = <<~'RUBY'
+        require 'notcurses'
+        ev = ->(id, **o) { Notcurses::Input.synthesize(id, **o) }
+        keys = { 'left' => ev.(Notcurses::Key::LEFT), 'ctrl_b' => ev.('B'.ord, modifiers: [:ctrl]),
+                 'ctrl_w' => ev.('W'.ord, modifiers: [:ctrl]) }
+        Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true) do |nc|
+          Notcurses::Reader.open(nc.stdplane.create_child(rows: 1, cols: 8)) do |reader|
+            reader.write('Mi piace')
+            [0x2764, 0xFE0F].each { |cp| reader.offer_input(ev.(cp)) }
+            reader.offer_input(ev.(Notcurses::Key::BACKSPACE))
+            ARGV[0] == 'move_left' ? reader.move_left : reader.offer_input(keys.fetch(ARGV[0]))
+            raise "cursore #{reader.plane.cursor}" unless ARGV[0] == 'ctrl_w' || reader.plane.cursor == [0, 5]
+          end
+        end
+        puts 'ok'
+      RUBY
+      lib = File.expand_path('../../lib', __dir__)
+      %w[left ctrl_b ctrl_w move_left].each do |final|
+        out, status = Open3.capture2e({ 'TERM' => 'xterm-256color' }, 'timeout', '-k', '5', '-s', 'KILL', '30',
+                                      RbConfig.ruby, '-I', lib, '-e', script, final, stdin_data: '')
+        expect([status.exitstatus, out]).to eq([0, "ok\n"]), final
+      end
+    end
+
+    it 'write non perde i grapheme che notcurses divide' do
+      # keycap, bandiera e congiunto devanagari: notcurses li divide, ogni pezzo ha una cella
+      ["1\u{FE0F}\u{20E3}x", "\u{1F1EE}\u{1F1F9}x", 'क्षx'].each do |text|
+        new_reader(rows: 1, cols: 10) do |reader|
+          expect([reader.write(text).contents, reader.plane.cursor]).to eq([text, [0, 3]]), text.inspect
+        end
+      end
+      { "\u{1F44D}\u{1F3FD}x" => [0, 3], "éx" => [0, 2], "❤\u{FE0F}x" => [0, 2] }.each do |text, cursor|
+        new_reader(rows: 1, cols: 10) do |reader|
+          expect([reader.write(text).contents, reader.plane.cursor]).to eq([text, cursor]), text.inspect
+        end
+      end
+      new_reader(rows: 1, cols: 10) do |reader| # nccell_load legge 1 byte di U+2028: il C riceve il carattere intero
+        expect { reader.write("a\u2028b") }.to raise_error(Notcurses::WidgetError, /"\\u2028"/)
+        expect(reader.contents).to eq('a')
+      end
+    end
+
+    it 'write solleva WidgetError se nccell_load fallisce (per esempio con l\'egcpool della vista pieno)' do
+      new_reader(rows: 1, cols: 10) do |reader|
+        allow(Notcurses::FFI).to receive(:nccell_load).and_return(-1)
+        expect(Notcurses::FFI).not_to receive(:ncreader_write_egc)
+        expect { reader.write("1\u{FE0F}\u{20E3}x") }.to raise_error(Notcurses::WidgetError, /nccell_load/)
+      end
+    end
+
+    it 'se nccell_load fallisce a metà grapheme il primo pezzo resta scritto e il resto non arriva al C' do
+      new_reader(rows: 1, cols: 10) do |reader|
+        calls = 0
+        allow(Notcurses::FFI).to receive(:nccell_load).and_wrap_original { |m, *a| (calls += 1) == 1 ? m.call(*a) : -1 }
+        allow(Notcurses::FFI).to receive(:ncreader_write_egc).and_call_original
+        expect { reader.write("1\u{FE0F}\u{20E3}") }.to raise_error(Notcurses::WidgetError, /nccell_load/)
+        expect(Notcurses::FFI).to have_received(:ncreader_write_egc).once
+        expect(reader.contents).to eq("1\u{FE0F}")
+      end
+    end
+
+    it "un pezzo di larghezza zero di un grapheme diviso, sull'ultima colonna, viene scartato" do
+      new_reader(rows: 1, cols: 5) do |reader|
+        reader.write("abcd1\u{FE0F}\u{20E3}") # U+20E3 resta da solo sull'ultima colonna
+        expect(reader.plane.cursor).to eq([0, 4])
+        expect(reader.write('x').contents).to eq('abcdx')
+      end
+    end
+
+    it "contents non fa crescere l'egcpool della vista" do
+      text = ("e#{"́" * 50}") * 10 # 10 EGC di 101 byte: stanno nell'egcpool della vista
+      new_reader(rows: 1, cols: 10) do |reader|
+        reader.write(text)
+        expect(20_000.times.count { reader.contents == text }).to eq(20_000) # prima: WidgetError dopo circa 16 450
+      end
+    end
+
+    it 'uno spostamento fallito del cursore della vista solleva WidgetError prima della chiamata C' do
+      new_reader(rows: 1, cols: 8) do |reader|
+        reader.write('abc')
+        allow(Notcurses::FFI).to receive(:ncplane_cursor_move_yx).and_return(-1)
+        expect(Notcurses::FFI).not_to receive(:ncreader_move_left)
+        expect { reader.move_left }.to raise_error(Notcurses::WidgetError, /ncplane_cursor_move_yx/)
+      end
+      allow(Notcurses::FFI).to receive(:ncplane_cursor_move_yx).and_call_original
+      new_reader(rows: 1, cols: 8) do |reader|
+        reader.write('abc')
+        allow(Notcurses::FFI).to receive(:ncplane_cursor_move_yx).and_return(0, -1) # prepare!, poi il workaround
+        expect(Notcurses::FFI).not_to receive(:ncreader_offer_input)
+        expect { reader.offer_input(ev(key::BACKSPACE)) }.to raise_error(Notcurses::WidgetError, /ncplane_cursor_move_yx/)
+      end
+    end
+
     it 'le scorciatoie con Ctrl e Alt' do
       new_reader(rows: 1, cols: 10) do |reader|
         reader.write('uno due')

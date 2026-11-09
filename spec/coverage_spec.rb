@@ -64,7 +64,7 @@ RSpec.describe 'Copertura delle funzioni FFI' do
     'ncpile_render_to_buffer' => :render_buffer, 'ncpile_render_to_file' => :render_buffer,
     'ncplane_resize_marginalized' => :ruby_resize, 'ncplane_resize_placewithin' => :ruby_resize,
     'ncplane_notcurses' => :context, 'ncplane_at_cursor' => :at_cursor, 'ncplane_at_cursor_cell' => :at_cursor,
-    'ncplane_set_base_cell' => :set_base_cell, 'ncplane_contents' => :contents,
+    'ncplane_set_base_cell' => :set_base_cell, 'ncplane_contents' => :contents, 'ncreader_contents' => :contents,
     'ncplane_set_userptr' => :userptr, 'ncplane_userptr' => :userptr, 'ncplane_mergedown' => :mergedown,
     'ncplane_puttext' => :puttext, 'ncplane_fadeout' => :fade, 'ncplane_fadein' => :fade, 'ncplane_pulse' => :pulse,
     'ncplane_putstr_aligned' => :aligned, 'ncplane_putnstr_aligned' => :aligned,
