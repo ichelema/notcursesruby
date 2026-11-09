@@ -2,6 +2,8 @@
 # Source: notcurses/include/notcurses/notcurses.h
 # frozen_string_literal: true
 
+require 'open3'
+require 'rbconfig'
 require_relative '../support/nc_helpers'
 
 # Blocchi di disegno dei tablet.
@@ -123,6 +125,17 @@ RSpec.describe Notcurses::Reel do
       end
       expect(result).to eq(:fatto)
       expect(plane).to be_closed
+    end
+
+    it 'non si crea dentro un callback chiamato da notcurses' do
+      parent = std.create_child(rows: 3, cols: 3)
+      target = new_plane
+      parent.create_child(rows: 1, cols: 1, resize: ->(_p) { described_class.new(target) })
+      expect { parent.resize(4, 4) }.to raise_error(Notcurses::WidgetError, /callback/)
+      expect(target).not_to be_closed
+      expect(target).not_to be_widget_plane
+      parent.family_destroy
+      target.close
     end
   end
 
@@ -459,6 +472,39 @@ RSpec.describe Notcurses::Reel do
       other.close
       reel.close
     end
+
+    it 'il blocco non crea Tree, Tabbed o Reel sul piano del tablet (prima: piani liberati due volte, abort)' do
+      script = <<~'RUBY'
+        require 'notcurses'
+        $stdout.sync = true
+        make = {
+          'Tree' => ->(pl) { Notcurses::Tree.new(pl, items: %w[a b]) { |p, v, _d| p&.putstr(v, y: 0, x: 0); 1 } },
+          'Tabbed' => ->(pl) { Notcurses::Tabbed.new(pl) },
+          'Reel' => ->(pl) { Notcurses::Reel.new(pl) }
+        }.fetch(ARGV[0])
+        Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true) do |nc|
+          reel = Notcurses::Reel.new(nc.stdplane.create_child(rows: 12, cols: 30))
+          hosted = nil
+          begin
+            reel.add do |tablet, _from_top|
+              hosted ||= make.call(tablet.plane.create_child(rows: 3, cols: 20))
+              0 # il reel distrugge il piano dati, con il figlio, in questo stesso ridisegno
+            end
+          rescue Notcurses::WidgetError => e
+            puts e.class
+          end
+        end
+        puts 'ok'
+      RUBY
+      lib = File.expand_path('../../lib', __dir__)
+      widgets = %w[Tree Tabbed Reel]
+      results = widgets.map do |widget|
+        out, status = Open3.capture2e({ 'TERM' => 'xterm-256color' }, 'timeout', '-k', '5', '-s', 'KILL', '30',
+                                      RbConfig.ruby, '-I', lib, '-e', script, widget, stdin_data: '')
+        [widget, status.exitstatus, out.lines.first(2).join]
+      end
+      expect(results).to eq(widgets.map { |w| [w, 0, "Notcurses::WidgetError\nok\n"] })
+    end
   end
 
   describe 'ciclo di vita' do
@@ -503,11 +549,8 @@ RSpec.describe Notcurses::Reel do
 
     it 'redraw, delete e close rifiutano un widget aperto su un piano di un tablet' do
       reel = new_reel(1)
-      hosted = nil
-      reel.add do |tablet, _from_top|
-        hosted ||= Notcurses::Tabbed.new(tablet.plane.create_child(rows: 2, cols: 5))
-        1
-      end
+      reel.add(&writer('t2'))
+      hosted = Notcurses::Tabbed.new(reel.tablets.last.plane.create_child(rows: 2, cols: 5))
       expect { reel.redraw }.to raise_error(Notcurses::WidgetError, /ospita/)
       expect { reel.delete(reel.tablets.last) }.to raise_error(Notcurses::WidgetError, /ospita/)
       expect { reel.close }.to raise_error(Notcurses::WidgetError, /ospita/)

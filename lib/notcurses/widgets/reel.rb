@@ -32,7 +32,7 @@ module Notcurses
   # false per i tablet sopra il fuoco: se il reel li taglia, resta visibile la
   # loro parte bassa (mettila in fondo), mentre ai tablet sotto il fuoco resta
   # la parte alta. Dentro il blocco non si possono chiamare i metodi che
-  # cambiano il reel né distruggere piani (WidgetError).
+  # cambiano il reel, creare widget né distruggere piani (WidgetError).
   #
   # Disposizione: il tablet con il fuoco resta dove era, se possibile; uno
   # che arriva da sotto (o da sopra) si appoggia al bordo inferiore (o
@@ -109,11 +109,13 @@ module Notcurses
     #   sconosciuto, o con circular: true senza infinite_scroll: true
     # @raise [TypeError] se un argomento ha il tipo sbagliato
     # @raise [WidgetError] se il piano non si può dare al reel (stdplane,
-    #   piano di un widget, piano preso in prestito)
+    #   piano di un widget, piano preso in prestito); dentro un callback
+    #   chiamato da notcurses (piano intatto)
     # @raise [ClosedError] se il piano è chiuso
     def initialize(plane, border_mask: 0, border_channels: 0, tablet_mask: 0, tablet_channels: 0,
                    focused_channels: 0, infinite_scroll: false, circular: false)
       claim_plane!(plane)
+      plane.context.check_not_in_callback!('Reel.new', WidgetError)
       @border_mask = mask!(border_mask, 'border_mask')
       @tablet_mask = mask!(tablet_mask, 'tablet_mask')
       @border_channels = Util.channels_value(border_channels, 'border_channels')
