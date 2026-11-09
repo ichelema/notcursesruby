@@ -857,7 +857,7 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 - **Review di ogni lotto:** `/trinity:workflow:4_review-fix-loop`, due reviewer in parallelo (Fable e GPT via
   LiteLLM), al massimo 3 round. Log lotto per lotto in `memory/correzioni-review.md`. Lotto 2: solo Fable (limite
   di utilizzo di GPT raggiunto), 3 round più una review singola dopo il loop. Lotto 3: Fable e GPT, 1 round, nessun
-  finding.
+  finding. Lotto 4: Fable e GPT, 2 round (round 1: un MEDIUM e un LOW, corretti; round 2: nessun finding).
 
 ### Lotti
 
@@ -866,6 +866,7 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 | 1 | [#2](https://github.com/ichelema/notcursesruby/pull/2) | `e22a117` | ICH-268, ICH-269, ICH-270; ICH-433 (nata dalla review) | nessuno |
 | 2 | [#3](https://github.com/ichelema/notcursesruby/pull/3) | `d4970c4` | ICH-271 | resize che taglia un glifo largo: la scrittura successiva va fuori dalla riga (`notcurses.c:991`, `1917-1927`, `1956-1962`); render dentro `ncplane_put` dopo un a capo su uno stdplane che scorre (`notcurses.c:1978-1981`); tabella "Piani" di `memory/fase2-wrapper-idiomatico.md` |
 | 3 | [#4](https://github.com/ichelema/notcursesruby/pull/4) | `29f5a41` | ICH-272 | i blitset dei plot `NCBLIT_4x1` e `NCBLIT_8x1` hanno `egcs` NULL (`blit.c:1279`, `1282`): con i quadranti `ncplane_as_rgba` e `ncvisual_from_plane` vanno in SIGSEGV (`notcurses.c:3114`), i blit tagliano l'immagine; tabella "Visual" di `memory/fase2-wrapper-idiomatico.md` |
+| 4 | [#5](https://github.com/ichelema/notcursesruby/pull/5) | `1f441f3` | ICH-273, ICH-274, ICH-275 | `ncreader_write_egc` di un EGC di larghezza zero sull'ultima colonna porta vista e copia nascosta a x == colonne (`reader.c:240-246`, clamp con cols 0); `ncreader_write_egc` scrive solo il primo EGC della stringa e restituisce 0 (`reader.c:233-238`); `ncreader_contents` è `ncplane_contents`, che lascia copie nell'egcpool (`reader.c:413-415`); `nccell_load` di U+2028 restituisce 1 byte e taglia il codepoint; tabella "Widget A" di `memory/fase2-wrapper-idiomatico.md` |
 
 ### Cambi dell'API pubblica
 
@@ -890,6 +891,13 @@ Nessun metodo nuovo né rimosso. Comportamenti nuovi:
   `:four_by_one` e `:eight_by_one` (e le costanti `NCBLIT_4x1`, `NCBLIT_8x1`) sollevano `ArgumentError` prima del C.
   Una sola tabella, `Util::IMAGE_BLITTERS`, serve `Visual`, `Plane#as_rgba` e `Direct`; `Direct::Args::BLITTERS`
   (privata) è rimossa. `Plot` e i metodi di formato accettano ancora i due blitter (lotto 3).
+- `Reader#offer_input` e `#write`: un carattere di larghezza zero sull'ultima colonna viene scartato e conta come
+  scritto. `prepare!` e il workaround di Backspace/Ctrl+U/Ctrl+W controllano `ncplane_cursor_move_yx`: `offer_input`,
+  `write` e `move_*` possono sollevare `WidgetError` prima della chiamata C (lotto 4).
+- `Reader#write` scrive un EGC di notcurses alla volta (`nccell_load`): un grapheme che notcurses divide occupa più
+  celle; se `nccell_load` fallisce solleva `WidgetError`, con il testo precedente scritto (lotto 4).
+- `Reader#contents` legge la vista con `Plane#contents`: non solleva più `WidgetError` per l'egcpool pieno, può
+  sollevare `PlaneError` se la lettura di una cella fallisce (lotto 4).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 

@@ -133,3 +133,44 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
   coverage 98,19 % righe; CI verde su tutta la matrice.
 - `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
 - `master` su `29f5a41`: 958 esempi, 0 fallimenti.
+
+## Lotto 4 — ICH-273, ICH-274, ICH-275 (PR #5, merge `1f441f3`)
+
+### Fix
+
+- **ICH-273 (larghezza zero sull'ultima colonna).** `put_egc` scarta un EGC con `ncstrwidth == 0` quando il cursore è
+  sull'ultima colonna e restituisce 0 (conta come scritto). Il controllo sta prima della sostituzione TAB → spazio:
+  `ncstrwidth("\t") == 1`, quindi il TAB non cambia. Nuovo metodo privato `move_view_cursor!`: `prepare!` e il
+  workaround di Backspace/Ctrl+U/Ctrl+W sollevano `WidgetError` se `ncplane_cursor_move_yx` fallisce. Anche i
+  `@raise` dei quattro `move_*` lo dicono (passano da `prepare!`). `wrap_backspace` ignora ancora il ritorno: è il
+  codice di ICH-218 e con `x = colonne - 1` non può fallire.
+- **ICH-274 (grapheme divisi).** `write` passa a `put_egc` ogni EGC di notcurses: `nccell_load` su una cella
+  temporanea, rilasciata subito (serve solo la lunghezza). Un ritorno negativo solleva `WidgetError` (fix della
+  review). Un pezzo che taglia un codepoint (U+2028: `nccell_load` restituisce 1 byte) non si usa: il resto del
+  grapheme va al C, che lo rifiuta, come prima.
+- **ICH-275 (egcpool di `contents`).** `contents` fa `to_ptr` e restituisce `@plane.contents`;
+  `ncreader_contents` è esclusa in `coverage_spec.rb` con il motivo `:contents`.
+
+### Review (2 round, Fable e GPT)
+
+- Round 1: MEDIUM (GPT) `nccell_load == -1` ignorato in `write`: il resto del grapheme andava al C, che ne scrive
+  solo il primo EGC (testo perso senza errore; riprodotto con lo stub e con l'egcpool della vista pieno). LOW
+  (Fable) commento falso: `nccell_load` rilascia il contenuto precedente (`pool_blit_direct`, `internal.h:1448`).
+  Corretti in `932ea62`, con la stessa frase sbagliata nel corpo della PR.
+- Round 2: nessun finding. Nota di Fable non adottata: una spec dedicata al TAB sull'ultima colonna (già coperta).
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| Stub `not_to receive` del primo blocco attivo anche nel secondo blocco dello stesso esempio | le aspettative di rspec-mocks valgono per tutto l'esempio | due esempi separati |
+| Comando dei controlli finali in coda per conferma | conteneva un `rm -rf` di `doc`, `.yardoc` e `coverage`, già in `.gitignore` | rilanciato senza `rm` |
+| La sessione è finita due volte nei worktree di review con `/cd` | non chiarito: "Follow work" della mod filetree è spento | l'utente ha riportato la sessione alla root prima della rimozione |
+
+### Verifica finale
+
+- Branch prima della review (`0cf69e1`): 964 esempi, 0 fallimenti, in ordine normale e con i semi 1234, 4242 e 7
+  (Ruby 4.0.7) e su Ruby 3.1.7; coverage 98,29 % righe; YARD 100 %, 0 warning. Dopo il fix della review (`932ea62`):
+  966 esempi, 0 fallimenti in ordine normale (Ruby 4.0.7); CI verde su tutta la matrice (Ruby 3.1.7–4.0.9).
+- `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+- `master` su `1f441f3`: 966 esempi, 0 fallimenti.

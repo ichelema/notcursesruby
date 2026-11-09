@@ -270,6 +270,10 @@ copertura.
 | Backspace a inizio riga sposta solo la copia nascosta, poi abort (`reader.c:265`, `90`) | il wrapper riallinea vista e cursore del terminale |
 | `NCREADER_OPTION_HORSCROLL` con glifi larghi: abort (`reader.c:90`, `222-246`) | opzione non offerta |
 | Cursore, dimensioni o scrolling della vista cambiati dall'esterno: letture fuori dal piano (`reader.c:134-136`) | cursore riallineato prima di ogni operazione, altrimenti `WidgetError` |
+| EGC di larghezza zero sull'ultima colonna: vista e copia nascosta a x == colonne (`reader.c:240-246`, clamp con cols 0); poi ogni scrittura fallisce e Backspace + freccia sinistra fa abort (`reader.c:90`) | scartato in `put_egc`; il ritorno di `ncplane_cursor_move_yx` diventa `WidgetError` (lotto 4, ICH-273) |
+| `ncreader_write_egc` scrive solo il primo EGC della stringa e restituisce 0 (`reader.c:233-238`) | `write` passa i pezzi di `nccell_load` uno alla volta (lotto 4, ICH-274) |
+| `nccell_load` di U+2028 restituisce 1 byte e taglia il codepoint (`utf8_egc_len`, `egcpool.h`) | un pezzo non UTF-8 valido non si usa: il resto del grapheme va al C, che lo rifiuta (lotto 4) |
+| `ncreader_contents` è `ncplane_contents` sulla vista: una copia nell'egcpool per ogni EGC di più di 4 byte a ogni chiamata (`reader.c:413-415`) | `Reader#contents` usa `Plane#contents` (lotto 4, ICH-275) |
 | `ncprogbar_progress` non inizializzato prima del primo set (`progbar.c:18-23`) | 0.0 |
 | NaN supera il controllo di `ncprogbar_set_progress` (`progbar.c:178`) | rifiutato |
 | Con `-freciprocal-math` l'indice del glifo di bordo arriva a 8 per alcuni valori: -1 e barra a metà (`progbar.c:124`) | `p` abbassato di qualche ulp (0 fallimenti su 9922 valori) |
