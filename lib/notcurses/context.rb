@@ -152,6 +152,14 @@ module Notcurses
   # insieme all'input successivo (notcurses blocca SIGWINCH e SIGCONT nel
   # thread interno che esegue l'init, non nei thread del chiamante).
   #
+  # Lo stesso flag toglie anche il gestore di SIGCONT di notcurses: dopo
+  # Ctrl+Z e fg il render non ridisegna tutto lo schermo (il testo scritto
+  # dalla shell resta) e {Key::SIGNAL} non arriva. Il rimedio è un
+  # +trap('CONT')+ che alza solo un flag, poi {#refresh} dal ciclo principale,
+  # mai dentro il trap: notcurses non è rientrante. {UI::EventLoop#run} lo fa
+  # già. Mentre il processo è fermo il terminale resta nel modo di notcurses
+  # (schermo alternativo, tracciamento del mouse).
+  #
   # @example
   #   Notcurses::Context.open do |nc|
   #     plane = nc.stdplane
@@ -211,8 +219,10 @@ module Notcurses
     # @param inhibit_setlocale [Boolean] NCOPTION_INHIBIT_SETLOCALE
     # @param no_clear_bitmaps [Boolean] NCOPTION_NO_CLEAR_BITMAPS
     # @param no_winch_sighandler [Boolean] NCOPTION_NO_WINCH_SIGHANDLER. Default
-    #   true (diverso dal C): vedi "Resize del terminale" nella descrizione
-    #   della classe
+    #   true (diverso dal C). Toglie il gestore di SIGWINCH e anche quello di
+    #   SIGCONT: niente ridisegno completo dopo Ctrl+Z e fg, niente
+    #   {Key::SIGNAL}. Vedi "Resize del terminale" nella descrizione della
+    #   classe
     # @param no_quit_sighandlers [Boolean] NCOPTION_NO_QUIT_SIGHANDLERS. Default
     #   true (diverso dal C). Con false i gestori di notcurses per SIGINT,
     #   SIGTERM, SIGSEGV, ... terminano il processo subito (niente Interrupt,
@@ -696,9 +706,10 @@ module Notcurses
     end
 
     # @return [Boolean] true se notcurses non ha installato il proprio gestore
-    #   di SIGWINCH (no_winch_sighandler: true, il default del wrapper): per
-    #   reagire subito al resize serve +trap('WINCH')+ (vedi "Resize del
-    #   terminale" nella descrizione della classe)
+    #   di SIGWINCH e SIGCONT (no_winch_sighandler: true, il default del
+    #   wrapper): per reagire subito al resize serve +trap('WINCH')+, per
+    #   ridisegnare dopo Ctrl+Z e fg serve +trap('CONT')+ e poi {#refresh} fuori
+    #   dal trap (vedi "Resize del terminale" nella descrizione della classe)
     # @raise [ClosedError] se il contesto è chiuso
     def no_winch_sighandler?
       to_ptr

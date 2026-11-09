@@ -281,7 +281,9 @@ module Notcurses
     BUTTON10       = FFI::NCKEY_BUTTON10
     # Mouse: pulsante 11.
     BUTTON11       = FFI::NCKEY_BUTTON11
-    # Il processo ha ricevuto SIGCONT.
+    # Il processo ha ricevuto SIGCONT. Arriva solo con no_winch_sighandler:
+    # false, insieme all'input successivo: con il default notcurses non ha il
+    # gestore di SIGCONT (vedi {Context#no_winch_sighandler?}).
     SIGNAL         = FFI::NCKEY_SIGNAL
     # Fine dell'input: stdin è chiuso.
     EOF            = FFI::NCKEY_EOF
