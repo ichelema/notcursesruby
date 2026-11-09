@@ -221,22 +221,26 @@ RSpec.describe Notcurses::UI::EventLoop do
       expect(ev).not_to be_running
     end
 
-    it "un'eccezione di un blocco esce da run, che ripristina il trap e chiude il pipe" do
-      mine = proc {}
-      old = Signal.trap('WINCH', mine)
+    it "un'eccezione di un blocco esce da run, che ripristina i trap e chiude il pipe" do
+      mine = { 'WINCH' => proc {}, 'CONT' => proc {} }
+      old = mine.to_h { |sig, handler| [sig, Signal.trap(sig, handler)] }
       ev = new_loop
-      during = nil
+      during = {}
       ev.post do
-        during = Signal.trap('WINCH', 'SYSTEM_DEFAULT')
-        Signal.trap('WINCH', during)
+        mine.each_key do |sig|
+          during[sig] = Signal.trap(sig, 'SYSTEM_DEFAULT')
+          Signal.trap(sig, during[sig])
+        end
         raise ArgumentError, 'boom'
       end
       fds = open_fds
       expect { ev.run }.to raise_error(ArgumentError, 'boom')
       expect(open_fds).to eq(fds)
-      expect(during).to be_a(Proc)
-      expect(during).not_to equal(mine) # durante run il gestore è quello del ciclo
-      expect(Signal.trap('WINCH', old || 'SYSTEM_DEFAULT')).to equal(mine)
+      mine.each do |sig, handler|
+        expect(during[sig]).to be_a(Proc)
+        expect(during[sig]).not_to equal(handler) # durante run il gestore è quello del ciclo
+        expect(Signal.trap(sig, old[sig] || 'SYSTEM_DEFAULT')).to equal(handler)
+      end
       expect(ev).not_to be_running
     end
 
@@ -289,6 +293,17 @@ RSpec.describe Notcurses::UI::EventLoop do
       end
       expect(run_loop(ev)).to eq(:stop)
       expect(sizes).to eq([[30, 100]])
+    end
+
+    it 'SIGCONT sveglia il ciclo, che ridisegna con refresh senza on_resize se le dimensioni non cambiano' do
+      ev = new_loop
+      sizes = []
+      ev.on_resize { |rows, cols| sizes << [rows, cols] }
+      expect(nc).to receive(:refresh).at_least(:once).and_call_original
+      ev.post { Process.kill('CONT', Process.pid) } # quello che manda la shell con fg dopo Ctrl+Z
+      ev.after(0.2) { ev.stop }
+      expect(run_loop(ev)).to eq(:stop)
+      expect(sizes).to be_empty
     end
 
     it 'con il gestore di SIGWINCH di notcurses non installa trap' do

@@ -94,6 +94,16 @@ module Notcurses
     # un render le dimensioni sono cambiate (resize perso), il giro successivo
     # le applica. Gli handler partono solo se le dimensioni cambiano.
     #
+    # Ctrl+Z e fg. Senza il gestore di notcurses manca anche quello di SIGCONT,
+    # che dopo la ripresa ridisegna tutto lo schermo: {#run} installa allora
+    # anche +trap('CONT')+, con le stesse regole di WINCH. Dopo fg il ciclo
+    # chiama {Context#refresh}, che toglie dallo schermo il testo scritto dalla
+    # shell; gli handler di {#on_resize} partono solo se le dimensioni sono
+    # cambiate. Con il gestore di notcurses arriva invece {Key::SIGNAL} a
+    # {#on_input}. Mentre il processo è fermo il terminale resta nel modo di
+    # notcurses (schermo alternativo, tracciamento del mouse): notcurses 3.0.17
+    # non gestisce SIGTSTP.
+    #
     # Un contesto che scarta l'input ({Context#drain_input?}) non viene
     # ascoltato: il ciclo serve solo timer, {#post} e resize.
     #
@@ -138,7 +148,7 @@ module Notcurses
       # dell'input ({Key::EOF}) o a un Interrupt. Per ricevere Ctrl-C come
       # Interrupt (con il default no_quit_sighandlers: true del contesto) il
       # ciclo deve girare nel thread principale. Un'eccezione di un handler
-      # esce da run dopo aver tolto il trap e chiuso il pipe di risveglio. Se
+      # esce da run dopo aver tolto i trap e chiuso il pipe di risveglio. Se
       # un handler chiude il contesto, run esce alla fine del giro.
       #
       # Tasti di controllo. Di default il terminale consuma Ctrl+S e Ctrl+Q
@@ -188,6 +198,8 @@ module Notcurses
           @input = @context.drain_input? ? nil : IO.for_fd(@context.inputready_fd, autoclose: false)
           if @context.no_winch_sighandler?
             @old_winch = Signal.trap('WINCH') { resize_signal }
+            # lo stesso flag toglie anche il gestore di SIGCONT di notcurses: dopo fg serve un refresh
+            @old_cont = Signal.trap('CONT') { resize_signal }
             winch = true
           end
           @reason = :stop
@@ -204,7 +216,10 @@ module Notcurses
           :interrupt
         ensure
           # nil vorrebbe dire IGNORE, che i processi figli erediterebbero
-          Signal.trap('WINCH', @old_winch || 'SYSTEM_DEFAULT') if winch
+          if winch
+            Signal.trap('WINCH', @old_winch || 'SYSTEM_DEFAULT')
+            Signal.trap('CONT', @old_cont || 'SYSTEM_DEFAULT')
+          end
           @wake_w&.close
           @wake_w = nil
           wake_r&.close
@@ -404,7 +419,7 @@ module Notcurses
         schedule(Timer.new(clock + delay, interval, @seq, block))
       end
 
-      # Gestore di trap('WINCH'): solo un flag e un byte sul pipe.
+      # Gestore di trap('WINCH') e trap('CONT'): solo un flag e un byte sul pipe.
       def resize_signal
         @resize_requested = true
         wake
