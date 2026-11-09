@@ -859,7 +859,8 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
   di utilizzo di GPT raggiunto), 3 round più una review singola dopo il loop. Lotto 3: Fable e GPT, 1 round, nessun
   finding. Lotto 4: Fable e GPT, 2 round (round 1: un MEDIUM e un LOW, corretti; round 2: nessun finding). Lotto 5:
   solo Fable (limite di utilizzo di GPT raggiunto, scelta dell'utente), 2 round (round 1: un LOW, corretto; round 2:
-  nessun finding).
+  nessun finding). Lotto 6: `/trinity:workflow:3_independent-review`, un reviewer Fable, 2 round (round 1: un LOW,
+  corretto; round 2, solo sul commit nuovo: nessun finding).
 
 ### Lotti
 
@@ -870,6 +871,7 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 | 3 | [#4](https://github.com/ichelema/notcursesruby/pull/4) | `29f5a41` | ICH-272 | i blitset dei plot `NCBLIT_4x1` e `NCBLIT_8x1` hanno `egcs` NULL (`blit.c:1279`, `1282`): con i quadranti `ncplane_as_rgba` e `ncvisual_from_plane` vanno in SIGSEGV (`notcurses.c:3114`), i blit tagliano l'immagine; tabella "Visual" di `memory/fase2-wrapper-idiomatico.md` |
 | 4 | [#5](https://github.com/ichelema/notcursesruby/pull/5) | `1f441f3` | ICH-273, ICH-274, ICH-275 | `ncreader_write_egc` di un EGC di larghezza zero sull'ultima colonna porta vista e copia nascosta a x == colonne (`reader.c:240-246`, clamp con cols 0); `ncreader_write_egc` scrive solo il primo EGC della stringa e restituisce 0 (`reader.c:233-238`); `ncreader_contents` è `ncplane_contents`, che lascia copie nell'egcpool (`reader.c:413-415`); `nccell_load` di U+2028 restituisce 1 byte e taglia il codepoint; tabella "Widget A" di `memory/fase2-wrapper-idiomatico.md` |
 | 5 | [#6](https://github.com/ichelema/notcursesruby/pull/6) | `119a98f` | ICH-276, ICH-277 | `ncmultiselector_draw` con il piano del widget di 1 riga: `yoff` unsigned contro `dimy - 2` (`selector.c:696`), circa 2^32 giri con il GVL tenuto; tabella "Widget A" di `memory/fase2-wrapper-idiomatico.md` |
+| 6 | [#7](https://github.com/ichelema/notcursesruby/pull/7) | `a55606b` | ICH-278 | nessuno (limite già noto: `NCOPTION_NO_WINCH_SIGHANDLER` toglie anche il gestore di SIGCONT, `unixsig.c:204-211`; notcurses non gestisce SIGTSTP) |
 
 ### Cambi dell'API pubblica
 
@@ -905,6 +907,9 @@ Nessun metodo nuovo né rimosso. Comportamenti nuovi:
   un tablet, di un Tree o di un Tab, callback `resize:`), come gli altri widget; il piano resta aperto (lotto 5).
 - `MultiSelector#offer_input` solleva `WidgetError` prima della chiamata C se il piano del widget ha una sola riga,
   anche per un evento vuoto (lotto 5).
+- `EventLoop#run` (e `UI::App#run`): con `no_winch_sighandler: true` installa anche `trap('CONT')` e lo toglie alla
+  fine, come `trap('WINCH')`; dopo Ctrl+Z e `fg` chiama `Context#refresh`, senza `on_resize` se le dimensioni non
+  cambiano. Il default `no_winch_sighandler: true` non cambia (lotto 6).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 

@@ -230,3 +230,49 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
   3.1.7–4.0.9) su `f3ca7d8`.
 - `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
 - `master` su `119a98f`: 974 esempi, 0 fallimenti.
+
+## Lotto 6 — ICH-278 (PR #7, merge `a55606b`)
+
+### Fix
+
+- **ICH-278 (`nucleo-04` + `ui-04`, ridisegno dopo SIGCONT).** Con `no_winch_sighandler?` true `EventLoop#run`
+  installa `trap('CONT') { resize_signal }` accanto a `trap('WINCH')`, e nell'`ensure` lo ripristina con la stessa
+  regola (`@old_cont || 'SYSTEM_DEFAULT'`). Causa radice: `NCOPTION_NO_WINCH_SIGHANDLER` toglie un solo gestore C,
+  che serve SIGWINCH e SIGCONT (`unixsig.c:204-211`); alla ripresa quel gestore fa fare al render un
+  `notcurses_refresh` (`in.c:30-38`, `render.c:1538-1541`) e accoda `NCKEY_SIGNAL`. Con il default del wrapper
+  nessuno ridisegnava dopo Ctrl+Z e `fg`. Il fix riusa `resize_signal` (flag e byte sul pipe) e
+  `handle_resize(refresh: true)`, che chiama `Context#refresh` e chiama `on_resize` solo se le dimensioni cambiano.
+  Con il gestore di notcurses `run` non installa trap: un trap Ruby sostituirebbe la sua `sigaction`.
+- YARD: sezione "Resize del terminale", `@param no_winch_sighandler` e `no_winch_sighandler?` di `Context`,
+  `Key::SIGNAL`, nuovo paragrafo "Ctrl+Z e fg" di `EventLoop`. Il default `no_winch_sighandler: true` non cambia.
+
+### Decisioni
+
+- Nessuna spec per "`Key::SIGNAL` arriva a `on_input` con `no_winch_sighandler: false`" (requisito 4): serve un
+  contesto reale con quel flag. Controllato con uno script: `on_input` riceve `["SIGNAL", "x"]`.
+- Review con `/trinity:workflow:3_independent-review` (un reviewer), non con il loop: GPT rispondeva di nuovo, ma il
+  fix era piccolo.
+
+### Review (2 round, Fable)
+
+- Round 1 (`d79759b`): APPROVABILE, un LOW: il `@param no_winch_sighandler` dava il rimedio solo per rimando alla
+  sezione di classe. Corretto in `45dd517`. Il reviewer ha eseguito le spec nuove su una copia di `lib/` con il
+  vecchio `event_loop.rb`: 2 fallimenti, come vuole la regola 11.
+- Round 2 (`45dd517`, solo la differenza): APPROVABILE, nessun finding.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| Script di controllo del requisito 4: `SIGNAL` non arrivava | lo script leggeva il gestore con `Signal.trap('CONT', 'SYSTEM_DEFAULT')`, che sostituisce la `sigaction` di notcurses | script senza lettura dei trap; l'assenza di trap è già coperta dalla spec `expect(Signal).not_to receive(:trap)` |
+| Suite della review con 2 fallimenti falsi | `rspec` con cwd nel worktree principale mette il suo `lib/` nel load path prima di `-I` e carica il codice vecchio | `rspec` con cwd neutro (`env -C /`) o nel worktree di review |
+| `git worktree remove` rifiutato | il worktree contiene il submodule `notcurses` | `--force` con `git status` vuoto (decisione già presa) |
+
+### Verifica finale
+
+- Branch (`45dd517`): 975 esempi, 0 fallimenti, in ordine normale e con il seme 1234 (Ruby 4.0.7); coverage
+  98,29 % righe; YARD 100 %, 0 warning; `ruby -w` senza warning. CI verde su tutta la matrice (Ruby 3.1.7–4.0.9).
+  Semi 4242 e 7 e Ruby 3.1.7 in locale: non eseguiti (Ruby 3.1.7 coperto dalla CI).
+- Riproduzione della issue: `EventLoop: refreshes after SIGCONT=1`, le due righe di `Context` invariate.
+- `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+- `master` su `a55606b`: 975 esempi, 0 fallimenti.
