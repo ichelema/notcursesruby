@@ -60,13 +60,15 @@ module Notcurses
     # @raise [TypeError] se un argomento ha il tipo sbagliato
     # @raise [WidgetError] se il piano ha meno di 2 righe (piano intatto), se
     #   il piano non si può dare al widget (stdplane, piano di un widget o con
-    #   un widget fra i discendenti, piano preso in prestito) o se
+    #   un widget fra i discendenti, piano preso in prestito); dentro un
+    #   callback chiamato da notcurses (piano intatto); se
     #   +nctabbed_create+ fallisce (in quel caso notcurses ha distrutto il
     #   piano e i suoi discendenti)
     # @raise [ClosedError] se il piano è chiuso
     def initialize(plane, selected_channels: 0, header_channels: 0, separator_channels: 0, separator: nil,
                    bottom: false)
       claim_plane!(plane)
+      plane.context.check_not_in_callback!('Tabbed.new', WidgetError)
       raise WidgetError, "il piano del Tabbed deve avere almeno 2 righe (ne ha #{plane.dim_y})" if plane.dim_y < 2
 
       opts = FFI::NcTabbedOptions.new

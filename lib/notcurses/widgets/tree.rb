@@ -33,9 +33,10 @@ module Notcurses
   # finale del suo contenuto. Una voce spinta fuori dallo schermo riceve plane
   # nil (notcurses ha appena distrutto il suo piano) e il ritorno non conta.
   # Il piano vale solo durante il blocco. Dentro il blocco non si possono
-  # chiamare i metodi dell'albero né distruggere piani (WidgetError). break,
-  # return e throw non possono uscire dal blocco attraverso il C: diventano
-  # una LocalJumpError, che esce come un'eccezione del blocco.
+  # chiamare i metodi dell'albero, creare widget né distruggere piani
+  # (WidgetError). break, return e throw non possono uscire dal blocco
+  # attraverso il C: diventano una LocalJumpError, che esce come
+  # un'eccezione del blocco.
   #
   # Ridisegno: come in notcurses, disegnano solo {#initialize} e {#redraw};
   # gli altri metodi cambiano lo stato e lasciano il ridisegno al chiamante.
@@ -93,8 +94,9 @@ module Notcurses
     # @raise [TypeError] se plane non è un Plane, le voci non sono Array/Hash o
     #   draw: non risponde a call
     # @raise [WidgetError] se il piano non si può dare all'albero (stdplane,
-    #   piano di un widget, piano preso in prestito) o se +nctree_create+
-    #   fallisce (in quel caso notcurses ha distrutto il piano)
+    #   piano di un widget, piano preso in prestito); dentro un callback
+    #   chiamato da notcurses (piano intatto); se +nctree_create+ fallisce (in
+    #   quel caso notcurses ha distrutto il piano)
     # @raise [Exception] l'eccezione del blocco durante il primo disegno: in
     #   quel caso l'albero viene distrutto, con il piano
     # @raise [ClosedError] se il piano è chiuso
@@ -106,6 +108,7 @@ module Notcurses
       raise TypeError, "draw: deve rispondere a call, non #{draw.class}" unless draw.respond_to?(:call)
 
       claim_plane!(plane)
+      plane.context.check_not_in_callback!('Tree.new', WidgetError)
       Util.integer!(indent, 'indent', Util::NONNEG_INT)
       @context = plane.context
       @tree_plane = plane

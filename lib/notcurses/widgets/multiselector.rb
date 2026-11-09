@@ -12,6 +12,8 @@ module Notcurses
   # ridimensiona alle righe e colonne che servono, lo ridisegna a ogni
   # cambiamento e lo distrugge alla chiusura (i figli del piano passano al suo
   # genitore). I metodi ridisegnano senza fare render: chiama {Context#render}.
+  # Il piano deve mantenere almeno 2 righe: con una sola riga il disegno del
+  # C non finisce (vedi {#offer_input}).
   # Caselle, frecce e bordi sono disegnati in UTF-8 anche su un terminale che
   # non lo supporta (3.0.17).
   #
@@ -125,11 +127,16 @@ module Notcurses
     # @return [Boolean] true se il widget ha consumato l'evento; false anche
     #   per un evento vuoto (id 0 o 0xffffffff)
     # @raise [TypeError] se input non è un Input
-    # @raise [WidgetError] se la lettura dello stato fallisce
+    # @raise [WidgetError] se il piano del widget ha una sola riga, prima
+    #   della chiamata C: in 3.0.17 il ciclo del disegno confronta un unsigned
+    #   con righe - 2 e gira circa 2^32 volte (selector.c:696); se la lettura
+    #   dello stato fallisce
     # @raise [ClosedError] se il widget è chiuso
     def offer_input(input)
       ptr = to_ptr
       ni = input_struct(input)
+      rows = FFI.ncplane_dim_y(FFI.ncmultiselector_plane(ptr))
+      raise WidgetError, "il piano del MultiSelector deve avere almeno 2 righe (ne ha #{rows})" if rows < 2
       return false if ni.nil?
 
       toggle = input.id == 0x20 && !input.release? # il C commuta con ' ', qualunque modificatore

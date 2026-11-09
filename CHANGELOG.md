@@ -37,6 +37,12 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 - `Reader#contents` legge la vista con `Plane#contents`: `ncreader_contents` lasciava nell'egcpool della vista una
   copia di ogni EGC lungo a ogni chiamata, e dopo qualche decina di migliaia di letture `contents` sollevava
   `WidgetError`. Ora può sollevare `PlaneError` se la lettura di una cella fallisce (ICH-275).
+- `Tree.new`, `Tabbed.new` e `Reel.new` sollevano `WidgetError` dentro un callback chiamato da notcurses, come gli
+  altri widget, e lasciano il piano aperto: prima il blocco di un tablet poteva creare il widget su un figlio del
+  piano del tablet, il reel distruggeva quel piano nello stesso ridisegno e la chiusura liberava i piani una seconda
+  volta (abort) o lasciava il `Tabbed` su piani liberati (SIGSEGV, `ClosedError` in `Context#close`) (ICH-276).
+- `MultiSelector#offer_input` solleva `WidgetError` prima della chiamata C se il piano del widget ha una sola riga:
+  prima il disegno di notcurses girava circa 2^32 volte tenendo il GVL e il processo si bloccava (ICH-277).
 
 ## [0.1.0] - 2026-10-27
 

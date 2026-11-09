@@ -2,6 +2,8 @@
 # Source: notcurses/include/notcurses/notcurses.h
 # frozen_string_literal: true
 
+require 'open3'
+require 'rbconfig'
 require_relative '../support/nc_helpers'
 
 RSpec.describe Notcurses::MultiSelector do
@@ -172,6 +174,42 @@ RSpec.describe Notcurses::MultiSelector do
       expect { parent.resize(4, 4) }.to raise_error(Notcurses::WidgetError, /callback/)
       parent.family_destroy
       target.close
+    end
+
+    it 'offer_input con il piano di una riga solleva WidgetError senza chiamare il C' do
+      ms = described_class.new(new_plane, items: %w[a b c])
+      ms.plane.resize(1, ms.plane.dim_x)
+      expect(Notcurses::FFI).not_to receive(:ncmultiselector_offer_input)
+      expect { ms.offer_input(ev(key::DOWN)) }.to raise_error(Notcurses::WidgetError, /2 righe/)
+      expect { ms.offer_input(space) }.to raise_error(Notcurses::WidgetError, /2 righe/)
+      expect(ms.selected).to eq([false, false, false])
+      ms.close
+    end
+
+    it 'offer_input con il piano di una riga non blocca il processo (prima: circa 2^32 giri nel C)' do
+      script = <<~'RUBY'
+        require 'notcurses'
+        $stdout.sync = true
+        ev = ->(id) { Notcurses::Input.synthesize(id) }
+        Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true) do |nc|
+          ms = Notcurses::MultiSelector.new(nc.stdplane.create_child(rows: 1, cols: 1), items: %w[a b c])
+          ms.plane.resize(1, ms.plane.dim_x)
+          begin
+            ms.offer_input(ev.(Notcurses::Key::DOWN))
+          rescue Notcurses::WidgetError
+            puts 'WidgetError'
+          end
+          ms.plane.resize(2, ms.plane.dim_x)
+          down = ms.offer_input(ev.(Notcurses::Key::DOWN))
+          ms.offer_input(ev.(' '.ord))
+          puts(down == true && ms.selected == [false, true, false] ? 'ok' : "down=#{down} #{ms.selected}")
+          ms.close
+        end
+      RUBY
+      lib = File.expand_path('../../lib', __dir__)
+      out, status = Open3.capture2e({ 'TERM' => 'xterm-256color' }, 'timeout', '-k', '5', '-s', 'KILL', '30',
+                                    RbConfig.ruby, '-I', lib, '-e', script, stdin_data: '')
+      expect([status.exitstatus, out]).to eq([0, "WidgetError\nok\n"])
     end
   end
 

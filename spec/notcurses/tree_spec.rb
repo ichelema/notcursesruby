@@ -146,6 +146,17 @@ RSpec.describe Notcurses::Tree do
       expect(nc.callback_errors).to be_empty
       tree.close
     end
+
+    it 'non si crea dentro un callback chiamato da notcurses' do
+      parent = std.create_child(rows: 3, cols: 3)
+      target = new_plane
+      parent.create_child(rows: 1, cols: 1, resize: ->(_p) { described_class.new(target, items: ['x']) { 1 } })
+      expect { parent.resize(4, 4) }.to raise_error(Notcurses::WidgetError, /callback/)
+      expect(target).not_to be_closed
+      expect(target).not_to be_widget_plane
+      parent.family_destroy
+      target.close
+    end
   end
 
   describe 'navigazione' do
@@ -393,6 +404,33 @@ RSpec.describe Notcurses::Tree do
       expect(other).not_to be_closed
       tree.close
       other.close
+    end
+
+    it 'dentro il blocco Tree.new, Tabbed.new e Reel.new sollevano WidgetError' do
+      targets = Array.new(3) { new_plane }
+      makers = [->(pl) { described_class.new(pl, items: ['x']) { 1 } }, ->(pl) { Notcurses::Tabbed.new(pl) },
+                ->(pl) { Notcurses::Reel.new(pl) }]
+      errors = []
+      tree = nil
+      tree = new_tree do |plane, value, _distance|
+        if tree && value == 'a'
+          makers.zip(targets).each do |make, target|
+            make.call(target)
+          rescue Notcurses::WidgetError => e
+            errors << e.message
+          end
+        end
+        plane&.putstr(value, y: 0, x: 0)
+        1
+      end
+      tree.redraw
+      expect(errors).to eq(%w[Tree Tabbed Reel].map { |w| "#{w}.new non è permesso dentro un callback chiamato da notcurses" })
+      targets.each do |target|
+        expect(target).not_to be_closed
+        expect(target).not_to be_widget_plane
+      end
+      tree.close
+      targets.each(&:close)
     end
   end
 
