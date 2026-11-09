@@ -221,8 +221,10 @@ module Notcurses
     # @param no_winch_sighandler [Boolean] NCOPTION_NO_WINCH_SIGHANDLER. Default
     #   true (diverso dal C). Toglie il gestore di SIGWINCH e anche quello di
     #   SIGCONT: niente ridisegno completo dopo Ctrl+Z e fg, niente
-    #   {Key::SIGNAL}. Vedi "Resize del terminale" nella descrizione della
-    #   classe
+    #   {Key::SIGNAL}. Rimedio: un +trap('CONT')+ che alza solo un flag, poi
+    #   {#refresh} dal ciclo principale, mai dentro il trap (lo fa già
+    #   {UI::EventLoop#run}). Vedi "Resize del terminale" nella descrizione
+    #   della classe
     # @param no_quit_sighandlers [Boolean] NCOPTION_NO_QUIT_SIGHANDLERS. Default
     #   true (diverso dal C). Con false i gestori di notcurses per SIGINT,
     #   SIGTERM, SIGSEGV, ... terminano il processo subito (niente Interrupt,
