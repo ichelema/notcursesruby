@@ -43,6 +43,11 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   volta (abort) o lasciava il `Tabbed` su piani liberati (SIGSEGV, `ClosedError` in `Context#close`) (ICH-276).
 - `MultiSelector#offer_input` solleva `WidgetError` prima della chiamata C se il piano del widget ha una sola riga:
   prima il disegno di notcurses girava circa 2^32 volte tenendo il GVL e il processo si bloccava (ICH-277).
+- `EventLoop#run` (e quindi `UI::App`) ridisegna lo schermo dopo Ctrl+Z e `fg`: con il default
+  `no_winch_sighandler: true` installa anche `trap('CONT')` e chiama `Context#refresh`, senza `on_resize` se le
+  dimensioni non cambiano; prima il testo scritto dalla shell restava sullo schermo fino al resize successivo. Il
+  YARD di `Context` e di `Key::SIGNAL` ora dice che quel flag toglie anche il gestore di SIGCONT di notcurses
+  (ICH-278).
 
 ## [0.1.0] - 2026-10-27
 
