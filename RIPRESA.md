@@ -4,6 +4,59 @@
 > prompt». Scritto il 2026-11-06, con il repository su `ab75226`, dopo la revisione completa del codice. La
 > sessione corregge i difetti trovati dalla revisione, un lotto di issue Linear alla volta.
 
+## Stato e prossimo step (aggiornato il 2026-11-09, dopo il lotto 5)
+
+Questa sezione prevale sul resto del file quando i dati sono in conflitto.
+
+**Stato.** I lotti 1–5 sono chiusi. Lotto 5: PR #6, merge `119a98f`, ICH-276 e ICH-277 a Done. `master` è su
+`b14b015`; suite: 974 esempi, 0 fallimenti. Leggi in `RICONSEGNA.md` la sezione "Correzioni della revisione del
+2026-11-06" e il log `memory/correzioni-review.md` (lotti 1–5). Restano aperte in Backlog, fuori dai lotti: ICH-441
+(`Process.daemon`), ICH-448 (stato del controllo dei bordi per wrapper `Plane`), ICH-449 (double free dopo
+`merge_down` + `Plane#at`), ICH-450 (`polyfill`, `gradient` ed `erase_region` su metà di un glifo largo).
+
+**Decisioni già prese, da non richiedere:**
+
+- modello `opus` per i comandi del workflow;
+- issue correlate ICH-214…ICH-232 fuori dai lotti;
+- lotto 17 da decidere dopo il lotto 16;
+- correzioni della CI nella PR del lotto, quando servono; status di Codecov informativi (`codecov.yml`);
+- `git worktree remove --force` approvato per tutti i lotti, quando l'unica differenza è il submodule `notcurses` e
+  `git status` è vuoto;
+- nelle PR nessuna magic word (neanche `Refs`) verso issue fuori dal lotto;
+- dopo il merge, il branch remoto del lotto si elimina.
+
+**Da fare per primo:**
+
+1. Recall in Hindsight, bank `notcursesruby`: decisioni e cause radice dei lotti 1–5 sono salvate (retain del lotto 5:
+   operazione `b4e6dabd`).
+2. Fai le verifiche di "Prima di iniziare", passi 1–5 (suite attesa: 974 esempi, 0 fallimenti). Salta il passo 6.
+3. Controlla il proxy LiteLLM con `curl -sS -m 10 http://127.0.0.1:4000/health/liveliness`. Controlla anche il
+   limite di utilizzo del modello GPT: nel lotto 5 il proxy rispondeva, ma il modello restituiva
+   `usage_limit_reached` e la review GPT finiva senza report. Se uno dei due controlli fallisce, dillo all'utente
+   prima di iniziare: nei lotti 2 e 5 l'utente ha scelto di proseguire con il solo Fable, ma la scelta va chiesta
+   ogni volta.
+   ```sh
+   curl -sS -m 60 http://127.0.0.1:4000/v1/chat/completions -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+     -H 'Content-Type: application/json' \
+     -d '{"model":"claude-gpt-5-6-sol-xhigh","max_tokens":20,"messages":[{"role":"user","content":"ok"}]}'
+   ```
+4. Prepara il lotto 6 (ICH-278, `nucleo-04+ui-04`, media: "Redraw the screen after SIGCONT in EventLoop and
+   document the lost SIGCONT handler"): leggi la issue da Linear e di' all'utente il comando da lanciare,
+   `/trinity:workflow:1_create-worktree master ICH-278 opus`. ICH-278 non è tra le scelte aperte della regola 14.
+
+**Note:**
+
+- I comandi `/trinity:workflow:*` li lancia l'utente.
+- Ogni fix ha una voce nella sezione "Corretto" di `[Non rilasciato]` in `CHANGELOG.md`, nel commit del fix o in un
+  commit `docs(changelog)` del lotto. Nel lotto 5 mancava ed è stato il finding del round 1.
+- Podman e Ruby 3.1.7 (mise) sono installati. Su Ruby 3.1.7 usa `bundle _2.3.27_` con il `Gemfile` copiato fuori
+  dal progetto (`BUNDLE_GEMFILE`), perché è installato anche Bundler 4.0.22.
+- Nei worktree serve `git submodule update --init --depth 1 notcurses` prima della suite.
+- La funzione "Follow work" della mod filetree è spenta (`/config`), ma nel lotto 4 la sessione è finita lo stesso
+  due volte nei worktree di review: se la sessione si trova dentro un worktree, dillo all'utente prima di rimuoverlo.
+- Nei comandi non mettere `rm` né `rm -rf` (`doc`, `.yardoc` e `coverage` sono già in `.gitignore`): un comando con
+  `rm` va in coda per la conferma dell'utente. Per `gem build` usa `--output` con un file nello scratchpad.
+
 ## Contesto
 
 - **Progetto:** binding Ruby completo per notcurses 3.0.17. Repository **privato**
