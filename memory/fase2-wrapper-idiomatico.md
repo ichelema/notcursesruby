@@ -260,6 +260,7 @@ copertura.
 | `desc` NULL nel multiselector: segfault (`selector.c:942`, `951`) | `nil` diventa `""` |
 | Multiselector con 0 voci: segfault sullo spazio (`selector.c:818`) | `ArgumentError` |
 | Genitore troppo piccolo: il C distrugge il piano del selettore (`selector.c:865-880`) | controllo prima, `WidgetError`, piano intatto |
+| Piano del multiselector di 1 riga: `ncmultiselector_draw` confronta `yoff` unsigned con `dimy - 2` (`selector.c:696`) e gira circa 2^32 volte, con il GVL tenuto | `offer_input` legge le righe a ogni chiamata e sotto 2 solleva `WidgetError` prima del C (lotto 5, ICH-277) |
 | Scorciatoia di una voce di menu da U+0800: scrittura oltre il buffer; da U+10000: abort (`menu.c:103-124`) | rifiutata |
 | `ncmenu_item_set_status`: `strcmp` su NULL (divisori, separatori), logica invertita (`menu.c:788-791`) | rifiuto, e doppia chiamata solo quando lo stato cambia |
 | `ncmenu_nextitem`/`previtem` leggono `sections[-1]` se la sezione 0 non si apre (`menu.c:599`, `620`) | il wrapper apre prima un'altra sezione |

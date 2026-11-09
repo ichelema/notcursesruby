@@ -174,3 +174,59 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
   966 esempi, 0 fallimenti in ordine normale (Ruby 4.0.7); CI verde su tutta la matrice (Ruby 3.1.7–4.0.9).
 - `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
 - `master` su `1f441f3`: 966 esempi, 0 fallimenti.
+
+## Lotto 5 — ICH-276, ICH-277 (PR #6, merge `119a98f`)
+
+### Fix
+
+- **ICH-276 (widget creati dentro i callback).** `Tree.new`, `Tabbed.new` e `Reel.new` chiamano
+  `check_not_in_callback!('<Classe>.new', WidgetError)` subito dopo `claim_plane!`, come gli altri sei widget. Causa
+  radice: il blocco di un tablet gira in `callback_scope`, e `check_hosted_widgets!` controlla i widget ospitati solo
+  all'inizio di `layout!`; nello stesso ridisegno il reel distrugge il piano dati (blocco che restituisce 0) o i piani
+  dei tablet (`ensure` dopo un'eccezione). Il widget restava aperto su piani liberati: `nctree_destroy` e
+  `Reel#close` li liberavano una seconda volta (SIGABRT), il `nctabbed` restava allocato (`free_plane` azzera
+  `p->widget` prima del distruttore, `notcurses.c:482-489`). L'alternativa del report (controllare prima di ogni
+  `destroy_family`) non serve. YARD di classe di `Tree` e `Reel`: il blocco non può creare widget.
+- **ICH-277 (MultiSelector di 1 riga).** `offer_input` legge `ncplane_dim_y` del piano del widget a ogni chiamata e
+  sotto 2 righe solleva `WidgetError` prima del C. Causa radice: `ncmultiselector_draw` confronta `yoff` unsigned con
+  `dimy - 2` (`selector.c:696`): con 1 riga circa 2^32 giri, con il GVL tenuto. Il controllo sta dopo il `TypeError`
+  dell'input e prima del ritorno `false` per un evento vuoto.
+
+### Decisioni
+
+- ICH-277 (regola 14): soglia di 2 righe, l'aritmetica del C, e non il minimo di `check_room!` (5 o 7 righe).
+  L'utente ha chiesto la soluzione migliore; una prova con 2, 3 e 4 righe, da 1 a 8 colonne, con e senza `title:`
+  non ha trovato blocchi né risultati sbagliati. `check_room!` misura il genitore solo per la creazione
+  (`selector.c:865-880`).
+- Spec in più rispetto ai *Required tests*: creazione dei tre widget nel blocco di disegno di un Tree e nel blocco
+  di un Tab (terzo acceptance criterion di ICH-276), e uno stub `not_to receive(:ncmultiselector_offer_input)` per
+  ICH-277.
+
+### Review (2 round, solo Fable)
+
+- La review GPT non ha mai girato: il modello GPT dietro il proxy LiteLLM restituiva `usage_limit_reached` (piano
+  plus, azzeramento dopo circa 70 minuti). Il subagente finiva senza report (122 token). L'utente ha scelto di
+  proseguire con il solo Fable, come nel lotto 2.
+- Round 1: LOW (Fable) mancavano le voci di `CHANGELOG.md` per ICH-276 e ICH-277. Corretto in `f3ca7d8`. Scartate
+  come preferenze: `plane.dim_y` al posto di `FFI.ncplane_dim_y(FFI.ncmultiselector_plane(ptr))`; il controllo prima
+  del ritorno `false` per un evento vuoto (voluto).
+- Round 2: nessun finding. Fable ha tolto le guardie in una copia di `lib/`: le spec nuove falliscono, lo script di
+  ICH-276 esce con 134 e il caso di ICH-277 con 137.
+- Nota di Fable, preesistente e fuori lotto: se il blocco di un tablet solleva, il tablet resta nel reel e il blocco
+  gira di nuovo al ridisegno successivo.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| Review GPT ferma senza report, anche rilanciata | limite di utilizzo del modello GPT (`usage_limit_reached`, visto con una richiesta diretta al proxy) | solo Fable, scelta dell'utente |
+| Comando dei controlli in coda per conferma, poi scaduto | conteneva `rm -f` del file `.gem` | `gem build --output` nello scratchpad, senza `rm` |
+| Spec nel processo figlio ferma al primo widget | `expect` dentro il ciclo | esiti dei tre widget raccolti e confrontati insieme |
+
+### Verifica finale
+
+- Branch prima della review (`f6de8dd`): 974 esempi, 0 fallimenti, in ordine normale e con i semi 1234, 4242 e 7
+  (Ruby 4.0.7) e su Ruby 3.1.7; coverage 98,29 % righe; YARD 100 %, 0 warning. CI verde su tutta la matrice (Ruby
+  3.1.7–4.0.9) su `f3ca7d8`.
+- `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+- `master` su `119a98f`: 974 esempi, 0 fallimenti.
