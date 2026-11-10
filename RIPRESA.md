@@ -9,7 +9,7 @@
 Questa sezione prevale sul resto del file quando i dati sono in conflitto.
 
 **Stato.** I lotti 1–7 sono chiusi. Lotto 7: PR #8, merge `29748c8`, ICH-279, ICH-280 e ICH-281 a Done. `master`
-è su `0e1a272`; suite: 982 esempi, 0 fallimenti. Leggi in `RICONSEGNA.md` la sezione "Correzioni della revisione
+è su `a0dc61c` (commit docs del lotto 7); suite: 982 esempi, 0 fallimenti. Leggi in `RICONSEGNA.md` la sezione "Correzioni della revisione
 del 2026-11-06" e il log `memory/correzioni-review.md` (lotti 1–7). Restano aperte in Backlog, fuori dai lotti:
 ICH-441 (`Process.daemon`), ICH-448 (stato del controllo dei bordi per wrapper `Plane`), ICH-449 (double free dopo
 `merge_down` + `Plane#at`), ICH-450 (`polyfill`, `gradient` ed `erase_region` su metà di un glifo largo), ICH-454
@@ -46,6 +46,17 @@ successivo), ICH-456 (segnale anche per ripetizione e rilascio del Ctrl+C di kit
    `/trinity:workflow:1_create-worktree master ICH-282 ICH-283 opus`. ICH-283 è tra le scelte aperte della regola
    14: in `2_work-issue`, prima del fix, presenta all'utente la soluzione della issue e l'alternativa, e aspetta la
    scelta.
+5. Segui la "Procedura per ogni lotto": l'utente lancia `1_create-worktree`, `2_work-issue`, `4_review-fix-loop`,
+   il merge e `5_remove-worktree`. Dopo il merge chiudi il lotto così:
+   1. `git pull` su `master` e suite completa;
+   2. riga del lotto nella tabella "Lotti" di `RICONSEGNA.md`, più le altre parti della sezione "Correzioni della
+      revisione del 2026-11-06" che il lotto cambia (review, cambi dell'API, issue aperte nate dai lotti);
+   3. log del lotto in `memory/correzioni-review.md` (Fix, Decisioni, Review, Problemi e soluzioni, Verifica
+      finale), con lo stesso formato dei lotti precedenti;
+   4. commit `docs(riconsegna): lotto <n> ... [skip ci]` dei due file;
+   5. retain in Hindsight, bank `notcursesruby`, con cause radice e decisioni, e operazione al passo 1;
+   6. aggiorna questa sezione (stato, passi 1–4 per il lotto successivo) e committala con
+      `docs(ripresa): stato dopo il lotto <n>, prossimo step lotto <n+1> (...) [skip ci]`; poi `git push`.
 
 **Note:**
 
@@ -63,7 +74,8 @@ successivo), ICH-456 (segnale anche per ripetizione e rilascio del Ctrl+C di kit
   `rm` va in coda per la conferma dell'utente. Per `gem build` usa `--output` con un file nello scratchpad.
 - Nei prompt dei reviewer di `4_review-fix-loop` vieta il codice che manda segnali al process group
   (`Process.kill(sig, 0)`, pid negativi), anche nei mutation test: nel lotto 7 un reviewer ne aveva messo in coda uno.
-- Su Ruby 3.1.7 basta `mise exec ruby@3.1.7 -- rspec` dalla radice del worktree, senza `bundle` (lotto 7).
+- In alternativa a `bundle _2.3.27_`, su Ruby 3.1.7 basta `mise exec ruby@3.1.7 -- rspec` dalla radice del
+  worktree, senza `bundle` (lotto 7: 982 esempi, 0 fallimenti).
 
 ## Contesto
 
