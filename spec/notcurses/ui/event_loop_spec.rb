@@ -356,7 +356,9 @@ RSpec.describe Notcurses::UI::EventLoop do
       ev.dispatch(syn('X'.ord, modifiers: [:ctrl])) # kitty "\e[120;5u" e il byte "\x18": id ed eff_text "X"
       ev.dispatch(syn('!'.ord)) # terminale classico
       ev.dispatch(syn('1'.ord))
-      expect(log).to eq(%i[bang ctrl_x bang one])
+      ev.on_input { |input| log << [:input, input.id] }
+      expect(ev.dispatch(syn(Notcurses::Key::UP))).to be(false) # eff_text vuoto: vale id
+      expect(log).to eq([:bang, :ctrl_x, :bang, :one, [:input, Notcurses::Key::UP]])
     end
   end
 

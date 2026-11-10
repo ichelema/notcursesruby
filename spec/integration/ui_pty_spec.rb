@@ -288,6 +288,8 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
       ev = Notcurses::UI::EventLoop.new(nc)
       seen = []
       ev.on_key('c', ctrl: true) { |input| seen << input.modifier_list }
+      evtypes = []
+      ev.on_input { |input| evtypes << input.evtype } # :press per un byte solo se kitty è acceso (in.c:501)
       quits = 0
       Signal.trap('QUIT') { quits += 1 }
       session = lambda do |name, keys, **opts|
@@ -309,7 +311,8 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
       session.('ripetizione e rilascio', "\e[99;133:2u\e[99;133:3u")
       session.('ctrl+\\ con numlock', "\e[92;133u")
       session.('no_linesigs', "\e[99;133u", no_linesigs: true)
-      puts "kitty #{kitty.()} quits #{quits}"
+      session.('tasto classico', 'a')
+      puts "kitty #{kitty.()} quits #{quits} evtypes #{evtypes.inspect}"
     end
     puts 'fine'
   RUBY
@@ -377,7 +380,7 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(out).to include("ripetizione e rilascio: stop []\n")
     expect(out).to include("ctrl+\\ con numlock: stop []\n")
     expect(out).to include("no_linesigs: stop [[:ctrl, :numlock]]\n")
-    expect(out).to include('kitty true quits 1')
+    expect(out).to include('kitty true quits 1 evtypes [:press]') # :press: notcurses ha acceso il protocollo
     expect(out).to end_with("fine\n")
   end
 end
