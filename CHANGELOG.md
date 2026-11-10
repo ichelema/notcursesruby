@@ -54,9 +54,9 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   di `on_key` il limite di Alt o Ctrl con Shift e un simbolo (ICH-279).
 - `EventLoop#run` (e quindi `UI::App`) esce con `:interrupt` anche per il Ctrl+C di kitty con CapsLock o NumLock
   attivi, e alza SIGSTOP e SIGQUIT per Ctrl+Z e Ctrl+\: prima notcurses consegnava il tasto e il ciclo andava
-  avanti. Con ISIG attivo questi tasti di kitty non arrivano più a componenti, `on_key` e `on_input`, nemmeno
-  l'evento che notcurses mette in coda per il Ctrl+C senza blocchi; i byte dei terminali classici restano tasti
-  (ICH-280).
+  avanti. Con ISIG attivo questi tasti di kitty, e il Ctrl+C di xterm con modifyOtherKeys, non arrivano più a
+  componenti, `on_key` e `on_input`, nemmeno l'evento che notcurses mette in coda per il Ctrl+C senza blocchi; i
+  byte di controllo (0x03 da una pipe o con intr rimappato) restano tasti, anche con kitty (ICH-280).
 - `UI::TextInput` scorre il testo anche per il grapheme sotto il cursore: un glifo largo dopo il cursore
   nell'ultima colonna restava tagliato, e Canc cancellava un carattere non visibile (ICH-281).
 

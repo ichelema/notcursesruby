@@ -173,9 +173,10 @@ module Notcurses
       # da solo. Kitty aggiunge CapsLock e NumLock ai modificatori: con ISIG
       # attivo run alza allora lo stesso segnale (SIGINT, SIGSTOP, SIGQUIT) al
       # proprio processo alla pressione, e non consegna questi tasti (con o senza
-      # CapsLock e NumLock, nemmeno ripetizioni e rilasci). I byte dei terminali
-      # classici (0x03 con intr rimappato, input da una pipe) arrivano invece
-      # come tasti. run legge ISIG solo all'avvio: {Context#linesigs_disable} o
+      # CapsLock e NumLock, nemmeno ripetizioni e rilasci). Lo stesso vale per
+      # il Ctrl+C di xterm con modifyOtherKeys ("\e[27;5;99~"). I byte di
+      # controllo (0x03 con intr rimappato, input da una pipe) arrivano invece
+      # come tasti, anche con kitty. run legge ISIG solo all'avvio: {Context#linesigs_disable} o
       # stty durante run non cambiano la scelta; per i tasti serve no_linesigs.
       #
       # @param no_flow_control [Boolean] disattiva IXON durante run
@@ -603,12 +604,13 @@ module Notcurses
 
       # notcurses 3.0.17 alza il segnale solo con Ctrl da solo (in.c:506): con
       # CapsLock o NumLock (protocollo kitty) lo alza il ciclo. Con ISIG attivo
-      # questi tasti non vengono consegnati. Un byte classico (evtype :unknown)
-      # non è un segnale: notcurses controlla Ctrl prima di trasformare 0x03 in 'C'.
+      # questi tasti non vengono consegnati. Un byte classico non è un segnale:
+      # notcurses controlla Ctrl prima di trasformare 0x03 in 'C' (in.c:539), e
+      # il campo ctrl della struct resta falso (anche con kitty, che lo fa :press).
       # @return [Boolean] true se l'evento è un tasto di segnale
       def line_signal(input)
         signal = LINE_SIGNALS[input.id]
-        return false unless @line_signals && signal && input.evtype != :unknown
+        return false unless @line_signals && signal && input.ctrl_field?
         return false unless (input.modifiers & ~MOD_LOCKS) == MOD_CTRL
 
         # raise() come notcurses: pid 0 colpirebbe anche il gruppo (i figli di Subprocess)

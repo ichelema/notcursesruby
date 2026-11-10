@@ -311,6 +311,11 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
       session.('ripetizione e rilascio', "\e[99;133:2u\e[99;133:3u")
       session.('ctrl+\\ con numlock', "\e[92;133u")
       session.('no_linesigs', "\e[99;133u", no_linesigs: true)
+      session.('xterm modifyOtherKeys', "\e[27;5;99~") # il segnale lo alza notcurses, l'evento resta in coda
+      session.('dopo xterm', nil)
+      system('stty', 'intr', 'undef', in: slave)
+      session.('byte 0x03', "\x03") # ISIG resta: con kitty il byte arriva :press, ma è un tasto
+      system('stty', 'intr', '^C', in: slave)
       session.('tasto classico', 'a')
       puts "kitty #{kitty.()} quits #{quits} evtypes #{evtypes.inspect}"
     end
@@ -380,6 +385,8 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(out).to include("ripetizione e rilascio: stop []\n")
     expect(out).to include("ctrl+\\ con numlock: stop []\n")
     expect(out).to include("no_linesigs: stop [[:ctrl, :numlock]]\n")
+    expect(out).to include("xterm modifyOtherKeys: interrupt []\n", "dopo xterm: stop []\n")
+    expect(out).to include("byte 0x03: stop [[:ctrl]]\n")
     expect(out).to include('kitty true quits 1 evtypes [:press]') # :press: notcurses ha acceso il protocollo
     expect(out).to end_with("fine\n")
   end

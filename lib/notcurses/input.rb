@@ -401,6 +401,7 @@ module Notcurses
       @xpx = ncinput[:xpx]
       cps = ncinput[:eff_text].to_a.take_while(&:positive?)
       @eff_text = cps.select { |cp| cp <= 0x10ffff && !(0xd800..0xdfff).cover?(cp) }.pack('U*')
+      @ctrl_field = ncinput[:ctrl]
       freeze
     end
 
@@ -463,6 +464,13 @@ module Notcurses
 
     # @return [Boolean] (+ncinput_ctrl_p+)
     def ctrl? = FFI.ncinput_ctrl_p(to_ffi)
+
+    # Campo deprecato +ctrl+ della struct: notcurses 3.0.17 lo scrive solo
+    # per le sequenze con Ctrl (kitty, xterm, terminfo), mai per un byte di
+    # controllo come 0x03, che diventa 'C' con Ctrl solo in {#modifiers}.
+    # @return [Boolean]
+    # @api private
+    def ctrl_field? = @ctrl_field
 
     # @return [Boolean] (+ncinput_alt_p+)
     def alt? = FFI.ncinput_alt_p(to_ffi)
