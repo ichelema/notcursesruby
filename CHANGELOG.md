@@ -48,6 +48,16 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   dimensioni non cambiano; prima il testo scritto dalla shell restava sullo schermo fino al resize successivo. Il
   YARD di `Context` e di `Key::SIGNAL` ora dice che quel flag toglie anche il gestore di SIGCONT di notcurses
   (ICH-278).
+- `UI::TextInput` inserisce il testo digitato (`Input#eff_text`) e `EventLoop#on_key` confronta un carattere
+  stampabile con quel testo: con il protocollo tastiera kitty (Kitty, Ghostty) Shift+1 inseriva "1" invece di "!" e
+  attivava `on_key('1')` invece di `on_key('!')`. Il YARD di `Input#utf8` dice che è il tasto senza Shift, e quello
+  di `on_key` il limite di Alt o Ctrl con Shift e un simbolo (ICH-279).
+- `EventLoop#run` (e quindi `UI::App`) esce con `:interrupt` anche per il Ctrl+C di kitty con CapsLock o NumLock
+  attivi, e alza SIGSTOP e SIGQUIT per Ctrl+Z e Ctrl+\: prima notcurses consegnava il tasto e il ciclo andava
+  avanti. Con ISIG attivo questi tasti non arrivano più a componenti, `on_key` e `on_input`, nemmeno l'evento che
+  notcurses mette in coda per il Ctrl+C senza blocchi (ICH-280).
+- `UI::TextInput` scorre il testo anche per il grapheme sotto il cursore: un glifo largo dopo il cursore
+  nell'ultima colonna restava tagliato, e Canc cancellava un carattere non visibile (ICH-281).
 
 ## [0.1.0] - 2026-10-27
 
