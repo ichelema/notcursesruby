@@ -266,6 +266,14 @@ RSpec.describe Notcurses::UI::EventLoop do
       expect(ev.run(no_linesigs: true)).to eq(:stop)
     end
 
+    it 'senza ISIG noto no_linesigs solleva ContextError, e run senza opzioni gira lo stesso' do
+      stub_const('Notcurses::FFI::ISIG', nil)
+      ev = new_loop
+      expect { ev.run(no_linesigs: true) }.to raise_error(Notcurses::ContextError, /ISIG non noto/)
+      ev.post { ev.stop }
+      expect(ev.run).to eq(:stop)
+    end
+
     it 'run dentro run solleva Notcurses::Error' do
       ev = new_loop
       error = nil

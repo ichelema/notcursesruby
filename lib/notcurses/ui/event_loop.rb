@@ -203,8 +203,8 @@ module Notcurses
         linesigs = false
         begin
           ixon = @context.flow_control_disable if no_flow_control
-          # senza ISIG noto linesigs? solleva: il ciclo non alza segnali, come prima
-          isig = !FFI::ISIG.nil? && @context.linesigs?
+          # senza ISIG noto linesigs? solleva: con no_linesigs come prima, senza il ciclo non alza segnali
+          isig = (no_linesigs || !FFI::ISIG.nil?) && @context.linesigs?
           if no_linesigs && isig
             @context.linesigs_disable
             linesigs = true
