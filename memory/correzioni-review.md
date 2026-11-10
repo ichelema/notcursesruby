@@ -276,3 +276,68 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 - Riproduzione della issue: `EventLoop: refreshes after SIGCONT=1`, le due righe di `Context` invariate.
 - `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
 - `master` su `a55606b`: 975 esempi, 0 fallimenti.
+
+## Lotto 7 — ICH-279, ICH-280, ICH-281 (PR #8, merge `29748c8`)
+
+### Fix
+
+- **ICH-279 (`ui-01`, Shift sotto il protocollo kitty).** `TextInput#offer_input` inserisce `input.eff_text`;
+  `EventLoop#key_match?` confronta un binding stampabile con il primo codepoint di `eff_text`, o con `id` se
+  `eff_text` è vuoto; i binding non stampabili restano su `id` e Shift. Causa radice: con kitty notcurses tiene in
+  `id` il tasto senza Shift e costruisce `utf8` da `id` (`in.c:2737`); il testo digitato è solo in `eff_text`
+  (`in.c:834-838`), che notcurses riempie con l'`id` finale, già in maiuscolo con Ctrl, quando il terminale non
+  manda testo (`in.c:2740-2742`): per questo `on_key('x', ctrl: true)` regge.
+- **ICH-280 (`ui-05`, Ctrl+C con CapsLock o NumLock).** `run` legge ISIG una volta (`Context#linesigs?`, con la
+  guardia su `FFI::ISIG` solo senza `no_linesigs`); `read_input` chiama `line_signal` prima di `dispatch`. Con ISIG
+  attivo un evento C, Z o `\` con Ctrl più soli blocchi e con il campo deprecato `ctrl` della struct vero non viene
+  consegnato; alla pressione con un blocco il ciclo fa `Process.kill(sig, Process.pid)`. Causa radice:
+  `load_ncinput` alza il segnale solo con `modifiers == NCKEY_MOD_CTRL` (`in.c:506`). `Input#ctrl_field?`
+  (`@api private`) espone il campo `ctrl`: notcurses lo scrive solo per le sequenze con Ctrl (kitty `in.c:814`, xterm
+  `in.c:738`, terminfo, mouse), mai per un byte di controllo (`in.c:539` cambia solo `modifiers`).
+- **ICH-281 (`ui-11`, glifo largo sotto il cursore).** I due cicli di scorrimento di `TextInput#draw` aggiungono
+  `widths[@position] || 1`, la formula della issue.
+- `Context#input_tty` controlla `STDIN.closed?` prima di `STDIN.tty?`: `run` ora chiama `linesigs?` a ogni avvio e
+  con STDIN chiuso sollevava `IOError`.
+
+### Decisioni
+
+- Commit divisi per issue anche dove un file conteneva cambi di più issue: blob intermedi con `git hash-object` e
+  `git update-index`, oppure `git apply --cached` di hunk scelti; ogni commit intermedio passava le spec UI e pty.
+- Divergenza fra ISIG del terminale e `ictx->linesigs` (finding MEDIUM del round 1): non è un fix minimo (il flag
+  di notcurses non è esposto e il ripristino di `run` cambierebbe), quindi ICH-454.
+- Ctrl+C in coda consegnato a un `run(no_linesigs: true)` successivo (LOW del round 3): serve uno stato fra i run,
+  quindi ICH-455 invece di un fix senza review.
+- Controllo di "Da controllare, senza issue" di `RIPRESA.md`: vero (il rilascio `\e[99;5:3u` da solo fa uscire
+  `run` con `:interrupt`; pressione, ripetizione e rilascio danno 3 SIGINT). Issue ICH-456, aperta su richiesta
+  dell'utente.
+
+### Review (3 round, Fable e GPT)
+
+- Round 1 (`45a8f7d`): Fable APPROVABILE CON RISERVE, GPT NON APPROVABILE. Corretti: byte 0x03/0x1a classico
+  scartato con ISIG attivo (MEDIUM), `run(no_linesigs: true)` senza `ContextError` con ISIG non noto (LOW), YARD
+  senza la lettura di ISIG all'avvio (LOW), due buchi nei test (LOW: ramo `eff_text` vuoto; `kitty true` sempre
+  vero perché notcurses scrive `\e[>u\e[=27u` a ogni avvio, `termdesc.c:538-543`). In ICH-454: divergenza ISIG.
+- Round 2 (`2c849fd`): entrambi lo stesso MEDIUM: con kitty acceso ogni evento senza tipo diventa `:press`
+  (`in.c:501-505`), quindi il controllo su `evtype` del round 1 non bastava. Corretto con il campo `ctrl`
+  (`8865ecd`), che chiude anche il Ctrl+C di xterm `\e[27;5;99~` in coda (LOW). Corretto anche `IOError` con STDIN
+  chiuso (LOW, `7f1d97e`).
+- Round 3 (`7f1d97e`): GPT APPROVABILE, nessun finding; Fable un LOW, in ICH-455.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| 10 fallimenti nella suite del worktree | submodule `notcurses` non inizializzato: mancano `notcurses/data/*.png` | `git submodule update --init --depth 1 notcurses` (nota già in `RIPRESA.md`) |
+| `bundle exec rspec` su Ruby 3.1.7 fallisce nel resolver | `Gemfile.lock` con Bundler 4.0.22 | `mise exec ruby@3.1.7 -- rspec`, senza `bundle` |
+| Script che sceglie gli hunk perdeva l'intestazione di un file | `id()` di una lista Python liberata viene riusato | contatore dei file al posto di `id()` |
+| Un reviewer ha messo in coda un mutation test con `Process.kill(signal, 0)` e `rm -rf` | hook Blast Radius sui comandi con `rm` | nei prompt dei reviewer: niente segnali al process group, comandi con `rm` separati e brevi |
+| Worktree di review con `.review-tmp/mut` dopo il comando in coda | il comando è fallito a metà (errore di sintassi alla riga 18) | rimosso `.review-tmp` con la conferma dell'utente, poi `--force` |
+
+### Verifica finale
+
+- Branch (`7f1d97e`): 982 esempi, 0 fallimenti su Ruby 4.0.7 e 3.1.7; YARD 100 %, 0 warning; `ruby -w` senza
+  warning. CI verde su tutta la matrice (Ruby 3.1.7–4.0.9) e Codecov.
+- Le spec nuove falliscono tutte sul codice di prima di ogni fix (controllato togliendo il diff di `lib/`).
+- I tre `repro.rb` delle issue danno l'output atteso.
+- `git diff dc10c8e -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+- `master` su `29748c8`: 982 esempi, 0 fallimenti.

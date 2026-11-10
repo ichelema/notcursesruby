@@ -861,7 +861,9 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
   finding. Lotto 4: Fable e GPT, 2 round (round 1: un MEDIUM e un LOW, corretti; round 2: nessun finding). Lotto 5:
   solo Fable (limite di utilizzo di GPT raggiunto, scelta dell'utente), 2 round (round 1: un LOW, corretto; round 2:
   nessun finding). Lotto 6: `/trinity:workflow:3_independent-review`, un reviewer Fable, 2 round (round 1: un LOW,
-  corretto; round 2, solo sul commit nuovo: nessun finding).
+  corretto; round 2, solo sul commit nuovo: nessun finding). Lotto 7: Fable e GPT, 3 round (round 1: due MEDIUM e
+  tre LOW, quattro corretti e un MEDIUM in ICH-454; round 2: un MEDIUM e due LOW, corretti; round 3: un LOW in
+  ICH-455, GPT nessun finding).
 
 ### Lotti
 
@@ -873,10 +875,11 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 | 4 | [#5](https://github.com/ichelema/notcursesruby/pull/5) | `1f441f3` | ICH-273, ICH-274, ICH-275 | `ncreader_write_egc` di un EGC di larghezza zero sull'ultima colonna porta vista e copia nascosta a x == colonne (`reader.c:240-246`, clamp con cols 0); `ncreader_write_egc` scrive solo il primo EGC della stringa e restituisce 0 (`reader.c:233-238`); `ncreader_contents` è `ncplane_contents`, che lascia copie nell'egcpool (`reader.c:413-415`); `nccell_load` di U+2028 restituisce 1 byte e taglia il codepoint; tabella "Widget A" di `memory/fase2-wrapper-idiomatico.md` |
 | 5 | [#6](https://github.com/ichelema/notcursesruby/pull/6) | `119a98f` | ICH-276, ICH-277 | `ncmultiselector_draw` con il piano del widget di 1 riga: `yoff` unsigned contro `dimy - 2` (`selector.c:696`), circa 2^32 giri con il GVL tenuto; tabella "Widget A" di `memory/fase2-wrapper-idiomatico.md` |
 | 6 | [#7](https://github.com/ichelema/notcursesruby/pull/7) | `a55606b` | ICH-278 | nessuno (limite già noto: `NCOPTION_NO_WINCH_SIGHANDLER` toglie anche il gestore di SIGCONT, `unixsig.c:204-211`; notcurses non gestisce SIGTSTP) |
+| 7 | [#8](https://github.com/ichelema/notcursesruby/pull/8) | `29748c8` | ICH-279, ICH-280, ICH-281 | con il protocollo kitty notcurses alza SIGINT, SIGSTOP e SIGQUIT solo con Ctrl da solo (`in.c:506-516`): con CapsLock o NumLock non alza niente, con Ctrl da solo alza il segnale e mette anche l'evento in coda; lo stesso controllo non guarda `evtype`, quindi anche la ripetizione e il rilascio alzano il segnale (ICH-456); con kitty acceso ogni evento senza tipo diventa `:press`, byte di controllo compresi (`in.c:501-505`); tabella "Bug e limiti di notcurses 3.0.17 trovati nella Fase 3" |
 
 ### Cambi dell'API pubblica
 
-Nessun metodo nuovo né rimosso. Comportamenti nuovi:
+Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lotto 7). Comportamenti nuovi:
 
 - `Context#close`, `Direct#close`, `Context#drop_planes`: un'eccezione al ritorno della chiamata C (Ctrl-C) lascia
   l'oggetto chiuso, i piani distrutti invalidi e il registro libero (lotto 1).
@@ -911,6 +914,14 @@ Nessun metodo nuovo né rimosso. Comportamenti nuovi:
 - `EventLoop#run` (e `UI::App#run`): con `no_winch_sighandler: true` installa anche `trap('CONT')` e lo toglie alla
   fine, come `trap('WINCH')`; dopo Ctrl+Z e `fg` chiama `Context#refresh`, senza `on_resize` se le dimensioni non
   cambiano. Il default `no_winch_sighandler: true` non cambia (lotto 6).
+- `UI::TextInput` inserisce `Input#eff_text` e `EventLoop#on_key` confronta un carattere stampabile con il primo
+  codepoint di `eff_text` (con `eff_text` vuoto, con `id`): con il protocollo kitty Shift+1 dà "!" (lotto 7).
+- `EventLoop#run` legge ISIG a ogni avvio, anche senza opzioni. Con ISIG attivo alza SIGINT, SIGSTOP o SIGQUIT al
+  proprio processo per Ctrl+C, Ctrl+Z e Ctrl+\ di kitty con CapsLock o NumLock, e non consegna più questi tasti
+  di kitty né il Ctrl+C di xterm con modifyOtherKeys; i byte di controllo restano tasti (lotto 7).
+- `UI::TextInput` scorre il testo anche per il grapheme sotto il cursore (lotto 7).
+- `Context#linesigs?` e il controllo di flusso con STDIN chiuso leggono `/dev/tty` invece di sollevare `IOError`
+  (lotto 7).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
@@ -935,3 +946,9 @@ Nessuno.
 - ICH-449 — double free dopo `merge_down` con glifi larghi seguito da `Plane#at` (lotto 2; esiste già su `master`).
 - ICH-450 — `polyfill`, `gradient` ed `erase_region` su metà di un glifo largo lasciano una metà orfana (lotto 2;
   esiste già su `master`).
+- ICH-454 — lo stato ISIG del terminale e il flag interno `linesigs` di notcurses possono divergere (`stty` fuori da
+  notcurses), e `run` allora sbaglia per il Ctrl+C di kitty (lotto 7, review round 1).
+- ICH-455 — dopo un `run` uscito con `:interrupt`, il Ctrl+C rimasto in coda arriva a un `run(no_linesigs: true)`
+  successivo (lotto 7, review round 3).
+- ICH-456 — notcurses alza il segnale anche per la ripetizione e il rilascio del Ctrl+C di kitty (lotto 7; esiste
+  già su `master`).
