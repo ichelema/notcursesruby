@@ -97,7 +97,8 @@ module Notcurses
           @block.call(self)
           return true
         else
-          return false unless insert(graphemes, input.utf8)
+          # eff_text: con il protocollo kitty utf8 è il tasto senza Shift ("1" per "!")
+          return false unless insert(graphemes, input.eff_text)
         end
         redraw
         true
@@ -125,10 +126,11 @@ module Notcurses
         graphemes = @text.grapheme_clusters
         @position = [@position, graphemes.size].min
         widths = graphemes.map { |g| Notcurses.strwidth(g) }
-        # il cursore resta dentro il campo, anche dopo l'ultimo carattere
+        # il grapheme sotto il cursore (o una cella dopo l'ultimo carattere) resta dentro il campo
+        under = widths[@position] || 1
         @first = @position if @position < @first
-        @first += 1 while @first < @position && widths[@first...@position].sum >= cols
-        @first -= 1 while @first.positive? && widths[(@first - 1)...@position].sum < cols
+        @first += 1 while @first < @position && widths[@first...@position].sum + under > cols
+        @first -= 1 while @first.positive? && widths[(@first - 1)...@position].sum + under <= cols
         @cursor_col = widths[@first...@position].sum
         put_text(0, graphemes[@first..].join)
       end

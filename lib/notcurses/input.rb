@@ -347,7 +347,7 @@ module Notcurses
   # @example
   #   input = ctx.get(timeout: 0.5)
   #   exit if input&.id == Notcurses::Key::ESC
-  #   puts input.utf8 if input && !input.utf8.empty?
+  #   puts input.eff_text if input && !input.eff_text.empty?
   class Input
     # Modificatori (+NCKEY_MOD_*+) come simboli.
     MODIFIERS = {
@@ -368,7 +368,9 @@ module Notcurses
     attr_reader :y
     # @return [Integer] colonna dell'evento del mouse (vedi {#y})
     attr_reader :x
-    # @return [String] testo UTF-8 del tasto ("" se non produce testo)
+    # @return [String] {#id} in UTF-8 ("" se non è un carattere). Con il
+    #   protocollo tastiera kitty id è il tasto senza Shift ("1" per Shift+1):
+    #   il testo digitato è {#eff_text}
     attr_reader :utf8
     # @return [Symbol] :unknown, :press, :repeat o :release
     attr_reader :evtype
@@ -399,6 +401,7 @@ module Notcurses
       @xpx = ncinput[:xpx]
       cps = ncinput[:eff_text].to_a.take_while(&:positive?)
       @eff_text = cps.select { |cp| cp <= 0x10ffff && !(0xd800..0xdfff).cover?(cp) }.pack('U*')
+      @ctrl_field = ncinput[:ctrl]
       freeze
     end
 
@@ -461,6 +464,13 @@ module Notcurses
 
     # @return [Boolean] (+ncinput_ctrl_p+)
     def ctrl? = FFI.ncinput_ctrl_p(to_ffi)
+
+    # Campo deprecato +ctrl+ della struct: notcurses 3.0.17 lo scrive solo
+    # per le sequenze con Ctrl (kitty, xterm, terminfo), mai per un byte di
+    # controllo come 0x03, che diventa 'C' con Ctrl solo in {#modifiers}.
+    # @return [Boolean]
+    # @api private
+    def ctrl_field? = @ctrl_field
 
     # @return [Boolean] (+ncinput_alt_p+)
     def alt? = FFI.ncinput_alt_p(to_ffi)

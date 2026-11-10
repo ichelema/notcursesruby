@@ -619,6 +619,7 @@ comune (`Util.c_region`); la copertura FFI non cambia (477 chiamate, 154 escluse
 | In `read_input_nblock` la condizione su `errno` non è mai vera dove `EAGAIN == EWOULDBLOCK` (Linux): ogni errore di `read`, anche EIO, segna la fine dell'input | `in.c:2180-2190` | letto nel C, non riprodotto: per esempio un pty il cui master si chiude dà `Key::EOF`, e `run` restituisce `:eof` |
 | notcurses divide il keycap `"1️⃣"` diversamente da Ruby e ne scrive U+20E3 come carattere di larghezza zero | `nccell_load` | il controllo del testo dei widget non lo vede; il disegno lo scrive come `"?"` invece di sollevare |
 | Nessuno stile «reverse»; senza tty `cursor_disable` e `mice_enable` sollevano `ContextError` | — | il focus si mostra con i colori; `App` ignora l'errore di `cursor_disable` |
+| Con il protocollo tastiera kitty notcurses alza SIGINT, SIGSTOP o SIGQUIT per Ctrl+C, Ctrl+Z e Ctrl+\ solo se i modificatori sono Ctrl da solo: con CapsLock o NumLock (kitty li aggiunge) non alza niente e consegna il tasto; con Ctrl da solo alza il segnale e mette anche l'evento in coda | `in.c:506-516` | con ISIG attivo `EventLoop#run` alza lo stesso segnale al proprio processo alla pressione, e non consegna questi tasti (ICH-280) |
 
 ### Controlli
 

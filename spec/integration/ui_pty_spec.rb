@@ -212,6 +212,9 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
       system('stty', '-isig', in: slave)
       session.('isig spento prima con stty', on, ctrl_c)
       system('stty', 'isig', in: slave)
+      system('stty', 'intr', 'undef', in: slave)
+      session.('intr rimappato', {}, ctrl_c) # ISIG resta: il byte 0x03 è un tasto, non un segnale
+      system('stty', 'intr', '^C', in: slave)
       system('stty', '-ixon', in: slave)
       session.('ixon spento prima', on, lambda {
         type.("\x11z")
@@ -219,6 +222,102 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
         app.stop
       })
       puts "ixon dopo #{stty.('-a')[/-?ixon\b/]}"
+    end
+    puts 'fine'
+  RUBY
+
+  # Finto terminale kitty: risponde anche a "\e[?u" con i flag 27, e notcurses
+  # accende il protocollo tastiera. kitty.() dice se notcurses l'ha acceso.
+  def kitty_prelude = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+
+    def wait_for(what)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+      sleep 0.01 until yield || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+      raise "attesa scaduta: #{what}" unless yield
+    end
+
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    lock = Mutex.new
+    written = String.new
+    answers = { "\e[6n" => "\e[5;7R", "\e[?u" => "\e[?27u", "\e[c" => "\e[?62;22c" }
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        lock.synchronize { written << data }
+        data.scan(/\e\[6n|\e\[\?u|\e\[c/) { |q| lock.synchronize { master.write(answers[q]) } }
+      end
+    rescue IOError, Errno::EIO
+    end
+    type = ->(keys) { lock.synchronize { master.write(keys) } }
+    kitty = -> { lock.synchronize { written.include?("\e[>u\e[=27u") } }
+  RUBY
+
+  def kitty_text_script = kitty_prelude + <<~'RUBY'
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      app = Notcurses::UI::App.new(nc)
+      field = Notcurses::UI::TextInput.new(app.root, size: 1)
+      app.after(10) { app.stop }
+      failure = nil
+      user = Thread.new do
+        wait_for('run') { app.running? }
+        type.("\e[49;2;33u\e[50;2;64u") # kitty Shift+1 e Shift+2 (tastiera US)
+        wait_for('testo') { field.text.size == 2 }
+        app.stop
+      rescue StandardError => e
+        failure = e
+        app.stop
+      end
+      reason = app.run
+      user.join
+      puts "failure #{failure.message}" if failure
+      puts "kitty #{kitty.()} reason #{reason} text #{field.text.inspect}"
+    end
+    puts 'fine'
+  RUBY
+
+  # Più run dello stesso EventLoop, ognuno con un timer di sicurezza: stampa
+  # il motivo d'uscita e i modificatori arrivati a on_key('c', ctrl: true).
+  def kitty_signals_script = kitty_prelude + <<~'RUBY'
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      ev = Notcurses::UI::EventLoop.new(nc)
+      seen = []
+      ev.on_key('c', ctrl: true) { |input| seen << input.modifier_list }
+      evtypes = []
+      ev.on_input { |input| evtypes << input.evtype } # :press per un byte solo se kitty è acceso (in.c:501)
+      quits = 0
+      Signal.trap('QUIT') { quits += 1 }
+      session = lambda do |name, keys, **opts|
+        seen.clear
+        user = keys && Thread.new do
+          wait_for('run') { ev.running? }
+          type.(keys)
+        end
+        timer = ev.after(1) { ev.stop }
+        reason = ev.run(**opts)
+        timer.cancel
+        user&.join
+        puts "#{name}: #{reason} #{seen.inspect}"
+      end
+      session.('numlock', "\e[99;133u")
+      session.('capslock', "\e[99;69u")
+      session.('solo ctrl', "\e[99;5u") # il segnale lo alza notcurses, l'evento resta in coda
+      session.('dopo solo ctrl', nil)
+      session.('ripetizione e rilascio', "\e[99;133:2u\e[99;133:3u")
+      session.('ctrl+\\ con numlock', "\e[92;133u")
+      session.('no_linesigs', "\e[99;133u", no_linesigs: true)
+      session.('xterm modifyOtherKeys', "\e[27;5;99~") # il segnale lo alza notcurses, l'evento resta in coda
+      session.('dopo xterm', nil)
+      system('stty', 'intr', 'undef', in: slave)
+      session.('byte 0x03', "\x03") # ISIG resta: con kitty il byte arriva :press, ma è un tasto
+      system('stty', 'intr', '^C', in: slave)
+      session.('tasto classico', 'a')
+      puts "kitty #{kitty.()} quits #{quits} evtypes #{evtypes.inspect}"
     end
     puts 'fine'
   RUBY
@@ -258,8 +357,37 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(out).to include('solo no_flow_control: interrupt ["^q", "z"] stty uguale')
     expect(out).to include('isig spento prima con linesigs_disable: stop ["^c", "z"] stty uguale')
     expect(out).to include('isig spento prima con stty: stop ["^c", "z"] stty uguale')
+    expect(out).to include('intr rimappato: stop ["^c", "z"] stty uguale')
     expect(out).to include('ixon spento prima: stop ["^q", "z"] stty uguale')
     expect(out).to include('ixon dopo -ixon')
+    expect(out).to end_with("fine\n")
+  end
+
+  it 'protocollo kitty: il TextInput riceve il testo digitato con Shift, non il tasto senza Shift' do
+    skip 'pty e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
+
+    out, status, timed_out = run_child(kitty_text_script, timeout: 30)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(status.exitstatus).to eq(0), out
+    expect(out).not_to include('failure'), out
+    expect(out).to include('kitty true reason stop text "!@"')
+    expect(out).to end_with("fine\n")
+  end
+
+  it 'protocollo kitty: Ctrl+C e Ctrl+\ con CapsLock o NumLock sono segnali, e non arrivano a on_key' do
+    skip 'pty e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
+
+    out, status, timed_out = run_child(kitty_signals_script, timeout: 30)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(status.exitstatus).to eq(0), out
+    expect(out).to include("numlock: interrupt []\n", "capslock: interrupt []\n", "solo ctrl: interrupt []\n")
+    expect(out).to include("dopo solo ctrl: stop []\n") # l'evento in coda non viene consegnato
+    expect(out).to include("ripetizione e rilascio: stop []\n")
+    expect(out).to include("ctrl+\\ con numlock: stop []\n")
+    expect(out).to include("no_linesigs: stop [[:ctrl, :numlock]]\n")
+    expect(out).to include("xterm modifyOtherKeys: interrupt []\n", "dopo xterm: stop []\n")
+    expect(out).to include("byte 0x03: stop [[:ctrl]]\n")
+    expect(out).to include('kitty true quits 1 evtypes [:press]') # :press: notcurses ha acceso il protocollo
     expect(out).to end_with("fine\n")
   end
 end

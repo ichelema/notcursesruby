@@ -266,6 +266,14 @@ RSpec.describe Notcurses::UI::EventLoop do
       expect(ev.run(no_linesigs: true)).to eq(:stop)
     end
 
+    it 'senza ISIG noto no_linesigs solleva ContextError, e run senza opzioni gira lo stesso' do
+      stub_const('Notcurses::FFI::ISIG', nil)
+      ev = new_loop
+      expect { ev.run(no_linesigs: true) }.to raise_error(Notcurses::ContextError, /ISIG non noto/)
+      ev.post { ev.stop }
+      expect(ev.run).to eq(:stop)
+    end
+
     it 'run dentro run solleva Notcurses::Error' do
       ev = new_loop
       error = nil
@@ -336,6 +344,21 @@ RSpec.describe Notcurses::UI::EventLoop do
       ev.dispatch(syn('x'.ord))
       expect(log).to eq([:ctrl_c, [:input, 'Q'.ord], :q, :q, [:input, 'q'.ord], [:input, 'q'.ord], :backtab, :tab,
                          [:alt_x, 'x'.ord], [:input, 'x'.ord]])
+    end
+
+    it 'on_key: un carattere corrisponde al testo digitato (eff_text del protocollo kitty), Ctrl resta sul codice' do
+      ev = described_class.new(nc)
+      log = []
+      ev.on_key('!') { log << :bang }
+      ev.on_key('1') { log << :one }
+      ev.on_key('x', ctrl: true) { log << :ctrl_x }
+      ev.dispatch(syn('1'.ord, modifiers: [:shift], eff_text: '!')) # kitty Shift+1: id "1", testo "!"
+      ev.dispatch(syn('X'.ord, modifiers: [:ctrl])) # kitty "\e[120;5u" e il byte "\x18": id ed eff_text "X"
+      ev.dispatch(syn('!'.ord)) # terminale classico
+      ev.dispatch(syn('1'.ord))
+      ev.on_input { |input| log << [:input, input.id] }
+      expect(ev.dispatch(syn(Notcurses::Key::UP))).to be(false) # eff_text vuoto: vale id
+      expect(log).to eq([:bang, :ctrl_x, :bang, :one, [:input, Notcurses::Key::UP]])
     end
   end
 

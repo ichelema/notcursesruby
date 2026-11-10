@@ -207,6 +207,12 @@ RSpec.describe Notcurses::Context do
       expect([true, false]).to include(nc.linesigs?)
     end
 
+    it 'linesigs? con STDIN chiuso non solleva IOError: legge /dev/tty, se c\'è' do
+      allow(STDIN).to receive(:closed?).and_return(true)
+      allow(STDIN).to receive(:tty?).and_raise(IOError, 'closed stream')
+      expect([true, false]).to include(nc.linesigs?)
+    end
+
     it 'con drain_input l\'input solleva InputError' do
       expect { nc.get(timeout: 0) }.to raise_error(Notcurses::InputError)
       expect { nc.getvec(2, timeout: 0) }.to raise_error(Notcurses::InputError)

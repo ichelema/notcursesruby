@@ -119,7 +119,10 @@ module Notcurses
       MOD_ALT = FFI::NCKEY_MOD_ALT
       MOD_SHIFT = FFI::NCKEY_MOD_SHIFT
       MOD_OTHER = FFI::NCKEY_MOD_META | FFI::NCKEY_MOD_SUPER | FFI::NCKEY_MOD_HYPER
-      private_constant :MOD_CTRL, :MOD_ALT, :MOD_SHIFT, :MOD_OTHER
+      MOD_LOCKS = FFI::NCKEY_MOD_CAPSLOCK | FFI::NCKEY_MOD_NUMLOCK
+      # i segnali che notcurses alza per Ctrl+C, Ctrl+Z e Ctrl+\ (in.c:506-516)
+      LINE_SIGNALS = { 'C'.ord => 'INT', 'Z'.ord => 'STOP', '\\'.ord => 'QUIT' }.freeze
+      private_constant :MOD_CTRL, :MOD_ALT, :MOD_SHIFT, :MOD_OTHER, :MOD_LOCKS, :LINE_SIGNALS
 
       # @return [Context]
       attr_reader :context
@@ -139,6 +142,7 @@ module Notcurses
         @input_handlers = []
         @resize_handlers = []
         @running = false
+        @line_signals = false
         @stop_requested = false
         @resize_requested = false
         @wake_w = nil
@@ -163,6 +167,17 @@ module Notcurses
       # ripristinato il terminale e run non lo tocca. run legge e cambia IXON,
       # e legge ISIG, sul terminale da cui notcurses legge i tasti (stdin se è
       # un tty, altrimenti /dev/tty).
+      #
+      # Con il protocollo tastiera kitty (Kitty, Ghostty) Ctrl+C arriva come
+      # sequenza e non come byte: il segnale lo alza notcurses, ma solo con Ctrl
+      # da solo. Kitty aggiunge CapsLock e NumLock ai modificatori: con ISIG
+      # attivo run alza allora lo stesso segnale (SIGINT, SIGSTOP, SIGQUIT) al
+      # proprio processo alla pressione, e non consegna questi tasti (con o senza
+      # CapsLock e NumLock, nemmeno ripetizioni e rilasci). Lo stesso vale per
+      # il Ctrl+C di xterm con modifyOtherKeys ("\e[27;5;99~"). I byte di
+      # controllo (0x03 con intr rimappato, input da una pipe) arrivano invece
+      # come tasti, anche con kitty. run legge ISIG solo all'avvio: {Context#linesigs_disable} o
+      # stty durante run non cambiano la scelta; per i tasti serve no_linesigs.
       #
       # @param no_flow_control [Boolean] disattiva IXON durante run
       # @param no_linesigs [Boolean] disattiva ISIG durante run
@@ -189,10 +204,13 @@ module Notcurses
         linesigs = false
         begin
           ixon = @context.flow_control_disable if no_flow_control
-          if no_linesigs && @context.linesigs?
+          # senza ISIG noto linesigs? solleva: con no_linesigs come prima, senza il ciclo non alza segnali
+          isig = (no_linesigs || !FFI::ISIG.nil?) && @context.linesigs?
+          if no_linesigs && isig
             @context.linesigs_disable
             linesigs = true
           end
+          @line_signals = isig && !no_linesigs
           wake_r, @wake_w = IO.pipe
           # il descrittore è di notcurses: autoclose false, lo chiude notcurses_stop
           @input = @context.drain_input? ? nil : IO.for_fd(@context.inputready_fd, autoclose: false)
@@ -299,16 +317,25 @@ module Notcurses
       # Corrispondenza: solo pressioni e ripetizioni (non i rilasci né il
       # mouse); Ctrl, Alt e Shift come chiesti, CapsLock e NumLock ignorati,
       # Meta, Super e Hyper assenti. Con ctrl: true una lettera ASCII vale
-      # anche maiuscola: notcurses consegna Ctrl+c come 'C' con Ctrl. Per un
-      # carattere stampabile Shift non conta (è già nel carattere, per esempio
-      # 'Q'); conta per gli altri codici, come {Key::TAB} (Shift+Tab).
+      # anche maiuscola: notcurses consegna Ctrl+c come 'C' con Ctrl. Un
+      # carattere stampabile corrisponde al carattere digitato
+      # ({Input#eff_text}, per esempio '!' per Shift+1), quindi Shift non conta
+      # (è già nel carattere, per esempio 'Q'); conta per gli altri codici,
+      # come {Key::TAB} (Shift+Tab).
+      #
+      # Limite del protocollo tastiera kitty (Kitty, Ghostty): Alt o Ctrl con
+      # Shift e un simbolo arrivano come il tasto senza Shift e senza testo
+      # (Alt+Shift+1 è "\e[49;4u", con eff_text "1"), quindi
+      # on_key('!', alt: true) corrisponde solo sui terminali classici.
       #
       # Tasti di controllo: notcurses 3.0.17 toglie al terminale solo ECHO,
       # ICANON e ICRNL, quindi di default Ctrl+C, Ctrl+Z e Ctrl+\ restano
       # segnali (ISIG) e Ctrl+S e Ctrl+Q restano il controllo di flusso (IXON):
       # non arrivano qui. Arrivano con {#run}(no_flow_control: true) per
       # Ctrl+S e Ctrl+Q e con {#run}(no_linesigs: true) per Ctrl+C, Ctrl+Z e
-      # Ctrl+\.
+      # Ctrl+\. Vale anche con il protocollo kitty, dove CapsLock e NumLock si
+      # aggiungono ai modificatori: {#run} li alza come segnali (vedi {#run}).
+      # {#dispatch} di un evento costruito li consegna sempre.
       #
       # @param key [String, Integer] un carattere (String di un codepoint) o
       #   un codice: codepoint o costante {Key}
@@ -492,7 +519,7 @@ module Notcurses
             @reason = :eof
             @stop_requested = true
           when Key::RESIZE then handle_resize(refresh: true)
-          else dispatch(input)
+          else dispatch(input) unless line_signal(input)
           end
         end
         worked
@@ -568,10 +595,27 @@ module Notcurses
 
       def key_match?((id, ctrl, alt, shift, _block), input)
         mods = input.modifiers
-        return false unless input.id == id && mods.nobits?(MOD_OTHER)
-        return false unless mods.anybits?(MOD_CTRL) == ctrl && mods.anybits?(MOD_ALT) == alt
+        return false unless mods.nobits?(MOD_OTHER) && mods.anybits?(MOD_CTRL) == ctrl && mods.anybits?(MOD_ALT) == alt
+        # un carattere vale per il testo digitato: con il protocollo kitty id è il tasto senza Shift
+        return (input.eff_text.empty? ? input.id : input.eff_text.ord) == id if printable?(id)
 
-        printable?(id) || mods.anybits?(MOD_SHIFT) == shift
+        input.id == id && mods.anybits?(MOD_SHIFT) == shift
+      end
+
+      # notcurses 3.0.17 alza il segnale solo con Ctrl da solo (in.c:506): con
+      # CapsLock o NumLock (protocollo kitty) lo alza il ciclo. Con ISIG attivo
+      # questi tasti non vengono consegnati. Un byte classico non è un segnale:
+      # notcurses controlla Ctrl prima di trasformare 0x03 in 'C' (in.c:539), e
+      # il campo ctrl della struct resta falso (anche con kitty, che lo fa :press).
+      # @return [Boolean] true se l'evento è un tasto di segnale
+      def line_signal(input)
+        signal = LINE_SIGNALS[input.id]
+        return false unless @line_signals && signal && input.ctrl_field?
+        return false unless (input.modifiers & ~MOD_LOCKS) == MOD_CTRL
+
+        # raise() come notcurses: pid 0 colpirebbe anche il gruppo (i figli di Subprocess)
+        Process.kill(signal, Process.pid) if input.press? && input.modifiers != MOD_CTRL
+        true
       end
 
       def printable?(id) = id >= 0x20 && id != 0x7f && id <= 0x10ffff && !Key.synthesized?(id)

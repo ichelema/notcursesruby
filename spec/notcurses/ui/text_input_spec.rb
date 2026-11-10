@@ -75,6 +75,29 @@ RSpec.describe Notcurses::UI::TextInput do
     expect([shown(input), input.cursor]).to eq(['abcd', [0, 4]]) # torna a mostrare l'inizio
   end
 
+  it 'un glifo largo sotto il cursore nell\'ultima colonna resta visibile; in 1 colonna non si blocca' do
+    input = field(5, text: 'abcd漢')
+    key(Notcurses::Key::LEFT)
+    expect([shown(input), input.cursor]).to eq(['bcd漢', [0, 3]])
+    expect(input.plane.at(y: 0, x: 3).egc).to eq('漢')
+    type('x')
+    expect([input.text, shown(input), input.cursor]).to eq(['abcdx漢', 'cdx漢', [0, 3]])
+    narrow = field(1, text: 'a漢')
+    expect(narrow.offer_input(syn(Notcurses::Key::LEFT))).to be(true) # il glifo non entra e resta nascosto
+    expect([narrow.position, narrow.cursor]).to eq([1, [0, 0]])
+  end
+
+  it 'inserisce il testo digitato (eff_text), non il tasto senza Shift del protocollo kitty' do
+    input = field(10)
+    app.dispatch(syn('1'.ord, modifiers: [:shift], eff_text: '!')) # kitty Shift+1: id e utf8 "1"
+    app.dispatch(syn(0xe8, modifiers: [:capslock], eff_text: 'È'))
+    expect(input.text).to eq('!È')
+    expect(input.offer_input(syn(Notcurses::Key::UP))).to be(false) # eff_text vuoto
+    expect(input.offer_input(syn(0x1b))).to be(false) # eff_text "\e": carattere di controllo
+    expect(input.offer_input(syn(0x09))).to be(false)
+    expect(input.text).to eq('!È')
+  end
+
   it 'Invio chiama il blocco; senza blocco, con Ctrl o Alt, o con il mouse l\'evento non è consumato' do
     sent = []
     input = field(10) { |i| sent << i.text }

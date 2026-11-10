@@ -1072,7 +1072,7 @@ module Notcurses
     # stdin se è un tty, altrimenti /dev/tty.
     # @return il valore del blocco, false senza terminale
     def input_tty
-      return yield(STDIN.fileno) if STDIN.tty?
+      return yield(STDIN.fileno) if !STDIN.closed? && STDIN.tty? # tty? solleva IOError con STDIN chiuso
 
       begin
         tty = File.open('/dev/tty', 'r+')
