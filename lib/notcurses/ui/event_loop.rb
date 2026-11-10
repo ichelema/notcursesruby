@@ -299,9 +299,16 @@ module Notcurses
       # Corrispondenza: solo pressioni e ripetizioni (non i rilasci né il
       # mouse); Ctrl, Alt e Shift come chiesti, CapsLock e NumLock ignorati,
       # Meta, Super e Hyper assenti. Con ctrl: true una lettera ASCII vale
-      # anche maiuscola: notcurses consegna Ctrl+c come 'C' con Ctrl. Per un
-      # carattere stampabile Shift non conta (è già nel carattere, per esempio
-      # 'Q'); conta per gli altri codici, come {Key::TAB} (Shift+Tab).
+      # anche maiuscola: notcurses consegna Ctrl+c come 'C' con Ctrl. Un
+      # carattere stampabile corrisponde al carattere digitato
+      # ({Input#eff_text}, per esempio '!' per Shift+1), quindi Shift non conta
+      # (è già nel carattere, per esempio 'Q'); conta per gli altri codici,
+      # come {Key::TAB} (Shift+Tab).
+      #
+      # Limite del protocollo tastiera kitty (Kitty, Ghostty): Alt o Ctrl con
+      # Shift e un simbolo arrivano come il tasto senza Shift e senza testo
+      # (Alt+Shift+1 è "\e[49;4u", con eff_text "1"), quindi
+      # on_key('!', alt: true) corrisponde solo sui terminali classici.
       #
       # Tasti di controllo: notcurses 3.0.17 toglie al terminale solo ECHO,
       # ICANON e ICRNL, quindi di default Ctrl+C, Ctrl+Z e Ctrl+\ restano
@@ -568,10 +575,11 @@ module Notcurses
 
       def key_match?((id, ctrl, alt, shift, _block), input)
         mods = input.modifiers
-        return false unless input.id == id && mods.nobits?(MOD_OTHER)
-        return false unless mods.anybits?(MOD_CTRL) == ctrl && mods.anybits?(MOD_ALT) == alt
+        return false unless mods.nobits?(MOD_OTHER) && mods.anybits?(MOD_CTRL) == ctrl && mods.anybits?(MOD_ALT) == alt
+        # un carattere vale per il testo digitato: con il protocollo kitty id è il tasto senza Shift
+        return (input.eff_text.empty? ? input.id : input.eff_text.ord) == id if printable?(id)
 
-        printable?(id) || mods.anybits?(MOD_SHIFT) == shift
+        input.id == id && mods.anybits?(MOD_SHIFT) == shift
       end
 
       def printable?(id) = id >= 0x20 && id != 0x7f && id <= 0x10ffff && !Key.synthesized?(id)

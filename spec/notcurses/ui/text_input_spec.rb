@@ -87,6 +87,17 @@ RSpec.describe Notcurses::UI::TextInput do
     expect([narrow.position, narrow.cursor]).to eq([1, [0, 0]])
   end
 
+  it 'inserisce il testo digitato (eff_text), non il tasto senza Shift del protocollo kitty' do
+    input = field(10)
+    app.dispatch(syn('1'.ord, modifiers: [:shift], eff_text: '!')) # kitty Shift+1: id e utf8 "1"
+    app.dispatch(syn(0xe8, modifiers: [:capslock], eff_text: 'È'))
+    expect(input.text).to eq('!È')
+    expect(input.offer_input(syn(Notcurses::Key::UP))).to be(false) # eff_text vuoto
+    expect(input.offer_input(syn(0x1b))).to be(false) # eff_text "\e": carattere di controllo
+    expect(input.offer_input(syn(0x09))).to be(false)
+    expect(input.text).to eq('!È')
+  end
+
   it 'Invio chiama il blocco; senza blocco, con Ctrl o Alt, o con il mouse l\'evento non è consumato' do
     sent = []
     input = field(10) { |i| sent << i.text }

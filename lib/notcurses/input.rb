@@ -347,7 +347,7 @@ module Notcurses
   # @example
   #   input = ctx.get(timeout: 0.5)
   #   exit if input&.id == Notcurses::Key::ESC
-  #   puts input.utf8 if input && !input.utf8.empty?
+  #   puts input.eff_text if input && !input.eff_text.empty?
   class Input
     # Modificatori (+NCKEY_MOD_*+) come simboli.
     MODIFIERS = {
@@ -368,7 +368,9 @@ module Notcurses
     attr_reader :y
     # @return [Integer] colonna dell'evento del mouse (vedi {#y})
     attr_reader :x
-    # @return [String] testo UTF-8 del tasto ("" se non produce testo)
+    # @return [String] {#id} in UTF-8 ("" se non è un carattere). Con il
+    #   protocollo tastiera kitty id è il tasto senza Shift ("1" per Shift+1):
+    #   il testo digitato è {#eff_text}
     attr_reader :utf8
     # @return [Symbol] :unknown, :press, :repeat o :release
     attr_reader :evtype

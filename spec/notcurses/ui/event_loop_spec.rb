@@ -337,6 +337,19 @@ RSpec.describe Notcurses::UI::EventLoop do
       expect(log).to eq([:ctrl_c, [:input, 'Q'.ord], :q, :q, [:input, 'q'.ord], [:input, 'q'.ord], :backtab, :tab,
                          [:alt_x, 'x'.ord], [:input, 'x'.ord]])
     end
+
+    it 'on_key: un carattere corrisponde al testo digitato (eff_text del protocollo kitty), Ctrl resta sul codice' do
+      ev = described_class.new(nc)
+      log = []
+      ev.on_key('!') { log << :bang }
+      ev.on_key('1') { log << :one }
+      ev.on_key('x', ctrl: true) { log << :ctrl_x }
+      ev.dispatch(syn('1'.ord, modifiers: [:shift], eff_text: '!')) # kitty Shift+1: id "1", testo "!"
+      ev.dispatch(syn('X'.ord, modifiers: [:ctrl])) # kitty "\e[120;5u" e il byte "\x18": id ed eff_text "X"
+      ev.dispatch(syn('!'.ord)) # terminale classico
+      ev.dispatch(syn('1'.ord))
+      expect(log).to eq(%i[bang ctrl_x bang one])
+    end
   end
 
   context 'con un contesto proprio' do

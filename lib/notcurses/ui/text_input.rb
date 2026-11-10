@@ -97,7 +97,8 @@ module Notcurses
           @block.call(self)
           return true
         else
-          return false unless insert(graphemes, input.utf8)
+          # eff_text: con il protocollo kitty utf8 è il tasto senza Shift ("1" per "!")
+          return false unless insert(graphemes, input.eff_text)
         end
         redraw
         true

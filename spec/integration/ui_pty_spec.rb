@@ -223,6 +223,61 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     puts 'fine'
   RUBY
 
+  # Finto terminale kitty: risponde anche a "\e[?u" con i flag 27, e notcurses
+  # accende il protocollo tastiera. kitty.() dice se notcurses l'ha acceso.
+  def kitty_prelude = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+
+    def wait_for(what)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+      sleep 0.01 until yield || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+      raise "attesa scaduta: #{what}" unless yield
+    end
+
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    lock = Mutex.new
+    written = String.new
+    answers = { "\e[6n" => "\e[5;7R", "\e[?u" => "\e[?27u", "\e[c" => "\e[?62;22c" }
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        lock.synchronize { written << data }
+        data.scan(/\e\[6n|\e\[\?u|\e\[c/) { |q| lock.synchronize { master.write(answers[q]) } }
+      end
+    rescue IOError, Errno::EIO
+    end
+    type = ->(keys) { lock.synchronize { master.write(keys) } }
+    kitty = -> { lock.synchronize { written.include?("\e[>u\e[=27u") } }
+  RUBY
+
+  def kitty_text_script = kitty_prelude + <<~'RUBY'
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      app = Notcurses::UI::App.new(nc)
+      field = Notcurses::UI::TextInput.new(app.root, size: 1)
+      app.after(10) { app.stop }
+      failure = nil
+      user = Thread.new do
+        wait_for('run') { app.running? }
+        type.("\e[49;2;33u\e[50;2;64u") # kitty Shift+1 e Shift+2 (tastiera US)
+        wait_for('testo') { field.text.size == 2 }
+        app.stop
+      rescue StandardError => e
+        failure = e
+        app.stop
+      end
+      reason = app.run
+      user.join
+      puts "failure #{failure.message}" if failure
+      puts "kitty #{kitty.()} reason #{reason} text #{field.text.inspect}"
+    end
+    puts 'fine'
+  RUBY
+
   it 'tasti veri, clic SGR, resize dal kernel, dati di FdPlane e Subprocess con post, Ctrl-C → :interrupt' do
     skip 'TIOCSCTTY e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
 
@@ -260,6 +315,17 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(out).to include('isig spento prima con stty: stop ["^c", "z"] stty uguale')
     expect(out).to include('ixon spento prima: stop ["^q", "z"] stty uguale')
     expect(out).to include('ixon dopo -ixon')
+    expect(out).to end_with("fine\n")
+  end
+
+  it 'protocollo kitty: il TextInput riceve il testo digitato con Shift, non il tasto senza Shift' do
+    skip 'pty e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
+
+    out, status, timed_out = run_child(kitty_text_script, timeout: 30)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(status.exitstatus).to eq(0), out
+    expect(out).not_to include('failure'), out
+    expect(out).to include('kitty true reason stop text "!@"')
     expect(out).to end_with("fine\n")
   end
 end
