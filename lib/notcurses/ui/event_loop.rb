@@ -173,7 +173,10 @@ module Notcurses
       # da solo. Kitty aggiunge CapsLock e NumLock ai modificatori: con ISIG
       # attivo run alza allora lo stesso segnale (SIGINT, SIGSTOP, SIGQUIT) al
       # proprio processo alla pressione, e non consegna questi tasti (con o senza
-      # CapsLock e NumLock, nemmeno ripetizioni e rilasci).
+      # CapsLock e NumLock, nemmeno ripetizioni e rilasci). I byte dei terminali
+      # classici (0x03 con intr rimappato, input da una pipe) arrivano invece
+      # come tasti. run legge ISIG solo all'avvio: {Context#linesigs_disable} o
+      # stty durante run non cambiano la scelta; per i tasti serve no_linesigs.
       #
       # @param no_flow_control [Boolean] disattiva IXON durante run
       # @param no_linesigs [Boolean] disattiva ISIG durante run
@@ -600,11 +603,13 @@ module Notcurses
 
       # notcurses 3.0.17 alza il segnale solo con Ctrl da solo (in.c:506): con
       # CapsLock o NumLock (protocollo kitty) lo alza il ciclo. Con ISIG attivo
-      # questi tasti non vengono consegnati.
+      # questi tasti non vengono consegnati. Un byte classico (evtype :unknown)
+      # non è un segnale: notcurses controlla Ctrl prima di trasformare 0x03 in 'C'.
       # @return [Boolean] true se l'evento è un tasto di segnale
       def line_signal(input)
         signal = LINE_SIGNALS[input.id]
-        return false unless @line_signals && signal && (input.modifiers & ~MOD_LOCKS) == MOD_CTRL
+        return false unless @line_signals && signal && input.evtype != :unknown
+        return false unless (input.modifiers & ~MOD_LOCKS) == MOD_CTRL
 
         # raise() come notcurses: pid 0 colpirebbe anche il gruppo (i figli di Subprocess)
         Process.kill(signal, Process.pid) if input.press? && input.modifiers != MOD_CTRL

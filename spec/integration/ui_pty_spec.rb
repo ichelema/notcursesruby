@@ -212,6 +212,9 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
       system('stty', '-isig', in: slave)
       session.('isig spento prima con stty', on, ctrl_c)
       system('stty', 'isig', in: slave)
+      system('stty', 'intr', 'undef', in: slave)
+      session.('intr rimappato', {}, ctrl_c) # ISIG resta: il byte 0x03 è un tasto, non un segnale
+      system('stty', 'intr', '^C', in: slave)
       system('stty', '-ixon', in: slave)
       session.('ixon spento prima', on, lambda {
         type.("\x11z")
@@ -346,6 +349,7 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(out).to include('solo no_flow_control: interrupt ["^q", "z"] stty uguale')
     expect(out).to include('isig spento prima con linesigs_disable: stop ["^c", "z"] stty uguale')
     expect(out).to include('isig spento prima con stty: stop ["^c", "z"] stty uguale')
+    expect(out).to include('intr rimappato: stop ["^c", "z"] stty uguale')
     expect(out).to include('ixon spento prima: stop ["^q", "z"] stty uguale')
     expect(out).to include('ixon dopo -ixon')
     expect(out).to end_with("fine\n")
