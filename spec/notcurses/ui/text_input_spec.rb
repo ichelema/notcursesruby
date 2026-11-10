@@ -75,6 +75,18 @@ RSpec.describe Notcurses::UI::TextInput do
     expect([shown(input), input.cursor]).to eq(['abcd', [0, 4]]) # torna a mostrare l'inizio
   end
 
+  it 'un glifo largo sotto il cursore nell\'ultima colonna resta visibile; in 1 colonna non si blocca' do
+    input = field(5, text: 'abcd漢')
+    key(Notcurses::Key::LEFT)
+    expect([shown(input), input.cursor]).to eq(['bcd漢', [0, 3]])
+    expect(input.plane.at(y: 0, x: 3).egc).to eq('漢')
+    type('x')
+    expect([input.text, shown(input), input.cursor]).to eq(['abcdx漢', 'cdx漢', [0, 3]])
+    narrow = field(1, text: 'a漢')
+    expect(narrow.offer_input(syn(Notcurses::Key::LEFT))).to be(true) # il glifo non entra e resta nascosto
+    expect([narrow.position, narrow.cursor]).to eq([1, [0, 0]])
+  end
+
   it 'Invio chiama il blocco; senza blocco, con Ctrl o Alt, o con il mouse l\'evento non è consumato' do
     sent = []
     input = field(10) { |i| sent << i.text }
