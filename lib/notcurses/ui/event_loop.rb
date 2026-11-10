@@ -119,7 +119,10 @@ module Notcurses
       MOD_ALT = FFI::NCKEY_MOD_ALT
       MOD_SHIFT = FFI::NCKEY_MOD_SHIFT
       MOD_OTHER = FFI::NCKEY_MOD_META | FFI::NCKEY_MOD_SUPER | FFI::NCKEY_MOD_HYPER
-      private_constant :MOD_CTRL, :MOD_ALT, :MOD_SHIFT, :MOD_OTHER
+      MOD_LOCKS = FFI::NCKEY_MOD_CAPSLOCK | FFI::NCKEY_MOD_NUMLOCK
+      # i segnali che notcurses alza per Ctrl+C, Ctrl+Z e Ctrl+\ (in.c:506-516)
+      LINE_SIGNALS = { 'C'.ord => 'INT', 'Z'.ord => 'STOP', '\\'.ord => 'QUIT' }.freeze
+      private_constant :MOD_CTRL, :MOD_ALT, :MOD_SHIFT, :MOD_OTHER, :MOD_LOCKS, :LINE_SIGNALS
 
       # @return [Context]
       attr_reader :context
@@ -139,6 +142,7 @@ module Notcurses
         @input_handlers = []
         @resize_handlers = []
         @running = false
+        @line_signals = false
         @stop_requested = false
         @resize_requested = false
         @wake_w = nil
@@ -163,6 +167,13 @@ module Notcurses
       # ripristinato il terminale e run non lo tocca. run legge e cambia IXON,
       # e legge ISIG, sul terminale da cui notcurses legge i tasti (stdin se è
       # un tty, altrimenti /dev/tty).
+      #
+      # Con il protocollo tastiera kitty (Kitty, Ghostty) Ctrl+C arriva come
+      # sequenza e non come byte: il segnale lo alza notcurses, ma solo con Ctrl
+      # da solo. Kitty aggiunge CapsLock e NumLock ai modificatori: con ISIG
+      # attivo run alza allora lo stesso segnale (SIGINT, SIGSTOP, SIGQUIT) al
+      # proprio processo alla pressione, e non consegna questi tasti (con o senza
+      # CapsLock e NumLock, nemmeno ripetizioni e rilasci).
       #
       # @param no_flow_control [Boolean] disattiva IXON durante run
       # @param no_linesigs [Boolean] disattiva ISIG durante run
@@ -189,10 +200,13 @@ module Notcurses
         linesigs = false
         begin
           ixon = @context.flow_control_disable if no_flow_control
-          if no_linesigs && @context.linesigs?
+          # senza ISIG noto linesigs? solleva: il ciclo non alza segnali, come prima
+          isig = !FFI::ISIG.nil? && @context.linesigs?
+          if no_linesigs && isig
             @context.linesigs_disable
             linesigs = true
           end
+          @line_signals = isig && !no_linesigs
           wake_r, @wake_w = IO.pipe
           # il descrittore è di notcurses: autoclose false, lo chiude notcurses_stop
           @input = @context.drain_input? ? nil : IO.for_fd(@context.inputready_fd, autoclose: false)
@@ -315,7 +329,9 @@ module Notcurses
       # segnali (ISIG) e Ctrl+S e Ctrl+Q restano il controllo di flusso (IXON):
       # non arrivano qui. Arrivano con {#run}(no_flow_control: true) per
       # Ctrl+S e Ctrl+Q e con {#run}(no_linesigs: true) per Ctrl+C, Ctrl+Z e
-      # Ctrl+\.
+      # Ctrl+\. Vale anche con il protocollo kitty, dove CapsLock e NumLock si
+      # aggiungono ai modificatori: {#run} li alza come segnali (vedi {#run}).
+      # {#dispatch} di un evento costruito li consegna sempre.
       #
       # @param key [String, Integer] un carattere (String di un codepoint) o
       #   un codice: codepoint o costante {Key}
@@ -499,7 +515,7 @@ module Notcurses
             @reason = :eof
             @stop_requested = true
           when Key::RESIZE then handle_resize(refresh: true)
-          else dispatch(input)
+          else dispatch(input) unless line_signal(input)
           end
         end
         worked
@@ -580,6 +596,19 @@ module Notcurses
         return (input.eff_text.empty? ? input.id : input.eff_text.ord) == id if printable?(id)
 
         input.id == id && mods.anybits?(MOD_SHIFT) == shift
+      end
+
+      # notcurses 3.0.17 alza il segnale solo con Ctrl da solo (in.c:506): con
+      # CapsLock o NumLock (protocollo kitty) lo alza il ciclo. Con ISIG attivo
+      # questi tasti non vengono consegnati.
+      # @return [Boolean] true se l'evento è un tasto di segnale
+      def line_signal(input)
+        signal = LINE_SIGNALS[input.id]
+        return false unless @line_signals && signal && (input.modifiers & ~MOD_LOCKS) == MOD_CTRL
+
+        # raise() come notcurses: pid 0 colpirebbe anche il gruppo (i figli di Subprocess)
+        Process.kill(signal, Process.pid) if input.press? && input.modifiers != MOD_CTRL
+        true
       end
 
       def printable?(id) = id >= 0x20 && id != 0x7f && id <= 0x10ffff && !Key.synthesized?(id)

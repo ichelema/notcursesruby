@@ -278,6 +278,39 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     puts 'fine'
   RUBY
 
+  # Più run dello stesso EventLoop, ognuno con un timer di sicurezza: stampa
+  # il motivo d'uscita e i modificatori arrivati a on_key('c', ctrl: true).
+  def kitty_signals_script = kitty_prelude + <<~'RUBY'
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      ev = Notcurses::UI::EventLoop.new(nc)
+      seen = []
+      ev.on_key('c', ctrl: true) { |input| seen << input.modifier_list }
+      quits = 0
+      Signal.trap('QUIT') { quits += 1 }
+      session = lambda do |name, keys, **opts|
+        seen.clear
+        user = keys && Thread.new do
+          wait_for('run') { ev.running? }
+          type.(keys)
+        end
+        timer = ev.after(1) { ev.stop }
+        reason = ev.run(**opts)
+        timer.cancel
+        user&.join
+        puts "#{name}: #{reason} #{seen.inspect}"
+      end
+      session.('numlock', "\e[99;133u")
+      session.('capslock', "\e[99;69u")
+      session.('solo ctrl', "\e[99;5u") # il segnale lo alza notcurses, l'evento resta in coda
+      session.('dopo solo ctrl', nil)
+      session.('ripetizione e rilascio', "\e[99;133:2u\e[99;133:3u")
+      session.('ctrl+\\ con numlock', "\e[92;133u")
+      session.('no_linesigs', "\e[99;133u", no_linesigs: true)
+      puts "kitty #{kitty.()} quits #{quits}"
+    end
+    puts 'fine'
+  RUBY
+
   it 'tasti veri, clic SGR, resize dal kernel, dati di FdPlane e Subprocess con post, Ctrl-C → :interrupt' do
     skip 'TIOCSCTTY e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
 
@@ -326,6 +359,21 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(status.exitstatus).to eq(0), out
     expect(out).not_to include('failure'), out
     expect(out).to include('kitty true reason stop text "!@"')
+    expect(out).to end_with("fine\n")
+  end
+
+  it 'protocollo kitty: Ctrl+C e Ctrl+\ con CapsLock o NumLock sono segnali, e non arrivano a on_key' do
+    skip 'pty e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
+
+    out, status, timed_out = run_child(kitty_signals_script, timeout: 30)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(status.exitstatus).to eq(0), out
+    expect(out).to include("numlock: interrupt []\n", "capslock: interrupt []\n", "solo ctrl: interrupt []\n")
+    expect(out).to include("dopo solo ctrl: stop []\n") # l'evento in coda non viene consegnato
+    expect(out).to include("ripetizione e rilascio: stop []\n")
+    expect(out).to include("ctrl+\\ con numlock: stop []\n")
+    expect(out).to include("no_linesigs: stop [[:ctrl, :numlock]]\n")
+    expect(out).to include('kitty true quits 1')
     expect(out).to end_with("fine\n")
   end
 end
