@@ -866,7 +866,9 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
   corretto; round 2, solo sul commit nuovo: nessun finding). Lotto 7: Fable e GPT, 3 round (round 1: due MEDIUM e
   tre LOW, quattro corretti e un MEDIUM in ICH-454; round 2: un MEDIUM e due LOW, corretti; round 3: un LOW in
   ICH-455, GPT nessun finding). Lotto 8: Fable e GPT, 3 round (round 1: un MEDIUM, corretto; round 2: due LOW,
-  corretti; round 3: nessun finding, un buco di test coperto dopo il loop senza review).
+  corretti; round 3: nessun finding, un buco di test coperto dopo il loop senza review). Lotto 9: Fable e GPT, 3
+  round (round 1: un MEDIUM, testo corretto e gestione in codice in ICH-458; round 2: due LOW, corretti; round 3: due
+  LOW, corretti dopo il loop senza review; GPT nessun finding in tutti i round).
 
 ### Lotti
 
@@ -880,6 +882,7 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 | 6 | [#7](https://github.com/ichelema/notcursesruby/pull/7) | `a55606b` | ICH-278 | nessuno (limite già noto: `NCOPTION_NO_WINCH_SIGHANDLER` toglie anche il gestore di SIGCONT, `unixsig.c:204-211`; notcurses non gestisce SIGTSTP) |
 | 7 | [#8](https://github.com/ichelema/notcursesruby/pull/8) | `29748c8` | ICH-279, ICH-280, ICH-281 | con il protocollo kitty notcurses alza SIGINT, SIGSTOP e SIGQUIT solo con Ctrl da solo (`in.c:506-516`): con CapsLock o NumLock non alza niente, con Ctrl da solo alza il segnale e mette anche l'evento in coda; lo stesso controllo non guarda `evtype`, quindi anche la ripetizione e il rilascio alzano il segnale (ICH-456); con kitty acceso ogni evento senza tipo diventa `:press`, byte di controllo compresi (`in.c:501-505`); tabella "Bug e limiti di notcurses 3.0.17 trovati nella Fase 3" |
 | 8 | [#9](https://github.com/ichelema/notcursesruby/pull/9) | `0c72ad1` | ICH-282, ICH-283 | il report SGR del movimento con un tasto premuto diventa una nuova pressione dello stesso tasto (`in.c:610-620`); sulla console Linux il mouse viene da gpm e ogni evento, rilascio compreso, diventa una pressione di BUTTON1 (`gpm.c:31`, `mice.c:4-19`); tabella "Bug e limiti di notcurses 3.0.17 trovati nella Fase 3" |
+| 9 | [#10](https://github.com/ichelema/notcursesruby/pull/10) | `106c700` | ICH-284; ICH-458 (nata dalla review) | `ncdirect_stream` sale di `rows - 1` righe (`direct.c:1550-1559`), ma il raster a celle lascia il cursore sotto il frame (`direct.c:558`): ogni frame scende di una riga; con `:pixel` un frame che finisce sull'ultima riga porta il cursore con una CUP alla riga sotto lo schermo (`direct.c:607-613`); tabella "Direct" di `memory/fase2-wrapper-idiomatico.md` |
 
 ### Cambi dell'API pubblica
 
@@ -930,6 +933,9 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
 - `UI::App`: una pressione di BUTTON1..3 con lo stesso tasto già premuto, senza rilascio, è un drag: non cambia il
   focus, non va ai componenti e arriva solo a `on_input`; un drag non ripete il clic di un `Button`. Sulla console
   Linux (`detected_terminal` `FBcon` o `VT`) la regola non vale. `App.new` legge `detected_terminal` (lotto 8).
+- `Direct#stream`: prima di ogni frame dopo il primo il cursore sale di tutta l'altezza del frame precedente, senza
+  CUB. Con `:pixel`, per un frame più basso dello schermo che finisce sull'ultima riga, l'esito dipende dal
+  terminale: documentato nel YARD (lotto 9, ICH-458).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
@@ -962,3 +968,6 @@ Nessuno.
   già su `master`).
 - ICH-457 — consegnare il movimento del drag al componente dove il drag è partito (pointer capture); funzionalità
   nuova, `Improvement` (lotto 8, scelta dell'utente su ICH-283).
+- ICH-458 — `Direct#stream` con `:pixel`: un frame più basso dello schermo che finisce sull'ultima riga fa partire i
+  frame successivi una riga più in alto, su un terminale che ferma la CUP sull'ultima riga; per i frame più stretti
+  del terminale è una regressione rispetto a prima del lotto 9 (lotto 9, review round 1).

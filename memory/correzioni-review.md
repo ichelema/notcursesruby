@@ -403,3 +403,66 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 - I due `repro.rb` delle issue danno l'output atteso.
 - `git diff 6368d9c -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
 - `master` su `0c72ad1`: 986 esempi, 0 fallimenti.
+
+## Lotto 9 — ICH-284 (PR #10, merge `106c700`)
+
+### Fix
+
+- **ICH-284 (`direct-visual-02`, `Direct#stream`).** Prima di ogni frame dopo il primo `stream` chiama
+  `ncdirect_cursor_up(rows)` con l'altezza del frame precedente; via il ramo `cols == dim_x` e il `cursor_left`.
+  Causa radice: il riposizionamento era copiato da `ncdirect_stream` (`direct.c:1550-1559`), che presume il cursore
+  sull'ultima riga del frame e sale di `rows - 1`; il raster a celle chiude anche l'ultima riga con `"\n%*.*s"`
+  (`direct.c:558`) e lascia il cursore sotto il frame. Ogni frame scendeva di una riga e la prima riga dei frame
+  precedenti restava sullo schermo. Il CUB dalla colonna 0 non faceva nulla; per l'allineamento basta la HPA del
+  raster.
+- **`:pixel` documentato, non gestito.** `ncdirect_dump_sprixel` sposta in alto un frame che non entra sotto il
+  cursore (`direct.c:442-448`), poi `ncdirect_dump_plane` manda una CUP a `min(y + rows, dim_y)` (`direct.c:607-613`).
+  Per un frame più basso dello schermo che finisce sull'ultima riga quella CUP punta sotto lo schermo: su un
+  terminale che la ferma sull'ultima riga del frame, il frame successivo parte una riga più in alto e da lì resta
+  fermo; se un sixel sull'ultima riga fa scorrere lo schermo (`termdesc.h:165-166`), i frame si sovrappongono. Un
+  frame alto quanto lo schermo parte dalla riga 0 (`direct.c:444`) e non si sposta. Descritto nel YARD di `#stream` e
+  nel CHANGELOG; la gestione in codice è ICH-458.
+
+### Decisioni
+
+- `:pixel`: la issue ammette "Handle it or document it"; il piano approvato dall'utente lo documenta. Dopo il round 1
+  la gestione in codice è andata in ICH-458 (MEDIUM, `related` a ICH-284), perché serve una lettura del cursore per
+  frame e un finto terminale sixel che segue il cursore: non è un fix minimo.
+- Per i frame più stretti del terminale, su un terminale che ferma la CUP, il caso `:pixel` in fondo allo schermo è
+  una regressione rispetto a prima: su master si sovrapponevano. L'utente ha fatto il merge con il compromesso
+  descritto nel report del loop.
+- Spec in più rispetto all'issue: `scale: :stretch` controlla che un frame largo come il terminale salga ancora di
+  tutta l'altezza (passa anche sul codice di prima, è una guardia del criterio "as today").
+- La PR e il commento sulla PR citano ICH-458 solo con il link, senza magic word.
+
+### Review (3 round, Fable e GPT)
+
+- Round 1 (`4f81490`): Fable APPROVABILE CON RISERVE, un MEDIUM (`:pixel` in fondo allo schermo è il caso comune e
+  il testo lo presentava come raro); testo corretto in `e67e511`, gestione in codice in ICH-458. GPT APPROVABILE,
+  nessun finding.
+- Round 2 (`e67e511`): Fable due LOW, corretti in `632f659`: il CHANGELOG chiamava "limite che resta" un caso che su
+  master funzionava per i frame stretti; un frame alto quanto lo schermo non si sposta. Corretto anche il riferimento
+  `direct.c:441` → `442`. GPT nessun finding.
+- Round 3 (`632f659`): Fable due LOW, corretti dopo il loop in `4604996` e non riverificati: l'esito `:pixel` dipende
+  dal terminale (`termdesc.h:165-166`); la vecchia deriva valeva solo per i frame più stretti del terminale. GPT
+  nessun finding.
+- Mutazioni dei reviewer: 7 nel round 1 e 6 nel round 2, tutte uccise dalle spec nuove.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| I worktree di review del round 1 esistevano già, il submodule solo in uno | il comando che li creava è stato interrotto dall'utente dopo la creazione | l'utente ha scelto di riusarli; submodule inizializzato nell'altro |
+| `git worktree remove` dei worktree di review e di quello del lotto rifiutato | worktree con il submodule `notcurses` | `--force` con `status` vuoto (approvato in `RIPRESA.md`) |
+| Il branch remoto del lotto esisteva ancora dopo il merge | GitHub non lo cancella | `git push origin --delete` dopo la conferma chiesta da `5_remove-worktree` (la decisione è già in `RIPRESA.md`) |
+| I passi di chiusura del lotto non partivano dopo il merge | la procedura li elencava solo nella sezione "Stato" | su richiesta dell'utente, il passo 7 della "Procedura per ogni lotto" dice di eseguirli subito dopo ogni merge |
+
+### Verifica finale
+
+- Branch (`4604996`): 988 esempi, 0 fallimenti su Ruby 4.0.7; con il seme 1234 e la coverage (su `4f81490`): righe
+  98,24 %, rami 90,89 %; YARD 100 %, 0 warning; `ruby -w` senza warning. CI verde su tutta la matrice (Ruby
+  3.1.7–4.0.9) e Codecov.
+- La spec nuova falliva sul codice di prima (`"\e[2A\e[1D"` al posto di `"\e[3A"`).
+- Il `repro.rb` della issue dà `" \n \n \n\e[3A \n \n \n"`.
+- `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+- `master` su `106c700`: 988 esempi, 0 fallimenti, anche con i semi 4242 e 7; `gem build` senza warning; CI verde.
