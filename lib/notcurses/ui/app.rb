@@ -21,6 +21,12 @@ module Notcurses
     # contenitori, fino alla radice attiva; poi {#on_key}, Tab e Shift+Tab,
     # infine {#on_input}.
     #
+    # Drag: notcurses consegna il movimento con un tasto premuto come nuove
+    # pressioni dello stesso tasto. Una pressione di BUTTON1..3 con lo stesso
+    # tasto già premuto (senza rilascio) è un drag: non cambia il focus, non
+    # va ai componenti e arriva solo a {#on_input}. Così un drag non ripete
+    # il clic. La rotella (BUTTON4 e BUTTON5) non ha rilascio e non cambia.
+    #
     # Resize: {#root} prende sempre tutta l'area di rendering e i dialoghi si
     # ricentrano, prima degli handler di {#on_resize}.
     #
@@ -65,6 +71,7 @@ module Notcurses
         @saved_focus = []
         @focused = nil
         @cursor_at = nil
+        @held = [] # tasti BUTTON1..3 premuti e non ancora rilasciati
         @closed = false
         @closing = false
         @root = nil
@@ -317,6 +324,8 @@ module Notcurses
       # @return [Boolean] true se un componente ha consumato l'evento
       def offer(input)
         if input.mouse?
+          return false if drag?(input)
+
           target = component_at(input.y, input.x)
           if target&.focusable? && MOUSE_FOCUS.include?(input.id) && input.press? && !target.equal?(@focused)
             change_focus(target)
@@ -332,6 +341,22 @@ module Notcurses
           break if target.equal?(top)
 
           target = target.parent
+        end
+        false
+      end
+
+      # notcurses 3.0.17 perde il bit del movimento (in.c:610-620): durante
+      # un drag ogni cella arriva come una nuova pressione dello stesso tasto.
+      # L'elenco dei tasti premuti costa un solo clic se un rilascio si perde.
+      def drag?(input)
+        return false unless MOUSE_FOCUS.include?(input.id)
+
+        if input.release?
+          @held.delete(input.id)
+        elsif input.press?
+          return true if @held.include?(input.id)
+
+          @held << input.id
         end
         false
       end

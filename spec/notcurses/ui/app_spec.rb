@@ -186,6 +186,7 @@ RSpec.describe Notcurses::UI::App do
       expect(app.dispatch(syn(Notcurses::Key::BUTTON1, y: 5, x: 1))).to be(false)
       expect(app.focused).to equal(b)
       expect(b.log).to eq([Notcurses::Key::BUTTON1])
+      app.dispatch(syn(Notcurses::Key::BUTTON1, y: 5, x: 1, evtype: :release))
       app.dispatch(syn(Notcurses::Key::BUTTON1, y: 2, x: 1)) # componente non focusabile: il focus resta
       expect(app.focused).to equal(b)
       expect(label.log).to eq([Notcurses::Key::BUTTON1])
@@ -197,6 +198,31 @@ RSpec.describe Notcurses::UI::App do
     ensure
       extra&.close
       loose&.close
+    end
+
+    it 'mouse: una pressione con lo stesso tasto già premuto è un drag: va solo a on_input, il focus resta (ICH-283)' do
+      a = probe(size: 2)
+      b = probe(size: 2)
+      seen = []
+      app.on_input { |input| seen << [input.id, input.y] }
+      app.dispatch(syn(Notcurses::Key::BUTTON1, y: 0, x: 1))
+      expect(app.dispatch(syn(Notcurses::Key::BUTTON1, y: 2, x: 1))).to be(false) # drag da a su b
+      expect(app.focused).to equal(a)
+      expect(b.log).to eq([])
+      expect(seen.last).to eq([Notcurses::Key::BUTTON1, 2])
+      app.dispatch(syn(Notcurses::Key::BUTTON3, y: 2, x: 1)) # un altro tasto non è un drag
+      expect(app.focused).to equal(b)
+      expect(b.log).to eq([Notcurses::Key::BUTTON3])
+      app.dispatch(syn(Notcurses::Key::BUTTON1, y: 2, x: 1, evtype: :release)) # il rilascio arriva ancora
+      expect(b.log).to eq([Notcurses::Key::BUTTON3, Notcurses::Key::BUTTON1])
+      app.dispatch(syn(Notcurses::Key::BUTTON1, y: 0, x: 1)) # dopo il rilascio è un clic nuovo
+      expect(app.focused).to equal(a)
+      # un rilascio perso costa al massimo un clic: la pressione seguente è un drag, il suo rilascio pulisce
+      app.dispatch(syn(Notcurses::Key::BUTTON1, y: 2, x: 1))
+      expect(app.focused).to equal(a)
+      app.dispatch(syn(Notcurses::Key::BUTTON1, y: 2, x: 1, evtype: :release))
+      app.dispatch(syn(Notcurses::Key::BUTTON1, y: 2, x: 1))
+      expect(app.focused).to equal(b)
     end
 
     it 'quando il componente con il focus si nasconde o si chiude, il focus passa al successivo' do

@@ -61,6 +61,10 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   nell'ultima colonna restava tagliato, e Canc cancellava un carattere non visibile (ICH-281).
 - `UI::LogView#append` accetta una stringa vuota: prima perdeva la riga non finita e da quel momento `append`,
   `lines`, il ridisegno e il layout del contenitore sollevavano `NoMethodError` (ICH-282).
+- `UI::App`: un drag con BUTTON1..3 premuto non ripete più il clic. notcurses consegna il movimento come nuove
+  pressioni dello stesso tasto: un `Button` chiamava il blocco a ogni cella e il focus passava a ogni componente
+  attraversato. Ora una pressione con lo stesso tasto già premuto non cambia il focus e arriva solo a `on_input`
+  (ICH-283).
 
 ## [0.1.0] - 2026-10-27
 

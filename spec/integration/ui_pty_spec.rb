@@ -81,6 +81,9 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
         wait_for('Tab') { app.focused.is_a?(ui::Button) }
         type.("\r")
         wait_for('Invio') { pressed == ['ab'] }
+        # clic trascinato sul Button (riga 4): notcurses perde il bit del movimento (32), il blocco va chiamato una volta
+        type.("\e[<0;2;4M\e[<32;3;4M\e[<32;4;4M\e[<0;4;4m")
+        wait_for('drag') { pressed.size == 2 }
         type.("\e[<0;5;2M\e[<0;5;2m") # clic SGR su riga 2, colonna 5 (in base 1): il TextInput
         wait_for('clic') { app.focused.equal?(name) }
         type.("c\x18") # c e Ctrl+X
@@ -330,7 +333,7 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(status.exitstatus).to eq(0), out
     expect(out).not_to include('failure'), out
     expect(out).to include('reason interrupt')
-    expect(out).to include('pressed ["ab"] text "abc" ctrl_x 1')
+    expect(out).to include('pressed ["ab", "ab"] text "abc" ctrl_x 1')
     expect(out).to include('sizes [[30, 100, [30, 100], [25, 100]]]')
     expect(out).to include('"riga 1"', '"riga 2"', '"dal figlio"') # FdPlane e Subprocess arrivano in ordine qualsiasi
     expect(out).to end_with("fine\n")
