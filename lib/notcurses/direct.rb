@@ -993,17 +993,19 @@ module Notcurses
     # blocco. Reimplementa +ncdirect_stream+, che in 3.0.17 ignora il ritorno
     # del callback (direct.c:1588) e non si può fermare: qui basta +break+ nel
     # blocco. Prima di ogni frame il cursore sale di tutta l'altezza del frame
-    # precedente: +ncdirect_stream+ sale di una riga in meno e ogni frame
-    # scende di una riga. Con il blitter :pixel i frame precedenti non vengono
-    # tolti dal terminale (il C usa una funzione interna) e ogni frame attende
-    # la posizione del cursore come {Frame#raster}. Con :pixel, quando un frame
-    # più basso dello schermo arriva all'ultima riga (cursore in fondo, oppure
-    # con sixel un video con la scala di default), il frame successivo parte
-    # una riga più in alto e da lì resta fermo: l'ultima riga del primo frame
-    # rimane visibile sotto il video. Il C sposta in alto un frame che non
-    # entra sotto il cursore (direct.c:442-448), poi porta il cursore con una
-    # CUP alla riga sotto lo schermo (direct.c:607-613), e il terminale lo
-    # ferma sull'ultima riga del frame.
+    # precedente: con i frame più stretti del terminale +ncdirect_stream+ sale
+    # di una riga in meno e ogni frame scende di una riga. Con il blitter
+    # :pixel i frame precedenti non vengono tolti dal terminale (il C usa una
+    # funzione interna) e ogni frame attende la posizione del cursore come
+    # {Frame#raster}. Con :pixel, quando un frame più basso dello schermo
+    # finisce sull'ultima riga (per esempio con il cursore in fondo; il C
+    # sposta in alto un frame che non entra sotto il cursore, direct.c:442-448),
+    # il C porta il cursore con una CUP alla riga sotto lo schermo
+    # (direct.c:607-613) e l'esito dipende dal terminale. Se il terminale ferma
+    # il cursore sull'ultima riga del frame, il frame successivo parte una riga
+    # più in alto e da lì resta fermo: l'ultima riga del primo frame rimane
+    # visibile. Se un sixel sull'ultima riga fa scorrere lo schermo di una riga
+    # (termdesc.h:165-166), i frame si sovrappongono.
     #
     # @param path [String] file video o immagine
     # @param align [Symbol] :left, :center o :right
