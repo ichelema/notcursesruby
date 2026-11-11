@@ -64,8 +64,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   del contenitore sollevavano `NoMethodError` (ICH-282).
 - `UI::App`: un drag con BUTTON1..3 premuto non ripete più il clic. notcurses consegna il movimento come nuove
   pressioni dello stesso tasto: un `Button` chiamava il blocco a ogni cella e il focus passava a ogni componente
-  attraversato. Ora una pressione con lo stesso tasto già premuto non cambia il focus e arriva solo a `on_input`
-  (ICH-283).
+  attraversato. Ora una pressione con lo stesso tasto già premuto non cambia il focus e arriva solo a `on_input`.
+  Sulla console Linux (gpm, senza rilasci) ogni pressione resta un clic (ICH-283).
 
 ## [0.1.0] - 2026-10-27
 

@@ -26,6 +26,9 @@ module Notcurses
     # tasto già premuto (senza rilascio) è un drag: non cambia il focus, non
     # va ai componenti e arriva solo a {#on_input}. Così un drag non ripete
     # il clic. La rotella (BUTTON4 e BUTTON5) non ha rilascio e non cambia.
+    # Sulla console Linux ({Context#detected_terminal} "FBcon" o "VT") il
+    # mouse viene da gpm, che manda solo pressioni: lì ogni pressione è un
+    # clic, e un drag ripete il clic.
     #
     # Resize: {#root} prende sempre tutta l'area di rendering e i dialoghi si
     # ricentrano, prima degli handler di {#on_resize}.
@@ -52,7 +55,8 @@ module Notcurses
     #   end
     class App < EventLoop
       MOUSE_FOCUS = [Key::BUTTON1, Key::BUTTON2, Key::BUTTON3].freeze
-      private_constant :MOUSE_FOCUS
+      LINUX_CONSOLE = /\A(?:FBcon|VT)(?: |\z)/
+      private_constant :MOUSE_FOCUS, :LINUX_CONSOLE
 
       # @return [Container] radice dei componenti: un Container verticale
       #   grande quanto l'area di rendering
@@ -72,6 +76,8 @@ module Notcurses
         @focused = nil
         @cursor_at = nil
         @held = [] # tasti BUTTON1..3 premuti e non ancora rilasciati
+        # sulla console Linux il mouse viene da gpm, che manda solo pressioni (gpm.c:31)
+        @releases = !LINUX_CONSOLE.match?(context.detected_terminal.to_s)
         @closed = false
         @closing = false
         @root = nil
@@ -349,7 +355,7 @@ module Notcurses
       # un drag ogni cella arriva come una nuova pressione dello stesso tasto.
       # L'elenco dei tasti premuti costa un solo clic se un rilascio si perde.
       def drag?(input)
-        return false unless MOUSE_FOCUS.include?(input.id)
+        return false unless @releases && MOUSE_FOCUS.include?(input.id)
 
         if input.release?
           @held.delete(input.id)

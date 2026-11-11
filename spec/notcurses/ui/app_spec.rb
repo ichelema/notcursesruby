@@ -225,6 +225,20 @@ RSpec.describe Notcurses::UI::App do
       expect(app.focused).to equal(b)
     end
 
+    it 'mouse: sulla console Linux (gpm, senza rilasci) ogni pressione arriva ai componenti (ICH-283)' do
+      %w[FBcon VT].each do |name|
+        allow(nc).to receive(:detected_terminal).and_return(name)
+        console = described_class.new(nc)
+        a = probe(console.root, size: 2)
+        b = probe(console.root, size: 2)
+        console.dispatch(syn(Notcurses::Key::BUTTON1, y: 0, x: 1)) # gpm manda solo pressioni
+        console.dispatch(syn(Notcurses::Key::BUTTON1, y: 2, x: 1))
+        expect(console.focused).to equal(b)
+        expect([a.log, b.log]).to eq([[Notcurses::Key::BUTTON1], [Notcurses::Key::BUTTON1]])
+        console.close
+      end
+    end
+
     it 'quando il componente con il focus si nasconde o si chiude, il focus passa al successivo' do
       a = probe(size: 1)
       b = probe(size: 1)
