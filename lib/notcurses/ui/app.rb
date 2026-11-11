@@ -27,8 +27,8 @@ module Notcurses
     # va ai componenti e arriva solo a {#on_input}. Così un drag non ripete
     # il clic. La rotella (BUTTON4 e BUTTON5) non ha rilascio e non cambia.
     # Sulla console Linux ({Context#detected_terminal} "FBcon" o "VT") il
-    # mouse viene da gpm, che manda solo pressioni: lì ogni pressione è un
-    # clic, e un drag ripete il clic.
+    # mouse viene da gpm, che manda ogni evento come pressione di BUTTON1,
+    # anche il rilascio: lì ogni pressione è un clic, e un drag ripete il clic.
     #
     # Resize: {#root} prende sempre tutta l'area di rendering e i dialoghi si
     # ricentrano, prima degli handler di {#on_resize}.
@@ -77,7 +77,7 @@ module Notcurses
         @cursor_at = nil
         @held = [] # tasti BUTTON1..3 premuti e non ancora rilasciati
         # sulla console Linux il mouse viene da gpm, che manda solo pressioni (gpm.c:31)
-        @releases = !LINUX_CONSOLE.match?(context.detected_terminal.to_s)
+        @releases = !LINUX_CONSOLE.match?(context.detected_terminal.to_s.b) # la versione può non essere UTF-8
         @closed = false
         @closing = false
         @root = nil

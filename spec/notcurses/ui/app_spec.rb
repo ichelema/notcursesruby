@@ -226,15 +226,17 @@ RSpec.describe Notcurses::UI::App do
     end
 
     it 'mouse: sulla console Linux (gpm, senza rilasci) ogni pressione arriva ai componenti (ICH-283)' do
-      %w[FBcon VT].each do |name|
+      # nome e release del kernel (termdesc.c:940); VTE e un nome con byte non UTF-8 non sono la console
+      { 'FBcon 6.12.0' => true, 'VT 7.3.3-1-cachyos' => true, 'VTE 7603' => false,
+        "XTerm \xFF".dup.force_encoding(Encoding::UTF_8) => false }.each do |name, console_linux|
         allow(nc).to receive(:detected_terminal).and_return(name)
         console = described_class.new(nc)
         a = probe(console.root, size: 2)
         b = probe(console.root, size: 2)
         console.dispatch(syn(Notcurses::Key::BUTTON1, y: 0, x: 1)) # gpm manda solo pressioni
         console.dispatch(syn(Notcurses::Key::BUTTON1, y: 2, x: 1))
-        expect(console.focused).to equal(b)
-        expect([a.log, b.log]).to eq([[Notcurses::Key::BUTTON1], [Notcurses::Key::BUTTON1]])
+        expect(console.focused).to equal(console_linux ? b : a), name.inspect
+        expect(b.log).to eq(console_linux ? [Notcurses::Key::BUTTON1] : []), name.inspect
         console.close
       end
     end
