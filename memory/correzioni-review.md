@@ -341,3 +341,65 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 - I tre `repro.rb` delle issue danno l'output atteso.
 - `git diff dc10c8e -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
 - `master` su `29748c8`: 982 esempi, 0 fallimenti.
+
+## Lotto 8 — ICH-282, ICH-283 (PR #9, merge `0c72ad1`)
+
+### Fix
+
+- **ICH-282 (`ui-02`, `LogView#append('')`).** `@partial = parts.pop || ''.b`. Causa radice: `"".split("\n", -1)`
+  è `[]`, quindi con la riga non finita vuota (vista nuova, dopo `clear`, dopo un blocco che finisce con `"\n"`)
+  `append('')` metteva `@partial` a `nil`, e da lì `append`, `lines`, il ridisegno e il layout del contenitore
+  sollevavano `NoMethodError`.
+- **ICH-283 (`ui-03`, drag che ripete il clic).** `App#drag?` tiene in `@held` i tasti BUTTON1..3 premuti: una
+  pressione di un tasto già in `@held` restituisce `false` da `offer` prima del focus e dei componenti, e arriva solo
+  a `on_input` (`key_binding` salta il mouse); il rilascio toglie il suo tasto. Causa radice: notcurses perde il bit
+  del movimento del report SGR (`in.c:610-620`), quindi ogni cella del drag arriva come pressione nuova dello stesso
+  tasto. Un rilascio perso costa un clic.
+- **Console Linux (review round 1).** Lì notcurses legge il mouse da gpm e trasforma ogni evento, rilascio compreso,
+  in `\e[<0;x;yM` (`gpm.c:31`, `mice.c:4-19`): `@held` non si svuotava mai e il mouse arrivava ai componenti una
+  volta sola. `App` non applica la regola quando `detected_terminal` è `FBcon` o `VT`, seguito o no da spazio e
+  versione (`LINUX_CONSOLE`, confronto sui byte). Lì ogni pressione resta un clic, come prima della PR.
+
+### Decisioni
+
+- ICH-283, scelta della regola 14: l'utente ha scelto la soluzione della issue (pressione ripetuta = movimento, il
+  Button scatta alla pressione), non il clic al rilascio. Dopo un esempio pratico l'utente ha chiesto se il drag and
+  drop resta possibile: con la soluzione scelta si scrive in `App#on_input`, non dentro un componente. Il drag dentro
+  i componenti (pointer capture) è ICH-457, aperta su richiesta dell'utente.
+- Console Linux (MEDIUM del round 1): fra esclusione della console, solo documentazione e stato che scade, l'utente
+  ha scelto l'esclusione con `detected_terminal`.
+- Confronto del nome sui byte (`.b`) invece dello `scrub` in `Util.take_string`: lo `scrub` è ICH-301 (lotto 14).
+- La PR descrive ICH-457 senza l'ID, per la regola che vieta le magic word verso issue fuori dal lotto.
+
+### Review (3 round, Fable e GPT)
+
+- Round 1 (`828886f`): Fable APPROVABILE CON RISERVE, un MEDIUM (console Linux con gpm), corretto in `b6ab903`; GPT
+  APPROVABILE, nessun finding. Corretto anche il testo della voce del CHANGELOG di ICH-282 (`f92dc5f`), segnalato da
+  Fable come nota.
+- Round 2 (`b6ab903`): Fable due LOW, corretti in `de79ba7`: `App.new` sollevava `ArgumentError` con un nome del
+  terminale non UTF-8 (la versione viene da XTVERSION); la spec non usava i nomi reali con la release del kernel
+  (`termdesc.c:940`) e nessuna mutazione della regexp la faceva fallire. GPT nessun finding (ha consegnato il report
+  solo dopo una richiesta).
+- Round 3 (`de79ba7`): nessun finding da entrambi. Fable ha segnalato un buco di test marginale (un rilascio che
+  svuota tutti i tasti premuti): spec aggiunta dopo il loop (`5dbba40`), non riverificata da una review.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| `yard doc --fail-on-warning` fallisce | `@held` in un commento è letto come tag YARD sconosciuto | commento senza `@` |
+| `git apply --cached` di un solo hunk del CHANGELOG mette in stage entrambi i cambi | con `-U1` i due cambi vicini formano un hunk | `git diff -U0` e `git apply --cached --unidiff-zero` |
+| `git worktree remove` dei worktree di review rifiutato | worktree con il submodule `notcurses` | `--force` con `status` vuoto (approvato in `RIPRESA.md`) |
+| La review GPT del round 2 finisce senza report | il subagente non ha chiamato l'hand-back | `SendMessage` con la richiesta del report |
+| La skill `linear` avviata dal tool Skill parte in background senza compito | la skill ha `context: fork` | skill fermata; issue creata con `scripts/linear.py` |
+
+### Verifica finale
+
+- Branch (`5dbba40`): 986 esempi, 0 fallimenti su Ruby 4.0.7, anche con i semi 1234, 4242 e 7 (su `828886f`); coverage
+  98,21 %; YARD 100 %, 0 warning; `ruby -w` senza warning; `gem build` senza warning. CI verde su tutta la matrice
+  (Ruby 3.1.7–4.0.9) e Codecov.
+- Ogni spec nuova falliva sul codice di prima del suo fix; le mutazioni della regexp e del rilascio fanno fallire
+  `app_spec.rb`.
+- I due `repro.rb` delle issue danno l'output atteso.
+- `git diff 6368d9c -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+- `master` su `0c72ad1`: 986 esempi, 0 fallimenti.

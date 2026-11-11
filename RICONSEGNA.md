@@ -865,7 +865,8 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
   nessun finding). Lotto 6: `/trinity:workflow:3_independent-review`, un reviewer Fable, 2 round (round 1: un LOW,
   corretto; round 2, solo sul commit nuovo: nessun finding). Lotto 7: Fable e GPT, 3 round (round 1: due MEDIUM e
   tre LOW, quattro corretti e un MEDIUM in ICH-454; round 2: un MEDIUM e due LOW, corretti; round 3: un LOW in
-  ICH-455, GPT nessun finding).
+  ICH-455, GPT nessun finding). Lotto 8: Fable e GPT, 3 round (round 1: un MEDIUM, corretto; round 2: due LOW,
+  corretti; round 3: nessun finding, un buco di test coperto dopo il loop senza review).
 
 ### Lotti
 
@@ -878,6 +879,7 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 | 5 | [#6](https://github.com/ichelema/notcursesruby/pull/6) | `119a98f` | ICH-276, ICH-277 | `ncmultiselector_draw` con il piano del widget di 1 riga: `yoff` unsigned contro `dimy - 2` (`selector.c:696`), circa 2^32 giri con il GVL tenuto; tabella "Widget A" di `memory/fase2-wrapper-idiomatico.md` |
 | 6 | [#7](https://github.com/ichelema/notcursesruby/pull/7) | `a55606b` | ICH-278 | nessuno (limite già noto: `NCOPTION_NO_WINCH_SIGHANDLER` toglie anche il gestore di SIGCONT, `unixsig.c:204-211`; notcurses non gestisce SIGTSTP) |
 | 7 | [#8](https://github.com/ichelema/notcursesruby/pull/8) | `29748c8` | ICH-279, ICH-280, ICH-281 | con il protocollo kitty notcurses alza SIGINT, SIGSTOP e SIGQUIT solo con Ctrl da solo (`in.c:506-516`): con CapsLock o NumLock non alza niente, con Ctrl da solo alza il segnale e mette anche l'evento in coda; lo stesso controllo non guarda `evtype`, quindi anche la ripetizione e il rilascio alzano il segnale (ICH-456); con kitty acceso ogni evento senza tipo diventa `:press`, byte di controllo compresi (`in.c:501-505`); tabella "Bug e limiti di notcurses 3.0.17 trovati nella Fase 3" |
+| 8 | [#9](https://github.com/ichelema/notcursesruby/pull/9) | `0c72ad1` | ICH-282, ICH-283 | il report SGR del movimento con un tasto premuto diventa una nuova pressione dello stesso tasto (`in.c:610-620`); sulla console Linux il mouse viene da gpm e ogni evento, rilascio compreso, diventa una pressione di BUTTON1 (`gpm.c:31`, `mice.c:4-19`); tabella "Bug e limiti di notcurses 3.0.17 trovati nella Fase 3" |
 
 ### Cambi dell'API pubblica
 
@@ -924,6 +926,10 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
 - `UI::TextInput` scorre il testo anche per il grapheme sotto il cursore (lotto 7).
 - `Context#linesigs?` e il controllo di flusso con STDIN chiuso leggono `/dev/tty` invece di sollevare `IOError`
   (lotto 7).
+- `UI::LogView#append('')` restituisce la vista e non cambia le righe (lotto 8).
+- `UI::App`: una pressione di BUTTON1..3 con lo stesso tasto già premuto, senza rilascio, è un drag: non cambia il
+  focus, non va ai componenti e arriva solo a `on_input`; un drag non ripete il clic di un `Button`. Sulla console
+  Linux (`detected_terminal` `FBcon` o `VT`) la regola non vale. `App.new` legge `detected_terminal` (lotto 8).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
@@ -954,3 +960,5 @@ Nessuno.
   successivo (lotto 7, review round 3).
 - ICH-456 — notcurses alza il segnale anche per la ripetizione e il rilascio del Ctrl+C di kitty (lotto 7; esiste
   già su `master`).
+- ICH-457 — consegnare il movimento del drag al componente dove il drag è partito (pointer capture); funzionalità
+  nuova, `Improvement` (lotto 8, scelta dell'utente su ICH-283).
