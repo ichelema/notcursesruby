@@ -59,6 +59,13 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   byte di controllo (0x03 da una pipe o con intr rimappato) restano tasti, anche con kitty (ICH-280).
 - `UI::TextInput` scorre il testo anche per il grapheme sotto il cursore: un glifo largo dopo il cursore
   nell'ultima colonna restava tagliato, e Canc cancellava un carattere non visibile (ICH-281).
+- `UI::LogView#append` accetta una stringa vuota: senza una riga non finita in attesa (vista nuova, dopo `clear` o
+  dopo un `"\n"`) la riga non finita diventava `nil`, e da quel momento `append`, `lines`, il ridisegno e il layout
+  del contenitore sollevavano `NoMethodError` (ICH-282).
+- `UI::App`: un drag con BUTTON1..3 premuto non ripete più il clic. notcurses consegna il movimento come nuove
+  pressioni dello stesso tasto: un `Button` chiamava il blocco a ogni cella e il focus passava a ogni componente
+  attraversato. Ora una pressione con lo stesso tasto già premuto non cambia il focus e arriva solo a `on_input`.
+  Sulla console Linux (gpm, senza rilasci) ogni pressione resta un clic (ICH-283).
 
 ## [0.1.0] - 2026-10-27
 

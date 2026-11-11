@@ -58,7 +58,7 @@ module Notcurses
         raise TypeError, "data deve essere String, non #{data.class}" unless data.is_a?(String)
 
         parts = (@partial + data.b).split("\n", -1)
-        @partial = parts.pop
+        @partial = parts.pop || ''.b # "".split("\n", -1) è []
         @lines.concat(parts.map { |line| line.delete_suffix("\r") })
         @lines.shift(@lines.size - @max_lines) if @lines.size > @max_lines
         redraw

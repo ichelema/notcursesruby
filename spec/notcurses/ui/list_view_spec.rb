@@ -56,10 +56,14 @@ RSpec.describe Notcurses::UI::ListView do
     y, x = view.plane.abs_yx
     expect(app.dispatch(syn(Notcurses::Key::BUTTON1, y: y + 2, x: x))).to be(true)
     expect(view.selected).to eq(2)
+    app.dispatch(syn(Notcurses::Key::BUTTON1, y: y + 2, x: x, evtype: :release))
     app.dispatch(syn(Notcurses::Key::SCROLL_DOWN, y: y, x: x))
     expect(view.selected).to eq(3)
     app.dispatch(syn(Notcurses::Key::SCROLL_UP, y: y, x: x))
     expect(view.selected).to eq(2)
+    app.dispatch(syn(Notcurses::Key::SCROLL_DOWN, y: y, x: x)) # la rotella non ha rilascio: ogni passo conta
+    app.dispatch(syn(Notcurses::Key::SCROLL_DOWN, y: y, x: x))
+    expect(view.selected).to eq(4)
     short = list(3, items: %w[solo])
     sy, sx = short.plane.abs_yx
     expect(app.dispatch(syn(Notcurses::Key::BUTTON1, y: sy + 2, x: sx))).to be(false) # sotto l'ultima voce

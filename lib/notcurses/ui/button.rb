@@ -6,8 +6,8 @@ module Notcurses
   module UI
     # Pulsante: l'etichetta dentro un bordo (con almeno 3 righe e 4 colonne)
     # o fra parentesi, "[ etichetta ]". Invio, Spazio (senza Ctrl e Alt) o un
-    # clic con BUTTON1 chiamano il blocco. Con il focus usa
-    # focused_channels.
+    # clic con BUTTON1 chiamano il blocco; un drag non ripete il clic (vedi
+    # {App}). Con il focus usa focused_channels.
     #
     # @example
     #   Notcurses::UI::Button.new(app.root, 'Esci', size: 3) { app.stop }
@@ -52,7 +52,8 @@ module Notcurses
       # @return [Boolean] true
       def focusable? = true
 
-      # Invio, Spazio o un clic con BUTTON1 chiamano il blocco.
+      # Invio, Spazio o un clic con BUTTON1 chiamano il blocco. Durante un
+      # drag {App} non offre le pressioni ripetute: il blocco scatta una volta.
       #
       # @param input [Input] l'evento
       # @return [Boolean] true se l'evento attiva il pulsante

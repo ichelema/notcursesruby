@@ -186,6 +186,7 @@ RSpec.describe Notcurses::UI::App do
       expect(app.dispatch(syn(Notcurses::Key::BUTTON1, y: 5, x: 1))).to be(false)
       expect(app.focused).to equal(b)
       expect(b.log).to eq([Notcurses::Key::BUTTON1])
+      app.dispatch(syn(Notcurses::Key::BUTTON1, y: 5, x: 1, evtype: :release))
       app.dispatch(syn(Notcurses::Key::BUTTON1, y: 2, x: 1)) # componente non focusabile: il focus resta
       expect(app.focused).to equal(b)
       expect(label.log).to eq([Notcurses::Key::BUTTON1])
@@ -197,6 +198,49 @@ RSpec.describe Notcurses::UI::App do
     ensure
       extra&.close
       loose&.close
+    end
+
+    it 'mouse: una pressione con lo stesso tasto già premuto è un drag: va solo a on_input, il focus resta (ICH-283)' do
+      a = probe(size: 2)
+      b = probe(size: 2)
+      seen = []
+      app.on_input { |input| seen << [input.id, input.y] }
+      app.dispatch(syn(Notcurses::Key::BUTTON1, y: 0, x: 1))
+      expect(app.dispatch(syn(Notcurses::Key::BUTTON1, y: 2, x: 1))).to be(false) # drag da a su b
+      expect(app.focused).to equal(a)
+      expect(b.log).to eq([])
+      expect(seen.last).to eq([Notcurses::Key::BUTTON1, 2])
+      app.dispatch(syn(Notcurses::Key::BUTTON3, y: 2, x: 1)) # un altro tasto non è un drag
+      expect(app.focused).to equal(b)
+      expect(b.log).to eq([Notcurses::Key::BUTTON3])
+      app.dispatch(syn(Notcurses::Key::BUTTON1, y: 2, x: 1, evtype: :release)) # il rilascio arriva ancora
+      expect(b.log).to eq([Notcurses::Key::BUTTON3, Notcurses::Key::BUTTON1])
+      app.dispatch(syn(Notcurses::Key::BUTTON3, y: 0, x: 1)) # il rilascio di BUTTON1 lascia premuto BUTTON3
+      expect(app.focused).to equal(b)
+      app.dispatch(syn(Notcurses::Key::BUTTON1, y: 0, x: 1)) # dopo il rilascio è un clic nuovo
+      expect(app.focused).to equal(a)
+      # un rilascio perso costa al massimo un clic: la pressione seguente è un drag, il suo rilascio pulisce
+      app.dispatch(syn(Notcurses::Key::BUTTON1, y: 2, x: 1))
+      expect(app.focused).to equal(a)
+      app.dispatch(syn(Notcurses::Key::BUTTON1, y: 2, x: 1, evtype: :release))
+      app.dispatch(syn(Notcurses::Key::BUTTON1, y: 2, x: 1))
+      expect(app.focused).to equal(b)
+    end
+
+    it 'mouse: sulla console Linux (gpm, senza rilasci) ogni pressione arriva ai componenti (ICH-283)' do
+      # nome e release del kernel (termdesc.c:940); VTE e un nome con byte non UTF-8 non sono la console
+      { 'FBcon 6.12.0' => true, 'VT 7.3.3-1-cachyos' => true, 'VTE 7603' => false,
+        "XTerm \xFF".dup.force_encoding(Encoding::UTF_8) => false }.each do |name, console_linux|
+        allow(nc).to receive(:detected_terminal).and_return(name)
+        console = described_class.new(nc)
+        a = probe(console.root, size: 2)
+        b = probe(console.root, size: 2)
+        console.dispatch(syn(Notcurses::Key::BUTTON1, y: 0, x: 1)) # gpm manda solo pressioni
+        console.dispatch(syn(Notcurses::Key::BUTTON1, y: 2, x: 1))
+        expect(console.focused).to equal(console_linux ? b : a), name.inspect
+        expect(b.log).to eq(console_linux ? [Notcurses::Key::BUTTON1] : []), name.inspect
+        console.close
+      end
     end
 
     it 'quando il componente con il focus si nasconde o si chiude, il focus passa al successivo' do

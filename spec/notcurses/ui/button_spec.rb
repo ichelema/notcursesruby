@@ -28,6 +28,24 @@ RSpec.describe Notcurses::UI::Button do
     expect(boxed).to be_focusable
   end
 
+  it 'un drag non ripete il clic: notcurses lo consegna come pressioni ripetute di BUTTON1 (ICH-283)' do
+    hits = []
+    first = described_class.new(row(1), 'A', size: 10) { hits << :a }
+    second = described_class.new(first.parent, 'B', size: 10) { hits << :b }
+    y, x = first.plane.abs_yx
+    bx = second.plane.abs_yx.last
+    app.dispatch(syn(Notcurses::Key::BUTTON1, y: y, x: x + 1))
+    app.dispatch(syn(Notcurses::Key::BUTTON1, y: y, x: x + 2)) # movimento con BUTTON1 premuto
+    app.dispatch(syn(Notcurses::Key::BUTTON1, y: y, x: x + 3))
+    app.dispatch(syn(Notcurses::Key::BUTTON1, y: y, x: x + 3, evtype: :release))
+    expect(hits).to eq([:a])
+    app.dispatch(syn(Notcurses::Key::BUTTON1, y: y, x: x + 1)) # da A trascinato su B
+    app.dispatch(syn(Notcurses::Key::BUTTON1, y: y, x: bx + 1))
+    app.dispatch(syn(Notcurses::Key::BUTTON1, y: y, x: bx + 1, evtype: :release))
+    expect(hits).to eq(%i[a a])
+    expect(app.focused).to equal(first)
+  end
+
   it 'Invio, Spazio e il clic con BUTTON1 chiamano il blocco con il pulsante; gli altri eventi no' do
     pressed = []
     button = described_class.new(row(3), 'Vai', size: 10) { |b| pressed << b }

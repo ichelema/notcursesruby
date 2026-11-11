@@ -620,6 +620,8 @@ comune (`Util.c_region`); la copertura FFI non cambia (477 chiamate, 154 escluse
 | notcurses divide il keycap `"1️⃣"` diversamente da Ruby e ne scrive U+20E3 come carattere di larghezza zero | `nccell_load` | il controllo del testo dei widget non lo vede; il disegno lo scrive come `"?"` invece di sollevare |
 | Nessuno stile «reverse»; senza tty `cursor_disable` e `mice_enable` sollevano `ContextError` | — | il focus si mostra con i colori; `App` ignora l'errore di `cursor_disable` |
 | Con il protocollo tastiera kitty notcurses alza SIGINT, SIGSTOP o SIGQUIT per Ctrl+C, Ctrl+Z e Ctrl+\ solo se i modificatori sono Ctrl da solo: con CapsLock o NumLock (kitty li aggiunge) non alza niente e consegna il tasto; con Ctrl da solo alza il segnale e mette anche l'evento in coda | `in.c:506-516` | con ISIG attivo `EventLoop#run` alza lo stesso segnale al proprio processo alla pressione, e non consegna questi tasti (ICH-280) |
+| Il report SGR del movimento con un tasto premuto (bit 32) diventa una nuova pressione dello stesso tasto: `mouse_click` mette `NCTYPE_PRESS` per ogni report `M` e `id = NCKEY_BUTTON1 + mods % 4` | `in.c:610-620` | `App` tratta come drag una pressione di BUTTON1..3 con lo stesso tasto già premuto: niente focus, niente componenti, solo `on_input`; un drag non ripete il clic di un `Button` (ICH-283) |
+| Sulla console Linux il mouse viene da gpm: ogni evento (pressione, rilascio, drag, qualsiasi tasto) diventa `\e[<0;x;yM`, cioè una pressione di BUTTON1, e un rilascio non arriva mai | `mice.c:4-19`, `gpm.c:31` | `App` non applica la regola del drag quando `Context#detected_terminal` è `"FBcon"` o `"VT"`: lì ogni pressione è un clic (trovato nella review del lotto 8) |
 
 ### Controlli
 

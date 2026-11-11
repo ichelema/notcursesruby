@@ -60,6 +60,28 @@ RSpec.describe Notcurses::UI::LogView do
     expect(lines(view)).to eq([''] * 5)
   end
 
+  it 'append con una stringa vuota non cambia le righe, anche con una riga non finita (ICH-282)' do
+    view = log(3)
+    expect(view.append('')).to equal(view) # vista nuova
+    expect(view.lines).to eq([])
+    view.append("x\n")
+    expect(view.append('')).to equal(view) # dopo una riga finita
+    expect(view.lines).to eq(%w[x])
+    view.clear
+    expect(view.append('')).to equal(view) # dopo clear
+    expect(view.lines).to eq([])
+    view.append('par')
+    view.append('') # con una riga non finita
+    view.append("tial\n")
+    expect(view.lines).to eq(%w[partial])
+    view.append('')
+    view.append("next\n")
+    expect(view.lines.last).to eq('next')
+    view.parent.layout(3, 12)
+    app.root.layout(*nc.dims)
+    expect(lines(view)).to eq(['partial', 'next', ''])
+  end
+
   it 'il layout ridisegna dalle righe in memoria: un piano più basso mostra le ultime' do
     view = log(4)
     view.append("1\n2\n3\n4\n")
