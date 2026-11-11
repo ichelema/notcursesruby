@@ -66,6 +66,13 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   pressioni dello stesso tasto: un `Button` chiamava il blocco a ogni cella e il focus passava a ogni componente
   attraversato. Ora una pressione con lo stesso tasto già premuto non cambia il focus e arriva solo a `on_input`.
   Sulla console Linux (gpm, senza rilasci) ogni pressione resta un clic (ICH-283).
+- `Direct#stream` disegna ogni frame sopra il precedente: con i frame più stretti del terminale prima saliva di una
+  riga in meno, ogni frame scendeva di una riga, la prima riga dei frame precedenti restava sullo schermo e in fondo
+  al terminale lo schermo scorreva a ogni frame. Con il blitter `:pixel`, per un frame più basso dello schermo che
+  finisce sull'ultima riga (per esempio con il cursore in fondo) l'esito dipende dal terminale. Se il terminale ferma
+  il cursore sull'ultima riga del frame, prima i frame più stretti del terminale si sovrapponevano, ora i frame dopo
+  il primo partono una riga più in alto e l'ultima riga del primo frame resta visibile. Se un sixel sull'ultima riga
+  fa scorrere lo schermo, prima lo schermo scorreva a ogni frame, ora i frame si sovrappongono (ICH-284).
 
 ## [0.1.0] - 2026-10-27
 

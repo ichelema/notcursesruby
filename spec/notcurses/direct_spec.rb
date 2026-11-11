@@ -32,6 +32,18 @@ module DirectSpecHelpers
     File.binwrite(path, gif)
     path
   end
+
+  # GIF 1x3 (1 colonna, 3 righe) con due frame (bianco, poi nero): codici LZW 4, idx, 6, 5.
+  def write_tall_two_frame_gif(path)
+    frame = lambda do |lzw|
+      "\x21\xF9\x04\x00\x0A\x00\x00\x00".b + "\x2C\x00\x00\x00\x00\x01\x00\x03\x00\x00".b +
+        "\x02\x02".b + lzw + "\x00".b
+    end
+    gif = "GIF89a\x01\x00\x03\x00\x80\x00\x00".b + "\xFF\xFF\xFF\x00\x00\x00".b +
+          frame.call("\x84\x0B".b) + frame.call("\x8C\x0B".b) + "\x3B".b
+    File.binwrite(path, gif)
+    path
+  end
 end
 
 RSpec.describe Notcurses::Direct do
@@ -571,6 +583,27 @@ RSpec.describe Notcurses::Direct do
         expect(seen).to eq([0, 1])
         expect(out).not_to be_empty
         expect(d.stream(data_file('onedot.png'), blitter: :ascii)).to equal(d)
+      end
+
+      it 'stream disegna ogni frame sopra il precedente: sale di tutta l\'altezza, senza CUB' do
+        tall = write_tall_two_frame_gif(File.join(@dir, 'alta.gif'))
+        no_sgr = ->(s) { s.gsub(/\e\[[0-9;]*m/, '') }
+        expect(no_sgr.call(written { d.stream(tall, blitter: :ascii, scale: :none) })).to eq(" \n \n \n\e[3A \n \n \n")
+        expect(no_sgr.call(written { d.stream(@gif, blitter: :ascii, scale: :none) })).to eq(" \n\e[1A \n")
+        centered = written { d.stream(tall, align: :center, blitter: :ascii, scale: :none) }
+        expect(no_sgr.call(centered)).to include("\e[3A\e[40G")
+      end
+
+      it 'stream di un frame largo come il terminale sale di tutta l\'altezza del frame' do
+        sizes = []
+        allow_any_instance_of(Notcurses::Direct::Frame).to receive(:dims).and_wrap_original do |m|
+          m.call.tap { |dims| sizes << dims }
+        end
+        allow(ffi).to receive(:ncdirect_cursor_up).and_call_original
+        written { d.stream(@gif, blitter: :ascii, scale: :stretch) }
+        expect(sizes.size).to eq(2)
+        expect(sizes.first[1]).to eq(d.dims[1])
+        expect(ffi).to have_received(:ncdirect_cursor_up).once.with(anything, sizes.first[0])
       end
 
       it 'stream si ferma con break e chiude l\'immagine' do

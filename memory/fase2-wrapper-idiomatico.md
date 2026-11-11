@@ -231,7 +231,7 @@ copertura.
 | Dopo la fine dell'input ogni lettura restituisce EOF (`in.c:2798`) | documentato in `Direct#get` |
 | `readline` e `cursor_yx` attendono la risposta del terminale senza timeout (`in.c:2820`) | `DirectError` senza `can_get_cursor?`; con un terminale vero l'attesa resta (documentata), ma dal 2026-10-26 rilascia il GVL |
 | `termtype:` scrive `ENV['TERM']` anche se l'init fallisce (`termdesc.c:1672`) | `TERM` ripristinato dopo un init fallito |
-| `ncdirect_stream` ignora il ritorno del callback (`direct.c:1588`), va in SIGSEGV con `vopts` NULL e tiene il GVL per tutto il video | `Direct#stream` in Ruby: `break` nel blocco ferma lo stream |
+| `ncdirect_stream` ignora il ritorno del callback (`direct.c:1588`), va in SIGSEGV con `vopts` NULL e tiene il GVL per tutto il video | `Direct#stream` in Ruby: `break` nel blocco ferma lo stream. Il riposizionamento del C (`direct.c:1550-1559`) sale di `rows - 1` righe, ma il raster lascia il cursore sotto il frame (`direct.c:558`): dal 2026-11-11 `stream` sale di `rows` righe, senza CUB (ICH-284) |
 
 ### Visual
 
