@@ -997,13 +997,13 @@ module Notcurses
     # scende di una riga. Con il blitter :pixel i frame precedenti non vengono
     # tolti dal terminale (il C usa una funzione interna) e ogni frame attende
     # la posizione del cursore come {Frame#raster}. Con :pixel, quando un frame
-    # arriva all'ultima riga dello schermo (cursore in fondo, oppure un video
-    # scalato all'altezza del terminale con la scala di default), il frame
-    # successivo parte una riga più in alto e da lì resta fermo: l'ultima riga
-    # del primo frame rimane visibile sotto il video. Il C sposta in alto un
-    # frame che non entra sotto il cursore (direct.c:441-448), poi porta il
-    # cursore con una CUP alla riga sotto lo schermo (direct.c:607-613), e il
-    # terminale lo ferma sull'ultima riga del frame.
+    # più basso dello schermo arriva all'ultima riga (cursore in fondo, oppure
+    # con sixel un video con la scala di default), il frame successivo parte
+    # una riga più in alto e da lì resta fermo: l'ultima riga del primo frame
+    # rimane visibile sotto il video. Il C sposta in alto un frame che non
+    # entra sotto il cursore (direct.c:442-448), poi porta il cursore con una
+    # CUP alla riga sotto lo schermo (direct.c:607-613), e il terminale lo
+    # ferma sull'ultima riga del frame.
     #
     # @param path [String] file video o immagine
     # @param align [Symbol] :left, :center o :right
