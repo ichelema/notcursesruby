@@ -68,7 +68,9 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   Sulla console Linux (gpm, senza rilasci) ogni pressione resta un clic (ICH-283).
 - `Direct#stream` disegna ogni frame sopra il precedente: prima saliva di una riga in meno, ogni frame scendeva di
   una riga, la prima riga dei frame precedenti restava sullo schermo e in fondo al terminale lo schermo scorreva a
-  ogni frame (ICH-284).
+  ogni frame. Resta un limite con il blitter `:pixel`: quando un frame arriva all'ultima riga dello schermo (cursore
+  in fondo, oppure un video scalato all'altezza del terminale), i frame dopo il primo partono una riga più in alto e
+  l'ultima riga del primo frame resta visibile (ICH-284).
 
 ## [0.1.0] - 2026-10-27
 
