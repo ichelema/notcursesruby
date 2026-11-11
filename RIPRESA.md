@@ -4,18 +4,19 @@
 > prompt». Scritto il 2026-11-06, con il repository su `ab75226`, dopo la revisione completa del codice. La
 > sessione corregge i difetti trovati dalla revisione, un lotto di issue Linear alla volta.
 
-## Stato e prossimo step (aggiornato il 2026-11-11, dopo il lotto 8)
+## Stato e prossimo step (aggiornato il 2026-11-11, dopo il lotto 9)
 
 Questa sezione prevale sul resto del file quando i dati sono in conflitto.
 
-**Stato.** I lotti 1–8 sono chiusi. Lotto 8: PR #9, merge `0c72ad1`, ICH-282 e ICH-283 a Done. `master` è su
-`9215954` (commit docs del lotto 8); suite: 986 esempi, 0 fallimenti. Leggi in `RICONSEGNA.md` la sezione "Correzioni
-della revisione del 2026-11-06" e il log `memory/correzioni-review.md` (lotti 1–8). Restano aperte in Backlog, fuori
+**Stato.** I lotti 1–9 sono chiusi. Lotto 9: PR #10, merge `106c700`, ICH-284 a Done. `master` è sul commit docs
+del lotto 9; suite: 988 esempi, 0 fallimenti. Leggi in `RICONSEGNA.md` la sezione "Correzioni della revisione del
+2026-11-06" e il log `memory/correzioni-review.md` (lotti 1–9). Restano aperte in Backlog, fuori
 dai lotti: ICH-441 (`Process.daemon`), ICH-448 (stato del controllo dei bordi per wrapper `Plane`), ICH-449 (double
 free dopo `merge_down` + `Plane#at`), ICH-450 (`polyfill`, `gradient` ed `erase_region` su metà di un glifo largo),
 ICH-454 (ISIG del terminale e `ictx->linesigs` divergono), ICH-455 (Ctrl+C in coda consegnato a un
 `run(no_linesigs: true)` successivo), ICH-456 (segnale anche per ripetizione e rilascio del Ctrl+C di kitty), ICH-457
-(drag consegnato al componente dove è partito, `Improvement`).
+(drag consegnato al componente dove è partito, `Improvement`), ICH-458 (`Direct#stream` con `:pixel` in fondo allo
+schermo).
 
 **Decisioni già prese, da non richiedere:**
 
@@ -30,32 +31,25 @@ ICH-454 (ISIG del terminale e `ictx->linesigs` divergono), ICH-455 (Ctrl+C in co
 
 **Da fare per primo:**
 
-1. Recall in Hindsight, bank `notcursesruby`: decisioni e cause radice dei lotti 1–8 sono salvate (retain del lotto 8:
-   operazione `37e1781a`).
-2. Fai le verifiche di "Prima di iniziare", passi 1–5 (suite attesa: 986 esempi, 0 fallimenti). Salta il passo 6.
+1. Recall in Hindsight, bank `notcursesruby`: decisioni e cause radice dei lotti 1–9 sono salvate (retain del lotto 9:
+   operazione `5c88fad6`).
+2. Fai le verifiche di "Prima di iniziare", passi 1–5 (suite attesa: 988 esempi, 0 fallimenti). Salta il passo 6.
 3. Controlla il proxy LiteLLM con `curl -sS -m 10 http://127.0.0.1:4000/health/liveliness`. Controlla anche il
    limite di utilizzo del modello GPT: nei lotti 2 e 5 il modello restituiva `usage_limit_reached` e la review GPT
-   finiva senza report; nei lotti 6–8 rispondeva. Se uno dei due controlli fallisce, dillo all'utente prima di
+   finiva senza report; nei lotti 6–9 rispondeva. Se uno dei due controlli fallisce, dillo all'utente prima di
    iniziare: nei lotti 2 e 5 l'utente ha scelto di proseguire con il solo Fable, ma la scelta va chiesta ogni volta.
    ```sh
    curl -sS -m 60 http://127.0.0.1:4000/v1/chat/completions -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
      -H 'Content-Type: application/json' \
-     -d '{"model":"claude-gpt-5-6-sol-xhigh","max_tokens":20,"messages":[{"role":"user","content":"ok"}]}'
+     -d '{"model":"claude-gpt-6-1-sol-high","max_tokens":20,"messages":[{"role":"user","content":"ok"}]}'
    ```
-4. Prepara il lotto 9 (ICH-284 `direct-visual-02`, `Direct#stream` che disegna ogni frame sopra il precedente):
-   leggi la issue da Linear e di' all'utente il comando da lanciare,
-   `/trinity:workflow:1_create-worktree master ICH-284 opus`. ICH-284 non è tra le scelte aperte della regola 14.
+4. Prepara il lotto 10 (ICH-285 `direct-visual-03`, workaround ZWJ in `Direct#putegc` e `Direct#print_aligned`;
+   ICH-286 `piani-02`, misura delle sequenze ZWJ in `Plane#puttext`): leggi le issue da Linear e di' all'utente il
+   comando da lanciare, `/trinity:workflow:1_create-worktree master ICH-285 ICH-286 opus`. ICH-286 è tra le scelte
+   aperte della regola 14: in `2_work-issue` chiedi all'utente la soluzione prima del fix.
 5. Segui la "Procedura per ogni lotto": l'utente lancia `1_create-worktree`, `2_work-issue`, `4_review-fix-loop`,
-   il merge e `5_remove-worktree`. Dopo il merge chiudi il lotto così:
-   1. `git pull` su `master` e suite completa;
-   2. riga del lotto nella tabella "Lotti" di `RICONSEGNA.md`, più le altre parti della sezione "Correzioni della
-      revisione del 2026-11-06" che il lotto cambia (review, cambi dell'API, issue aperte nate dai lotti);
-   3. log del lotto in `memory/correzioni-review.md` (Fix, Decisioni, Review, Problemi e soluzioni, Verifica
-      finale), con lo stesso formato dei lotti precedenti;
-   4. commit `docs(riconsegna): lotto <n> ... [skip ci]` dei due file;
-   5. retain in Hindsight, bank `notcursesruby`, con cause radice e decisioni, e operazione al passo 1;
-   6. aggiorna questa sezione (stato, passi 1–4 per il lotto successivo) e committala con
-      `docs(ripresa): stato dopo il lotto <n>, prossimo step lotto <n+1> (...) [skip ci]`; poi `git push`.
+   il merge e `5_remove-worktree`. **Dopo ogni merge esegui subito la chiusura del lotto** (passo 7 della procedura),
+   senza aspettare che l'utente la chieda.
 
 **Note:**
 
@@ -80,7 +74,8 @@ ICH-454 (ISIG del terminale e `ictx->linesigs` divergono), ICH-455 (Ctrl+C in co
 - Se un reviewer GPT finisce senza report (lotto 8, round 2), chiedigli il report con `SendMessage`.
 - La skill `linear` dal tool Skill parte in background senza compito (`context: fork`): per creare o leggere issue
   usa direttamente `lq` (sezione "Comandi").
-- Le review Fable girano su `claude-fable-5-2` (alias `fable`), le review GPT su `claude-gpt-5-6-sol-xhigh`.
+- Le review Fable girano su `claude-fable-5-2` (alias `fable`), le review GPT su `claude-gpt-6-1-sol-high` (`gpt-model` in
+  `agents/reviewer.md` della skill trinity, dal lotto 9).
 
 ## Contesto
 
@@ -274,11 +269,21 @@ lotto 7 ed è ora ICH-456.
 4. `4_review-fix-loop` serve solo se la review trova problemi.
 5. Controlla la CI della PR (`gh pr checks <n> --watch`). Con la CI verde chiedi all'utente il merge (regola 13).
    Dopo il merge Linear porta le issue a Done.
-6. `5_remove-worktree` rimuove worktree e branch. Poi aggiorna `master` (`git pull`) e riesegui la suite completa
-   prima del lotto successivo.
-7. Alla fine del lotto aggiungi una riga alla tabella dei lotti in `RICONSEGNA.md` (sezione "Correzioni della
-   revisione del 2026-11-06": lotto, PR, commit, issue, bug di notcurses nuovi) e committala su `master` con
-   `[skip ci]`.
+6. `5_remove-worktree` rimuove worktree e branch (anche il branch remoto, vedi le decisioni).
+7. **Dopo ogni merge chiudi il lotto subito**, senza aspettare che l'utente lo chieda: appena l'utente dice che ha
+   fatto il merge, o dopo `5_remove-worktree`, esegui questi passi in ordine.
+   1. `git pull` su `master`, poi la suite completa e la "Verifica finale" del log: semi 1234, 4242 e 7,
+      `gem build`, `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb` e la CI della PR e di `master`.
+   2. Riga del lotto nella tabella "Lotti" di `RICONSEGNA.md` (lotto, PR, merge, issue, bug di notcurses nuovi), più
+      le altre parti della sezione "Correzioni della revisione del 2026-11-06" che il lotto cambia: review, cambi
+      dell'API, issue aperte nate dai lotti.
+   3. Log del lotto in `memory/correzioni-review.md` (Fix, Decisioni, Review, Problemi e soluzioni, Verifica
+      finale), con lo stesso formato dei lotti precedenti.
+   4. Commit `docs(riconsegna): lotto <n> ... [skip ci]` dei due file.
+   5. Retain in Hindsight, bank `notcursesruby`, con cause radice e decisioni; scrivi l'id dell'operazione nella
+      sezione "Stato e prossimo step".
+   6. Aggiorna la sezione "Stato e prossimo step" (stato, passi per il lotto successivo) e committala con
+      `docs(ripresa): stato dopo il lotto <n>, prossimo step lotto <n+1> (...) [skip ci]`; poi `git push`.
 
 Se un acceptance criterion si rivela sbagliato o impossibile, non cambiarlo da solo: proponi il testo nuovo
 all'utente e, dopo la conferma, aggiorna la issue su Linear.
