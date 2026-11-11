@@ -4,17 +4,18 @@
 > prompt». Scritto il 2026-11-06, con il repository su `ab75226`, dopo la revisione completa del codice. La
 > sessione corregge i difetti trovati dalla revisione, un lotto di issue Linear alla volta.
 
-## Stato e prossimo step (aggiornato il 2026-11-10, dopo il lotto 7)
+## Stato e prossimo step (aggiornato il 2026-11-11, dopo il lotto 8)
 
 Questa sezione prevale sul resto del file quando i dati sono in conflitto.
 
-**Stato.** I lotti 1–7 sono chiusi. Lotto 7: PR #8, merge `29748c8`, ICH-279, ICH-280 e ICH-281 a Done. `master`
-è su `a0dc61c` (commit docs del lotto 7); suite: 982 esempi, 0 fallimenti. Leggi in `RICONSEGNA.md` la sezione "Correzioni della revisione
-del 2026-11-06" e il log `memory/correzioni-review.md` (lotti 1–7). Restano aperte in Backlog, fuori dai lotti:
-ICH-441 (`Process.daemon`), ICH-448 (stato del controllo dei bordi per wrapper `Plane`), ICH-449 (double free dopo
-`merge_down` + `Plane#at`), ICH-450 (`polyfill`, `gradient` ed `erase_region` su metà di un glifo largo), ICH-454
-(ISIG del terminale e `ictx->linesigs` divergono), ICH-455 (Ctrl+C in coda consegnato a un `run(no_linesigs: true)`
-successivo), ICH-456 (segnale anche per ripetizione e rilascio del Ctrl+C di kitty).
+**Stato.** I lotti 1–8 sono chiusi. Lotto 8: PR #9, merge `0c72ad1`, ICH-282 e ICH-283 a Done. `master` è su
+`9215954` (commit docs del lotto 8); suite: 986 esempi, 0 fallimenti. Leggi in `RICONSEGNA.md` la sezione "Correzioni
+della revisione del 2026-11-06" e il log `memory/correzioni-review.md` (lotti 1–8). Restano aperte in Backlog, fuori
+dai lotti: ICH-441 (`Process.daemon`), ICH-448 (stato del controllo dei bordi per wrapper `Plane`), ICH-449 (double
+free dopo `merge_down` + `Plane#at`), ICH-450 (`polyfill`, `gradient` ed `erase_region` su metà di un glifo largo),
+ICH-454 (ISIG del terminale e `ictx->linesigs` divergono), ICH-455 (Ctrl+C in coda consegnato a un
+`run(no_linesigs: true)` successivo), ICH-456 (segnale anche per ripetizione e rilascio del Ctrl+C di kitty), ICH-457
+(drag consegnato al componente dove è partito, `Improvement`).
 
 **Decisioni già prese, da non richiedere:**
 
@@ -29,23 +30,21 @@ successivo), ICH-456 (segnale anche per ripetizione e rilascio del Ctrl+C di kit
 
 **Da fare per primo:**
 
-1. Recall in Hindsight, bank `notcursesruby`: decisioni e cause radice dei lotti 1–7 sono salvate (retain del lotto 7:
-   operazione `df9be793`).
-2. Fai le verifiche di "Prima di iniziare", passi 1–5 (suite attesa: 982 esempi, 0 fallimenti). Salta il passo 6.
+1. Recall in Hindsight, bank `notcursesruby`: decisioni e cause radice dei lotti 1–8 sono salvate (retain del lotto 8:
+   operazione `37e1781a`).
+2. Fai le verifiche di "Prima di iniziare", passi 1–5 (suite attesa: 986 esempi, 0 fallimenti). Salta il passo 6.
 3. Controlla il proxy LiteLLM con `curl -sS -m 10 http://127.0.0.1:4000/health/liveliness`. Controlla anche il
    limite di utilizzo del modello GPT: nei lotti 2 e 5 il modello restituiva `usage_limit_reached` e la review GPT
-   finiva senza report; nei lotti 6 e 7 rispondeva. Se uno dei due controlli fallisce, dillo all'utente prima di
+   finiva senza report; nei lotti 6–8 rispondeva. Se uno dei due controlli fallisce, dillo all'utente prima di
    iniziare: nei lotti 2 e 5 l'utente ha scelto di proseguire con il solo Fable, ma la scelta va chiesta ogni volta.
    ```sh
    curl -sS -m 60 http://127.0.0.1:4000/v1/chat/completions -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
      -H 'Content-Type: application/json' \
      -d '{"model":"claude-gpt-5-6-sol-xhigh","max_tokens":20,"messages":[{"role":"user","content":"ok"}]}'
    ```
-4. Prepara il lotto 8 (ICH-282 `ui-02`, `LogView#append` con una stringa vuota; ICH-283 `ui-03`, pressioni ripetute
-   di BUTTON1-3 durante un drag): leggi le issue da Linear e di' all'utente il comando da lanciare,
-   `/trinity:workflow:1_create-worktree master ICH-282 ICH-283 opus`. ICH-283 è tra le scelte aperte della regola
-   14: in `2_work-issue`, prima del fix, presenta all'utente la soluzione della issue e l'alternativa, e aspetta la
-   scelta.
+4. Prepara il lotto 9 (ICH-284 `direct-visual-02`, `Direct#stream` che disegna ogni frame sopra il precedente):
+   leggi la issue da Linear e di' all'utente il comando da lanciare,
+   `/trinity:workflow:1_create-worktree master ICH-284 opus`. ICH-284 non è tra le scelte aperte della regola 14.
 5. Segui la "Procedura per ogni lotto": l'utente lancia `1_create-worktree`, `2_work-issue`, `4_review-fix-loop`,
    il merge e `5_remove-worktree`. Dopo il merge chiudi il lotto così:
    1. `git pull` su `master` e suite completa;
@@ -76,6 +75,12 @@ successivo), ICH-456 (segnale anche per ripetizione e rilascio del Ctrl+C di kit
   (`Process.kill(sig, 0)`, pid negativi), anche nei mutation test: nel lotto 7 un reviewer ne aveva messo in coda uno.
 - In alternativa a `bundle _2.3.27_`, su Ruby 3.1.7 basta `mise exec ruby@3.1.7 -- rspec` dalla radice del
   worktree, senza `bundle` (lotto 7: 982 esempi, 0 fallimenti).
+- Nei worktree di review serve anche `git submodule update --init --depth 1 notcurses`; per rimuoverli
+  `git worktree remove` vuole `--force` per il submodule (approvato, vedi le decisioni).
+- Se un reviewer GPT finisce senza report (lotto 8, round 2), chiedigli il report con `SendMessage`.
+- La skill `linear` dal tool Skill parte in background senza compito (`context: fork`): per creare o leggere issue
+  usa direttamente `lq` (sezione "Comandi").
+- Le review Fable girano su `claude-fable-5-2` (alias `fable`), le review GPT su `claude-gpt-5-6-sol-xhigh`.
 
 ## Contesto
 
