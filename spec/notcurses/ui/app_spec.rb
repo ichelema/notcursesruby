@@ -215,6 +215,8 @@ RSpec.describe Notcurses::UI::App do
       expect(b.log).to eq([Notcurses::Key::BUTTON3])
       app.dispatch(syn(Notcurses::Key::BUTTON1, y: 2, x: 1, evtype: :release)) # il rilascio arriva ancora
       expect(b.log).to eq([Notcurses::Key::BUTTON3, Notcurses::Key::BUTTON1])
+      app.dispatch(syn(Notcurses::Key::BUTTON3, y: 0, x: 1)) # il rilascio di BUTTON1 lascia premuto BUTTON3
+      expect(app.focused).to equal(b)
       app.dispatch(syn(Notcurses::Key::BUTTON1, y: 0, x: 1)) # dopo il rilascio è un clic nuovo
       expect(app.focused).to equal(a)
       # un rilascio perso costa al massimo un clic: la pressione seguente è un drag, il suo rilascio pulisce
