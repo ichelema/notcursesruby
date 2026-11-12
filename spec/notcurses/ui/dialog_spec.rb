@@ -38,6 +38,14 @@ RSpec.describe Notcurses::UI::Dialog do
     expect(place(dialog)).to eq([[0, 0], [3, 10]])
   end
 
+  it 'misura e manda a capo il testo con una sequenza ZWJ' do
+    dev = [0x1F469, 0x200D, 0x1F4BB].pack('U*') # un grapheme: 2 colonne
+    dialog = described_class.new(app, text: "#{dev}abc de")
+    expect(dialog.plane.dims).to eq([5, 12]) # testo 8 + 4 colonne
+    dialog.place(24, 9)
+    expect(dialog.children.first.text).to eq("#{dev}abc\nde") # a capo a 5 colonne: la prima parola ne occupa 5
+  end
+
   it 'prende il focus, Tab resta dentro e il mouse fuori dal dialogo non arriva ai componenti sotto' do
     under = Notcurses::UI::Button.new(app.root, 'Sotto', size: 3) {}
     expect(app.focused).to equal(under)

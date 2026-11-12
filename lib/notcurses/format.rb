@@ -167,7 +167,11 @@ module Notcurses
     # Bug di 3.0.17 aggirato: dopo uno ZWJ (U+200D) +ncstrwidth+ unisce tutto
     # il resto del testo allo stesso EGC e lo conta 0 colonne. Il wrapper
     # misura il testo spezzato dopo ogni grapheme cluster con uno ZWJ, come
-    # lo scrive {Plane#putstr}: "👩‍🚀abc" vale 5 colonne, non 2.
+    # lo scrive {Plane#putstr}: "👩‍🚀abc" vale 5 colonne, non 2. I grapheme
+    # cluster sono quelli di Ruby (String#each_grapheme_cluster), che
+    # seguono la versione di Unicode di Ruby: per una sequenza ZWJ che non è
+    # un emoji (per esempio una congiunta devanagari) il risultato può
+    # cambiare con la versione di Ruby, come la scrittura di {Plane#putstr}.
     #
     # @param text [String]
     # @return [Integer] colonne, >= 0
