@@ -93,6 +93,14 @@ RSpec.describe 'Notcurses: funzioni di formattazione' do
       expect(Notcurses.strwidth('abc'.b)).to eq(3)
     end
 
+    it 'misura anche il testo dopo una sequenza ZWJ' do
+      astro = [0x1F469, 0x200D, 0x1F680].pack('U*')
+      expect(Notcurses.strwidth(astro)).to eq(2)
+      expect(Notcurses.strwidth("#{astro}abc")).to eq(5)
+      expect(Notcurses.strwidth("a#{astro}#{astro}b")).to eq(6)
+      expect { Notcurses.strwidth("ab#{astro}cd\x01") }.to raise_error(ArgumentError, /dal byte 15/) # 2 + 11 + 2
+    end
+
     it 'rifiuta i testi che notcurses non sa misurare' do
       expect { Notcurses.strwidth("a\x01") }.to raise_error(ArgumentError)
       expect { Notcurses.strwidth("a\xff".b) }.to raise_error(ArgumentError)

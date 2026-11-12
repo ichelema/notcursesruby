@@ -927,6 +927,27 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    it 'puttext misura le sequenze ZWJ come putstr: le parole lunghe vanno a capo' do
+      astro = [0x1F469, 0x200D, 0x1F680].pack('U*') # astronauta: un grapheme, 2 colonne
+      rows = ->(p) { (0...p.dim_y).map { |y| p.contents(y: y, rows: 1) } }
+      with_parent(rows: 3, cols: 4) do |p|
+        expect(p.puttext("#{astro}abc", y: 0)).to eq(5)
+        expect(rows.(p)).to eq(["#{astro}ab", 'c', ''])
+      end
+      with_parent(rows: 3, cols: 6) do |p|
+        p.puttext("#{astro}ab cd", y: 0)
+        expect(rows.(p)).to eq(["#{astro}ab", 'cd', ''])
+      end
+      with_parent(rows: 3, cols: 4) do |p|
+        expect(p.puttext("abcd #{astro}abc", y: 0)).to eq(9)
+        expect(rows.(p)).to eq(['abcd', "#{astro}ab", 'c'])
+      end
+      with_parent(rows: 2, cols: 4) do |p|
+        expect { p.puttext("abcd #{astro}abc", y: 0) }.to raise_error(Notcurses::PlaneError)
+        expect(rows.(p)).to eq(['', ''])
+      end
+    end
+
     it 'puttext rifiuta, senza scrivere, un testo che non entra; sui piani che scorrono scorre' do
       with_parent(rows: 2, cols: 5) do |p|
         expect { p.puttext('uno due tre quattro') }.to raise_error(Notcurses::PlaneError)

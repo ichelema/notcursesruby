@@ -498,6 +498,10 @@ module Notcurses
     # con i colori di channels (+ncdirect_putegc+); il resto di text è
     # ignorato.
     #
+    # Bug di 3.0.17 aggirato: dopo uno ZWJ (U+200D) il C unisce tutto il resto
+    # del testo allo stesso EGC e lo scrive; il wrapper passa al C il testo
+    # solo fino al primo grapheme cluster con uno ZWJ.
+    #
     # @param text [String] testo UTF-8; "" non scrive nulla
     # @param channels [Channels, Integer] come in {#putstr}
     # @return [Array(Integer, Integer)] [colonne, byte] dell'EGC scritto
@@ -508,7 +512,7 @@ module Notcurses
     # @raise [ClosedError] se il contesto è chiuso
     def putegc(text, channels: 0)
       ptr = to_ptr
-      s = Util.string!(text, 'text')
+      s = Util.zwj_segments(Util.string!(text, 'text')).first
       chans = Args.channels(channels, 'channels')
       sbytes = ::FFI::MemoryPointer.new(:int)
       sbytes.write_int(-1)
@@ -530,12 +534,16 @@ module Notcurses
     # (direct.c:818): il wrapper calcola la colonna come +ncdirect_align+,
     # sposta il cursore e chiama +ncdirect_putstr+. Non va a capo.
     #
+    # Misura text con {Notcurses.strwidth}, che aggira il bug dello ZWJ
+    # (U+200D) di 3.0.17: +ncstrwidth+ conterebbe 0 colonne per tutto il testo
+    # dopo uno ZWJ.
+    #
     # @param text [String] testo UTF-8 senza caratteri di controllo (salvo
     #   newline e tab, contati come una colonna)
     # @param y [Integer, nil] riga, 0..INT_MAX; nil = la riga del cursore
     # @param align [Symbol] :left, :center o :right
     # @param channels [Channels, Integer] come in {#putstr}
-    # @return [Integer] colonne occupate da text (+ncstrwidth+)
+    # @return [Integer] colonne occupate da text ({Notcurses.strwidth})
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [DirectError] se lo spostamento del cursore o la scrittura
     #   falliscono
@@ -546,8 +554,11 @@ module Notcurses
       Util.nonneg_int!(y, 'y') unless y.nil?
       a = Args.align(align)
       chans = Args.channels(channels, 'channels')
-      width = FFI.ncstrwidth(s, nil, nil)
-      raise ArgumentError, "text = #{s.inspect} contiene caratteri di controllo" if width.negative?
+      width = begin
+        Notcurses.strwidth(s)
+      rescue ArgumentError
+        raise ArgumentError, "text = #{s.inspect} contiene caratteri di controllo"
+      end
 
       x = a == FFI::NCALIGN_LEFT ? 0 : aligned_x(a, width, dims[1])
       Util.check!(FFI.ncdirect_cursor_move_yx(ptr, y || -1, x), DirectError, 'ncdirect_cursor_move_yx')
