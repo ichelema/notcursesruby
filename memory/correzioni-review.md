@@ -466,3 +466,61 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 - Il `repro.rb` della issue dà `" \n \n \n\e[3A \n \n \n"`.
 - `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
 - `master` su `106c700`: 988 esempi, 0 fallimenti, anche con i semi 4242 e 7; `gem build` senza warning; CI verde.
+
+## Lotto 10 — ICH-285, ICH-286 (PR #11, merge `23fd73a`)
+
+### Fix
+
+- **ICH-285 (`direct-visual-03`, `Direct#putegc` e `#print_aligned`).** `zwj_segments` passa da `Plane` (privato) a
+  `Util.zwj_segments`. `Notcurses.strwidth` somma `ncstrwidth` sui segmenti, con l'offset del byte d'errore riferito
+  a tutto il testo. `putegc` passa al C solo il primo segmento; `print_aligned` misura con `Notcurses.strwidth` e
+  trasforma il suo `ArgumentError` nel messaggio di prima ("contiene caratteri di controllo"). Causa radice: dopo uno
+  ZWJ `utf8_egc_len` resta in `injoin` e conta 0 colonne per tutto il resto (`egcpool.h:119`, `126-128`); il
+  workaround esisteva solo in `Plane#putstr`, mentre `ncdirect_putegc` (`direct.c:49-66`) e `ncstrwidth`
+  (`notcurses.c:3311-3333`) usano la stessa funzione.
+- **ICH-286 (`piani-02`, `Plane#puttext`).** Nessun cambio a `wrap_lines`: misura le parole con
+  `Notcurses.strwidth`, che ora conosce lo ZWJ. Solo la spec.
+- **Perimetro allargato alla UI.** `UI::Component` (`Text.truncate`, `Text.wrap`, `put_text`), `Dialog#place` e
+  `ListView#draw` misurano con `strwidth`: una `Label` con un emoji ZWJ e `size: 10` non solleva più `PlaneError`.
+
+### Decisioni
+
+- Regola 14 (ICH-286 e il vincolo tecnico di ICH-285): l'utente ha scelto `Notcurses.strwidth` consapevole dello ZWJ
+  invece del fix locale in `Direct` e `wrap_lines`. Motivo: una sola correzione alla causa, che arriva a tutti i
+  chiamanti, e niente issue nuova per la UI. Il contratto "con le regole di notcurses" cambia; la gem non ha utenti.
+- Regola 16: l'utente ha approvato l'allargamento del perimetro alla UI. Commento su ICH-285 con la scelta; magic
+  word solo per ICH-285 e ICH-286.
+- I widget disegnati dal C (`Reader`, `MultiSelector`, `Cell`, `Widget`) chiamano `FFI.ncstrwidth` direttamente e
+  restano invariati: devono misurare come il C.
+- Le asserzioni richieste per le righe 309, 317 e 326 di `direct_spec.rb` sono in esempi nuovi accanto a quelli
+  esistenti, non dentro di essi.
+
+### Review (1 round, `3_independent-review`)
+
+- Round 1 (`4f264d4`), nella stessa sessione dell'implementazione: APPROVABILE CON RISERVE. Un LOW: per una sequenza
+  ZWJ che non è un emoji (congiunta devanagari) `strwidth` dipende dalla versione di Ruby (4 su Ruby 4.0.7, 5 su
+  3.1.7), come già `Plane#putstr`. Due test mancanti: `Dialog` con ZWJ e offset del byte d'errore.
+- Dopo la review, su richiesta dell'utente, `fd089bf`: frase nel YARD di `strwidth` e le due spec, senza un nuovo
+  round. La spec di `Dialog` falliva sul codice di prima (`[6, 11]` al posto di `[5, 12]`); quella dell'offset
+  fallisce con una mutazione senza offset ("dal byte 2").
+- Controesempi della review senza anomalie: in 6 casi su 6 `strwidth`, il ritorno di `putstr` e il cursore coincidono;
+  `putegc` con ZWJ iniziale, `"a‍b"` e controllo iniziale; `print_aligned` con testo più largo del terminale e con
+  NUL. Limite già presente e fuori dal lotto: `putstr` rifiuta la bandiera 🏳️‍🌈 seguita da testo.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| Le spec delle immagini di `direct_spec` fallivano nel worktree | `git submodule update -q` con `-q` dopo il sottocomando: git lo legge come un percorso | `git submodule -q update --init --depth 1 notcurses` |
+| Seme e coverage senza output | `$E` con più parole in zsh non si divide | una funzione `E() { ...; }` (nota già in `RIPRESA.md`) |
+| La prima prova su `master` della spec di `Dialog` passava | il numero di riga indicava lo spec precedente: il nuovo è alla riga 41 | rilanciata con la riga giusta: fallisce |
+| Il comando di pulizia della review è andato in coda | contiene `rm -r` | l'utente l'ha confermato |
+
+### Verifica finale
+
+- Branch (`fd089bf`): 994 esempi, 0 fallimenti su Ruby 4.0.7; con la coverage (su `4f264d4`): righe 98,24 %, rami
+  90,93 %; YARD 100 %, 0 warning; `ruby -w` senza warning. CI verde su tutta la matrice (Ruby 3.1.7–4.0.9) e Codecov.
+- Le 5 spec nuove del round di implementazione fallivano sul codice di prima.
+- `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+- `master` su `23fd73a`: 994 esempi, 0 fallimenti, anche con i semi 1234, 4242 e 7; `gem build` senza warning; CI
+  verde.

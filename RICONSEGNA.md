@@ -868,7 +868,9 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
   ICH-455, GPT nessun finding). Lotto 8: Fable e GPT, 3 round (round 1: un MEDIUM, corretto; round 2: due LOW,
   corretti; round 3: nessun finding, un buco di test coperto dopo il loop senza review). Lotto 9: Fable e GPT, 3
   round (round 1: un MEDIUM, testo corretto e gestione in codice in ICH-458; round 2: due LOW, corretti; round 3: due
-  LOW, corretti dopo il loop senza review; GPT nessun finding in tutti i round).
+  LOW, corretti dopo il loop senza review; GPT nessun finding in tutti i round). Lotto 10:
+  `/trinity:workflow:3_independent-review` nella stessa sessione dell'implementazione (non indipendente), 1 round:
+  APPROVABILE CON RISERVE, un LOW (frase nel YARD) e due spec mancanti, aggiunti dopo la review senza un nuovo round.
 
 ### Lotti
 
@@ -883,6 +885,7 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 | 7 | [#8](https://github.com/ichelema/notcursesruby/pull/8) | `29748c8` | ICH-279, ICH-280, ICH-281 | con il protocollo kitty notcurses alza SIGINT, SIGSTOP e SIGQUIT solo con Ctrl da solo (`in.c:506-516`): con CapsLock o NumLock non alza niente, con Ctrl da solo alza il segnale e mette anche l'evento in coda; lo stesso controllo non guarda `evtype`, quindi anche la ripetizione e il rilascio alzano il segnale (ICH-456); con kitty acceso ogni evento senza tipo diventa `:press`, byte di controllo compresi (`in.c:501-505`); tabella "Bug e limiti di notcurses 3.0.17 trovati nella Fase 3" |
 | 8 | [#9](https://github.com/ichelema/notcursesruby/pull/9) | `0c72ad1` | ICH-282, ICH-283 | il report SGR del movimento con un tasto premuto diventa una nuova pressione dello stesso tasto (`in.c:610-620`); sulla console Linux il mouse viene da gpm e ogni evento, rilascio compreso, diventa una pressione di BUTTON1 (`gpm.c:31`, `mice.c:4-19`); tabella "Bug e limiti di notcurses 3.0.17 trovati nella Fase 3" |
 | 9 | [#10](https://github.com/ichelema/notcursesruby/pull/10) | `106c700` | ICH-284; ICH-458 (nata dalla review) | `ncdirect_stream` sale di `rows - 1` righe (`direct.c:1550-1559`), ma il raster a celle lascia il cursore sotto il frame (`direct.c:558`): ogni frame scende di una riga; con `:pixel` un frame che finisce sull'ultima riga porta il cursore con una CUP alla riga sotto lo schermo (`direct.c:607-613`); tabella "Direct" di `memory/fase2-wrapper-idiomatico.md` |
+| 10 | [#11](https://github.com/ichelema/notcursesruby/pull/11) | `23fd73a` | ICH-285, ICH-286 | nessuno nuovo: il bug noto dello ZWJ (`egcpool.h:126-128`) tocca anche `ncdirect_putegc` (`direct.c:49-66`) e `ncstrwidth` (`notcurses.c:3311-3333`); tabelle "Piani" e "Direct" di `memory/fase2-wrapper-idiomatico.md` |
 
 ### Cambi dell'API pubblica
 
@@ -936,6 +939,15 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
 - `Direct#stream`: prima di ogni frame dopo il primo il cursore sale di tutta l'altezza del frame precedente, senza
   CUB. Con `:pixel`, per un frame più basso dello schermo che finisce sull'ultima riga, l'esito dipende dal
   terminale: documentato nel YARD (lotto 9, ICH-458).
+- `Notcurses.strwidth` misura il testo spezzato dopo ogni grapheme cluster con uno ZWJ (U+200D), come lo scrive
+  `Plane#putstr`: `"👩‍🚀abc"` vale 5 colonne, non 2 come `ncstrwidth`. Il testo senza ZWJ dà lo stesso valore di prima.
+  Il contratto "con le regole di notcurses" cambia (scelta dell'utente, regola 14): il valore nuovo arriva a
+  `Direct#print_aligned`, `Plane#puttext` e alla UI (`Label`, `ListView`, `Button`, `Dialog`, `LogView`,
+  `TextInput`). Per una sequenza ZWJ che non è un emoji il valore segue i grapheme cluster della versione di Ruby
+  (lotto 10).
+- `Direct#putegc` passa al C il testo solo fino al primo grapheme cluster con uno ZWJ; `Direct#print_aligned`
+  solleva `ArgumentError` anche per un carattere di controllo dopo una sequenza ZWJ. `Plane#zwj_segments` (privato)
+  diventa `Util.zwj_segments` (`@api private`) (lotto 10).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
