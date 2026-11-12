@@ -73,6 +73,12 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   il cursore sull'ultima riga del frame, prima i frame più stretti del terminale si sovrapponevano, ora i frame dopo
   il primo partono una riga più in alto e l'ultima riga del primo frame resta visibile. Se un sixel sull'ultima riga
   fa scorrere lo schermo, prima lo schermo scorreva a ogni frame, ora i frame si sovrappongono (ICH-284).
+- `Notcurses.strwidth` misura anche il testo dopo una sequenza ZWJ (U+200D): `"👩‍🚀abc"` vale 5 colonne, non 2. Il
+  workaround del bug di notcurses 3.0.17, prima solo in `Plane#putstr`, ora vale per `Direct#putegc` (scrive solo il
+  primo EGC, non anche il resto del testo), `Direct#print_aligned` (colonna e valore restituito giusti; `ArgumentError`
+  per un carattere di controllo dopo la sequenza), `Plane#puttext` (una parola con ZWJ più larga del piano va a capo
+  invece di sollevare `PlaneError`) e la UI, che taglia e allinea il testo con `strwidth`: una `Label` con
+  `"👩‍💻 sviluppatrice molto brava"` e `size: 10` non solleva più `PlaneError` (ICH-285, ICH-286).
 
 ## [0.1.0] - 2026-10-27
 

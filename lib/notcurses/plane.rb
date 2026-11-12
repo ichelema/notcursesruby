@@ -1475,7 +1475,7 @@ module Notcurses
         raise PlaneError, 'un carattere largo 2 colonne non entra in un piano largo 1'
       end
 
-      segments = zwj_segments(str).flat_map { |seg| seg.split(/(?=\n)/) }
+      segments = Util.zwj_segments(str).flat_map { |seg| seg.split(/(?=\n)/) }
       widths = segments.map { |seg| Notcurses.strwidth(seg) }
       first = Notcurses.strwidth(str.grapheme_clusters.first)
       sync_scrolling_stdplane!(ptr, str.include?("\n") || widths.sum > dim_x - (x.is_a?(Integer) ? x : cursor_x))
@@ -2443,20 +2443,6 @@ module Notcurses
       end
     ensure
       FFI.nccell_release(ptr, cell) if cell
-    end
-
-    # Il testo spezzato dopo ogni grapheme cluster con uno ZWJ: notcurses
-    # 3.0.17 unisce al carattere con lo ZWJ tutto quello che segue.
-    def zwj_segments(str)
-      return [str] unless str.include?("‍")
-
-      segments = [+'']
-      str.each_grapheme_cluster do |g|
-        segments.last << g
-        segments << +'' if g.include?("‍")
-      end
-      segments.pop if segments.last.empty?
-      segments
     end
 
     # Controlla dove scrivere un testo di total colonne, con il primo

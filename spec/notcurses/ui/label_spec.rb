@@ -33,6 +33,15 @@ RSpec.describe Notcurses::UI::Label do
     expect(right.plane.at(y: 0, x: 3).egc).to eq('漢')
   end
 
+  it 'taglia e allinea il testo con una sequenza ZWJ' do
+    dev = [0x1F469, 0x200D, 0x1F4BB].pack('U*') # un grapheme: 2 colonne
+    left = described_class.new(row(1), text: "#{dev} sviluppatrice molto brava", size: 10)
+    right = described_class.new(row(1), text: "#{dev}ab", align: :right, size: 10)
+    expect(lines(left)).to eq(["#{dev} svilupp"])
+    expect(right.plane.at(y: 0, x: 6).egc).to eq(dev)
+    expect(right.plane.at(y: 0, x: 9).egc).to eq('b')
+  end
+
   it 'scrive con gli stili e i colori dati; lo sfondo vuoto usa gli stessi colori' do
     channels = Notcurses::Channels.rgb(255, 0, 0, 0, 0, 255)
     label = described_class.new(row(1), text: 'x', styles: [:bold], channels: channels, size: 3)

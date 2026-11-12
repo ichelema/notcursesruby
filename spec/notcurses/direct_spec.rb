@@ -326,6 +326,13 @@ RSpec.describe Notcurses::Direct do
         expect { d.putegc(nil) }.to raise_error(TypeError)
       end
 
+      it 'putegc con una sequenza ZWJ scrive solo il primo EGC' do
+        family = [0x1F468, 0x200D, 0x1F469, 0x200D, 0x1F467].pack('U*') # un grapheme: 2 colonne, 18 byte
+        expect(written { expect(d.putegc("#{family}xyz")).to eq([2, 18]) }).to eq(family)
+        expect(written { expect(d.putegc("x#{family}")).to eq([1, 1]) }).to eq('x')
+        expect(written { d.putegc("#{family}\x01x") }).to eq(family)
+      end
+
       it 'print_aligned allinea il testo sulla riga y e restituisce le colonne (sull\'output, non su stdout)' do
         expect(written { expect(d.print_aligned('ciao', y: 2, align: :right)).to eq(4) }).to eq("\e[3;77Hciao")
         expect(written { d.print_aligned('ciao', y: 2, align: :center) }).to eq("\e[3;39Hciao")
@@ -333,6 +340,17 @@ RSpec.describe Notcurses::Direct do
         expect(written { d.print_aligned('x' * 100, y: 1, align: :right) }).to eq("\e[2;1H#{'x' * 100}")
         expect(written { d.print_aligned('中', y: 0, align: :right, channels: red) })
           .to eq("\e[1;79H\e[38;2;255;0;0m中")
+      end
+
+      it 'print_aligned misura le sequenze ZWJ con il testo che le segue' do
+        family = [0x1F468, 0x200D, 0x1F469, 0x200D, 0x1F467].pack('U*')
+        dev = [0x1F469, 0x200D, 0x1F4BB].pack('U*')
+        expect(written { expect(d.print_aligned("#{family} abc", y: 0, align: :right)).to eq(6) })
+          .to eq("\e[1;75H#{family} abc")
+        expect(written { d.print_aligned("#{family} abc", y: 0, align: :center) }).to eq("\e[1;38H#{family} abc")
+        expect(written { expect(d.print_aligned("abc #{dev}", y: 0, align: :right)).to eq(6) })
+          .to eq("\e[1;75Habc #{dev}")
+        expect { d.print_aligned("#{family}\x01x") }.to raise_error(ArgumentError, /controllo/)
       end
 
       it 'print_aligned valida gli argomenti' do

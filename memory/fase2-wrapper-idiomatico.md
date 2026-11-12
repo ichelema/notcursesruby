@@ -198,7 +198,7 @@ copertura.
 | `ncplane_putstr_aligned` e scritture con `x:` su un piano che scorre: il primo carattere va fuori dalla riga | controllo prima della chiamata |
 | TAB nell'ultima colonna: il ciclo di espansione scrive la cella `x == lenx`, cioè la riga successiva o oltre il framebuffer (`notcurses.c:1936-1957`) | TAB rifiutati in `putstr`/`putegc`/`Cell`; il `Reader` scrive uno spazio |
 | EGC che notcurses segmenta come larghezza zero (U+200B, segno combinante isolato, keycap U+20E3, jamo hangul): con il cursore a `x == dim_x` scrive fuori dalla riga (`notcurses.c:1873-1893`) | rifiutati prima della scrittura |
-| Dopo uno ZWJ (U+200D) il C unisce tutto il resto del testo in un solo EGC (`egcpool.h:126-128`) | testo spezzato dopo ogni grapheme con ZWJ |
+| Dopo uno ZWJ (U+200D) il C unisce tutto il resto del testo in un solo EGC (`egcpool.h:126-128`) | testo spezzato dopo ogni grapheme con ZWJ (`Util.zwj_segments`); `Notcurses.strwidth` misura i segmenti, così anche `puttext` e la UI (ICH-285, ICH-286) |
 | U+2028 e U+2029 troncati a un byte | rifiutati |
 | `ncplane_fadeout`/`fadein`: render della pila standard, `nanosleep` con il GVL, con un callback lento non arrivano in fondo | `Plane#fadeout`/`#fadein` in Ruby sopra `FadeContext` |
 | `ncplane_pulse` resta nero dopo il primo ciclo e senza callback non ritorna | `Plane#pulse` in Ruby, blocco obbligatorio |
@@ -221,6 +221,7 @@ copertura.
 | `ncdirect_stop` scrive il proprio reset (`\e[39;49m\e(B\e[m`) sullo stdout del processo anche quando l'output è un file (`direct.c:841`) | documentato |
 | `ncdirect_vline` con `UINT_MAX` va in SIGFPE; oltre `INT_MAX` le linee fanno fino a 2^32 iterazioni con colori sbagliati (`direct.c:1351`) | lunghezza massima `INT_MAX - 1` |
 | `ncdirect_vline` torna indietro di una colonna dopo ogni carattere (`direct.c:1389`) | un solo EGC largo una colonna |
+| Dopo uno ZWJ (U+200D) `ncdirect_putegc` e `ncstrwidth` uniscono tutto il resto del testo in un solo EGC (`egcpool.h:126-128`) | `putegc` passa al C solo il primo segmento di `Util.zwj_segments`; `print_aligned` misura con `Notcurses.strwidth`, che somma i segmenti (ICH-285) |
 | `hline`/`vline`/`box` interpolano i bit RGB anche dei canali a palette: l'indice finisce nel blu (`direct.c:1285-1292`) | `ArgumentError` per i canali a palette |
 | `ncdirect_cursor_move_yx` per conservare la colonna legge la posizione dal terminale (condizione invertita, `direct.c:233`) | con `x: nil` serve `can_get_cursor?`, altrimenti `DirectError` (il C andrebbe alla colonna 0) |
 | `ncdirect_align` con un allineamento non valido restituisce `INT_MAX` e il C scrive una sequenza spazzatura (`direct.c:411-426`) | solo `:left`, `:center`, `:right` |

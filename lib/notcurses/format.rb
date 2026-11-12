@@ -164,6 +164,11 @@ module Notcurses
     # dipende dalla locale (LC_CTYPE): prima di aprire un contesto è quella del
     # processo.
     #
+    # Bug di 3.0.17 aggirato: dopo uno ZWJ (U+200D) +ncstrwidth+ unisce tutto
+    # il resto del testo allo stesso EGC e lo conta 0 colonne. Il wrapper
+    # misura il testo spezzato dopo ogni grapheme cluster con uno ZWJ, come
+    # lo scrive {Plane#putstr}: "👩‍🚀abc" vale 5 colonne, non 2.
+    #
     # @param text [String]
     # @return [Integer] colonne, >= 0
     # @raise [TypeError] se text non è String
@@ -172,10 +177,17 @@ module Notcurses
     def strwidth(text)
       str = Util.string!(text, 'text')
       validbytes = ::FFI::MemoryPointer.new(:int)
-      cols = FFI.ncstrwidth(str, validbytes, nil)
-      return cols unless cols.negative?
+      offset = 0
+      Util.zwj_segments(str).sum do |seg|
+        cols = FFI.ncstrwidth(seg, validbytes, nil)
+        if cols.negative?
+          raise ArgumentError,
+                "text = #{text.inspect}: notcurses non riesce a misurare il testo dal byte #{offset + validbytes.read_int}"
+        end
 
-      raise ArgumentError, "text = #{text.inspect}: notcurses non riesce a misurare il testo dal byte #{validbytes.read_int}"
+        offset += seg.bytesize
+        cols
+      end
     end
 
     private

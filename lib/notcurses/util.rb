@@ -292,6 +292,22 @@ module Notcurses
       value.to_ptr
     end
 
+    # Il testo spezzato dopo ogni grapheme cluster con uno ZWJ (U+200D):
+    # notcurses 3.0.17 unisce al carattere con lo ZWJ tutto quello che segue.
+    # @param str [String] testo UTF-8 valido
+    # @return [Array<String>] [str] se str non contiene ZWJ
+    def zwj_segments(str)
+      return [str] unless str.include?("‍")
+
+      segments = [+'']
+      str.each_grapheme_cluster do |g|
+        segments.last << g
+        segments << +'' if g.include?("‍")
+      end
+      segments.pop if segments.last.empty?
+      segments
+    end
+
     # --- dal C a Ruby ---
 
     # Stringa restituita da un :string di FFI (copia BINARY) in UTF-8.
