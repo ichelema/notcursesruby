@@ -4,15 +4,16 @@
 > prompt». Scritto il 2026-11-06, con il repository su `ab75226`, dopo la revisione completa del codice. La
 > sessione corregge i difetti trovati dalla revisione, un lotto di issue Linear alla volta.
 
-## Stato e prossimo step (aggiornato il 2026-11-12, dopo il lotto 10)
+## Stato e prossimo step (aggiornato il 2026-11-13, dopo il lotto 11)
 
 Questa sezione prevale sul resto del file quando i dati sono in conflitto.
 
-**Stato.** I lotti 1–10 sono chiusi. Lotto 10: PR #11, merge `23fd73a`, ICH-285 e ICH-286 a Done;
-`Notcurses.strwidth` ora conosce lo ZWJ (scelta dell'utente, vedi "Cambi dell'API pubblica" in `RICONSEGNA.md`).
-`master` è sul commit docs del lotto 10; suite: 994 esempi, 0 fallimenti. Leggi in `RICONSEGNA.md` la sezione
-"Correzioni della revisione del 2026-11-06" e il log `memory/correzioni-review.md` (lotti 1–10). Restano aperte in
-Backlog, fuori
+**Stato.** I lotti 1–11 sono chiusi. Lotto 11: PR #12, merge `cb3f0ba`, ICH-287, ICH-288, ICH-289 e ICH-290 a
+Done. ICH-288 e ICH-290 sono solo documentazione (ICH-288: scelta dell'utente). Il criterio di ICH-290 è cambiato
+durante la review: sopra il limite l'etichetta di Plot dipende dalla build di notcurses ("184.47P" sulla build
+locale `x86_64_v4`, "0.00" sulla build Arch generica della CI). `master` è sul commit docs del lotto 11; suite: 1000
+esempi, 0 fallimenti. Leggi in `RICONSEGNA.md` la sezione "Correzioni della revisione del 2026-11-06" e il log
+`memory/correzioni-review.md` (lotti 1–11). Restano aperte in Backlog, fuori
 dai lotti: ICH-441 (`Process.daemon`), ICH-448 (stato del controllo dei bordi per wrapper `Plane`), ICH-449 (double
 free dopo `merge_down` + `Plane#at`), ICH-450 (`polyfill`, `gradient` ed `erase_region` su metà di un glifo largo),
 ICH-454 (ISIG del terminale e `ictx->linesigs` divergono), ICH-455 (Ctrl+C in coda consegnato a un
@@ -33,26 +34,31 @@ schermo).
 
 **Da fare per primo:**
 
-1. Recall in Hindsight, bank `notcursesruby`: decisioni e cause radice dei lotti 1–10 sono salvate (retain del lotto
-   10: operazione `ad77291c`).
-2. Fai le verifiche di "Prima di iniziare", passi 1–5 (suite attesa: 994 esempi, 0 fallimenti). Salta il passo 6.
+1. Recall in Hindsight, bank `notcursesruby`: decisioni e cause radice dei lotti 1–11 sono salvate (retain del lotto
+   11: operazione `5c62b906`).
+2. Fai le verifiche di "Prima di iniziare", passi 1–5 (suite attesa: 1000 esempi, 0 fallimenti). Salta il passo 6.
 3. Controlla il proxy LiteLLM con `curl -sS -m 10 http://127.0.0.1:4000/health/liveliness`. Controlla anche il
    limite di utilizzo del modello GPT: nei lotti 2 e 5 il modello restituiva `usage_limit_reached` e la review GPT
-   finiva senza report; nei lotti 6–10 rispondeva. Se uno dei due controlli fallisce, dillo all'utente prima di
+   finiva senza report; nei lotti 6–11 rispondeva. Se uno dei due controlli fallisce, dillo all'utente prima di
    iniziare: nei lotti 2 e 5 l'utente ha scelto di proseguire con il solo Fable, ma la scelta va chiesta ogni volta.
    ```sh
    curl -sS -m 60 http://127.0.0.1:4000/v1/chat/completions -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
      -H 'Content-Type: application/json' \
      -d '{"model":"claude-gpt-6-1-sol-high","max_tokens":20,"messages":[{"role":"user","content":"ok"}]}'
    ```
-4. Prepara il lotto 11 (ICH-287 `widget-06`, piani degli item di `Tree` alla larghezza corrente; ICH-288 `widget-07`,
-   regola dei colori di `ProgBar`; ICH-289 `widget-08`, ordine delle intestazioni in `Tab#move`; ICH-290 `widget-09`,
-   etichette di `Plot` sopra 1,8e17): leggi le issue da Linear e di' all'utente il comando da lanciare,
-   `/trinity:workflow:1_create-worktree master ICH-287 ICH-288 ICH-289 ICH-290 opus`. ICH-288 è tra le scelte aperte
-   della regola 14: in `2_work-issue` chiedi all'utente la soluzione prima del fix. Spiega all'utente ogni scelta
-   con una tabella delle opzioni e il loro effetto fuori dal lotto: nel lotto 10 la prima domanda era troppo
-   compressa e l'utente ha chiesto più spiegazioni.
-5. Segui la "Procedura per ogni lotto": l'utente lancia `1_create-worktree`, `2_work-issue`, `4_review-fix-loop`,
+4. Prepara il lotto 12 (ICH-291 `ui-06`, rollback di un componente UI o di un `Dialog` se il disegno solleva
+   durante la creazione; ICH-292 `ui-08`, focus dopo un resize che mostra di nuovo i componenti ed Esc al `Dialog`;
+   ICH-293 `ui-10`, spazio per tutta l'etichetta di ogni pulsante del `Dialog`): leggi le issue da Linear e di'
+   all'utente il comando da lanciare, `/trinity:workflow:1_create-worktree master ICH-291 ICH-292 ICH-293 opus`.
+   ICH-291 è tra le scelte aperte della regola 14: in `2_work-issue` chiedi all'utente la soluzione prima del fix.
+   Spiega all'utente ogni scelta con una tabella delle opzioni e il loro effetto fuori dal lotto (nel lotto 11 la
+   tabella mostrata prima di `1_create-worktree` ha funzionato). Il lotto 12 tocca di nuovo `app.rb`, come il
+   lotto 8.
+5. Una spec che fissa un comportamento di notcurses (non un fix) può dipendere dalla build: la notcurses locale è
+   `cachyos-extra-znver4` (`x86_64_v4`), la CI usa il pacchetto Arch generico. Nel lotto 11 la spec di ICH-290
+   passava in locale e falliva su tutta la CI. Prima della review controlla la CI della PR
+   (`gh pr checks <n> --watch`).
+6. Segui la "Procedura per ogni lotto": l'utente lancia `1_create-worktree`, `2_work-issue`, `4_review-fix-loop`,
    il merge e `5_remove-worktree`. **Dopo ogni merge esegui subito la chiusura del lotto** (passo 7 della procedura),
    senza aspettare che l'utente la chieda.
 
