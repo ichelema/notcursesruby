@@ -15,7 +15,7 @@ module Notcurses
   # senza render. Il piano si può ridimensionare: l'orientamento si ricalcola
   # al disegno successivo.
   #
-  # I colori dell'esempio, diversi tra sinistra e destra, servono un piano
+  # I colori dell'esempio, diversi tra sinistra e destra, richiedono un piano
   # largo almeno 2 colonne, e senza UTF-8 anche alto almeno 2 righe: vedi la
   # regola dei colori in {#initialize}.
   #
