@@ -48,7 +48,9 @@ module Notcurses
   # :double, le etichette sono sbagliate, mentre i campioni mantengono il loro
   # valore. Il C converte il valore per 100 in un intero a 64 bit senza segno
   # (plot.c:298-306): fuori intervallo il risultato dipende dalla build di
-  # notcurses ("184.47P" su x86-64-v4, "0.00" su x86-64 generico).
+  # notcurses ("184.47P" su x86-64-v4, "0.00" su x86-64 generico). Con
+  # exponential: e :uint64 la riga più alta moltiplica interi: il valore per
+  # 100 riparte da 0 oltre 2^64 (2e17 dà "15.53P").
   #
   # @example
   #   plane = nc.stdplane.create_child(rows: 5, cols: 40)
