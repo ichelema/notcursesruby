@@ -871,6 +871,8 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
   LOW, corretti dopo il loop senza review; GPT nessun finding in tutti i round). Lotto 10:
   `/trinity:workflow:3_independent-review` nella stessa sessione dell'implementazione (non indipendente), 1 round:
   APPROVABILE CON RISERVE, un LOW (frase nel YARD) e due spec mancanti, aggiunti dopo la review senza un nuovo round.
+  Lotto 11: Fable e GPT, 3 round (round 1: un HIGH, la spec di Plot rossa in CI, e due LOW, corretti; round 2: un
+  LOW di Fable, corretto, GPT nessun finding; round 3: nessun finding).
 
 ### Lotti
 
@@ -886,6 +888,7 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 | 8 | [#9](https://github.com/ichelema/notcursesruby/pull/9) | `0c72ad1` | ICH-282, ICH-283 | il report SGR del movimento con un tasto premuto diventa una nuova pressione dello stesso tasto (`in.c:610-620`); sulla console Linux il mouse viene da gpm e ogni evento, rilascio compreso, diventa una pressione di BUTTON1 (`gpm.c:31`, `mice.c:4-19`); tabella "Bug e limiti di notcurses 3.0.17 trovati nella Fase 3" |
 | 9 | [#10](https://github.com/ichelema/notcursesruby/pull/10) | `106c700` | ICH-284; ICH-458 (nata dalla review) | `ncdirect_stream` sale di `rows - 1` righe (`direct.c:1550-1559`), ma il raster a celle lascia il cursore sotto il frame (`direct.c:558`): ogni frame scende di una riga; con `:pixel` un frame che finisce sull'ultima riga porta il cursore con una CUP alla riga sotto lo schermo (`direct.c:607-613`); tabella "Direct" di `memory/fase2-wrapper-idiomatico.md` |
 | 10 | [#11](https://github.com/ichelema/notcursesruby/pull/11) | `23fd73a` | ICH-285, ICH-286 | nessuno nuovo: il bug noto dello ZWJ (`egcpool.h:126-128`) tocca anche `ncdirect_putegc` (`direct.c:49-66`) e `ncstrwidth` (`notcurses.c:3311-3333`); tabelle "Piani" e "Direct" di `memory/fase2-wrapper-idiomatico.md` |
+| 11 | [#12](https://github.com/ichelema/notcursesruby/pull/12) | `cb3f0ba` | ICH-287, ICH-288, ICH-289, ICH-290 | i piani delle voci di `nctree` non cambiano mai larghezza (`tree.c:456`), tabella "Reel, Tree, Tabbed"; le etichette di `ncplot` sopra circa 1,84e17 passano da double a `uintmax_t` fuori intervallo (`plot.c:128-136`, `298-306`, comportamento indefinito: "184.47P" su x86-64-v4, "0.00" su x86-64 generico) e la riga alta esponenziale `uint64` va in wrap (`plot.c:300`); la regola dei colori di `ncprogbar` su 1 colonna o 1 riga (`fill.c:192-197`, `238-255`); "Bug noti non aggirati" di `memory/fase2-wrapper-idiomatico.md` |
 
 ### Cambi dell'API pubblica
 
@@ -948,6 +951,10 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
 - `Direct#putegc` passa al C il testo solo fino al primo grapheme cluster con uno ZWJ; `Direct#print_aligned`
   solleva `ArgumentError` anche per un carattere di controllo dopo una sequenza ZWJ. `Plane#zwj_segments` (privato)
   diventa `Util.zwj_segments` (`@api private`) (lotto 10).
+- `Tree#redraw` porta i piani delle voci alla larghezza corrente dell'albero meno la colonna della voce, almeno 1:
+  un blocco che restringe da sé il piano della voce lo ritrova largo al redraw successivo (lotto 11).
+- `Tab#move(before:)` del primo tab mostrato verso il tab alla sua destra non cambia più il primo tab mostrato
+  (lotto 11).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 

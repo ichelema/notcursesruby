@@ -290,6 +290,7 @@ copertura.
 | `nctree_prev`/`next`/`focused`/`offer_input` su un albero vuoto dereferenziano NULL (`tree.c:351`, `398`, `607`) | il C non viene chiamato |
 | `nctree_del` con un percorso vuoto: double free (`tree.c:250`) | `ArgumentError` |
 | Le voci di più righe sopra il fuoco si sovrappongono e i loro piani non cambiano mai altezza (`tree.c:419-448`) | il callback del wrapper impila le voci |
+| I piani delle voci già creati non cambiano mai larghezza (`tree.c:456`, `FIXME possibly enlarge`): dopo un resize in larghezza dell'albero il blocco disegna fuori dall'albero, o non usa le colonne nuove | `resize_item` porta ogni piano a `dim_x(albero) - x(voce)` colonne, almeno 1 (lotto 11, ICH-287) |
 | Indentazione più larga del piano: piani di larghezza negativa (`tree.c:444`) | rifiutata |
 | Dopo un resize più piccolo la riga attiva resta fuori dal piano e `nctree_redraw` fallisce (`tree.c:522`) | fuoco riposizionato e nuovo tentativo |
 | `nctree_goto` è uno stub (`tree.c:609-616`) | `Tree#goto` in Ruby |
@@ -341,6 +342,13 @@ fino al ridisegno successivo. Bordi arrotondati, ASCII senza UTF-8; niente PgUp/
   riga (`tabbed.c:37`, `191`).
 - Tree: il C calcola la riga attiva con l'altezza della voce che aveva il fuoco prima: con voci di altezze diverse il
   fuoco si sposta di qualche riga.
+- ProgBar: su un piano largo 1 colonna, e senza UTF-8 anche alto 1 riga, `ncplane_gradient2x1` e `ncplane_gradient`
+  vogliono sinistra e destra uguali (`fill.c:192-197`, `238-255`); senza UTF-8 un piano 1x1 vuole i quattro colori
+  uguali. Altrimenti ogni `progress=` solleva `WidgetError` (lotto 11, ICH-288).
+- Plot: con `label_ticks:` da circa 1,84e17 (2^64/100) le etichette sono sbagliate. Il C converte il valore per 100
+  da double a `uintmax_t` (`plot.c:128-136`, `298-306`): fuori intervallo è un comportamento indefinito, "184.47P"
+  sulla build CachyOS x86-64-v4 e "0.00" sulla build Arch generica. Con `exponential:` e `:uint64` la riga alta
+  moltiplica interi (`plot.c:300`) e riparte da 0 oltre 2^64 (lotto 11, ICH-290).
 - Direct: `Frame#close` abbandona il frame senza liberarne la memoria C (3.0.17 non offre un distruttore pubblico);
   `stop` scrive il reset su stdout.
 - Visual: `ncvisual_from_palidx` non usa i colori della palette (`visual.c:969`); `ncvisual_rotate` perde la prima

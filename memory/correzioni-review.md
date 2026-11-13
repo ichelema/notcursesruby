@@ -524,3 +524,69 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 - `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
 - `master` su `23fd73a`: 994 esempi, 0 fallimenti, anche con i semi 1234, 4242 e 7; `gem build` senza warning; CI
   verde.
+
+## Lotto 11 — ICH-287, ICH-288, ICH-289, ICH-290 (PR #12, merge `cb3f0ba`)
+
+### Fix
+
+- **ICH-287 (`widget-06`, `Tree`).** `resize_item` dà al piano della voce `rows` righe e
+  `dim_x(albero) - ncplane_x(voce)` colonne, almeno 1, e salta il resize solo se le due dimensioni coincidono.
+  Causa radice: `nctree` fissa la larghezza del piano solo alla creazione (`tree.c:441-456`, `FIXME possibly
+  enlarge`), e il wrapper correggeva solo l'altezza. Dopo un resize in larghezza il blocco riceveva i piani vecchi:
+  su un albero più stretto disegnava fuori, perché i piani delle voci sono figli del piano dell'albero e non vengono
+  tagliati.
+- **ICH-289 (`widget-08`, `Tab#move`).** Se il tab spostato è il primo mostrato e `before:` è già il suo successore,
+  `nctab_move` lascia la lista com'era (`tabbed.c:318-330`) e il wrapper non sposta più `leftmost`. Causa radice:
+  la regola fissa "il primo diventa quello che lo seguiva" valeva anche per lo spostamento nullo.
+- **ICH-288 (`widget-07`, `ProgBar`).** Solo YARD (classe, `initialize`, `progress=`) e due spec che fissano la regola
+  dei colori di `fill.c:192-197` e `238-255`, una in un processo figlio con `LANG=C`.
+- **ICH-290 (`widget-09`, `Plot`).** Solo YARD ("Limiti noti di 3.0.17" e `label_ticks:`) e una spec che fissa il
+  limite delle etichette sopra circa 1,84e17.
+
+### Decisioni
+
+- Regola 14 (ICH-288): l'utente ha scelto l'opzione A, solo documentazione, invece di un controllo in Ruby in
+  `progress=` prima del C. Motivi: la issue lo chiede, il wrapper non copia una regola del C che una versione nuova
+  può cambiare, il messaggio del C resta.
+- ICH-290, criterio cambiato durante la review (con la conferma dell'utente): sopra il limite l'etichetta dipende
+  dalla build di notcurses. La conversione da double a `uintmax_t` fuori intervallo è un comportamento indefinito:
+  la build CachyOS `x86_64_v4` (znver4, AVX-512, `vcvttsd2usi` satura) mostra "184.47P", la build Arch generica
+  della CI mostra "0.00". La spec accetta i due valori noti: un valore nuovo su un'altra piattaforma la fa fallire.
+  Su Linear sono cambiati criterio, test richiesto e titolo ("…labels are wrong above about 1.8e17").
+- Il YARD di `Tab#move` promette il caso nullo solo per il primo tab mostrato: l'ultimo tab spostato prima del suo
+  successore circolare (il primo) diventa ancora il primo, come già documentato.
+- Commit `docs(...)` per ICH-288 e ICH-290, che non cambiano codice.
+
+### Review (3 round, Fable e GPT)
+
+- Round 1 (`f4133af`): Fable NON APPROVABILE per un HIGH, la spec di Plot rossa su tutta la CI (già corretta in
+  `85e56e3` durante la review), più due LOW: `resize_item` con colonne ≤ 0 se il blocco sposta la voce oltre il
+  bordo destro (ogni redraw successivo falliva: regressione del fix, `547aa19`) e la frase YARD di `Tab#move` falsa
+  per l'ultimo tab (trovata anche da GPT, `4a0691c`). Una nota di forma in `progbar.rb` (`bd37ef6`). GPT:
+  APPROVABILE CON RISERVE, solo il LOW di `Tab#move`.
+- Round 2 (`bd37ef6`): Fable un LOW, la riga alta di Plot con `exponential:` e `:uint64` moltiplica interi e va in
+  wrap modulo 2^64 su ogni build ("15.53P" per 2e17), documentato in `94f32ae`. GPT nessun finding.
+- Round 3 (`94f32ae`): nessun finding da tutti e due. Nessuna issue creata, nessun residuo.
+- Scartati: una chiamata a `render` nella spec di Tree (il controllo geometrico richiesto basta); spec opzionali
+  per Plot `:double` e ProgBar 1x1 senza UTF-8. Accettato: un blocco che restringe da sé il piano lo ritrova largo
+  (conseguenza del criterio). Fuori dal lotto: `Plane#resize_region` che sposta l'origine dell'albero (notcurses non
+  sposta i piani figli).
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| La spec di ICH-290 passava in locale e falliva su tutta la CI ("0.00" invece di "184.47P") | notcurses locale è la build CachyOS `x86_64_v4`; la CI usa il pacchetto Arch generico; la conversione fuori intervallo è indefinita | YARD e spec con i due valori noti; criterio aggiornato su Linear dopo la conferma dell'utente |
+| Il controllo con il seme 1234 non dava output | `for o in "" "--order rand:1234"` con `$o` non quotato: in zsh non si divide in parole | comando rilanciato con il seme scritto per esteso |
+| `echo =====` nel ciclo delle query Linear | in zsh `=parola` è l'espansione di un comando | separatore tra virgolette |
+| La spec senza UTF-8 di ProgBar richiede `Open3` | `progbar_spec.rb` non lo caricava; in suite arrivava da altri file | `require 'open3'` in testa al file |
+
+### Verifica finale
+
+- Branch (`94f32ae`): 1000 esempi, 0 fallimenti su Ruby 4.0.7; YARD 100 %, 0 warning; `ruby -w` senza warning. CI
+  verde su tutta la matrice (Ruby 3.1.7–4.0.9), coverage e Codecov.
+- Le spec nuove di ICH-287 e ICH-289 fallivano sul codice di prima (`[20, 20, 18]`, `["b", "c", "a"]`); quelle di
+  ICH-288 e ICH-290 passano sul codice di prima, come chiesto: fissano il comportamento di notcurses.
+- `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+- `master` su `cb3f0ba`: 1000 esempi, 0 fallimenti, anche con i semi 1234, 4242 e 7; `gem build` senza warning; CI
+  verde.
