@@ -10,12 +10,17 @@ module Notcurses
     # Focus. Un solo componente alla volta, o nessuno. Il primo componente
     # focusabile e visibile che nasce prende il focus se nessuno lo ha.
     # Quando il componente con il focus si chiude o diventa invisibile, il
-    # focus passa al successivo. Tab e Shift+Tab seguono l'ordine dell'albero
-    # dei componenti (in profondità, nell'ordine di creazione) dalla radice
-    # attiva: il {Dialog} in cima, se c'è, altrimenti {#root}.
+    # focus passa al successivo. Se un resize nasconde tutti i candidati, il
+    # focus resta a nessuno; il resize che li mostra di nuovo lo ridà al
+    # componente che lo aveva (se è ancora aperto, visibile e nella radice
+    # attiva), altrimenti al primo candidato visibile. Un {#focus}(nil)
+    # esplicito resta anche dopo un resize. Tab e Shift+Tab seguono l'ordine
+    # dell'albero dei componenti (in profondità, nell'ordine di creazione)
+    # dalla radice attiva: il {Dialog} in cima, se c'è, altrimenti {#root}.
     #
     # Consegna di un evento ({#dispatch}): un tasto va al componente con il
-    # focus, un evento del mouse al componente sotto il puntatore (una
+    # focus (alla radice attiva se nessuno ha il focus: così Esc arriva a un
+    # {Dialog}), un evento del mouse al componente sotto il puntatore (una
     # pressione di BUTTON1..3 gli dà anche il focus, se è focusabile). Se il
     # componente non lo consuma ({Component#offer_input}), l'evento sale ai
     # contenitori, fino alla radice attiva; poi {#on_key}, Tab e Shift+Tab,
@@ -74,6 +79,7 @@ module Notcurses
         @modals = []
         @saved_focus = []
         @focused = nil
+        @lost_focus = nil # componente nascosto senza un sostituto visibile
         @cursor_at = nil
         @held = [] # tasti BUTTON1..3 premuti e non ancora rilasciati
         # sulla console Linux il mouse viene da gpm, che manda solo pressioni (gpm.c:31)
@@ -192,9 +198,9 @@ module Notcurses
         nil
       end
 
-      # Consegna un evento: al componente con il focus (o sotto il mouse) e
-      # ai suoi contenitori, poi {#on_key}, Tab e Shift+Tab, infine
-      # {#on_input}.
+      # Consegna un evento: al componente con il focus (o sotto il mouse, o
+      # alla radice attiva se nessuno ha il focus) e ai suoi contenitori, poi
+      # {#on_key}, Tab e Shift+Tab, infine {#on_input}.
       #
       # @param input [Input]
       # @return [Boolean] true se un componente, un tasto di {#on_key} o Tab
@@ -245,10 +251,12 @@ module Notcurses
         return unless @focused && inside?(@focused, component)
         return @focused = nil if @closing
 
+        lost = @focused
         order = focus_candidates(all: true)
         index = order.index(@focused)
         order = order.rotate(index + 1) if index
         change_focus(order.find { |c| c.visible? && !inside?(c, component) })
+        @lost_focus = lost if @focused.nil? # resized lo ridà quando torna visibile
       end
 
       # @param component [Component] componente chiuso
@@ -296,6 +304,7 @@ module Notcurses
       end
 
       def change_focus(component)
+        @lost_focus = nil
         return if component.equal?(@focused)
 
         old = @focused
@@ -339,7 +348,7 @@ module Notcurses
         else
           return false if input.release?
 
-          target = @focused
+          target = @focused || active_root
         end
         top = active_root
         while target && !target.closed?
@@ -378,7 +387,19 @@ module Notcurses
       def resized(rows, cols)
         @root.layout(rows, cols)
         @modals.each { |dialog| dialog.place(rows, cols) }
+        restore_focus
         super
+      end
+
+      # Dopo un resize che ha tolto il focus a tutti: il componente che lo
+      # ha perso, se è ancora utilizzabile, o il primo candidato visibile.
+      def restore_focus
+        lost = @lost_focus
+        return unless lost && @focused.nil?
+
+        lost = nil unless !lost.closed? && lost.visible? && inside?(lost, active_root)
+        target = lost || focus_candidates.first
+        change_focus(target) if target
       end
 
       def render_frame

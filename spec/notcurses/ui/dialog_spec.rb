@@ -135,6 +135,37 @@ RSpec.describe Notcurses::UI::Dialog do
     expect(key(Notcurses::Key::ENTER)).to be(true) # Enter arriva di nuovo al pulsante sotto
   end
 
+  it 'un resize che nasconde i pulsanti e poi li mostra ridà il focus; Esc ed Enter arrivano (ICH-292)' do
+    [[Notcurses::Key::ESC, nil], [Notcurses::Key::ENTER, 'Yes']].each do |id, choice|
+      choices = []
+      dialog = described_class.new(app, text: 'Quit?', buttons: %w[Yes No]) { |c| choices << c }
+      sizes = [[2, 80], [24, 80]]
+      allow(nc).to receive(:refresh) { sizes.shift || [24, 80] }
+      seen = :none
+      app.on_resize do |rows, _cols|
+        next unless rows == 24
+
+        seen = app.focused
+        app.stop
+      end
+      app.post { Process.kill('WINCH', Process.pid) }
+      app.after(0.2) { Process.kill('WINCH', Process.pid) }
+      app.after(5) { app.stop }
+      app.run
+      expect([seen, app.focused]).to all(equal(buttons_of(dialog).first))
+      expect(key(id)).to be(true)
+      expect([dialog.closed?, choices]).to eq([true, [choice]])
+    end
+  end
+
+  it 'senza focus un tasto va alla radice attiva: Esc chiude il dialogo (ICH-292)' do
+    choices = []
+    described_class.new(app, text: 'x') { |c| choices << c }
+    app.focus(nil)
+    expect(key(Notcurses::Key::ESC)).to be(true)
+    expect(choices).to eq([nil])
+  end
+
   it 'valida gli argomenti; sopra l\'App stanno solo root e i dialoghi' do
     expect { described_class.new(nc, text: 'x') }.to raise_error(TypeError)
     expect { described_class.new(app, text: "a\tb") }.to raise_error(ArgumentError)

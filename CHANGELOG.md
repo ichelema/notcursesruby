@@ -96,6 +96,10 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   `Container`, `Label`, `Button`, `TextInput`, `ListView`, `LogView` e `Dialog` rifiutano subito `channels:` e
   `focused_channels:` con lo sfondo `:highcontrast` (`ArgumentError`), anche per un widget nascosto; prima un
   `Container` senza titolo li accettava (ICH-291).
+- `App`: un resize che nasconde tutti i componenti focusabili e un resize successivo che li mostra ridanno il
+  focus al componente che lo aveva (o al primo candidato visibile), prima degli handler di `on_resize`; prima il
+  focus restava a nessuno fino a Tab. Senza focus un tasto va alla radice attiva, così Esc chiude un `Dialog`
+  aperto. Un `focus(nil)` esplicito resta anche dopo un resize (ICH-292).
 
 ## [0.1.0] - 2026-10-27
 

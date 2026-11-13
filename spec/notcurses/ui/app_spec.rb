@@ -338,6 +338,43 @@ RSpec.describe Notcurses::UI::App do
       expect(calls).to eq([[:enable, { y: 2, x: 3 }], [:disable]])
     end
 
+    # Due resize durante run: il terminale scende a 2 righe, poi torna a 24.
+    # Restituisce il componente con il focus visto dall'handler di on_resize.
+    def shrink_and_restore
+      sizes = [[2, 80], [24, 80]]
+      allow(nc).to receive(:refresh) { sizes.shift || [24, 80] }
+      seen = :none
+      app.on_resize do |rows, _cols|
+        next unless rows == 24
+
+        seen = app.focused
+        app.stop
+      end
+      app.post { Process.kill('WINCH', Process.pid) }
+      app.after(0.2) { Process.kill('WINCH', Process.pid) }
+      app.after(5) { app.stop }
+      app.run
+      seen
+    end
+
+    it 'un resize che mostra di nuovo i componenti ridà il focus a quello che lo aveva (ICH-292)' do
+      Notcurses::UI::Label.new(app.root, text: 'x', size: 2)
+      Notcurses::UI::TextInput.new(app.root, size: 1)
+      b = Notcurses::UI::TextInput.new(app.root, size: 1)
+      app.focus(b)
+      expect(shrink_and_restore).to equal(b) # già prima degli handler di on_resize
+      expect(app.focused).to equal(b)
+      app.dispatch(syn('x'.ord))
+      expect(b.text).to eq('x')
+    end
+
+    it 'focus(nil) resta dopo un resize (ICH-292)' do
+      probe(size: 1)
+      app.focus(nil)
+      expect(shrink_and_restore).to be_nil
+      expect(app.focused).to be_nil
+    end
+
     it 'resize: root prende le nuove dimensioni prima degli handler di on_resize' do
       seen = nil
       app.on_resize do |rows, cols|
