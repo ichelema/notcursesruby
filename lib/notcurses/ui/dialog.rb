@@ -50,7 +50,10 @@ module Notcurses
         close_on_error do
           @body = Label.new(self, text: '', align: :center, channels: channels)
           row = Container.new(self, direction: :horizontal, size: 1, channels: channels)
-          @buttons.each { |label| Button.new(row, label, channels: channels) { finish(label) } }
+          # i pesi sono le larghezze che place somma: ogni etichetta entra intera
+          @buttons.each do |label|
+            Button.new(row, label, channels: channels, weight: Notcurses.strwidth(label) + 5) { finish(label) }
+          end
           place(*app.context.dims)
         end
       end

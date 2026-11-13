@@ -100,6 +100,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   focus al componente che lo aveva (o al primo candidato visibile), prima degli handler di `on_resize`; prima il
   focus restava a nessuno fino a Tab. Senza focus un tasto va alla radice attiva, così Esc chiude un `Dialog`
   aperto. Un `focus(nil)` esplicito resta anche dopo un resize (ICH-292).
+- `Dialog`: ogni pulsante ha spazio per tutta l'etichetta; prima la riga si divideva in parti uguali e
+  un'etichetta più lunga della media restava tagliata. La larghezza del dialogo non cambia (ICH-293).
 
 ## [0.1.0] - 2026-10-27
 

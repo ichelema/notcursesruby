@@ -28,6 +28,20 @@ RSpec.describe Notcurses::UI::Dialog do
     expect(buttons_of(dialog).map(&:label)).to eq(%w[Sì No])
   end
 
+  it 'ogni pulsante ha spazio per tutta l\'etichetta; etichette uguali dividono la riga in parti uguali (ICH-293)' do
+    { ['Save', "Don't save", 'Cancel'] => 39, %w[A B Longest] => 28 }.each do |labels, width|
+      dialog = described_class.new(app, text: 'Save?', buttons: labels)
+      buttons = buttons_of(dialog)
+      expect(dialog.plane.dim_x).to eq(width)
+      expect(buttons.map { |b| b.plane.contents(y: 0, rows: 1).strip }).to eq(labels.map { |l| "[ #{l} ]" })
+      expect(buttons.zip(labels)).to all(satisfy { |b, l| b.plane.dim_x >= Notcurses.strwidth(l) + 4 })
+      expect(buttons.map(&:label)).to eq(labels)
+      dialog.close
+    end
+    even = described_class.new(app, text: 'una riga di testo piuttosto lunga', buttons: %w[A B C])
+    expect(buttons_of(even).map { |b| b.plane.dim_x }.minmax.then { |lo, hi| hi - lo }).to be <= 1
+  end
+
   it 'su un terminale stretto il testo va a capo sulle parole e il dialogo resta dentro lo schermo' do
     dialog = described_class.new(app, text: 'uno due tre quattro cinque sei')
     dialog.place(24, 14)
