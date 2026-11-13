@@ -159,6 +159,7 @@ module Notcurses
           raise ArgumentError, 'il componente non è visibile' unless component.visible?
           raise ArgumentError, 'il componente è fuori dalla finestra modale aperta' unless inside?(component, active_root)
         end
+        @lost_focus = nil # una scelta esplicita, anche nil, vale più di quella da ripristinare
         change_focus(component)
         self
       end
@@ -304,7 +305,7 @@ module Notcurses
       end
 
       def change_focus(component)
-        @lost_focus = nil
+        @lost_focus = nil if component
         return if component.equal?(@focused)
 
         old = @focused
@@ -385,8 +386,11 @@ module Notcurses
       end
 
       def resized(rows, cols)
+        before = @focused
         @root.layout(rows, cols)
         @modals.each { |dialog| dialog.place(rows, cols) }
+        # durante il layout il focus può passare a un candidato che si nasconde subito dopo: conta quello di prima
+        @lost_focus = before if before && @lost_focus
         restore_focus
         super
       end

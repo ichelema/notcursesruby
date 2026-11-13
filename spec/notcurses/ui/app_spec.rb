@@ -303,6 +303,50 @@ RSpec.describe Notcurses::UI::App do
       broken.dirty = true # un errore della pulizia non sostituisce quello del disegno
       expect { broken.new(box, size: 1) }.to raise_error(ArgumentError, 'disegno rotto')
       expect(broken.last).to be_closed
+      expect(box.children).to eq([])
+      expect { app.root.layout(30, 100) }.not_to raise_error
+    end
+
+    it 'il rollback lascia il focus com\'era anche se il ridisegno del focus solleva (ICH-291)' do
+      shy = Class.new(probe_class) do
+        class << self
+          attr_accessor :last
+        end
+
+        def initialize(parent, **opts)
+          self.class.last = self
+          super
+        end
+
+        private
+
+        def draw = (raise ArgumentError, 'disegno con il focus' if focused?)
+      end
+      a = probe(size: 1)
+      app.focus(nil)
+      expect { shy.new(app.root, size: 1) }.to raise_error(ArgumentError, 'disegno con il focus')
+      expect(shy.last).to be_closed
+      expect(app.root.children).to eq([a])
+      expect(app.focused).to be_nil
+      y, x = a.plane.abs_yx
+      expect(app.component_at(y + 1, x)).not_to equal(shy.last) # il piano chiuso non è più registrato
+      expect { app.root.layout(30, 100) }.not_to raise_error
+    end
+
+    it 'il rollback ridà il focus al componente che la creazione aveva nascosto (ICH-291)' do
+      broken = Class.new(probe_class) do
+        private
+
+        def draw = raise(ArgumentError, 'disegno rotto')
+      end
+      box = Notcurses::UI::Container.new(app.root, size: 1)
+      old = Notcurses::UI::TextInput.new(box)
+      app.focus(old)
+      expect { broken.new(box, size: 1) }.to raise_error(ArgumentError, 'disegno rotto')
+      expect(old).to be_visible
+      expect(app.focused).to equal(old)
+      app.dispatch(syn('x'.ord))
+      expect(old.text).to eq('x')
     end
 
     it 'i widget rifiutano channels con lo sfondo :highcontrast prima di creare il piano (ICH-291)' do
@@ -339,16 +383,16 @@ RSpec.describe Notcurses::UI::App do
     end
 
     # Due resize durante run: il terminale scende a 2 righe, poi torna a 24.
-    # Restituisce il componente con il focus visto dall'handler di on_resize.
+    # Il blocco gira nell'handler di on_resize a 2 righe. Restituisce il
+    # componente con il focus visto dall'handler, per numero di righe.
     def shrink_and_restore
       sizes = [[2, 80], [24, 80]]
       allow(nc).to receive(:refresh) { sizes.shift || [24, 80] }
-      seen = :none
+      seen = {}
       app.on_resize do |rows, _cols|
-        next unless rows == 24
-
-        seen = app.focused
-        app.stop
+        seen[rows] = app.focused
+        yield if rows == 2 && block_given?
+        app.stop if rows == 24
       end
       app.post { Process.kill('WINCH', Process.pid) }
       app.after(0.2) { Process.kill('WINCH', Process.pid) }
@@ -357,22 +401,41 @@ RSpec.describe Notcurses::UI::App do
       seen
     end
 
-    it 'un resize che mostra di nuovo i componenti ridà il focus a quello che lo aveva (ICH-292)' do
-      Notcurses::UI::Label.new(app.root, text: 'x', size: 2)
-      Notcurses::UI::TextInput.new(app.root, size: 1)
-      b = Notcurses::UI::TextInput.new(app.root, size: 1)
-      app.focus(b)
-      expect(shrink_and_restore).to equal(b) # già prima degli handler di on_resize
-      expect(app.focused).to equal(b)
-      app.dispatch(syn('x'.ord))
-      expect(b.text).to eq('x')
+    [0, 1].each do |index|
+      it "un resize che mostra di nuovo i componenti ridà il focus a quello che lo aveva, input #{index} (ICH-292)" do
+        Notcurses::UI::Label.new(app.root, text: 'x', size: 2)
+        inputs = Array.new(2) { Notcurses::UI::TextInput.new(app.root, size: 1) }
+        target = inputs[index]
+        app.focus(target)
+        seen = shrink_and_restore
+        expect(seen[2]).to be_nil # nascosti tutti: nessun focus
+        expect(seen[24]).to equal(target) # già prima degli handler di on_resize
+        expect(app.focused).to equal(target)
+        app.dispatch(syn('x'.ord))
+        expect(target.text).to eq('x')
+      end
     end
 
     it 'focus(nil) resta dopo un resize (ICH-292)' do
       probe(size: 1)
       app.focus(nil)
-      expect(shrink_and_restore).to be_nil
+      expect(shrink_and_restore[24]).to be_nil
       expect(app.focused).to be_nil
+    end
+
+    it 'focus(nil) mentre i componenti sono nascosti resta dopo il resize che li mostra (ICH-292)' do
+      Notcurses::UI::Label.new(app.root, text: 'x', size: 2)
+      Notcurses::UI::TextInput.new(app.root, size: 1)
+      expect(shrink_and_restore { app.focus(nil) }[24]).to be_nil
+      expect(app.focused).to be_nil
+    end
+
+    it 'se il componente che ha perso il focus si chiude, il resize lo dà al primo candidato visibile (ICH-292)' do
+      Notcurses::UI::Label.new(app.root, text: 'x', size: 2)
+      a = Notcurses::UI::TextInput.new(app.root, size: 1)
+      b = Notcurses::UI::TextInput.new(app.root, size: 1)
+      app.focus(a)
+      expect(shrink_and_restore { a.close }[24]).to equal(b)
     end
 
     it 'resize: root prende le nuove dimensioni prima degli handler di on_resize' do

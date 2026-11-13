@@ -172,6 +172,42 @@ RSpec.describe Notcurses::UI::Dialog do
     end
   end
 
+  # Due resize durante run (2 righe, poi 24); il blocco gira a 2 righe.
+  def shrink_and_restore
+    sizes = [[2, 80], [24, 80]]
+    allow(nc).to receive(:refresh) { sizes.shift || [24, 80] }
+    app.on_resize do |rows, _cols|
+      yield if rows == 2
+      app.stop if rows == 24
+    end
+    app.post { Process.kill('WINCH', Process.pid) }
+    app.after(0.2) { Process.kill('WINCH', Process.pid) }
+    app.after(5) { app.stop }
+    app.run
+  end
+
+  it 'il focus torna dopo il resize anche se il dialogo si chiude a terminale piccolo (ICH-292)' do
+    Notcurses::UI::Label.new(app.root, text: 'x', size: 2)
+    under = Notcurses::UI::TextInput.new(app.root, size: 1)
+    described_class.new(app, text: 'Quit?', buttons: %w[Yes No])
+    shrink_and_restore { key(Notcurses::Key::ESC) }
+    expect(app.focused).to equal(under)
+  end
+
+  it 'il focus torna dopo il resize anche se il dialogo si apre a terminale piccolo (ICH-292)' do
+    Notcurses::UI::Label.new(app.root, text: 'x', size: 2)
+    Notcurses::UI::TextInput.new(app.root, size: 1)
+    choices = []
+    dialog = nil
+    shrink_and_restore do
+      allow(nc).to receive(:dims).and_return([2, 80])
+      dialog = described_class.new(app, text: 'Quit?', buttons: %w[Yes No]) { |c| choices << c }
+    end
+    expect(app.focused).to equal(buttons_of(dialog).first)
+    expect(key(Notcurses::Key::ENTER)).to be(true)
+    expect(choices).to eq(['Yes'])
+  end
+
   it 'senza focus un tasto va alla radice attiva: Esc chiude il dialogo (ICH-292)' do
     choices = []
     described_class.new(app, text: 'x') { |c| choices << c }

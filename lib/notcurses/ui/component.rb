@@ -308,11 +308,14 @@ module Notcurses
         begin
           @app.release_focus(self)
           close_parts
-          @parent&.remove_child(self)
-          @app.unregister(self)
         ensure
-          @closed = true
-          @plane.close
+          begin # anche se il ridisegno del focus o la chiusura dei figli sollevano
+            @app.unregister(self)
+            @parent&.remove_child(self)
+          ensure
+            @closed = true
+            @plane.close
+          end
         end
         nil
       end
@@ -368,16 +371,23 @@ module Notcurses
       end
 
       # Esegue il blocco; se il blocco solleva, chiude il componente (che
-      # esce dal contenitore e dall'App) e propaga l'eccezione originale,
-      # anche se la chiusura fallisce.
+      # esce dal contenitore e dall'App), rimette il focus dove era e
+      # propaga l'eccezione originale, anche se la chiusura fallisce.
       # @return [void]
       def close_on_error
+        before = @app.focused
         yield
       rescue Exception => e # rubocop:disable Lint/RescueException
         begin
           close
         rescue StandardError
           nil # conta l'errore della creazione, non quello della pulizia
+        end
+        begin
+          # un Dialog lo rimette già con App#close_modal
+          @app.focus(before) unless is_a?(Dialog) || @app.focused.equal?(before)
+        rescue StandardError
+          nil # before non può più avere il focus (chiuso, nascosto o fuori dal dialogo)
         end
         raise e
       end
