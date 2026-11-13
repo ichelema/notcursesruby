@@ -516,7 +516,8 @@ module Notcurses
     # (+nctab_move+): indica esattamente uno dei due. Il wrapper tiene
     # coerente il primo tab mostrato: se il tab spostato era il primo, il
     # primo diventa quello che lo seguiva; spostato prima del primo, diventa
-    # il primo. Non ridisegna.
+    # il primo. Un tab spostato subito prima del suo successore resta dove
+    # è, anche se era il primo. Non ridisegna.
     #
     # @param after [Tab, nil] tab aperto dello stesso widget
     # @param before [Tab, nil] tab aperto dello stesso widget
@@ -536,7 +537,9 @@ module Notcurses
 
       ptr = to_ptr
       left = FFI.nctabbed_leftmost(nt).address
-      follower = FFI.nctab_next(ptr) if left == ptr.address
+      nxt = FFI.nctab_next(ptr)
+      # prima del suo successore il tab non si muove: nctab_move lascia la lista com'era
+      follower = nxt if left == ptr.address && !(before && nxt.address == tptr.address)
       rc = after ? FFI.nctab_move(nt, ptr, tptr, ::FFI::Pointer::NULL) : FFI.nctab_move(nt, ptr, ::FFI::Pointer::NULL, tptr)
       Util.check!(rc, WidgetError, 'nctab_move')
       # nctab_move non aggiorna il primo tab mostrato (tabbed.c:303-332)

@@ -301,6 +301,30 @@ RSpec.describe Notcurses::Tabbed do
       tabbed.close
     end
 
+    it 'move del primo tab prima del suo successore non ruota l\'intestazione' do
+      tabbed = abc
+      a, b, = tabbed.tabs
+      expect(a.move(before: b)).to equal(a)
+      expect(names(tabbed)).to eq(%w[a b c])
+      expect(tabbed.leftmost).to equal(a)
+      tabbed.close
+
+      tabbed = described_class.new(new_plane)
+      %w[a b].each { |n| tabbed.add(n, after: tabbed.tabs.last, &draw) }
+      a, b = tabbed.tabs
+      a.move(before: b)
+      expect(names(tabbed)).to eq(%w[a b])
+      expect(tabbed.leftmost).to equal(a)
+      tabbed.close
+
+      { 2 => %w[b c a], 1 => %w[b a c] }.each do |idx, expected| # gli altri spostamenti del primo non cambiano
+        tabbed = abc
+        tabbed.tabs[0].move(after: tabbed.tabs[idx])
+        expect(names(tabbed)).to eq(expected)
+        tabbed.close
+      end
+    end
+
     it 'move rifiuta after: e before: insieme (adiacenza invertita in 3.0.17), nessuno dei due e tab estranei' do
       tabbed = abc
       a, b, c = tabbed.tabs

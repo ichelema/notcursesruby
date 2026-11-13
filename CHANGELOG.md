@@ -82,6 +82,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 - `Tree#redraw` adatta i piani delle voci alla larghezza corrente dell'albero: dopo un `Plane#resize` in larghezza
   il blocco di disegno riceveva piani larghi come prima, e su un albero più stretto disegnava fuori dall'albero
   (ICH-287).
+- `Tab#move(before:)` del primo tab mostrato verso il suo successore non ruota più l'intestazione: con A, B e C,
+  `a.move(before: b)` lascia "A B C" invece di "B C A" (ICH-289).
 
 ## [0.1.0] - 2026-10-27
 
