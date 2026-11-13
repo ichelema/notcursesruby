@@ -45,9 +45,10 @@ module Notcurses
   # l'ultimo; con valori double negativi e label_ticks: le etichette sono
   # sbagliate (conversione C da double negativo a intero senza segno); con
   # label_ticks: da circa 1,84e17 (2^64/100) in su, con :uint64 e con
-  # :double, tutte le etichette mostrano "184.47P" (il C moltiplica il valore
-  # per 100 in un intero a 64 bit, plot.c:298-306), mentre i campioni
-  # mantengono il loro valore.
+  # :double, le etichette sono sbagliate, mentre i campioni mantengono il loro
+  # valore. Il C converte il valore per 100 in un intero a 64 bit senza segno
+  # (plot.c:298-306): fuori intervallo il risultato dipende dalla build di
+  # notcurses ("184.47P" su x86-64-v4, "0.00" su x86-64 generico).
   #
   # @example
   #   plane = nc.stdplane.create_child(rows: 5, cols: 40)
@@ -101,7 +102,7 @@ module Notcurses
     #   titolo e campione stampato
     # @param label_ticks [Boolean] NCPLOT_OPTION_LABELTICKSD: etichette dei
     #   valori a sinistra (7 colonne; il piano deve averne almeno 8). Da
-    #   circa 1,84e17 in su ogni etichetta mostra "184.47P" (limite di 3.0.17,
+    #   circa 1,84e17 in su le etichette sono sbagliate (limite di 3.0.17,
     #   vedi la classe)
     # @param exponential [Boolean] NCPLOT_OPTION_EXPONENTIALD: asse dei
     #   valori esponenziale

@@ -242,11 +242,12 @@ RSpec.describe Notcurses::Plot do
       end
 
       # Limite di 3.0.17 documentato, non aggirato (plot.c:298-306): fallisce se un notcurses nuovo lo cambia.
-      it 'con label_ticks le etichette si fermano a 184.47P (limite di 3.0.17)' do
-        { 10**17 => '100.00P', 2 * 10**17 => '184.47P' }.each do |value, label|
+      # Sopra il limite la conversione C è indefinita: "184.47P" su x86-64-v4, "0.00" su x86-64 generico (CI).
+      it 'con label_ticks le etichette sono sbagliate sopra circa 1.8e17 (limite di 3.0.17)' do
+        { 10**17 => [%w[100.00P]], 2 * 10**17 => [%w[184.47P], %w[0.00]] }.each do |value, labels|
           plot = described_class.new(new_plane, label_ticks: true, blitter: :ascii) # add_sample somma: un grafico nuovo
           plot.add_sample(0, value)
-          expect((0...3).map { |y| plot.plane.contents(y: y, rows: 1, cols: 7) }).to all(eq(label))
+          expect(labels).to include((0...3).map { |y| plot.plane.contents(y: y, rows: 1, cols: 7) }.uniq)
           expect(plot.sample(0)).to eq(value)
           plot.close
         end
