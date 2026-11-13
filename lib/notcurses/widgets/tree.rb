@@ -60,8 +60,8 @@ module Notcurses
   #   rifiutato;
   # - +nctree_goto+ è uno stub (tree.c:610-616): {#goto} è scritto in Ruby;
   # - le voci di più righe sopra il fuoco si sovrapponevano e i piani già
-  #   creati non cambiavano altezza (tree.c:419-448): il wrapper impila le
-  #   voci da sé;
+  #   creati non cambiavano altezza né larghezza (tree.c:419-456): il wrapper
+  #   impila le voci da sé e le adatta alla larghezza corrente dell'albero;
   # - un'indentazione più larga del piano crea piani di larghezza negativa
   #   (tree.c:444): rifiutata.
   class Tree
@@ -397,10 +397,12 @@ module Notcurses
       @frontier_bottom = y + rows if distance >= 0
     end
 
+    # Anche la larghezza: il C la fissa solo alla creazione del piano (tree.c:456).
     def resize_item(ptr, rows)
-      return if FFI.ncplane_dim_y(ptr) == rows
+      cols = FFI.ncplane_dim_x(@tree_plane.address_ptr) - FFI.ncplane_x(ptr)
+      return if FFI.ncplane_dim_y(ptr) == rows && FFI.ncplane_dim_x(ptr) == cols
 
-      rc = FFI.ncplane_resize_simple(ptr, rows, FFI.ncplane_dim_x(ptr))
+      rc = FFI.ncplane_resize_simple(ptr, rows, cols)
       Util.check!(rc, WidgetError, 'ncplane_resize_simple')
     end
 

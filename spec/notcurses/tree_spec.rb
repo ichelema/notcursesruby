@@ -349,6 +349,35 @@ RSpec.describe Notcurses::Tree do
       tree.close
     end
 
+    it "dopo un resize in larghezza i piani delle voci seguono la larghezza dell'albero" do
+      f = Notcurses::FFI
+      widths = []
+      tree = new_tree(['a', { 'b' => ['b0'] }]) do |plane, value, _distance|
+        next 0 unless plane
+
+        widths << [value, plane.dim_x]
+        plane.putstr('#' * plane.dim_x, y: 0, x: 0) # il blocco riempie la riga della voce
+        1
+      end
+      tree.next
+      tree.next # fuoco su b0: ogni voce ha un piano
+      tp = tree.plane.to_ptr
+      { 10 => [10, 10, 8], 30 => [30, 30, 28], 9 => [9, 9, 7] }.each do |cols, expected|
+        tree.plane.resize(6, cols)
+        widths.clear
+        tree.redraw
+        expect(widths.sort.map(&:last)).to eq(expected)
+        ptr = f.ncpile_top(tp)
+        until ptr.null?
+          if ptr.address != tp.address && f.ncplane_parent(ptr).address == tp.address
+            expect(f.ncplane_abs_x(ptr) + f.ncplane_dim_x(ptr)).to be <= f.ncplane_abs_x(tp) + f.ncplane_dim_x(tp)
+          end
+          ptr = f.ncplane_below(ptr)
+        end
+      end
+      tree.close
+    end
+
     it 'rifiuta un piano diventato troppo stretto per l\'indentazione' do
       tree = new_tree
       tree.plane.resize(6, 4)

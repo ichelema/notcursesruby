@@ -79,6 +79,9 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   per un carattere di controllo dopo la sequenza), `Plane#puttext` (una parola con ZWJ più larga del piano va a capo
   invece di sollevare `PlaneError`) e la UI, che taglia e allinea il testo con `strwidth`: una `Label` con
   `"👩‍💻 sviluppatrice molto brava"` e `size: 10` non solleva più `PlaneError` (ICH-285, ICH-286).
+- `Tree#redraw` adatta i piani delle voci alla larghezza corrente dell'albero: dopo un `Plane#resize` in larghezza
+  il blocco di disegno riceveva piani larghi come prima, e su un albero più stretto disegnava fuori dall'albero
+  (ICH-287).
 
 ## [0.1.0] - 2026-10-27
 
