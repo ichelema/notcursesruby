@@ -398,8 +398,9 @@ module Notcurses
     end
 
     # Anche la larghezza: il C la fissa solo alla creazione del piano (tree.c:456).
+    # Almeno 1 colonna: il blocco può aver spostato il piano oltre il bordo destro.
     def resize_item(ptr, rows)
-      cols = FFI.ncplane_dim_x(@tree_plane.address_ptr) - FFI.ncplane_x(ptr)
+      cols = [FFI.ncplane_dim_x(@tree_plane.address_ptr) - FFI.ncplane_x(ptr), 1].max
       return if FFI.ncplane_dim_y(ptr) == rows && FFI.ncplane_dim_x(ptr) == cols
 
       rc = FFI.ncplane_resize_simple(ptr, rows, cols)

@@ -378,6 +378,17 @@ RSpec.describe Notcurses::Tree do
       tree.close
     end
 
+    it "un blocco che sposta il piano della voce oltre la larghezza dell'albero non blocca i redraw" do
+      tree = new_tree(%w[x y], rows: 4) do |plane, _value, _distance|
+        next 0 unless plane
+
+        plane.move(plane.y, 25)
+        1
+      end
+      2.times { expect(tree.redraw).to equal(tree) }
+      tree.close
+    end
+
     it 'rifiuta un piano diventato troppo stretto per l\'indentazione' do
       tree = new_tree
       tree.plane.resize(6, 4)
