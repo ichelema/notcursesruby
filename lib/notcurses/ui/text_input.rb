@@ -30,7 +30,8 @@ module Notcurses
       # @param size [Integer, nil] dimensione fissa nel contenitore, >= 1
       # @param weight [Integer, nil] quota dello spazio restante, >= 1 (default 1)
       # @yieldparam input [TextInput] il campo, quando arriva Invio
-      # @raise [ArgumentError] con un testo non ammesso, con size e weight insieme
+      # @raise [ArgumentError] con un testo non ammesso, con size e weight insieme,
+      #   se channels o focused_channels hanno lo sfondo con alpha :highcontrast
       # @raise [TypeError] se un argomento ha il tipo sbagliato
       # @raise [ClosedError] se il contenitore è chiuso
       def initialize(parent, text: '', channels: FIELD_CHANNELS, focused_channels: FOCUSED_CHANNELS, size: nil, weight: nil,
@@ -39,8 +40,8 @@ module Notcurses
         @position = @text.grapheme_clusters.size
         @first = 0
         @cursor_col = 0
-        @channels = Util.channels_value(channels, 'channels')
-        @focused_channels = Util.channels_value(focused_channels, 'focused_channels')
+        @channels = Util.plane_channels_value(channels, 'channels')
+        @focused_channels = Util.plane_channels_value(focused_channels, 'focused_channels')
         @block = block
         attach_component!(parent, size: size, weight: weight)
       end

@@ -73,6 +73,16 @@ RSpec.describe Notcurses::UI::Label do
     expect(label.plane.contents(y: 0, rows: 1)).to eq('? ok')
   end
 
+  it 'channels con lo sfondo :highcontrast solleva alla creazione, anche senza spazio (ICH-291)' do
+    box = Notcurses::UI::Container.new(app.root, size: 3)
+    expect { described_class.new(box, text: 'x', channels: 0x3000_0000) }.to raise_error(ArgumentError, /highcontrast/)
+    expect(box.children).to eq([])
+    full = described_class.new(box, text: 'pieno', size: 3)
+    expect { described_class.new(box, text: 'x', size: 1, channels: 0x3000_0000) }.to raise_error(ArgumentError, /highcontrast/)
+    expect(box.children).to eq([full])
+    expect { app.root.layout(30, 100) }.not_to raise_error
+  end
+
   it 'chiuso: text= e plane sollevano ClosedError' do
     label = described_class.new(row(1), text: 'x', size: 3)
     label.close

@@ -271,6 +271,60 @@ RSpec.describe Notcurses::UI::App do
       expect(app.focused).to equal(c)
     end
 
+    it 'un componente il cui disegno solleva alla creazione si chiude senza lasciare tracce (ICH-291)' do
+      broken = Class.new(probe_class) do
+        class << self
+          attr_accessor :last, :dirty
+        end
+
+        def initialize(parent, **opts)
+          self.class.last = self
+          super
+        end
+
+        private
+
+        def draw = raise(ArgumentError, 'disegno rotto')
+
+        def close_parts = (raise 'pulizia rotta' if self.class.dirty)
+      end
+      a = probe(size: 1)
+      expect { broken.new(app.root, size: 1) }.to raise_error(ArgumentError, 'disegno rotto')
+      expect(broken.last).to be_closed
+      expect(app.root.children).to eq([a])
+      expect(app.focused).to equal(a)
+      expect { app.root.layout(30, 100) }.not_to raise_error
+      app.focus(nil)
+      expect { broken.new(app.root, size: 1) }.to raise_error(ArgumentError, 'disegno rotto')
+      expect(app.root.children).to eq([a])
+      expect(app.focused).to be_nil
+      expect { probe(size: 1) }.not_to raise_error
+      box = Notcurses::UI::Container.new(app.root, size: 1)
+      broken.dirty = true # un errore della pulizia non sostituisce quello del disegno
+      expect { broken.new(box, size: 1) }.to raise_error(ArgumentError, 'disegno rotto')
+      expect(broken.last).to be_closed
+    end
+
+    it 'i widget rifiutano channels con lo sfondo :highcontrast prima di creare il piano (ICH-291)' do
+      ui = Notcurses::UI
+      bad = 0x3000_0000
+      [
+        -> { ui::Container.new(app.root, channels: bad) },
+        -> { ui::Label.new(app.root, text: 'x', channels: bad) },
+        -> { ui::Button.new(app.root, 'x', channels: bad) {} },
+        -> { ui::Button.new(app.root, 'x', focused_channels: bad) {} },
+        -> { ui::TextInput.new(app.root, channels: bad) },
+        -> { ui::TextInput.new(app.root, focused_channels: bad) },
+        -> { ui::ListView.new(app.root, channels: bad) },
+        -> { ui::ListView.new(app.root, focused_channels: bad) },
+        -> { ui::LogView.new(app.root, channels: bad) },
+        -> { ui::Dialog.new(app, text: 'x', channels: bad) }
+      ].each_with_index do |make, i|
+        expect { make.call }.to raise_error(ArgumentError, /highcontrast/), "caso #{i}"
+      end
+      expect(app.root.children).to eq([])
+    end
+
     it 'prima del render mette il cursore dove dice il componente con il focus, solo quando cambia' do
       probe(size: 2)
       a = probe(size: 1, cursor: [0, 3])

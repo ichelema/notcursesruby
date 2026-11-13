@@ -29,11 +29,13 @@ module Notcurses
       # @param channels [Channels, Integer] colori del dialogo e dei pulsanti
       #   senza il focus
       # @yieldparam choice [String, nil] l'etichetta del pulsante, nil per Esc
-      # @raise [ArgumentError] con un testo o un'etichetta non ammessi, o
-      #   senza pulsanti
+      # @raise [ArgumentError] con un testo o un'etichetta non ammessi, senza
+      #   pulsanti, o se channels ha lo sfondo con alpha :highcontrast
       # @raise [TypeError] se app non è un App, buttons non è un Array di
       #   String, o un argomento ha il tipo sbagliato
       # @raise [ClosedError] se l'App è chiusa
+      # @raise [Exception] l'eccezione del disegno: il dialogo è già chiuso e
+      #   il focus è tornato dove era
       def initialize(app, text:, title: nil, buttons: ['OK'], channels: 0, &block)
         raise TypeError, "app deve essere Notcurses::UI::App, non #{app.class}" unless app.is_a?(App)
 
@@ -45,10 +47,12 @@ module Notcurses
         @block = block
         @body = nil
         super(app, border: true, title: title, channels: channels)
-        @body = Label.new(self, text: '', align: :center, channels: channels)
-        row = Container.new(self, direction: :horizontal, size: 1, channels: channels)
-        @buttons.each { |label| Button.new(row, label, channels: channels) { finish(label) } }
-        place(*app.context.dims)
+        close_on_error do
+          @body = Label.new(self, text: '', align: :center, channels: channels)
+          row = Container.new(self, direction: :horizontal, size: 1, channels: channels)
+          @buttons.each { |label| Button.new(row, label, channels: channels) { finish(label) } }
+          place(*app.context.dims)
+        end
       end
 
       # Esc chiude il dialogo e chiama il blocco con nil.

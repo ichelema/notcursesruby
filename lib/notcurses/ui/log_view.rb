@@ -36,12 +36,13 @@ module Notcurses
       # @param channels [Channels, Integer] colori del testo e dello sfondo
       # @param size [Integer, nil] dimensione fissa nel contenitore, >= 1
       # @param weight [Integer, nil] quota dello spazio restante, >= 1 (default 1)
-      # @raise [ArgumentError] se max_lines è minore di 1, con size e weight insieme
+      # @raise [ArgumentError] se max_lines è minore di 1, con size e weight insieme,
+      #   se channels ha lo sfondo con alpha :highcontrast
       # @raise [TypeError] se un argomento ha il tipo sbagliato
       # @raise [ClosedError] se il contenitore è chiuso
       def initialize(parent, max_lines: 1000, channels: 0, size: nil, weight: nil)
         @max_lines = Util.integer!(max_lines, 'max_lines', 1..Util::NONNEG_INT.max)
-        @channels = Util.channels_value(channels, 'channels')
+        @channels = Util.plane_channels_value(channels, 'channels')
         @lines = []
         @partial = ''.b
         attach_component!(parent, size: size, weight: weight)

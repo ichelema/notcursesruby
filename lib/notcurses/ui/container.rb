@@ -39,8 +39,8 @@ module Notcurses
       # @param size [Integer, nil] dimensione fissa nel contenitore, >= 1
       # @param weight [Integer, nil] quota dello spazio restante, >= 1 (default 1)
       # @raise [ArgumentError] con una direzione sconosciuta, un titolo con
-      #   caratteri non ammessi (come {Label}), size e weight insieme, o come
-      #   {Component}
+      #   caratteri non ammessi (come {Label}), size e weight insieme, se
+      #   channels ha lo sfondo con alpha :highcontrast, o come {Component}
       # @raise [TypeError] se un argomento ha il tipo sbagliato
       # @raise [ClosedError] se il contenitore o l'App sono chiusi
       def initialize(parent, direction: :vertical, border: false, title: nil, channels: 0, size: nil, weight: nil)
@@ -49,7 +49,7 @@ module Notcurses
         @direction = direction
         @border = Util.bool!(border, 'border')
         @title = title.nil? ? nil : Text.check!(title, 'title')
-        @channels = Util.channels_value(channels, 'channels')
+        @channels = Util.plane_channels_value(channels, 'channels')
         @children = []
         @closing = false
         attach_component!(parent, size: size, weight: weight)

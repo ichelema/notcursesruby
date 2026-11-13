@@ -90,6 +90,12 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 - YARD di `Plot`: documentato il limite di notcurses 3.0.17 delle etichette di `label_ticks:`. Da circa 1,84·10^17
   in su, con `:uint64` e con `:double`, le etichette sono sbagliate ("184.47P" o "0.00", secondo la build di
   notcurses), mentre i campioni mantengono il loro valore; il comportamento non cambia (ICH-290).
+- UI: un componente il cui disegno solleva durante la creazione si chiude ed esce dal contenitore; prima restava
+  fra i figli e ogni layout successivo (un fratello nuovo, un resize) sollevava di nuovo. Un `Dialog` che fallisce
+  alla creazione si chiude e il focus torna dove era; prima restava la finestra modale attiva. I costruttori di
+  `Container`, `Label`, `Button`, `TextInput`, `ListView`, `LogView` e `Dialog` rifiutano subito `channels:` e
+  `focused_channels:` con lo sfondo `:highcontrast` (`ArgumentError`), anche per un widget nascosto; prima un
+  `Container` senza titolo li accettava (ICH-291).
 
 ## [0.1.0] - 2026-10-27
 

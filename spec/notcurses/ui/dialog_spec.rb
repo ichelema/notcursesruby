@@ -118,6 +118,23 @@ RSpec.describe Notcurses::UI::Dialog do
     expect(dialog).to be_closed
   end
 
+  it 'se un figlio solleva alla creazione il dialogo si chiude e il focus torna dove era (ICH-291)' do
+    under = Notcurses::UI::Button.new(app.root, 'Sotto', size: 3) {}
+    expect { described_class.new(app, text: 'Sicuro?', channels: 0x3000_0000) }.to raise_error(ArgumentError, /highcontrast/)
+    expect(app.focused).to equal(under)
+    allow(Notcurses::UI::Button).to receive(:new).and_raise(ArgumentError, 'pulsante rotto')
+    expect { described_class.new(app, text: 'Sicuro?') }.to raise_error(ArgumentError, 'pulsante rotto')
+    expect(app.focused).to equal(under)
+    expect { app.focus(under) }.not_to raise_error
+    expect(app.component_at(1, 1)).to equal(under)
+    allow(nc).to receive(:refresh).and_return([30, 100])
+    app.on_resize { app.stop }
+    app.post { Process.kill('WINCH', Process.pid) }
+    app.after(5) { app.stop }
+    expect(app.run).to eq(:stop)
+    expect(key(Notcurses::Key::ENTER)).to be(true) # Enter arriva di nuovo al pulsante sotto
+  end
+
   it 'valida gli argomenti; sopra l\'App stanno solo root e i dialoghi' do
     expect { described_class.new(nc, text: 'x') }.to raise_error(TypeError)
     expect { described_class.new(app, text: "a\tb") }.to raise_error(ArgumentError)

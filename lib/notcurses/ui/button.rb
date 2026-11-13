@@ -25,15 +25,16 @@ module Notcurses
       # @param weight [Integer, nil] quota dello spazio restante, >= 1 (default 1)
       # @yieldparam button [Button] il pulsante
       # @raise [ArgumentError] senza blocco, con un'etichetta non ammessa, con
-      #   size e weight insieme
+      #   size e weight insieme, se channels o focused_channels hanno lo
+      #   sfondo con alpha :highcontrast
       # @raise [TypeError] se un argomento ha il tipo sbagliato
       # @raise [ClosedError] se il contenitore è chiuso
       def initialize(parent, label, channels: 0, focused_channels: FOCUSED_CHANNELS, size: nil, weight: nil, &block)
         raise ArgumentError, 'Button: serve un blocco' unless block
 
         @label = Text.check!(label, 'label')
-        @channels = Util.channels_value(channels, 'channels')
-        @focused_channels = Util.channels_value(focused_channels, 'focused_channels')
+        @channels = Util.plane_channels_value(channels, 'channels')
+        @focused_channels = Util.plane_channels_value(focused_channels, 'focused_channels')
         @block = block
         attach_component!(parent, size: size, weight: weight)
       end

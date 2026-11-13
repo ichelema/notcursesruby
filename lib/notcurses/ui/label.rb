@@ -32,7 +32,8 @@ module Notcurses
       # @param size [Integer, nil] dimensione fissa nel contenitore, >= 1
       # @param weight [Integer, nil] quota dello spazio restante, >= 1 (default 1)
       # @raise [ArgumentError] con un testo o un allineamento non ammessi, con
-      #   size e weight insieme
+      #   size e weight insieme, se channels ha lo sfondo con alpha
+      #   :highcontrast
       # @raise [TypeError] se un argomento ha il tipo sbagliato
       # @raise [ClosedError] se il contenitore è chiuso
       def initialize(parent, text: '', align: :left, styles: [], channels: 0, size: nil, weight: nil)
@@ -41,7 +42,7 @@ module Notcurses
 
         @align = align
         @styles = Util.styles_value(styles)
-        @channels = Util.channels_value(channels, 'channels')
+        @channels = Util.plane_channels_value(channels, 'channels')
         attach_component!(parent, size: size, weight: weight)
       end
 

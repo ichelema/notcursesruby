@@ -29,7 +29,8 @@ module Notcurses
       # @param size [Integer, nil] dimensione fissa nel contenitore, >= 1
       # @param weight [Integer, nil] quota dello spazio restante, >= 1 (default 1)
       # @yieldparam list [ListView] l'elenco, quando arriva Invio
-      # @raise [ArgumentError] con una voce non ammessa, con size e weight insieme
+      # @raise [ArgumentError] con una voce non ammessa, con size e weight insieme,
+      #   se channels o focused_channels hanno lo sfondo con alpha :highcontrast
       # @raise [TypeError] se items non è un Array di String, o un argomento
       #   ha il tipo sbagliato
       # @raise [ClosedError] se il contenitore è chiuso
@@ -37,8 +38,8 @@ module Notcurses
         @items = items!(items)
         @selected = @items.empty? ? nil : 0
         @top = 0
-        @channels = Util.channels_value(channels, 'channels')
-        @focused_channels = Util.channels_value(focused_channels, 'focused_channels')
+        @channels = Util.plane_channels_value(channels, 'channels')
+        @focused_channels = Util.plane_channels_value(focused_channels, 'focused_channels')
         @block = block
         attach_component!(parent, size: size, weight: weight)
       end
