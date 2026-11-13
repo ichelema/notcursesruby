@@ -84,6 +84,9 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   (ICH-287).
 - `Tab#move(before:)` del primo tab mostrato verso il suo successore non ruota più l'intestazione: con A, B e C,
   `a.move(before: b)` lascia "A B C" invece di "B C A" (ICH-289).
+- YARD di `ProgBar`: documentata la regola dei colori di notcurses 3.0.17 sulle dimensioni del piano. Su un piano
+  largo 1 colonna, e senza UTF-8 anche alto 1 riga, sinistra e destra devono avere gli stessi colori, altrimenti
+  ogni `progress=` solleva `WidgetError`; il comportamento non cambia (ICH-288).
 
 ## [0.1.0] - 2026-10-27
 
