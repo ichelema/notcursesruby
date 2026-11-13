@@ -2,6 +2,7 @@
 # Source: notcurses/include/notcurses/notcurses.h
 # frozen_string_literal: true
 
+require 'open3'
 require_relative '../support/nc_helpers'
 
 RSpec.describe Notcurses::ProgBar do
@@ -117,6 +118,23 @@ RSpec.describe Notcurses::ProgBar do
       end
     end
 
+    # Regola di 3.0.17 documentata, non aggirata (fill.c:192-197): fallisce se un notcurses nuovo la cambia.
+    it 'su un piano largo una colonna sinistra e destra devono avere gli stessi colori' do
+      dark = Notcurses::Channel.rgb(0, 80, 0)
+      light = Notcurses::Channel.rgb(0, 255, 0)
+      [[5, 1], [1, 1]].each do |rows, cols|
+        described_class.open(new_plane(rows, cols), ul_channel: dark, ur_channel: light,
+                                                    bl_channel: dark, br_channel: light) do |bar|
+          expect { bar.progress = 0.5 }.to raise_error(Notcurses::WidgetError, /ncprogbar_set_progress/)
+        end
+        described_class.open(new_plane(rows, cols), ul_channel: dark, ur_channel: dark,
+                                                    bl_channel: light, br_channel: light) do |bar|
+          bar.progress = 1
+          expect(filled(bar.plane)).to all(be true)
+        end
+      end
+    end
+
     it 'valida gli argomenti e rifiuta lo stdplane e il piano di un altro widget' do
       plane = new_plane(1, 4)
       expect { described_class.new('piano') }.to raise_error(TypeError)
@@ -181,5 +199,30 @@ RSpec.describe Notcurses::ProgBar do
         expect(nc.stats.planes).to eq(1)
       end
     end
+  end
+
+  it 'senza UTF-8 anche su un piano alto una riga sinistra e destra devono avere gli stessi colori' do
+    script = <<~'RUBY'
+      require 'notcurses'
+      dark = Notcurses::Channel.rgb(0, 80, 0)
+      light = Notcurses::Channel.rgb(0, 255, 0)
+      Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true) do |nc|
+        puts "can_utf8? #{nc.can_utf8?}"
+        [[1, 40], [2, 40]].each do |rows, cols|
+          Notcurses::ProgBar.open(nc.stdplane.create_child(rows: rows, cols: cols), ul_channel: dark,
+                                  ur_channel: light, bl_channel: dark, br_channel: light) do |bar|
+            bar.progress = 0.5
+            puts "#{rows}x#{cols}: ok"
+          rescue Notcurses::WidgetError => e
+            puts "#{rows}x#{cols}: #{e.message}"
+          end
+        end
+      end
+    RUBY
+    env = { 'TERM' => 'xterm-256color', 'LANG' => 'C', 'LC_ALL' => 'C' }
+    lib = File.expand_path('../../lib', __dir__)
+    out, status = Open3.capture2e(env, 'timeout', '-k', '5', '-s', 'KILL', '30', RbConfig.ruby, '-I', lib, '-e', script,
+                                  stdin_data: '')
+    expect([status.exitstatus, out]).to eq([0, "can_utf8? false\n1x40: ncprogbar_set_progress fallita (-1)\n2x40: ok\n"])
   end
 end

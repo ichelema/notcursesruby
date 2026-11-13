@@ -15,6 +15,10 @@ module Notcurses
   # senza render. Il piano si può ridimensionare: l'orientamento si ricalcola
   # al disegno successivo.
   #
+  # I colori dell'esempio, diversi tra sinistra e destra, richiedono un piano
+  # largo almeno 2 colonne, e senza UTF-8 anche alto almeno 2 righe: vedi la
+  # regola dei colori in {#initialize}.
+  #
   # @example
   #   plane = nc.stdplane.create_child(rows: 1, cols: 40, y: 10, x: 2)
   #   bar = Notcurses::ProgBar.new(plane, ul_channel: Notcurses::Channel.rgb(0, 80, 0),
@@ -30,6 +34,14 @@ module Notcurses
     # Crea la barra sul piano (+ncprogbar_create+). I quattro colori devono
     # essere coerenti per il gradiente (tutti di default o nessuno, stesso
     # alpha, niente indici di palette), altrimenti {#progress=} fallisce.
+    #
+    # Regola di 3.0.17 sulle dimensioni del piano (fill.c:192-197,238-255):
+    # su un piano largo 1 colonna, e senza UTF-8 ({Context#can_utf8?} falso)
+    # anche su un piano alto 1 riga, ul_channel deve essere uguale a
+    # ur_channel e bl_channel a br_channel. Senza UTF-8 un piano 1x1 vuole i
+    # quattro colori uguali. La regola vale a ogni {#progress=}, sulle
+    # dimensioni correnti del piano: una barra può iniziare a fallire dopo un
+    # resize.
     #
     # @param plane [Plane] piano posseduto dal wrapper, non lo stdplane e non
     #   già di un widget: passa alla barra
@@ -95,7 +107,9 @@ module Notcurses
     #
     # @param value [Numeric] 0.0..1.0
     # @raise [WidgetError] se +ncprogbar_set_progress+ fallisce (per esempio
-    #   con colori incoerenti per il gradiente): {#progress} restituisce
+    #   con colori incoerenti per il gradiente, o diversi tra sinistra e destra
+    #   su un piano largo 1 colonna, e senza UTF-8 alto 1 riga: vedi la regola
+    #   in {#initialize}): {#progress} restituisce
     #   comunque il nuovo valore, che il C ha memorizzato prima del disegno
     # @raise [TypeError, ArgumentError] se value non è un numero reale finito
     #   in 0..1
