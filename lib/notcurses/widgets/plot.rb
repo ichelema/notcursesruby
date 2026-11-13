@@ -43,7 +43,11 @@ module Notcurses
   # 7 meno la sua lunghezza in byte (visibile solo fino a 8 byte, dopo non
   # compare); print_sample: stampa uno slot vicino al più recente, non sempre
   # l'ultimo; con valori double negativi e label_ticks: le etichette sono
-  # sbagliate (conversione C da double negativo a intero senza segno).
+  # sbagliate (conversione C da double negativo a intero senza segno); con
+  # label_ticks: da circa 1,84e17 (2^64/100) in su, con :uint64 e con
+  # :double, tutte le etichette mostrano "184.47P" (il C moltiplica il valore
+  # per 100 in un intero a 64 bit, plot.c:298-306), mentre i campioni
+  # mantengono il loro valore.
   #
   # @example
   #   plane = nc.stdplane.create_child(rows: 5, cols: 40)
@@ -96,7 +100,9 @@ module Notcurses
     # @param legend_style [Integer, Symbol, Array<Symbol>] stili di etichette,
     #   titolo e campione stampato
     # @param label_ticks [Boolean] NCPLOT_OPTION_LABELTICKSD: etichette dei
-    #   valori a sinistra (7 colonne; il piano deve averne almeno 8)
+    #   valori a sinistra (7 colonne; il piano deve averne almeno 8). Da
+    #   circa 1,84e17 in su ogni etichetta mostra "184.47P" (limite di 3.0.17,
+    #   vedi la classe)
     # @param exponential [Boolean] NCPLOT_OPTION_EXPONENTIALD: asse dei
     #   valori esponenziale
     # @param no_degrade [Boolean] NCPLOT_OPTION_NODEGRADE: errore invece di

@@ -240,6 +240,17 @@ RSpec.describe Notcurses::Plot do
         expect(plot.sample(0)).to eq(2**64 - 1)
         plot.close
       end
+
+      # Limite di 3.0.17 documentato, non aggirato (plot.c:298-306): fallisce se un notcurses nuovo lo cambia.
+      it 'con label_ticks le etichette si fermano a 184.47P (limite di 3.0.17)' do
+        { 10**17 => '100.00P', 2 * 10**17 => '184.47P' }.each do |value, label|
+          plot = described_class.new(new_plane, label_ticks: true, blitter: :ascii) # add_sample somma: un grafico nuovo
+          plot.add_sample(0, value)
+          expect((0...3).map { |y| plot.plane.contents(y: y, rows: 1, cols: 7) }).to all(eq(label))
+          expect(plot.sample(0)).to eq(value)
+          plot.close
+        end
+      end
     end
 
     describe 'campioni double' do

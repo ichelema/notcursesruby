@@ -87,6 +87,9 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 - YARD di `ProgBar`: documentata la regola dei colori di notcurses 3.0.17 sulle dimensioni del piano. Su un piano
   largo 1 colonna, e senza UTF-8 anche alto 1 riga, sinistra e destra devono avere gli stessi colori, altrimenti
   ogni `progress=` solleva `WidgetError`; il comportamento non cambia (ICH-288).
+- YARD di `Plot`: documentato il limite di notcurses 3.0.17 delle etichette di `label_ticks:`. Da circa 1,84·10^17
+  in su, con `:uint64` e con `:double`, ogni etichetta mostra "184.47P", mentre i campioni mantengono il loro valore;
+  il comportamento non cambia (ICH-290).
 
 ## [0.1.0] - 2026-10-27
 
