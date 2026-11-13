@@ -516,8 +516,8 @@ module Notcurses
     # (+nctab_move+): indica esattamente uno dei due. Il wrapper tiene
     # coerente il primo tab mostrato: se il tab spostato era il primo, il
     # primo diventa quello che lo seguiva; spostato prima del primo, diventa
-    # il primo. Un tab spostato subito prima del suo successore resta dove
-    # è, anche se era il primo. Non ridisegna.
+    # il primo. Il primo tab, spostato subito prima del tab alla sua destra
+    # nell'intestazione, resta dove è e resta il primo. Non ridisegna.
     #
     # @param after [Tab, nil] tab aperto dello stesso widget
     # @param before [Tab, nil] tab aperto dello stesso widget
