@@ -28,7 +28,8 @@ module Notcurses
       # con altre basi i prefissi finiscono prima dei valori e il C scrive un NUL
       raise ArgumentError, "base = #{base.inspect} non valida: usa 1000 o 1024" unless [1000, 1024].include?(base)
 
-      check_metric_overflow!(value, decimal, base)
+      # 1000.0 e 1024.0 passano il controllo sopra: il C riceve la base intera
+      check_metric_overflow!(value, decimal, base.to_i)
 
       omit = Util.c_bool(omit_decimal, 'omit_decimal')
       uprefix = 0

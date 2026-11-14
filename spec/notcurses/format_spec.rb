@@ -40,6 +40,12 @@ RSpec.describe 'Notcurses: funzioni di formattazione' do
       expect(Notcurses.metric(0, decimal: 10**18)).to eq('0.00')
       expect(Notcurses.si_prefix(10**14, decimal: 10**15)).to eq('100.00m')
     end
+
+    it 'con base Float controlla l\'overflow come con la base intera' do
+      expect(Notcurses.metric(2**54 - 1, decimal: 2**60, base: 1024.0)).to eq('16.00m')
+      expect { Notcurses.metric(313_413_999_946_230, decimal: 313_413_999_946_230_001, base: 1000.0) }
+        .to raise_error(ArgumentError)
+    end
   end
 
   describe 'prefissi standard' do
