@@ -33,7 +33,7 @@ doppie, `Improvement`), ICH-470 (commento `# rubocop:disable` inutile in `ui/com
 
 - modello `opus` per i comandi del workflow;
 - issue correlate ICH-214…ICH-232 fuori dai lotti;
-- lotto 17 (Fase 1, regola 1): approvazione da chiedere all'utente prima di preparare il lotto;
+- lotto 17 (Fase 1, regola 1) approvato dall'utente il 2026-11-14, dopo la chiusura del lotto 16;
 - correzioni della CI nella PR del lotto, quando servono; status di Codecov informativi (`codecov.yml`);
 - `git worktree remove --force` approvato per tutti i lotti, quando l'unica differenza è il submodule `notcurses` e
   `git status` è vuoto;
@@ -55,11 +55,9 @@ doppie, `Improvement`), ICH-470 (commento `# rubocop:disable` inutile in `ui/com
      -H 'Content-Type: application/json' \
      -d '{"model":"claude-gpt-6-1-sol-high","max_tokens":20,"messages":[{"role":"user","content":"ok"}]}'
    ```
-4. Lotto 17 (prefisso `bug`, ICH-312 `ffi-01`, ICH-313 `ffi-03`): cambia la Fase 1 (`lib/notcurses/ffi/`), quindi
-   leggi le issue da Linear e chiedi all'utente l'approvazione con AskUserQuestion (regola 1). Con l'approvazione, di'
-   all'utente il comando `/trinity:workflow:1_create-worktree master ICH-312 ICH-313 opus`. Senza approvazione, il
-   lotto resta fuori: scrivi il motivo nelle due issue (Consegne, punto 2). Con il lotto 17 il controllo `git diff
-   ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb` non è più vuoto: nella verifica finale controlla che il diff
+4. Lotto 17 (prefisso `bug`, ICH-312 `ffi-01`, ICH-313 `ffi-03`), approvato dall'utente (regola 1): leggi le issue
+   da Linear e di' all'utente il comando `/trinity:workflow:1_create-worktree master ICH-312 ICH-313 opus`.
+   Con il lotto 17 il controllo `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb` non è più vuoto: nella verifica finale controlla che il diff
    contenga solo le righe delle due issue. `spec/ffi_layout_spec.rb` (lotto 16) confronta struct e costanti con gli
    header: deve restare verde anche dopo il lotto 17.
 5. Prima della review controlla la CI della PR (`gh pr checks <n> --watch`).

@@ -858,7 +858,7 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 
 - **Inizio:** 2026-11-08. Modello passato ai comandi del workflow: `opus` (scelta dell'utente). Le issue già aperte
   che toccano lo stesso codice (ICH-214…ICH-232) restano fuori dai lotti (scelta dell'utente). Lotto 17 (Fase 1):
-  approvazione rimandata a dopo il lotto 16.
+  approvazione rimandata a dopo il lotto 16, data dall'utente il 2026-11-14.
 - **Review di ogni lotto:** `/trinity:workflow:4_review-fix-loop`, due reviewer in parallelo (Fable e GPT via
   LiteLLM), al massimo 3 round. Log lotto per lotto in `memory/correzioni-review.md`. Lotto 2: solo Fable (limite
   di utilizzo di GPT raggiunto), 3 round più una review singola dopo il loop. Lotto 3: Fable e GPT, 1 round, nessun
