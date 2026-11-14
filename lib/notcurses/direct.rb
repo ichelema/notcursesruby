@@ -1347,7 +1347,7 @@ module Notcurses
         raise ArgumentError, "set = #{set.inspect}: servono 6 caratteri larghi una colonna"
       end
 
-      ::FFI::MemoryPointer.new(:wchar_t, 6).put_array_of_int32(0, chars.map(&:ord))
+      ::FFI::MemoryPointer.new(:int32, 6).put_array_of_int32(0, chars.map(&:ord))
     end
 
     # Ripete il blocco finché restituisce un valore, attendendo l'input fuori
