@@ -434,7 +434,8 @@ module Notcurses
 
     # Ridisegna tutto il terminale e aggiorna le dimensioni (+notcurses_refresh+).
     #
-    # @return [Array(Integer, Integer)] [righe, colonne] del terminale
+    # @return [Array(Integer, Integer)] [righe, colonne] dell'area di rendering
+    #   (il terminale meno i margini), come {#dims}
     # @raise [RenderError] se il refresh fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def refresh
@@ -526,7 +527,8 @@ module Notcurses
 
     # Nuova pila con un piano radice (+ncpile_create+). Il piano restituito è
     # del chiamante. Le opzioni hanno lo stesso significato di
-    # {Plane#create_child}, rispetto al terminale invece che a un genitore. Una
+    # {Plane#create_child}, rispetto all'area di rendering ({#dims}: il
+    # terminale meno i margini del contesto) invece che a un genitore. Una
     # pila nuova non viene disegnata da {#render}: usa {Plane#render_pile} su
     # uno dei suoi piani.
     #
@@ -536,7 +538,8 @@ module Notcurses
     #   ha un genitore)
     # @param x [Integer] colonna
     # @param margins [Array(Integer, Integer, Integer, Integer), nil] [alto,
-    #   destra, basso, sinistra] rispetto alle dimensioni attuali del terminale
+    #   destra, basso, sinistra] rispetto alle dimensioni attuali dell'area di
+    #   rendering ({#dims}), non del terminale
     # @param name [String, nil] nome (per il debug)
     # @param fixed [Boolean] NCPLANE_OPTION_FIXED
     # @param autogrow [Boolean] NCPLANE_OPTION_AUTOGROW
