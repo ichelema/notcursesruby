@@ -163,6 +163,11 @@ module Notcurses
     # (+ncvisual_from_file+). Formati: tutto ciò che ffmpeg apre con uno stream
     # video (PNG, JPEG, GIF, MKV, ...).
     #
+    # Thread: la chiamata C apre e legge il file con ffmpeg senza il GVL (una
+    # FIFO, un URL o un file system lento non hanno limite di tempo): gli altri
+    # thread Ruby girano, ma non devono usare lo stesso contesto finché la
+    # chiamata non torna.
+    #
     # @param path [String, #to_path] percorso del file
     # @yieldparam visual [Visual] (facoltativo) il visual, chiuso alla fine del blocco
     # @return [Visual] il visual; con un blocco, il valore del blocco
@@ -594,6 +599,10 @@ module Notcurses
     # diventano quelli del nuovo frame. {.from_file} ha già decodificato il
     # primo; un'immagine ha un solo frame.
     #
+    # Thread: la chiamata C legge il file senza il GVL, come in {.from_file}:
+    # gli altri thread Ruby girano, ma non devono usare lo stesso contesto
+    # finché la chiamata non torna.
+    #
     # @return [Boolean] true se c'è un nuovo frame, false a fine stream (il
     #   visual conserva l'ultimo frame; il C restituisce 1, che non è un errore)
     # @raise [VisualError] se il visual non viene da un file o se la
@@ -607,7 +616,9 @@ module Notcurses
     end
 
     # Come {#decode}, ma a fine stream riparte dal primo frame
-    # (+ncvisual_decode_loop+).
+    # (+ncvisual_decode_loop+). Come {#decode}, la chiamata C legge il file
+    # senza il GVL: gli altri thread Ruby girano, ma non devono usare lo stesso
+    # contesto finché la chiamata non torna.
     #
     # @return [Boolean] true se c'è il frame successivo, false se è ripartito
     #   dall'inizio (il visual contiene il primo frame)

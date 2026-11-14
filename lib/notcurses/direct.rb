@@ -34,7 +34,11 @@ module Notcurses
   # align :center/:right su un terminale senza hpa, {#render_image},
   # {Frame#raster} e {#stream} attendono il terminale dentro il C, senza
   # timeout ma con il GVL rilasciato: gli altri thread Ruby girano, i segnali
-  # vengono serviti al ritorno della chiamata.
+  # vengono serviti al ritorno della chiamata. Anche {#render_frame},
+  # {#load_image}, {Direct::Image#initialize} e {#stream} aprono e leggono il
+  # file con ffmpeg senza il GVL (una FIFO, un URL o un file system lento non
+  # hanno limite di tempo): gli altri thread girano, ma non devono usare lo
+  # stesso contesto.
   #
   # Effetti sul processo mentre il contesto è attivo: fd 0 in O_NONBLOCK e
   # terminale in cbreak (ripristinati da {#close}); termtype: cambia ENV['TERM']
@@ -962,7 +966,9 @@ module Notcurses
     end
 
     # Carica e scala un'immagine senza disegnarla (+ncdirect_render_frame+):
-    # la disegna {Frame#raster}.
+    # la disegna {Frame#raster}. La chiamata C apre e legge il file senza il
+    # GVL: gli altri thread Ruby girano, ma non devono usare lo stesso contesto
+    # finché la chiamata non torna.
     #
     # @param path [String] file immagine
     # @param blitter [Symbol, Integer] come in {#render_image}
@@ -989,7 +995,9 @@ module Notcurses
     end
 
     # Carica un'immagine o un video da renderizzare più volte
-    # (+ncdirectf_from_file+).
+    # (+ncdirectf_from_file+). La chiamata C apre e legge il file senza il GVL:
+    # gli altri thread Ruby girano, ma non devono usare lo stesso contesto
+    # finché la chiamata non torna.
     #
     # @param path [String] file immagine o video
     # @return [Image] senza blocco; con un blocco, il valore del blocco
@@ -1018,6 +1026,10 @@ module Notcurses
     # più in alto e da lì resta fermo: l'ultima riga del primo frame rimane
     # visibile. Se un sixel sull'ultima riga fa scorrere lo schermo di una riga
     # (termdesc.h:165-166), i frame si sovrappongono.
+    #
+    # Thread: l'apertura del file e la decodifica di ogni frame avvengono senza
+    # il GVL, come in {#load_image}: gli altri thread Ruby girano, ma non devono
+    # usare lo stesso contesto finché il metodo non torna.
     #
     # @param path [String] file video o immagine
     # @param align [Symbol] :left, :center o :right
@@ -1132,6 +1144,9 @@ module Notcurses
       extend Resource::ClassMethods
 
       # Carica il file (+ncdirectf_from_file+). Usa di solito {Direct#load_image}.
+      # La chiamata C apre e legge il file senza il GVL: gli altri thread Ruby
+      # girano, ma non devono usare lo stesso contesto finché la chiamata non
+      # torna.
       #
       # @param direct [Direct] contesto aperto
       # @param path [String] file immagine o video

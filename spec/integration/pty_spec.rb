@@ -9,7 +9,9 @@ require 'rbconfig'
 # terminale è un pty con un thread Ruby che risponde alle query: con il GVL
 # tenuto durante l'attesa il thread non potrebbe rispondere e il processo
 # resterebbe bloccato già all'init. Gira in un processo figlio, perché lo
-# stdin del processo diventa il pty.
+# stdin del processo diventa il pty. Anche le funzioni che aprono o decodificano
+# un file con ffmpeg rilasciano il GVL: un esempio legge da una FIFO riempita da
+# un thread dello stesso processo figlio.
 RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
   def lib_dir = File.expand_path('../../lib', __dir__)
 
@@ -220,6 +222,40 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     out, status, timed_out = run_child("PNG = #{png.dump}\n#{pixel_script}", timeout: 20)
     expect(timed_out).to be(false), "processo figlio bloccato (GVL tenuto durante un'attesa?):\n#{out}"
     expect(out).to include('can_pixel true', 'render_image ok', 'raster ok', 'stream ok', 'fine')
+    expect(status.exitstatus).to eq(0), out
+  end
+
+  # Ogni caso legge l'immagine da una FIFO che un thread di questo processo
+  # riempie dopo 0,3 s: con il GVL tenuto durante l'apertura il thread non gira.
+  def fifo_script = <<~'RUBY'
+    require 'notcurses'
+    require 'tmpdir'
+    $stdout.sync = true
+    def from_fifo(name)
+      Dir.mktmpdir do |dir|
+        fifo = File.join(dir, 'img.png')
+        File.mkfifo(fifo)
+        writer = Thread.new { sleep 0.3; File.binwrite(fifo, File.binread(PNG)) }
+        yield fifo
+        writer.join
+        puts "#{name} ok"
+      end
+    end
+    Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                            drain_input: true) do
+      from_fifo('from_file') { |fifo| Notcurses::Visual.from_file(fifo) { } }
+    end
+    Notcurses::Direct.open(output: '/dev/null', termtype: 'xterm-256color') do |d|
+      from_fifo('render_frame') { |fifo| d.render_frame(fifo, blitter: :half).close }
+      from_fifo('load_image') { |fifo| d.load_image(fifo) { } }
+    end
+  RUBY
+
+  it 'Visual.from_file, render_frame e load_image aprono il file lasciando girare i thread Ruby' do
+    png = File.expand_path('../fixtures/visual/rgbw.png', __dir__)
+    out, status, timed_out = run_child("PNG = #{png.dump}\n#{fifo_script}", timeout: 20)
+    expect(timed_out).to be(false), "processo figlio bloccato (GVL tenuto durante l'apertura del file?):\n#{out}"
+    expect(out).to include('from_file ok', 'render_frame ok', 'load_image ok')
     expect(status.exitstatus).to eq(0), out
   end
 

@@ -12,6 +12,10 @@
 - **Modifiche successive (2026-10-27, ICH-229):** su autorizzazione dell'utente, `tcgetattr` e `tcsetattr` della libc,
   la struct `Termios` (i quattro flag e una coda opaca), la typedef `:tcflag_t` e le costanti `IXON`, `ISIG` e
   `TCSANOW`, con i valori per sistema. Dettagli nella sezione "ICH-229" in fondo.
+- **Modifiche successive (2026-11-14, ICH-312):** su autorizzazione dell'utente (lotto 17), `blocking: true` anche su
+  `ncvisual_from_file`, `ncvisual_decode`, `ncvisual_decode_loop`, `ncdirect_render_frame` e `ncdirectf_from_file`,
+  che aprono o leggono un file con ffmpeg senza limite di tempo (FIFO, URL, file system lento); decisione 20 di
+  `memory/fase1-ffi-raw.md`.
 
 ### File generati
 
