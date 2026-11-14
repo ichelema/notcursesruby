@@ -1,3 +1,5 @@
+# Generated from notcurses 3.0.17
+# Source: notcurses/include/notcurses/notcurses.h
 # frozen_string_literal: true
 
 # Le action di terzi ricevono i secret del workflow: un tag come v7 si sposta

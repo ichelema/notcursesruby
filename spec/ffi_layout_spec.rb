@@ -1,3 +1,5 @@
+# Generated from notcurses 3.0.17
+# Source: notcurses/include/notcurses/notcurses.h
 # frozen_string_literal: true
 
 require "notcurses"
