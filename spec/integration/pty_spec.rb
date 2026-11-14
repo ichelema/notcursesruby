@@ -156,6 +156,9 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
       events = nc.getvec(10, timeout: 5)
       puts "getvec #{events.map { |e| e.id == Notcurses::Key::UP ? 'UP' : e.utf8 }.join(',')}"
       puts "getvec_vuoto #{nc.getvec(3, timeout: 0.2).inspect}"
+      Thread.new { sleep 0.3; master.write("\ex") } # Alt+x come lo manda un terminale vero
+      alt = nc.get(timeout: 5)
+      puts "alt #{alt.id.chr} #{alt.alt?} #{alt.modifier_list.inspect}"
       Thread.new { sleep 0.3; Process.kill(:INT, Process.pid) }
       begin
         nc.get
@@ -173,8 +176,8 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(status.exitstatus).to eq(0), out
     expect(out).to match(/^timeout nil 0\.3$/)
     expect(out[/^get a ticks (\d+)$/, 1].to_i).to be > 20 # 0,5 s di attesa: gli altri thread girano
-    expect(out).to include("get2 b\n", "getvec x,y,z,UP\n", "getvec_vuoto []\n", "interrupt ok\n",
-                           "dopo_interrupt nil\n")
+    expect(out).to include("get2 b\n", "getvec x,y,z,UP\n", "getvec_vuoto []\n", "alt x true [:alt]\n",
+                           "interrupt ok\n", "dopo_interrupt nil\n")
     expect(out).to end_with("fine\n")
   end
 

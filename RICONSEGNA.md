@@ -848,7 +848,9 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 4. **Pubblicazione:** rubygems.org, tag `v0.1.0` e release su GitHub sono fuori scope e richiedono la conferma
    dell'utente; `CHANGELOG.md` ha già i link a `v0.1.0`.
 5. **Aggiornare lo snapshot di Arch** quando cambia notcurses: `ARCH_SNAPSHOT` e il digest dell'immagine nel workflow;
-   la chiave della cache dei pacchetti cambia da sola.
+   la chiave della cache dei pacchetti cambia da sola. Insieme allo snapshot va aggiornato lo SHA di
+   `codecov/codecov-action` (oggi `303a32d7a59b442fa8d48b6a1cc6825c09c847a5`, `v7.1.1`), con il commento della
+   versione: `gh api repos/codecov/codecov-action/commits/<tag> --jq .sha` (ICH-311).
 6. **macOS** resta non provato: un job `macos-14` con Homebrew (notcurses 3.0.17) è possibile, ma i minuti macOS
    costano 10 volte quelli Linux su un repository privato.
 

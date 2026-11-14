@@ -44,6 +44,8 @@ RSpec.describe Notcurses::Palette do
     pal = nc.palette
     pal.set_rgb(3, 1, 2, 3)
     expect(pal.use).to equal(pal)
+    # una copia nuova della palette del contesto vede la voce; nessun altro esempio legge la voce 3
+    expect(described_class.open(nc) { |p| p.rgb(3) }).to eq([1, 2, 3])
     nc.render
     pal.close
   end

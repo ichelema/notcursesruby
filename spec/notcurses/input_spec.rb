@@ -33,6 +33,19 @@ RSpec.describe Notcurses::Input do
     expect(input.eff_text).to be_frozen
   end
 
+  # ESC + tasto: notcurses 3.0.17 imposta solo il campo deprecato alt, modifiers resta 0 (automaton.c:578-582)
+  it 'Alt segnalato solo nel campo deprecato alt (ESC + tasto) diventa NCKEY_MOD_ALT' do
+    ni = Notcurses::FFI::NcInput.new
+    ni[:id] = 'x'.ord
+    ni[:alt] = true
+    ni[:modifiers] = 0
+    input = described_class.new(ni)
+    expect(input).to be_alt
+    expect(input.modifiers & Notcurses::FFI::NCKEY_MOD_ALT).not_to eq(0)
+    expect(input.modifier_list).to eq([:alt])
+    expect(input.to_ffi[:modifiers] & Notcurses::FFI::NCKEY_MOD_ALT).not_to eq(0)
+  end
+
   it 'congela utf8 ed eff_text: accumularci sopra non rompe l\'evento' do
     ev = described_class.synthesize('a'.ord)
     expect { ev.utf8 << 'bcdef' }.to raise_error(FrozenError)
