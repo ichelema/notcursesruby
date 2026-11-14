@@ -4,18 +4,19 @@
 > prompt». Scritto il 2026-11-06, con il repository su `ab75226`, dopo la revisione completa del codice. La
 > sessione corregge i difetti trovati dalla revisione, un lotto di issue Linear alla volta.
 
-## Stato e prossimo step (aggiornato il 2026-11-14, dopo ICH-465)
+## Stato e prossimo step (aggiornato il 2026-11-14, dopo il lotto 15)
 
 Questa sezione prevale sul resto del file quando i dati sono in conflitto.
 
-**Stato.** I lotti 1–14 sono chiusi. Lotto 14: PR #15, merge `d47e3ac`, ICH-300, ICH-301, ICH-302 e ICH-303 a
-Done. Scelta dell'utente: `scrub` in `Util.take_string` (ICH-301, confermata dopo la review: il piano non aveva
-mostrato le alternative). Il bug di `ncnmetric` (overflow con decimal > (2^64 - 1)/base) è nella nuova tabella
-"Formato (`format.rb`)" di `memory/fase2-wrapper-idiomatico.md`. Dopo il lotto 14, fuori dai lotti: ICH-465 a
-Done (PR #16, merge `ba3367f`): RuboCop con Standard nel `Gemfile` e nella CI, 5307 offense congelate in
-`.rubocop_todo.yml`, nessun cambio in `lib/` e `spec/`. `master` è sul commit docs di ICH-465; suite: 1033 esempi,
-0 fallimenti; `bundle exec rubocop`: 0 offense. Leggi in `RICONSEGNA.md` la sezione "Correzioni della revisione del
-2026-11-06" (con "RuboCop (ICH-465)") e il log `memory/correzioni-review.md` (lotti 1–14 e ICH-465). Restano
+**Stato.** I lotti 1–15 sono chiusi. Lotto 15: PR #17, merge `28ef91a`, ICH-304 e ICH-305 a Done: esempio
+`Notcurses::UI` del README con il risultato stampato dopo il blocco di `Context.open`, e `ffi ~> 1.16` nel gemspec,
+nel `Gemfile` e in `spec/gemspec_spec.rb` (nel lockfile cambia solo la riga di `DEPENDENCIES`). Review Fable e GPT,
+1 round, nessun finding; prova a mano di ICH-304 fatta dall'utente. Scelta dell'utente: la voce di ICH-305 sta
+nell'elenco "Cambi a `Gemfile` e `Gemfile.lock`" della sezione delle correzioni di `RICONSEGNA.md`, non nella tabella
+della Fase 4. Prima del lotto 15, fuori dai lotti: ICH-465 a Done (PR #16, merge `ba3367f`): RuboCop con Standard
+nel `Gemfile` e nella CI, 5307 offense congelate in `.rubocop_todo.yml`. `master` è sul commit docs del lotto 15;
+suite: 1033 esempi, 0 fallimenti; `bundle exec rubocop`: 0 offense. Leggi in `RICONSEGNA.md` la sezione "Correzioni
+della revisione del 2026-11-06" e il log `memory/correzioni-review.md` (lotti 1–15 e ICH-465). Restano
 aperte in Backlog, fuori dai lotti: ICH-441 (`Process.daemon`),
 ICH-448 (stato del controllo dei bordi per wrapper `Plane`), ICH-449 (double free dopo `merge_down` + `Plane#at`),
 ICH-450 (`polyfill`, `gradient` ed `erase_region` su metà di un glifo largo), ICH-454 (ISIG del terminale e
@@ -26,7 +27,8 @@ partito, `Improvement`), ICH-458 (`Direct#stream` con `:pixel` in fondo allo sch
 ICH-461 (focus a un componente che diventa visibile fuori dal resize), ICH-463 (carattere UTF-8 a cavallo della
 lettura da 8192 byte: notcurses si blocca con stdin rediretto), ICH-464 (`to_ptr` e chiamata C non atomici per un
 `close` da `trap`; contiene una scelta della regola 14), ICH-469 (autocorrezioni sicure di RuboCop e virgolette
-doppie, `Improvement`), ICH-470 (commento `# rubocop:disable` inutile in `ui/component.rb`, `Improvement`).
+doppie, `Improvement`), ICH-470 (commento `# rubocop:disable` inutile in `ui/component.rb`, `Improvement`), ICH-473 (esempio YARD di
+`Notcurses::UI::App` che stampa dentro il blocco di `Context.open`, come il README prima di ICH-304).
 
 **Decisioni già prese, da non richiedere:**
 
@@ -41,8 +43,9 @@ doppie, `Improvement`), ICH-470 (commento `# rubocop:disable` inutile in `ui/com
 
 **Da fare per primo:**
 
-1. Recall in Hindsight, bank `notcursesruby`: decisioni e cause radice dei lotti 1–14 e di ICH-465 sono salvate
-   (retain del lotto 14: operazione `6f0289e8`; retain di ICH-465: operazione `5b1f0505`).
+1. Recall in Hindsight, bank `notcursesruby`: decisioni e cause radice dei lotti 1–15 e di ICH-465 sono salvate
+   (retain del lotto 14: operazione `6f0289e8`; retain di ICH-465: operazione `5b1f0505`; retain del lotto 15:
+   operazione `893e206c`).
 2. Fai le verifiche di "Prima di iniziare", passi 1–5 (suite attesa: 1033 esempi, 0 fallimenti; `bundle exec
    rubocop`: 0 offense). Salta il passo 6.
 3. Controlla il proxy LiteLLM con `curl -sS -m 10 http://127.0.0.1:4000/health/liveliness`. Controlla anche il
@@ -54,12 +57,13 @@ doppie, `Improvement`), ICH-470 (commento `# rubocop:disable` inutile in `ui/com
      -H 'Content-Type: application/json' \
      -d '{"model":"claude-gpt-6-1-sol-high","max_tokens":20,"messages":[{"role":"user","content":"ok"}]}'
    ```
-4. Prepara il lotto 15 (ICH-304 `ffi-04`, risultato di `Context.open` nell'esempio `Notcurses::UI` del README;
-   ICH-305 `ffi-06`, limite minimo di `ffi` a `~> 1.16` nel gemspec e nel `Gemfile`): leggi le issue da Linear e di'
-   all'utente il comando, `/trinity:workflow:1_create-worktree master ICH-304 ICH-305 opus`. ICH-305 cambia `Gemfile`
-   e `Gemfile.lock` (ora con le gem di RuboCop e il vincolo `parallel < 2`) e la riga di `ffi` che
-   `spec/gemspec_spec.rb:24` cerca nel `Gemfile`: dopo `bundle lock` controlla che il diff del lockfile tocchi solo
-   `ffi`, e nella CI il job Ruby 3.2.11.
+4. Prepara il lotto 16 (prefisso `improvments`, sei issue di sole spec e CI: ICH-306 `nucleo-11`, ICH-307
+   `nucleo-12`, ICH-308 `direct-visual-04`, ICH-309 `ffi-05`, ICH-310 `ui-13`, ICH-311 `ffi-02`): leggi le issue da
+   Linear e di' all'utente il comando,
+   `/trinity:workflow:1_create-worktree master ICH-306 ICH-307 ICH-308 ICH-309 ICH-310 ICH-311 opus`. Le spec nuove
+   sul layer FFI non cambiano la Fase 1 (regola 1). Un file di spec nuovo passa da ogni cop di Standard (virgolette
+   doppie). ICH-311 cambia `.github/workflows/ci.yml`: controllalo con `actionlint` prima del push (sezione
+   "Comandi"). Dopo il lotto 16 chiedi all'utente l'approvazione per il lotto 17 (ICH-312, ICH-313, Fase 1).
 5. Una spec che fissa un comportamento di notcurses (non un fix) può dipendere dalla build: la CI usa il pacchetto
    Arch generico. Prima della review controlla la CI della PR (`gh pr checks <n> --watch`).
 6. Segui la "Procedura per ogni lotto": l'utente lancia `1_create-worktree`, `2_work-issue`, `4_review-fix-loop`,
@@ -77,6 +81,11 @@ doppie, `Improvement`), ICH-470 (commento `# rubocop:disable` inutile in `ui/com
 - Il lockfile si genera con Ruby 4.0.7, ma il job Ruby 3.2.11 lo installa con `BUNDLE_FROZEN`: in ICH-465
   `parallel 2.3.0` (Ruby >= 3.3) ha rotto quel job, da qui `parallel < 2` nel `Gemfile`. `2_work-issue` apre la PR
   prima dell'esito della CI: controlla `gh pr checks <n> --watch` prima della review.
+- Un hook (Blast Radius) mette in coda per la conferma dell'utente i comandi con `rm -rf`, anche quelli dei
+  reviewer: nel lotto 15 il reviewer Fable ha lasciato `.review-tmp/` e la rimozione del suo worktree ha richiesto
+  la conferma dell'utente. Nel prompt dei reviewer chiedi di cancellare i file di appoggio uno per uno, senza `rm -rf`.
+- Nel lotto 15 la sessione ha implementato da sola (Fable): in quel caso la review Fable è meno indipendente di
+  quella GPT, e va detto all'utente.
 - In ICH-465 la chiusura del passo 7 è stata saltata dopo il merge e dopo `5_remove-worktree`, e fatta solo su
   richiesta dell'utente. `5_remove-worktree` ora la ricorda alla fine.
 - Regola 14: la tabella delle opzioni va nel piano di `2_work-issue`, prima del fix. Nel lotto 14 il piano di
