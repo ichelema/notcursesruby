@@ -225,6 +225,19 @@ RSpec.describe Notcurses::Context do
       expect(nc.inputready_fd).to be >= 0
     end
 
+    it 'getvec legge più blocchi da 8192 slot finché un blocco non è pieno o count è raggiunto' do
+      counts = []
+      allow(Notcurses::FFI).to receive(:notcurses_getvec) do |_nc, _deadline, _buf, count|
+        counts << count
+        counts.size == 1 ? count : 5 # il primo blocco torna pieno, il secondo no: coda vuota
+      end
+      expect(nc.getvec(10_000, timeout: 0).size).to eq(8197)
+      expect(counts).to eq([8192, 1808])
+      counts.clear
+      expect(nc.getvec(8192, timeout: 0).size).to eq(8192) # count raggiunto: nessun altro blocco
+      expect(counts).to eq([8192])
+    end
+
     it 'espone le capacità del terminale' do
       %i[can_truecolor? can_change_color? can_fade? can_utf8? can_halfblock? can_quadrant? can_sextant?
          can_octant? can_braille? can_pixel? can_open_images? can_open_videos?].each do |m|

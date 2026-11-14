@@ -180,7 +180,7 @@ module Notcurses
       all: FFI::NCMICE_ALL_EVENTS
     }.freeze
 
-    # Slot massimi di una chiamata a {#getvec}: la coda di input di notcurses
+    # Slot di un blocco di lettura di {#getvec}: la coda di input di notcurses
     # tiene al più BUFSIZ eventi (8192 con glibc, in.c:1961).
     GETVEC_MAX = 8192
     private_constant :GETVEC_MAX
@@ -681,28 +681,21 @@ module Notcurses
 
     # Legge fino a count eventi già pronti (+notcurses_getvec+). Attende come
     # {#get} finché ce n'è almeno uno. Il risultato si ferma al primo evento
-    # {Key::EOF} (il C riempirebbe tutto il vettore di EOF). Una chiamata
-    # restituisce al massimo 8192 eventi, la dimensione della coda di input di
-    # notcurses: gli eventi rimasti arrivano con la chiamata successiva.
+    # {Key::EOF} (il C riempirebbe tutto il vettore di EOF). Legge a blocchi di
+    # 8192 eventi, la dimensione della coda di input di notcurses, finché la
+    # coda è vuota o count è raggiunto: la memoria dipende dagli eventi letti,
+    # non da count.
     #
     # @param count [Integer] numero massimo di eventi, 1..INT_MAX
     # @param timeout [Numeric, nil] come in {#get}: 0..2147483647, o nil
-    # @return [Array<Input>] da 1 a count eventi, al massimo 8192; vuoto se il
-    #   timeout scade
+    # @return [Array<Input>] da 1 a count eventi; vuoto se il timeout scade
     # @raise [InputError] se notcurses segnala un errore di input
     # @raise [TypeError, ArgumentError] se un argomento non è valido (count
     #   fuori da 1..INT_MAX, timeout fuori da 0..2147483647)
     # @raise [ClosedError] se il contesto è chiuso
     def getvec(count, timeout: nil)
-      count = [Util.integer!(count, 'count', 1..Util::INT32.max), GETVEC_MAX].min
-      result = wait_input(timeout) do
-        buf = ::FFI::MemoryPointer.new(FFI::NcInput, count)
-        # deadline assoluta {0, 0}: già scaduta, quindi la chiamata non attende
-        n = FFI.notcurses_getvec(to_ptr, FFI::Timespec.new, buf, count)
-        raise InputError, 'notcurses_getvec: errore di input' if n.negative?
-
-        Array.new(n) { |i| Input.new(FFI::NcInput.new(buf + (i * FFI::NcInput.size))) } if n.positive?
-      end
+      Util.integer!(count, 'count', 1..Util::INT32.max)
+      result = wait_input(timeout) { queued_inputs(count) }
       return [] if result.nil?
 
       eof = result.index { |ev| ev.id == Key::EOF }
@@ -1154,6 +1147,32 @@ module Notcurses
         sides.each_key.with_index { |name, i| opts[name] = Util.uint!(margins[i], 'margins') }
       else raise TypeError, "margins deve essere [alto, destra, basso, sinistra] o String, non #{margins.class}"
       end
+    end
+
+    # Eventi già in coda, al massimo count, letti a blocchi di GETVEC_MAX slot.
+    # Le chiamate C sono consecutive e gli Input nascono dopo: durante una
+    # raffica la coda si svuota prima che notcurses scarti altri eventi.
+    # @return [Array<Input>, nil] nil senza eventi
+    def queued_inputs(count)
+      ptr = to_ptr
+      size = FFI::NcInput.size
+      blocks = []
+      taken = 0
+      loop do
+        slots = [count - taken, GETVEC_MAX].min
+        buf = ::FFI::MemoryPointer.new(FFI::NcInput, slots)
+        # deadline assoluta {0, 0}: già scaduta, quindi la chiamata non attende
+        n = FFI.notcurses_getvec(ptr, FFI::Timespec.new, buf, slots)
+        raise InputError, 'notcurses_getvec: errore di input' if n.negative?
+
+        blocks << [buf, n] if n.positive?
+        taken += n
+        # blocco non pieno: la coda è vuota. A fine input il C riempie ogni blocco di EOF
+        break if n < slots || taken == count || FFI::NcInput.new(buf + ((n - 1) * size))[:id] == Key::EOF
+      end
+      return nil if blocks.empty?
+
+      blocks.flat_map { |buf, n| Array.new(n) { |i| Input.new(FFI::NcInput.new(buf + (i * size))) } }
     end
 
     # Ripete il blocco finché restituisce un valore, attendendo l'input fuori
