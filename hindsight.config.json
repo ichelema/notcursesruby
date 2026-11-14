@@ -1,0 +1,40 @@
+{
+  "retain_mission": "Le conversazioni di questo progetto sono in italiano: estrai e scrivi OGNI fatto in italiano. Il progetto è notcursesruby: una gem in Ruby puro che fornisce il binding completo di notcurses 3.0.17 tramite la gem ffi, su tre livelli: layer FFI raw (Notcurses::FFI, lib/notcurses/ffi/), wrapper idiomatico (Notcurses::Context, Plane, Visual, Direct, widget) e framework UI (Notcurses::UI). Lo sviluppo avviene su Linux (Arch Linux in locale, ubuntu-24.04 in CI). Estrai fatti durevoli e riutilizzabili per le future sessioni su questo progetto. Dai priorità a: decisioni di design dell'API Ruby e relative motivazioni; corrispondenza tra le funzioni C di notcurses.h/direct.h e i metodi Ruby, comprese le funzioni inline reimplementate in Ruby (inline_reimpl.rb); gestione della memoria e del ciclo di vita (distruttori, ownership dei puntatori, finalizer, ordine di rilascio); comportamenti e limiti di libnotcurses 3.0.17, del terminale e di terminfo; convenzioni di test (RSpec, spec di integrazione su PTY, coverage, fixture) e di CI (GitHub Actions, matrice Ruby 3.1–4.0); workflow per issue Linear ICH-xxx, lotti, branch, worktree, RIPRESA.md e RICONSEGNA.md; bug con causa radice e correzione; preferenze dell'utente. Preferisci fatti concreti e azionabili al riempitivo conversazionale. Quando un fatto contiene elementi tecnici (comandi shell, path di file, nomi di file/classi/metodi/funzioni C, simboli FFI, flag e parametri, valori numerici, hash di commit, numeri di issue e PR, variabili d'ambiente, o i passi di una procedura) PRESERVALI ALLA LETTERA: non parafrasarli, non abbreviarli, non ometterli. NON estrarre: segreti/token/API key/password, stato effimero della sessione, output grezzo dei tool, stack trace completi (tieni solo la causa radice), o qualsiasi cosa già ovvia dal codice, dalla documentazione YARD o dalla git history.",
+  "reflect_mission": "Fornisci memoria a lungo termine per Claude Code, un assistente di programmazione AI che lavora con l'utente (Ichelema) su notcursesruby, il binding Ruby (gem ffi, Ruby puro) di notcurses 3.0.17, sviluppato su Linux (Arch Linux in locale, ubuntu-24.04 in CI). Rispondi sempre in italiano. Sintetizza le memorie in indicazioni pratiche e ancorate al progetto: decisioni sull'API Ruby e sui tre livelli della gem (FFI raw, wrapper idiomatico, framework UI), limiti noti di libnotcurses e del terminale, convenzioni di test e CI, workflow per issue Linear e lotti, preferenze dell'utente. Tratta la memoria come contesto consultivo, non come fonte di verità: per ogni fatto mutabile fai riferimento al repository, ai file (README.md, RIPRESA.md, CHANGELOG.md) e alla git history correnti.",
+  "observations_mission": "IMPORTANTE: scrivi OGNI observation in italiano. Consolida solo fatti DUREVOLI e azionabili del progetto notcursesruby: decisioni sull'API Ruby e loro motivazioni, mappatura tra funzioni C di notcurses e metodi Ruby, gestione di memoria e ciclo di vita degli oggetti, limiti di libnotcurses 3.0.17 e del terminale, comandi che funzionano o falliscono, bug con causa radice e fix, convenzioni di test e CI, preferenze dell'utente. Mantieni la precisione tecnica: riporta path esatti, nomi di file, classi, metodi e simboli C, versioni, comandi, numeri di issue e valori numerici senza arrotondare. Per i fatti che cambiano nel tempo (stato dei lotti, issue aperte, versioni), includi la data. NON consolidare meta-conversazione (es. 'l'assistente ha spiegato/descritto', 'l'utente ha chiesto'), né stato effimero della sessione. Preferisci sempre i dettagli specifici alle astrazioni, non generalizzare mai.",
+  "mental_models": [
+    {
+      "id": "recurring-learnings",
+      "name": "Apprendimenti ricorrenti e criticità",
+      "source_query": "Quali bug ricorrenti, criticità, workaround e lezioni apprese sul campo si applicano a notcursesruby e alla sua toolchain? Raggruppa per area (layer FFI e simboli di libnotcurses, memoria e ciclo di vita degli oggetti, terminale/terminfo/PTY, test e CI, packaging della gem). Ogni voce nella forma 'sintomo -> fix concreto (comando/file/metodo)'. Max 15 voci totali. Niente introduzione, niente conclusione.",
+      "tags": ["claude-code"]
+    }
+  ],
+  "knowledge_pages": [
+    {
+      "name": "Feature Work",
+      "source_query": "Quali feature, iniziative o enhancement sono in corso o pianificati in notcursesruby (layer FFI, wrapper idiomatico, framework Notcurses::UI, widget, documentazione, packaging)? Per ogni voce indica: obiettivo, issue Linear o lotto se noti, stato attuale, decisioni aperte. Escludi bug-fix, chore e manutenzione ordinaria. Max 15 voci, una riga ciascuna. Niente introduzione, niente conclusione.",
+      "tags": ["knowledge:feature-work"]
+    },
+    {
+      "name": "Decisions",
+      "source_query": "Quali decisioni tecniche vincolanti sono state prese in notcursesruby, e perché (per esempio Ruby puro su ffi invece di un'estensione C, reimplementazione in Ruby delle funzioni inline, gestione di ownership e distruttori, forma dell'API Ruby, versione di notcurses supportata)? Per ogni voce indica: la scelta fatta, le alternative scartate, la motivazione. Max 15 voci, una riga ciascuna. Niente introduzione, niente conclusione.",
+      "tags": ["knowledge:decision"]
+    },
+    {
+      "name": "Conventions",
+      "source_query": "Quali convenzioni operative segue notcursesruby? Naming dei metodi Ruby rispetto alle funzioni C, struttura dei file in lib/notcurses/, eccezioni ed error handling, keyword arguments, test RSpec e spec di integrazione, RuboCop, documentazione YARD, CHANGELOG, workflow per issue Linear, branch e commit. Per ogni voce indica: ambito -> regola concreta (con esempio se utile). Max 15 voci, una riga ciascuna. Niente introduzione, niente conclusione.",
+      "tags": ["knowledge:convention"]
+    },
+    {
+      "name": "Components",
+      "source_query": "Quali sono i moduli e i file principali di notcursesruby (Notcurses::FFI e lib/notcurses/ffi/, Context, Plane, Visual, Direct, widget, Notcurses::UI e i suoi widget composti, spec e tool di supporto)? Per ciascuno indica: responsabilità, dipendenze chiave, come si collega agli altri componenti. Max 15 voci, una riga ciascuna. Niente introduzione, niente conclusione.",
+      "tags": ["knowledge:component"]
+    },
+    {
+      "name": "Concepts",
+      "source_query": "Quali concetti di notcurses e di notcursesruby deve conoscere un nuovo contributore (per esempio plane, pile, cell, channel, EGC, visual, blitter, direct mode, ciclo degli eventi e focus di Notcurses::UI)? Per ogni voce indica: termine -> definizione concreta e dove si usa nel codice. Max 15 voci, una riga ciascuna. Niente introduzione, niente conclusione.",
+      "tags": ["knowledge:concept"]
+    }
+  ]
+}
