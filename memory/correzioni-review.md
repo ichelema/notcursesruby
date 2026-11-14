@@ -842,3 +842,59 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 - `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
 - `master` su `ba3367f`: 1033 esempi, 0 fallimenti in ordine normale e con i semi 1234, 4242 e 7; RuboCop senza
   offense; `gem build` riuscito; CI verde.
+
+## Lotto 15 — ICH-304, ICH-305 (PR #17, merge `28ef91a`)
+
+### Fix
+
+- **ICH-304 (`ffi-04`, esempio `Notcurses::UI` del README).** Il blocco di `Context.open` restituisce
+  `[app.run, name.text]` e `puts` sta dopo il blocco, come in `examples/demo.rb`. Causa radice: `Context.open` usa lo
+  schermo alternativo, quindi una riga stampata dentro il blocco sparisce alla chiusura (`\e[?1049l`). Nessun
+  cambio in `lib/`, nessuna spec nuova (la suite non esegue gli esempi del README).
+- **ICH-305 (`ffi-06`, limite minimo di `ffi`).** `~> 1.16` nel gemspec, nel `Gemfile` e in `spec/gemspec_spec.rb`;
+  nel lockfile cambia solo la riga `ffi (~> 1.16)` di `DEPENDENCIES`. Causa radice: il vincolo `~> 1.15` veniva dal
+  `Gemfile` della Fase 4, non da una API; `spec/inline_reimpl_spec.rb` usa `FFI::Library#attached_functions`
+  (ffi 1.16.0) e ffi 1.15.0 e 1.15.1 non cercano in `/opt/homebrew/lib`.
+
+### Decisioni
+
+- La voce di ICH-305 sta nell'elenco "Cambi a `Gemfile` e `Gemfile.lock`" della sezione delle correzioni, non nella
+  tabella della Fase 4 che la issue indicava (`RICONSEGNA.md:804-809`): scelta approvata dall'utente nel piano,
+  criterio della issue aggiornato su Linear.
+- Le citazioni di `ffi ~> 1.15` nelle tabelle delle fasi 1, 4 e 5 di `RICONSEGNA.md` e in `memory/` restano: sono
+  lo stato di allora.
+- ICH-304 ha una voce nel CHANGELOG anche se la issue non la chiede (nota di `RIPRESA.md`: ogni fix ha una voce).
+- Il commento `# :stop, :eof o :interrupt (Ctrl+C)` resta identico sulla riga di `[app.run, name.text]`, come chiede
+  il criterio.
+- Implementazione fatta dalla sessione (Fable), non delegata: sette file, modifiche già definite dalle issue.
+
+### Review (1 round, Fable e GPT)
+
+- Round 1 (`f2b1784`): Fable e GPT APPROVABILE CON RISERVE, nessun finding. La riserva è la prova a mano di ICH-304
+  in un terminale reale, fatta dall'utente prima del merge (`stop: abc` resta sullo schermo). I reviewer hanno
+  ripetuto la riproduzione nel pty sul README di `master` (6237 prima di 6291) e del branch (6777 dopo 6280), anche
+  con Ctrl+C, testo vuoto, testo UTF-8 e il pulsante "Entra". Commento riassuntivo sulla PR.
+- Fuori dalla PR, già su `master`: l'esempio YARD di `Notcurses::UI::App` (`lib/notcurses/ui/app.rb:50-60`) stampa
+  dentro il blocco di `Context.open`; ICH-473, su richiesta dell'utente.
+- Mai eseguita la suite con ffi 1.16.x: CI e lockfile usano la 1.17.4. I reviewer hanno letto il CHANGELOG di ffi
+  dalla 1.16.0 alla 1.17.4 e non hanno trovato API più recenti in uso.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| `spec/integration/pty_spec.rb:170` fallito una volta nel worktree (`getvec x` invece di `getvec x,y,z,UP`) | la gara di tempi nota di `getvec` | suite ripetuta: 0 fallimenti; l'esempio da solo passa 5 volte su 5 |
+| Il reviewer Fable non ha cancellato `.review-tmp/` (4 file) | un hook ha messo in coda il suo `rm -rf` per la conferma dell'utente | conferma dell'utente per `git worktree remove --force` |
+| Un comando in coda del reviewer GPT, approvato dall'utente, è fallito con exit 125 | il suo worktree era già rimosso (era pulito) | nessuna |
+| Prima prova a mano con `stop: abx` | un tasto diverso nella prova | seconda prova: `stop: abc` |
+
+### Verifica finale
+
+- Branch (`f2b1784`): 1033 esempi, 0 fallimenti su Ruby 4.0.7 con il submodule inizializzato; `bundle exec rubocop`
+  95 file, 0 offense; `gem build` riuscito. CI verde su tutta la matrice (Ruby 3.1.7–4.0.9, compreso il job 3.2.11
+  che installa dal lockfile) e Codecov.
+- La spec di ICH-305 falliva prima del fix (`expected [["ffi", "~> 1.16"]], got [["ffi", "~> 1.15"]]`); il gemspec
+  rifiuta ffi 1.15.0 e 1.15.5 e accetta la 1.16.0.
+- `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+- `master` su `28ef91a`: 1033 esempi, 0 fallimenti in ordine normale e con i semi 1234, 4242 e 7; RuboCop senza
+  offense; `ruby -w` senza warning; `gem build` riuscito; CI verde.

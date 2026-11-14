@@ -884,7 +884,9 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
   nessun finding in tutti i round). ICH-465 (fuori dai lotti): `/trinity:workflow:3_independent-review` nella stessa
   sessione dell'implementazione (non indipendente), 1 round: NON APPROVABILE, un HIGH (`parallel 2.3.0` nel lockfile
   richiede Ruby >= 3.3: `bundle install` rosso nel job Ruby 3.2.11) e un LOW (`Lint/RedundantCopDisableDirective`
-  spento da Standard), corretti dopo la review senza un nuovo round; CI verde su tutta la matrice.
+  spento da Standard), corretti dopo la review senza un nuovo round; CI verde su tutta la matrice. Lotto 15: Fable e
+  GPT, 1 round, nessun finding; implementazione fatta dalla sessione (Fable), quindi la review Fable è meno
+  indipendente di quella GPT; l'esempio YARD di `Notcurses::UI::App`, già su `master`, in ICH-473.
 
 ### Lotti
 
@@ -905,6 +907,7 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 | 13 | [#14](https://github.com/ichelema/notcursesruby/pull/14) | `7f91ae7` | ICH-294, ICH-295, ICH-296, ICH-298, ICH-299 | con stdin su un pipe, un carattere UTF-8 a cavallo della lettura da 8192 byte (`in.c:56`, `2179`) ferma l'input: `get` non restituisce quel carattere e `notcurses_stop` non ritorna; causa nel C non verificata, non ancora nelle tabelle dei bug (ICH-463). A coda piena notcurses scarta gli eventi (`in.c:523`) e li conta in `Stats#input_errors`: limite già noto, misurato nel lotto |
 | 14 | [#15](https://github.com/ichelema/notcursesruby/pull/15) | `d47e3ac` | ICH-300, ICH-301, ICH-302, ICH-303 | `ncnmetric` con 0 < value < decimal moltiplica value per la base fino a decimal senza un controllo di overflow funzionante (`metric.c:53-59`: la guardia di `metric.c:56` controlla `dv`, che in quel ramo non cambia): con decimal > (2^64 - 1)/base restituisce cifre e prefisso sbagliati senza errore; nuova tabella "Formato (`format.rb`)" di `memory/fase2-wrapper-idiomatico.md` |
 | fuori dai lotti | [#16](https://github.com/ichelema/notcursesruby/pull/16) | `ba3367f` | ICH-465 (RuboCop con Standard nel `Gemfile` e nella CI; nessun cambio in `lib/` e `spec/`) | nessuno |
+| 15 | [#17](https://github.com/ichelema/notcursesruby/pull/17) | `28ef91a` | ICH-304, ICH-305; ICH-473 (nata dalla review) | nessuno |
 
 ### Cambi dell'API pubblica
 
@@ -1085,3 +1088,6 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
   due regex del gemspec e di `spec/gemspec_spec.rb` da correggere nello stesso commit; `Improvement` (ICH-465).
 - ICH-470 — il commento `# rubocop:disable Lint/UnusedMethodArgument` di `lib/notcurses/ui/component.rb:223` non
   serve con Standard; `Improvement` (ICH-465, review).
+- ICH-473 — l'esempio YARD di `Notcurses::UI::App` (`lib/notcurses/ui/app.rb:50-60`) stampa `name.text` dentro il
+  blocco di `Context.open`, come il README prima di ICH-304: la riga va sullo schermo alternativo (lotto 15, review;
+  esiste già su `master`, letto e non eseguito).
