@@ -4,16 +4,17 @@
 > prompt». Scritto il 2026-11-06, con il repository su `ab75226`, dopo la revisione completa del codice. La
 > sessione corregge i difetti trovati dalla revisione, un lotto di issue Linear alla volta.
 
-## Stato e prossimo step (aggiornato il 2026-11-14, dopo il lotto 13)
+## Stato e prossimo step (aggiornato il 2026-11-14, dopo il lotto 14)
 
 Questa sezione prevale sul resto del file quando i dati sono in conflitto.
 
-**Stato.** I lotti 1–13 sono chiusi. Lotto 13: PR #14, merge `7f91ae7`, ICH-294, ICH-295, ICH-296, ICH-298 e
-ICH-299 a Done. Scelte dell'utente: `ArgumentError` per un timeout sopra 2^31 - 1 secondi (ICH-294); `getvec` a
-blocchi di 8192 slot fino a `count`, non un limite secco (ICH-295, criteri riscritti su Linear nel round 1 della
-review); il timer `every` resta programmato dopo un'eccezione (ICH-296); limite di un giorno in `select_timeout`
-(ICH-299). `master` è sul commit docs del lotto 13; suite: 1026 esempi, 0 fallimenti. Leggi in `RICONSEGNA.md` la
-sezione "Correzioni della revisione del 2026-11-06" e il log `memory/correzioni-review.md` (lotti 1–13). Restano
+**Stato.** I lotti 1–14 sono chiusi. Lotto 14: PR #15, merge `d47e3ac`, ICH-300, ICH-301, ICH-302 e ICH-303 a
+Done. Scelta dell'utente: `scrub` in `Util.take_string` (ICH-301, confermata dopo la review: il piano non aveva
+mostrato le alternative). Il bug di `ncnmetric` (overflow con decimal > (2^64 - 1)/base) è nella nuova tabella
+"Formato (`format.rb`)" di `memory/fase2-wrapper-idiomatico.md`. `master` è sul commit docs del lotto 14; suite:
+1033 esempi, 0 fallimenti. Leggi in `RICONSEGNA.md` la sezione "Correzioni della revisione del 2026-11-06" e il log
+`memory/correzioni-review.md` (lotti 1–14). In Todo, fuori dai lotti: ICH-465 (RuboCop con Standard nel `Gemfile` e
+nella CI), da fare prima del lotto 15 (scelta dell'utente). Restano
 aperte in Backlog, fuori dai lotti: ICH-441 (`Process.daemon`),
 ICH-448 (stato del controllo dei bordi per wrapper `Plane`), ICH-449 (double free dopo `merge_down` + `Plane#at`),
 ICH-450 (`polyfill`, `gradient` ed `erase_region` su metà di un glifo largo), ICH-454 (ISIG del terminale e
@@ -38,9 +39,9 @@ lettura da 8192 byte: notcurses si blocca con stdin rediretto), ICH-464 (`to_ptr
 
 **Da fare per primo:**
 
-1. Recall in Hindsight, bank `notcursesruby`: decisioni e cause radice dei lotti 1–13 sono salvate (retain del lotto
-   13: operazione `ae2f6010`).
-2. Fai le verifiche di "Prima di iniziare", passi 1–5 (suite attesa: 1026 esempi, 0 fallimenti). Salta il passo 6.
+1. Recall in Hindsight, bank `notcursesruby`: decisioni e cause radice dei lotti 1–14 sono salvate (retain del lotto
+   14: operazione `6f0289e8`).
+2. Fai le verifiche di "Prima di iniziare", passi 1–5 (suite attesa: 1033 esempi, 0 fallimenti). Salta il passo 6.
 3. Controlla il proxy LiteLLM con `curl -sS -m 10 http://127.0.0.1:4000/health/liveliness`. Controlla anche il
    limite di utilizzo del modello GPT: nei lotti 2 e 5 il modello restituiva `usage_limit_reached` e la review GPT
    finiva senza report; nei lotti 6–13 rispondeva. Se uno dei due controlli fallisce, dillo all'utente prima di
@@ -50,14 +51,16 @@ lettura da 8192 byte: notcurses si blocca con stdin rediretto), ICH-464 (`to_ptr
      -H 'Content-Type: application/json' \
      -d '{"model":"claude-gpt-6-1-sol-high","max_tokens":20,"messages":[{"role":"user","content":"ok"}]}'
    ```
-4. Prepara il lotto 14 (ICH-300 `nucleo-05`, stringhe congelate di `Input#utf8` e `Input#eff_text`; ICH-301
-   `nucleo-07`, UTF-8 non valido in `Util.take_string`; ICH-302 `nucleo-09`, coppie valore/decimale che vanno in
-   overflow in `metric` e negli helper dei prefissi; ICH-303 `nucleo-10`, YARD di `Context#refresh` e
-   `#create_pile`): leggi le issue da Linear e di' all'utente il comando da lanciare,
-   `/trinity:workflow:1_create-worktree master ICH-300 ICH-301 ICH-302 ICH-303 opus`. ICH-301 è tra le scelte aperte
-   della regola 14: in `2_work-issue` chiedi all'utente la soluzione prima del fix. Spiega all'utente ogni scelta
-   con una tabella delle opzioni e il loro effetto fuori dal lotto. Il lotto 14 tocca di nuovo `context.rb` (come i
-   lotti 1 e 13) e `util.rb` (come i lotti 12 e 13).
+4. Prima ICH-465 (`Improvement`, prefisso `improvments`): leggi la issue da Linear e di' all'utente il comando,
+   `/trinity:workflow:1_create-worktree master ICH-465 opus`. La issue aggiunge Standard, `rubocop-performance` e
+   `rubocop-thread_safety` al `Gemfile`, `.rubocop.yml`, un `.rubocop_todo.yml` generato e uno step nella CI; non
+   cambia `lib/` né `spec/`. La conversione alle virgolette doppie è una issue successiva: due regex leggono i
+   sorgenti come testo e vanno corrette insieme (`notcursesruby.gemspec:7`, `spec/gemspec_spec.rb:24`).
+   Poi il lotto 15 (ICH-304 `ffi-04`, risultato di `Context.open` nell'esempio `Notcurses::UI` del README; ICH-305
+   `ffi-06`, limite minimo di `ffi` a `~> 1.16` nel gemspec e nel `Gemfile`), con
+   `/trinity:workflow:1_create-worktree master ICH-304 ICH-305 opus`. ICH-465 e ICH-305 cambiano entrambe `Gemfile`
+   e `Gemfile.lock`: apri il lotto 15 solo dopo il merge di ICH-465. ICH-305 cambia anche la riga di `ffi` che
+   `spec/gemspec_spec.rb:24` cerca nel `Gemfile`.
 5. Una spec che fissa un comportamento di notcurses (non un fix) può dipendere dalla build: la CI usa il pacchetto
    Arch generico. Prima della review controlla la CI della PR (`gh pr checks <n> --watch`).
 6. Segui la "Procedura per ogni lotto": l'utente lancia `1_create-worktree`, `2_work-issue`, `4_review-fix-loop`,
@@ -66,6 +69,11 @@ lettura da 8192 byte: notcurses si blocca con stdin rediretto), ICH-464 (`to_ptr
 
 **Note:**
 
+- Regola 14: la tabella delle opzioni va nel piano di `2_work-issue`, prima del fix. Nel lotto 14 il piano di
+  ICH-301 mostrava solo la soluzione della issue, e la scelta è arrivata dopo la review.
+- Nel lotto 14 il submodule `notcurses` non è stato inizializzato nel worktree (per non dover usare `--force` alla
+  rimozione): 10 esempi delle immagini sono falliti in locale e sono passati in CI. Con il submodule inizializzato
+  la suite locale è completa; la rimozione con `--force` è approvata (vedi le decisioni).
 - `spec/integration/pty_spec.rb:170` è instabile per una gara di tempi (`getvec` si sveglia dopo il primo di 4
   tasti): nel lotto 13 è fallito una volta con il seme 4242 e mai in 25 esecuzioni isolate. Se fallisce, ripeti la
   suite prima di cercare una regressione. Non ha una issue.
