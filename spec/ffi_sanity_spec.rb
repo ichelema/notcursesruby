@@ -45,6 +45,12 @@ RSpec.describe Notcurses::FFI do
         Notcurses::Direct.open(output: '/dev/null', termtype: 'xterm-256color') do |d|
           d.box(3, 3)
           d.box(3, 3, set: '┌┐└┘─│')
+          d.box(3, 3, set: :heavy)
+          d.box(3, 3, set: :ascii)
+        end
+        Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                drain_input: true) do |nc|
+          raise 'putwc_stained' unless Notcurses::FFI.ncplane_putwc_stained(nc.stdplane.to_ptr, 0x4e00) == 2
         end
         puts 'ok'
       RUBY
