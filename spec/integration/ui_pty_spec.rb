@@ -361,6 +361,108 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     puts 'fine'
   RUBY
 
+  # Una sessione kitty completa su App: ogni tasto arriva con la sua sequenza
+  # CSI u, e i rilasci (evtype 3) devono raggiungere on_input e nessun componente.
+  def kitty_app_script = kitty_prelude + <<~'RUBY'
+    ui = Notcurses::UI
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      app = ui::App.new(nc)
+      field = ui::TextInput.new(app.root, size: 1)
+      pressed = 0
+      button = ui::Button.new(app.root, 'Invia', size: 3) { pressed += 1 }
+      ctrl_x = 0
+      app.on_key('x', ctrl: true) { ctrl_x += 1 }
+      releases = []
+      app.on_input { |input| releases << input.evtype if input.release? }
+      offered = []
+      [field, button].each do |component|
+        component.define_singleton_method(:offer_input) do |input|
+          offered << input.evtype if input.release?
+          super(input)
+        end
+      end
+      app.after(10) { app.stop }
+      failure = nil
+      user = Thread.new do
+        wait_for('run') { app.running? }
+        type.("\e[97u\e[97;1:3u\e[98;1:1u\e[98;1:2u\e[98;1:3u") # a: pressione e rilascio, b: pressione, ripetizione e rilascio
+        wait_for('testo') { field.text == 'abb' && releases.size == 2 }
+        type.("\e[120;133u\e[120;133:3u") # Ctrl+X con NumLock
+        wait_for('Ctrl+X') { ctrl_x == 1 && releases.size == 3 }
+        type.("\e[9u\e[9;1:3u") # Tab
+        wait_for('Tab') { app.focused.equal?(button) && releases.size == 4 }
+        type.("\e[13u\e[13;1:3u") # Invio
+        wait_for('Invio') { pressed == 1 && releases.size == 5 }
+        type.("\e[99;5u") # Ctrl+C: il segnale lo alza notcurses
+      rescue StandardError => e
+        failure = e
+        app.stop
+      end
+      reason = app.run
+      user.join
+      puts "failure #{failure.message}" if failure
+      puts "kitty #{kitty.()} reason #{reason} text #{field.text.inspect} ctrl_x #{ctrl_x} pressed #{pressed}"
+      puts "releases #{releases.size} offered #{offered.size}"
+    end
+    puts 'fine'
+  RUBY
+
+  # Resize con il gestore SIGWINCH di notcurses (no_winch_sighandler: false): notcurses accoda
+  # Key::RESIZE solo quando arriva altro input, prima di quell'input (in.c:2439-2445).
+  def winch_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    ui = Notcurses::UI
+
+    def wait_for(what)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+      sleep 0.01 until yield || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+      raise "attesa scaduta: #{what}" unless yield
+    end
+
+    Process.setsid
+    master, slave = PTY.open
+    slave.ioctl(0x540E, 0) # TIOCSCTTY (Linux): il pty diventa il terminale di controllo
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    lock = Mutex.new
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        data.scan(/\e\[6n|\e\[c/) { |q| lock.synchronize { master.write(q == "\e[6n" ? "\e[5;7R" : "\e[?62;22c") } }
+      end
+    rescue IOError, Errno::EIO
+    end
+    type = ->(keys) { lock.synchronize { master.write(keys) } }
+
+    opts = { output: slave.path, termtype: 'xterm-256color', suppress_banners: true, no_winch_sighandler: false }
+    Notcurses::Context.open(**opts) do |nc|
+      app = ui::App.new(nc)
+      log = []
+      app.on_resize { |rows, cols| log << [:resize, rows, cols] }
+      app.on_key('z') { log << [:z, app.root.plane.dims] }
+      failure = nil
+      user = Thread.new do
+        wait_for('run') { app.running? }
+        slave.winsize = [30, 100] # il kernel manda SIGWINCH al gestore di notcurses
+        sleep 0.2 # il gestore deve aver girato prima del tasto
+        type.('z')
+        wait_for('z') { log.size == 2 }
+        app.stop
+      rescue StandardError => e
+        failure = e
+        app.stop
+      end
+      reason = app.run
+      user.join
+      puts "failure #{failure.message}" if failure
+      puts "reason #{reason} log #{log.inspect}"
+    end
+    puts 'fine'
+  RUBY
+
   it 'tasti veri, clic SGR, resize dal kernel, dati di FdPlane e Subprocess con post, Ctrl-C → :interrupt' do
     skip 'TIOCSCTTY e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
 
@@ -436,6 +538,29 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(out).to include("xterm modifyOtherKeys: interrupt []\n", "dopo xterm: stop []\n")
     expect(out).to include("byte 0x03: stop [[:ctrl]]\n")
     expect(out).to include('kitty true quits 1 evtypes [:press]') # :press: notcurses ha acceso il protocollo
+    expect(out).to end_with("fine\n")
+  end
+
+  it 'protocollo kitty: CSI u con rilasci e NumLock, Tab, Invio e Ctrl+C → :interrupt, i rilasci solo a on_input' do
+    skip 'pty e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
+
+    out, status, timed_out = run_child(kitty_app_script, timeout: 30)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(status.exitstatus).to eq(0), out
+    expect(out).not_to include('failure'), out
+    expect(out).to include('kitty true reason interrupt text "abb" ctrl_x 1 pressed 1')
+    expect(out).to include("releases 5 offered 0\n") # i 5 rilasci arrivano a on_input, a nessun componente
+    expect(out).to end_with("fine\n")
+  end
+
+  it 'resize con il gestore SIGWINCH di notcurses: on_resize gira prima del tasto che lo porta' do
+    skip 'TIOCSCTTY e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
+
+    out, status, timed_out = run_child(winch_script, timeout: 30)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(status.exitstatus).to eq(0), out
+    expect(out).not_to include('failure'), out
+    expect(out).to include('reason stop log [[:resize, 30, 100], [:z, [30, 100]]]')
     expect(out).to end_with("fine\n")
   end
 end
