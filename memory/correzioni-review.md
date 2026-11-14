@@ -721,3 +721,66 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 - `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
 - `master` su `7f91ae7`: 1026 esempi, 0 fallimenti, anche con i semi 1234, 4242 e 7; `gem build` riuscito (warning
   solo di rdoc, vedi sopra); CI verde.
+
+## Lotto 14 — ICH-300, ICH-301, ICH-302, ICH-303 (PR #15, merge `d47e3ac`)
+
+### Fix
+
+- **ICH-300 (`nucleo-05`, stringhe di `Input`).** `Input#initialize` congela `@utf8` ed `@eff_text`; `synthesize`
+  passa da `new`, quindi i due percorsi sono coperti. Causa radice: `freeze` sull'oggetto non congela le String
+  costruite a runtime (`scrub`, `pack('U*')`), e `frozen_string_literal` copre solo i letterali; un `<<` del
+  chiamante allungava `utf8` oltre i 5 byte di `char[5]` e `to_ffi` sollevava `IndexError`.
+- **ICH-301 (`nucleo-07`, UTF-8 non valido).** `Util.take_string` fa `scrub` dopo `force_encoding`; NULL dà ancora
+  `nil` e `free` resta in `ensure`. Causa radice: `take_string` marcava come UTF-8 byte che vengono da fuori dal
+  wrapper (`getenv("LOGNAME")`, `pw_name`, la risposta del terminale in `termdesc_longterm`).
+- **ICH-302 (`nucleo-09`, overflow di `ncnmetric`).** `check_metric_overflow!` (privato, `format.rb`) ripete il
+  ciclo di `metric.c:53-59` con gli Integer di Ruby e solleva `ArgumentError` solo se il valore supera 2^64 - 1;
+  lo chiamano `metric` dopo il controllo di `base` e `prefix_buffer`, che ora riceve la base (1000 o 1024). Causa
+  radice: bug di notcurses 3.0.17, la guardia di `metric.c:56` controlla `dv`, che in quel ramo non cambia.
+- **ICH-303 (`nucleo-10`, YARD).** Solo documentazione: `Context#refresh` e `#create_pile` si riferiscono all'area di
+  rendering (`{#dims}`), non al terminale; spec che fissa `refresh == dims` e la pila `[18, 72]` con i margini.
+
+### Decisioni
+
+- Regola 14 (ICH-301): l'opzione scelta (`scrub` in `take_string`) è quella della issue. Il piano non ha mostrato le
+  alternative prima del fix, come chiede la regola; la tabella delle opzioni (solo nei cinque metodi, String
+  binaria, errore) è arrivata dopo la review, e l'utente ha confermato `scrub` in `take_string` prima del merge.
+  Decisione registrata in un commento su ICH-301.
+- ICH-302: controllo sulla coppia, non limite di `decimal` abbassato a `(2**64 - 1)/base`, come chiede il vincolo
+  della issue; il range documentato resta `1..(2**64 - 1)/10`.
+- ICH-302, round 1: `base.to_i` nel controllo invece di una validazione stretta (`base.is_a?(Integer)`): i valori
+  che `metric` accetta su `master` restano accettati.
+- Il bug di `ncnmetric` sta in una nuova sottosezione "Formato (`format.rb`)" della tabella dei bug aggirati, perché
+  nessuna delle sottosezioni esistenti riguarda la formattazione (scelta approvata dall'utente nel piano).
+
+### Review (2 round, Fable e GPT)
+
+- Round 1 (`71b90a0`): GPT APPROVABILE, nessun finding; Fable APPROVABILE CON RISERVE, due LOW: con `base: 1000.0` o
+  `1024.0` (accettati da `[1000, 1024].include?`) il controllo girava in aritmetica Float, rifiutava la coppia valida
+  `(2**54 - 1, 2**60, 1024.0)` (regressione rispetto a `master`) e lasciava passare l'overflow
+  `(313413999946230, 313413999946230001, 1000.0)`; mancavano le voci del CHANGELOG (regola di `RIPRESA.md`).
+  Corretti in `7cf2632` e `40fbdf8`.
+- Round 2 (`40fbdf8`): nessun finding da entrambi; fuzz del controllo contro `FFI.ncnmetric` (300 000 e 200 000
+  coppie, basi intere e Float) senza discrepanze. Commento riassuntivo sulla PR.
+- Fuori dalla PR, già su `master`: `Marshal.load(Marshal.dump(ev))` restituisce un `Input` non congelato; nessuna
+  issue (fuori dai criteri di ICH-300).
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| 10 esempi falliti nel worktree (9 in `direct_spec.rb`, `pty_spec.rb:215`) | il submodule `notcurses` del worktree è vuoto: mancano le immagini di `notcurses/data` | `direct_spec.rb` del checkout principale con la `lib` del worktree (60 su 60); non si inizializza il submodule, perché `git worktree remove` rifiuta i worktree con submodule; la CI li esegue ed è verde |
+| `pty_spec.rb` lanciato dal checkout principale non prova il codice del worktree | il processo figlio usa `lib_dir` relativo al file di spec | esempio lasciato alla CI |
+| RuboCop non eseguibile con `bundle exec` | la gem non è nel `Gemfile` e la CI non ha uno step di lint | ICH-465 (Standard con `rubocop-performance` e `rubocop-thread_safety`, struttura del progetto ikigai) |
+| Il reviewer GPT del round 2 non poteva cancellare `.review-tmp/` | il sistema di permessi ha negato la cancellazione | conferma dell'utente per `git worktree remove --force` (solo 75 file in `.review-tmp/`) |
+| Il branch remoto della PR esisteva ancora dopo il merge | GitHub non lo ha cancellato | `git push origin --delete` su richiesta dell'utente |
+
+### Verifica finale
+
+- Branch (`40fbdf8`): 1033 esempi su Ruby 4.0.7, solo i 10 esempi delle immagini falliti nel worktree (vedi sopra);
+  YARD 100 %, 0 warning; `ruby -w` senza warning. CI verde su tutta la matrice (Ruby 3.1.7–4.0.9) e Codecov.
+- Ogni spec nuova falliva sul codice di prima (controllato dal reviewer Fable nel round 1: 6 esempi rossi con la
+  `lib` di `d507e3e`); la spec di ICH-303 fissa il contratto e passa anche su `master`.
+- `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+- `master` su `d47e3ac`: 1033 esempi, 0 fallimenti con i semi 1234, 4242 e 7 (le immagini ci sono nel checkout
+  principale); `gem build` riuscito (warning solo di rdoc, vedi lotto 13); CI verde.

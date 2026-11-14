@@ -879,6 +879,9 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
   limite secco di `getvec` perdeva più eventi di `master` in raffica, corretto con la lettura a blocchi scelta
   dall'utente; round 2: un MEDIUM di Fable, SIGSEGV con un `close` da `trap` tra due blocchi, corretto; round 3:
   nessun finding; GPT nessun finding in tutti i round; due difetti già presenti su `master` in ICH-463 e ICH-464).
+  Lotto 14: Fable e GPT, 2 round (round 1: due LOW di Fable, il controllo di overflow di `metric` in aritmetica
+  Float con `base: 1000.0` o `1024.0` e le voci del CHANGELOG mancanti, corretti; round 2: nessun finding; GPT
+  nessun finding in tutti i round).
 
 ### Lotti
 
@@ -897,6 +900,7 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 | 11 | [#12](https://github.com/ichelema/notcursesruby/pull/12) | `cb3f0ba` | ICH-287, ICH-288, ICH-289, ICH-290 | i piani delle voci di `nctree` non cambiano mai larghezza (`tree.c:456`), tabella "Reel, Tree, Tabbed"; le etichette di `ncplot` sopra circa 1,84e17 passano da double a `uintmax_t` fuori intervallo (`plot.c:128-136`, `298-306`, comportamento indefinito: "184.47P" su x86-64-v4, "0.00" su x86-64 generico) e la riga alta esponenziale `uint64` va in wrap (`plot.c:300`); la regola dei colori di `ncprogbar` su 1 colonna o 1 riga (`fill.c:192-197`, `238-255`); "Bug noti non aggirati" di `memory/fase2-wrapper-idiomatico.md` |
 | 12 | [#13](https://github.com/ichelema/notcursesruby/pull/13) | `4ec4f4c` | ICH-291, ICH-292, ICH-293 | nessuno |
 | 13 | [#14](https://github.com/ichelema/notcursesruby/pull/14) | `7f91ae7` | ICH-294, ICH-295, ICH-296, ICH-298, ICH-299 | con stdin su un pipe, un carattere UTF-8 a cavallo della lettura da 8192 byte (`in.c:56`, `2179`) ferma l'input: `get` non restituisce quel carattere e `notcurses_stop` non ritorna; causa nel C non verificata, non ancora nelle tabelle dei bug (ICH-463). A coda piena notcurses scarta gli eventi (`in.c:523`) e li conta in `Stats#input_errors`: limite già noto, misurato nel lotto |
+| 14 | [#15](https://github.com/ichelema/notcursesruby/pull/15) | `d47e3ac` | ICH-300, ICH-301, ICH-302, ICH-303 | `ncnmetric` con 0 < value < decimal moltiplica value per la base fino a decimal senza un controllo di overflow funzionante (`metric.c:53-59`: la guardia di `metric.c:56` controlla `dv`, che in quel ramo non cambia): con decimal > (2^64 - 1)/base restituisce cifre e prefisso sbagliati senza errore; nuova tabella "Formato (`format.rb`)" di `memory/fase2-wrapper-idiomatico.md` |
 
 ### Cambi dell'API pubblica
 
@@ -989,6 +993,15 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
 - `UI::EventLoop#run`: il primo giro non attende, quindi consegna subito i tasti lasciati in coda dal run precedente;
   l'attesa di un giro dura al massimo 86 400 s, così `after(Float::MAX)` resta valido come "mai" (scelta dell'utente,
   regola 14: non `ArgumentError` in `after` ed `every`) (lotto 13).
+- `Input#utf8` e `Input#eff_text` restituiscono stringhe congelate: `<<` solleva `FrozenError` invece di cambiare
+  l'evento (lotto 14).
+- `Util.take_string` sostituisce con U+FFFD i byte che non sono UTF-8 valido, quindi lo fanno anche
+  `Notcurses.accountname`, `.hostname`, `.osversion`, `Context#detected_terminal` e `Direct#detected_terminal`
+  (scelta dell'utente, regola 14, confermata dopo la review: `scrub` in `take_string`, non solo nei cinque metodi,
+  non una String binaria, non un errore) (lotto 14).
+- `Notcurses.metric`, `.si_prefix`, `.binary_prefix` e `.byte_prefix` sollevano `ArgumentError` per le coppie
+  value/decimal che mandano in overflow `ncnmetric`; l'intervallo di `decimal` non cambia, e con `base: 1000.0` o
+  `1024.0` il controllo usa la base intera (lotto 14).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
