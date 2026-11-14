@@ -15,6 +15,10 @@ RSpec.describe 'Notcurses versione' do
     expect(v.encoding).to eq(Encoding::UTF_8)
   end
 
+  it 'lib_version inizia con HEADER_VERSION: gli header del layer FFI sono quelli della libreria caricata' do
+    expect(Notcurses.lib_version).to start_with(Notcurses::HEADER_VERSION)
+  end
+
   it 'lib_version_components coincide con lib_version' do
     major, minor, patch, _tweak = Notcurses.lib_version_components
     expect(Notcurses.lib_version).to start_with("#{major}.#{minor}.#{patch}")
