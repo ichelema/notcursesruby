@@ -1673,10 +1673,7 @@ module Notcurses
     # @raise [TypeError] se channels non è Channels o Integer
     # @raise [ClosedError] se il piano è chiuso
     def channels=(channels)
-      value = Util.channels_value(channels)
-      raise ArgumentError, "l'alpha :highcontrast non è ammessa per lo sfondo" if Channels.new(value: value).bg_alpha == :highcontrast
-
-      FFI.ncplane_set_channels(to_ptr, value)
+      FFI.ncplane_set_channels(to_ptr, Util.plane_channels_value(channels))
     end
 
     # @return [Channel] colore di primo piano (+ncplane_fchannel+)

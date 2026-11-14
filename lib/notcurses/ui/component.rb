@@ -162,8 +162,10 @@ module Notcurses
     # Per scrivere un componente: la classe include il modulo, alla fine di
     # +initialize+ chiama +attach_component!(parent, size:, weight:)+ e
     # implementa il metodo privato +draw+, che disegna su {#plane} (già
-    # cancellato). Un componente focusabile ridefinisce {#focusable?} e
-    # {#offer_input}, e disegna lo stato del focus da {#focused?}.
+    # cancellato). Se +draw+ solleva durante la creazione, il componente si
+    # chiude e +new+ propaga l'eccezione. Un componente focusabile
+    # ridefinisce {#focusable?} e {#offer_input}, e disegna lo stato del
+    # focus da {#focused?}.
     #
     # @example Un orologio
     #   class Clock
@@ -306,11 +308,14 @@ module Notcurses
         begin
           @app.release_focus(self)
           close_parts
-          @parent&.remove_child(self)
-          @app.unregister(self)
         ensure
-          @closed = true
-          @plane.close
+          begin # anche se il ridisegno del focus o la chiusura dei figli sollevano
+            @app.unregister(self)
+            @parent&.remove_child(self)
+          ensure
+            @closed = true
+            @plane.close
+          end
         end
         nil
       end
@@ -332,6 +337,7 @@ module Notcurses
       #   già la radice per un componente che non è un Dialog
       # @raise [TypeError] se parent non è un Container o un'App
       # @raise [ClosedError] se il contenitore o l'App sono chiusi
+      # @raise [Exception] l'eccezione del disegno: il componente è già chiuso
       def attach_component!(parent, size:, weight:)
         raise ArgumentError, 'usa size: oppure weight:, non entrambi' if size && weight
 
@@ -358,8 +364,31 @@ module Notcurses
         @ptr = @plane.to_ptr
         @closed = false
         @visible = false
-        @parent&.add_child(self)
-        @app.attached(self)
+        close_on_error do
+          @parent&.add_child(self)
+          @app.attached(self)
+        end
+      end
+
+      # Esegue il blocco; se il blocco solleva, chiude il componente (che
+      # esce dal contenitore e dall'App), rimette il focus dove era e
+      # propaga l'eccezione originale, anche se la chiusura fallisce.
+      # @param before [Array] stato del focus da rimettere ({App#focus_state})
+      # @return [void]
+      def close_on_error(before = @app.focus_state)
+        yield
+      rescue Exception => e # rubocop:disable Lint/RescueException
+        begin
+          close
+        rescue StandardError
+          nil # conta l'errore della creazione, non quello della pulizia
+        end
+        begin
+          @app.restore_focus_state(before)
+        rescue StandardError
+          nil # before non può più avere il focus (chiuso, nascosto o fuori dal dialogo)
+        end
+        raise e
       end
 
       # Disegno del componente sul piano già cancellato.

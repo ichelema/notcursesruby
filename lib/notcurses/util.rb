@@ -445,6 +445,21 @@ module Notcurses
       end
     end
 
+    # Come {channels_value}, per i colori di scrittura di un piano: notcurses
+    # non ammette l'alpha :highcontrast per lo sfondo (+ncplane_set_channels+).
+    # @param value [Channels, Integer] canali
+    # @param name [String] nome usato nel messaggio d'errore
+    # @return [Integer]
+    # @raise [TypeError] se value non è Channels né Integer
+    # @raise [ArgumentError] se value Integer è fuori da uint64_t o lo sfondo
+    #   ha alpha :highcontrast
+    def plane_channels_value(value, name = 'channels')
+      channels = channels_value(value, name)
+      raise ArgumentError, "#{name}: l'alpha :highcontrast non è ammessa per lo sfondo" if Channels.new(value: channels).bg_alpha == :highcontrast
+
+      channels
+    end
+
     # Valore uint32_t di un parametro channel: {Channel} o Integer, senza i bit
     # di servizio.
     # @param value [Channel, Integer] canale

@@ -28,6 +28,20 @@ RSpec.describe Notcurses::UI::Dialog do
     expect(buttons_of(dialog).map(&:label)).to eq(%w[Sì No])
   end
 
+  it 'ogni pulsante ha spazio per tutta l\'etichetta; etichette uguali dividono la riga in parti uguali (ICH-293)' do
+    { ['Save', "Don't save", 'Cancel'] => 39, %w[A B Longest] => 28 }.each do |labels, width|
+      dialog = described_class.new(app, text: 'Save?', buttons: labels)
+      buttons = buttons_of(dialog)
+      expect(dialog.plane.dim_x).to eq(width)
+      expect(buttons.map { |b| b.plane.contents(y: 0, rows: 1).strip }).to eq(labels.map { |l| "[ #{l} ]" })
+      expect(buttons.zip(labels)).to all(satisfy { |b, l| b.plane.dim_x >= Notcurses.strwidth(l) + 4 })
+      expect(buttons.map(&:label)).to eq(labels)
+      dialog.close
+    end
+    even = described_class.new(app, text: 'una riga di testo piuttosto lunga', buttons: %w[A B C])
+    expect(buttons_of(even).map { |b| b.plane.dim_x }.minmax.then { |lo, hi| hi - lo }).to be <= 1
+  end
+
   it 'su un terminale stretto il testo va a capo sulle parole e il dialogo resta dentro lo schermo' do
     dialog = described_class.new(app, text: 'uno due tre quattro cinque sei')
     dialog.place(24, 14)
@@ -116,6 +130,153 @@ RSpec.describe Notcurses::UI::Dialog do
     expect(place(dialog)).to eq([[12, 44], [5, 11]]) # largo quanto il pulsante: "OK" + 5, più 4
     app.close
     expect(dialog).to be_closed
+  end
+
+  it 'se un figlio solleva alla creazione il dialogo si chiude e il focus torna dove era (ICH-291)' do
+    under = Notcurses::UI::Button.new(app.root, 'Sotto', size: 3) {}
+    expect { described_class.new(app, text: 'Sicuro?', channels: 0x3000_0000) }.to raise_error(ArgumentError, /highcontrast/)
+    expect(app.focused).to equal(under)
+    allow(Notcurses::UI::Button).to receive(:new).and_raise(ArgumentError, 'pulsante rotto')
+    expect { described_class.new(app, text: 'Sicuro?') }.to raise_error(ArgumentError, 'pulsante rotto')
+    expect(app.focused).to equal(under)
+    expect { app.focus(under) }.not_to raise_error
+    expect(app.component_at(1, 1)).to equal(under)
+    allow(nc).to receive(:refresh).and_return([30, 100])
+    app.on_resize { app.stop }
+    app.post { Process.kill('WINCH', Process.pid) }
+    app.after(5) { app.stop }
+    expect(app.run).to eq(:stop)
+    expect(key(Notcurses::Key::ENTER)).to be(true) # Enter arriva di nuovo al pulsante sotto
+    app.focus(nil)
+    expect { described_class.new(app, text: 'Sicuro?') }.to raise_error(ArgumentError, 'pulsante rotto')
+    expect(app.focused).to be_nil # nessun focus prima, nessun focus dopo
+  end
+
+  it 'un resize che nasconde i pulsanti e poi li mostra ridà il focus; Esc ed Enter arrivano (ICH-292)' do
+    [[Notcurses::Key::ESC, nil], [Notcurses::Key::ENTER, 'Yes']].each do |id, choice|
+      choices = []
+      dialog = described_class.new(app, text: 'Quit?', buttons: %w[Yes No]) { |c| choices << c }
+      sizes = [[2, 80], [24, 80]]
+      allow(nc).to receive(:refresh) { sizes.shift || [24, 80] }
+      seen = :none
+      app.on_resize do |rows, _cols|
+        next unless rows == 24
+
+        seen = app.focused
+        app.stop
+      end
+      app.post { Process.kill('WINCH', Process.pid) }
+      app.after(0.2) { Process.kill('WINCH', Process.pid) }
+      app.after(5) { app.stop }
+      app.run
+      expect([seen, app.focused]).to all(equal(buttons_of(dialog).first))
+      expect(key(id)).to be(true)
+      expect([dialog.closed?, choices]).to eq([true, [choice]])
+    end
+  end
+
+  # Due resize durante run (small righe, poi 24); il blocco gira a small righe.
+  def shrink_and_restore(small = 2)
+    sizes = [[small, 80], [24, 80]]
+    allow(nc).to receive(:refresh) { sizes.shift || [24, 80] }
+    app.on_resize do |rows, _cols|
+      yield if rows == small
+      app.stop if rows == 24
+    end
+    app.post { Process.kill('WINCH', Process.pid) }
+    app.after(0.2) { Process.kill('WINCH', Process.pid) }
+    app.after(5) { app.stop }
+    app.run
+  end
+
+  it 'il focus torna dopo il resize anche se il dialogo si chiude a terminale piccolo (ICH-292)' do
+    Notcurses::UI::Label.new(app.root, text: 'x', size: 2)
+    Notcurses::UI::TextInput.new(app.root, size: 1)
+    under = Notcurses::UI::TextInput.new(app.root, size: 1)
+    app.focus(under)
+    described_class.new(app, text: 'Quit?', buttons: %w[Yes No])
+    shrink_and_restore { key(Notcurses::Key::ESC) }
+    expect(app.focused).to equal(under) # quello di prima, non il primo candidato
+  end
+
+  it 'il focus torna dopo il resize anche se il dialogo si apre a terminale piccolo (ICH-292)' do
+    Notcurses::UI::Label.new(app.root, text: 'x', size: 2)
+    Notcurses::UI::TextInput.new(app.root, size: 1)
+    under = Notcurses::UI::TextInput.new(app.root, size: 1)
+    app.focus(under)
+    choices = []
+    dialog = nil
+    shrink_and_restore do
+      allow(nc).to receive(:dims).and_return([2, 80])
+      dialog = described_class.new(app, text: 'Quit?', buttons: %w[Yes No]) { |c| choices << c }
+    end
+    expect(app.focused).to equal(buttons_of(dialog).first)
+    expect(key(Notcurses::Key::ENTER)).to be(true)
+    expect(choices).to eq(['Yes'])
+    expect(app.focused).to equal(under) # alla chiusura torna quello di prima del resize
+  end
+
+  it 'il focus torna dopo il resize anche se un pulsante del dialogo lo ha avuto a terminale piccolo (ICH-292)' do
+    Notcurses::UI::Label.new(app.root, text: 'x', size: 4)
+    Notcurses::UI::TextInput.new(app.root, size: 1)
+    second = Notcurses::UI::TextInput.new(app.root, size: 1)
+    app.focus(second)
+    shrink_and_restore(4) do
+      allow(nc).to receive(:dims).and_return([4, 80])
+      dialog = described_class.new(app, text: 'Quit?')
+      expect(app.focused).to equal(buttons_of(dialog).first) # il pulsante è visibile a 4 righe
+      key(Notcurses::Key::ESC)
+    end
+    expect(app.focused).to equal(second)
+  end
+
+  it 'il rollback chiude il dialogo anche se il ridisegno del focus che torna solleva (ICH-291)' do
+    touchy = Class.new do
+      include Notcurses::UI::Component
+
+      attr_accessor :armed
+
+      def initialize(parent) = attach_component!(parent, size: 1, weight: nil)
+
+      def focusable? = true
+
+      private
+
+      def draw = (raise 'ridisegno rotto' if armed && focused?)
+    end
+    broken = Class.new(described_class) do
+      class << self
+        attr_accessor :last
+      end
+
+      def initialize(...)
+        self.class.last = self
+        super
+      end
+
+      private
+
+      def draw
+        super
+        raise ArgumentError, 'creazione rotta' if @body
+      end
+    end
+    under = touchy.new(app.root)
+    expect(app.focused).to equal(under)
+    under.armed = true
+    expect { broken.new(app, text: 'Sicuro?') }.to raise_error(ArgumentError, 'creazione rotta')
+    dialog = broken.last
+    expect(dialog).to be_closed
+    expect(dialog.children).to eq([]) # i figli si chiudono ed escono dal dialogo
+    expect(app.component_at(12, 40)).to equal(app.root) # al centro non resta il dialogo
+  end
+
+  it 'senza focus un tasto va alla radice attiva: Esc chiude il dialogo (ICH-292)' do
+    choices = []
+    described_class.new(app, text: 'x') { |c| choices << c }
+    app.focus(nil)
+    expect(key(Notcurses::Key::ESC)).to be(true)
+    expect(choices).to eq([nil])
   end
 
   it 'valida gli argomenti; sopra l\'App stanno solo root e i dialoghi' do

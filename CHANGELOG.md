@@ -90,6 +90,20 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 - YARD di `Plot`: documentato il limite di notcurses 3.0.17 delle etichette di `label_ticks:`. Da circa 1,84·10^17
   in su, con `:uint64` e con `:double`, le etichette sono sbagliate ("184.47P" o "0.00", secondo la build di
   notcurses), mentre i campioni mantengono il loro valore; il comportamento non cambia (ICH-290).
+- UI: un componente il cui disegno solleva durante la creazione si chiude, esce dal contenitore e dall'App, e il
+  focus resta com'era; prima restava fra i figli e ogni layout successivo (un fratello nuovo, un resize) sollevava
+  di nuovo. Un `Dialog` che fallisce alla creazione si chiude e il focus resta com'era; prima restava la finestra
+  modale attiva. `Component#close` e `Dialog#close` tolgono il componente dal contenitore e dall'App anche se il
+  ridisegno del focus solleva. I costruttori di `Container`, `Label`, `Button`, `TextInput`, `ListView`, `LogView` e
+  `Dialog` rifiutano subito `channels:` e `focused_channels:` con lo sfondo `:highcontrast` (`ArgumentError`), anche
+  per un widget nascosto; prima un `Container` senza titolo li accettava (ICH-291).
+- `App`: un resize che nasconde tutti i componenti focusabili e un resize successivo che li mostra ridanno il focus
+  al componente che lo aveva prima del resize (o al primo candidato visibile), prima degli handler di `on_resize`,
+  anche se nel frattempo un dialogo si apre o si chiude; prima il focus restava a nessuno fino a Tab. Senza focus un
+  tasto va alla radice attiva, così Esc chiude un `Dialog` aperto. Un `focus(nil)` esplicito resta anche dopo un
+  resize (ICH-292).
+- `Dialog`: ogni pulsante ha spazio per tutta l'etichetta; prima la riga si divideva in parti uguali e
+  un'etichetta più lunga della media restava tagliata. La larghezza del dialogo non cambia (ICH-293).
 
 ## [0.1.0] - 2026-10-27
 
