@@ -20,8 +20,8 @@ RSpec.describe 'notcursesruby.gemspec' do
   end
 
   it 'dipende solo da ffi, con lo stesso vincolo del Gemfile' do
-    expect(spec.runtime_dependencies.map { |d| [d.name, d.requirement.to_s] }).to eq([['ffi', '~> 1.15']])
-    expect(File.read(File.join(root, 'Gemfile'))).to match(/^gem 'ffi', '~> 1\.15'$/)
+    expect(spec.runtime_dependencies.map { |d| [d.name, d.requirement.to_s] }).to eq([['ffi', '~> 1.16']])
+    expect(File.read(File.join(root, 'Gemfile'))).to match(/^gem 'ffi', '~> 1\.16'$/)
     expect(spec.required_ruby_version.to_s).to eq('>= 3.1')
   end
 

@@ -33,5 +33,5 @@ Gem::Specification.new do |spec|
                %w[README.md LICENSE NOTICE CHANGELOG.md .yardopts]
   spec.require_paths = ['lib']
 
-  spec.add_dependency 'ffi', '~> 1.15'
+  spec.add_dependency 'ffi', '~> 1.16'
 end

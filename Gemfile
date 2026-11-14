@@ -1,7 +1,7 @@
 # Generated from notcurses 3.0.17
 # Source: notcurses/include/notcurses/notcurses.h
 source 'https://rubygems.org'
-gem 'ffi', '~> 1.15'
+gem 'ffi', '~> 1.16'
 
 group :development do
   # parallel 2 richiede Ruby >= 3.3: il job Ruby 3.2 della CI installa dal lockfile
