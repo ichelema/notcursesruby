@@ -1,0 +1,41 @@
+# .rubocop.yml
+
+# We want Exclude directives from different
+# config files to get merged, not overwritten
+inherit_mode:
+  merge:
+    - Exclude
+
+plugins:
+  # Performance cops are bundled with Standard
+  - rubocop-performance
+  - rubocop-thread_safety
+
+require:
+  # Standard's config uses this custom cop,
+  # so it must be loaded
+  - standard
+
+inherit_gem:
+  standard: config/base.yml
+
+inherit_from: .rubocop_todo.yml
+
+AllCops:
+  Exclude:
+    - 'vendor/**/*'
+    - 'bin/**/*'
+    - 'doc/**/*'
+    - '.git/**/*'
+    - '.vscode/**/*'
+    - 'notcurses/**/*'
+    - 'libnotcurses-sys/**/*'
+    - 'coverage/**/*'
+  TargetRubyVersion: 3.1
+  NewCops: enable
+
+Layout/EndOfLine:
+  Enabled: false
+
+Style/Documentation:
+  Enabled: false

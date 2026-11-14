@@ -4,6 +4,10 @@ source 'https://rubygems.org'
 gem 'ffi', '~> 1.15'
 
 group :development do
+  gem 'rubocop', '~> 1.91.0', require: false
+  gem 'rubocop-performance', '~> 1.26.1', require: false
+  gem 'rubocop-thread_safety', '~> 0.8.0', require: false
+  gem 'standard', '~> 1.57.0', require: false
   gem 'yard', '~> 0.9'
 end
 
