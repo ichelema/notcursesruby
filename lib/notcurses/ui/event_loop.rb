@@ -74,7 +74,9 @@ module Notcurses
     # (notcurses svuota il pipe di prontezza a ogni lettura, anche con altri
     # eventi in coda), i blocchi di {#post}, i timer scaduti, e un
     # {Context#render} se il giro ha consegnato qualcosa. {#run} rende anche lo
-    # schermo all'avvio.
+    # schermo all'avvio. Il primo giro di ogni {#run} non attende: consegna
+    # subito gli eventi che il run precedente ha lasciato nella coda di
+    # notcurses (uscito con {#stop} o con un'eccezione).
     #
     # Thread. Solo il thread che esegue {#run} chiama notcurses: gli handler, i
     # timer e i blocchi di {#post} girano lì. {#post} e {#stop} sono gli unici
@@ -224,8 +226,12 @@ module Notcurses
           @dims = @context.dims
           render_frame
           watched = [@input, wake_r].compact
+          # il primo giro non attende: il run precedente può aver lasciato eventi nella
+          # coda di notcurses con il pipe di prontezza già vuoto
+          wait = false
           until @stop_requested
-            IO.select(watched, nil, nil, select_timeout)
+            IO.select(watched, nil, nil, wait ? select_timeout : 0)
+            wait = true
             drain(wake_r)
             step
           end

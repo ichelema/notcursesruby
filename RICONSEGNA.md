@@ -611,7 +611,7 @@ comune (`Util.c_region`); la copertura FFI non cambia (477 chiamate, 154 escluse
 
 | Bug o limite | Dove | Gestione |
 | --- | --- | --- |
-| `notcurses_get` svuota tutto il pipe di prontezza, anche con altri eventi in coda | `in.c:2751-2757` | il ciclo legge fino al primo `nil` a ogni risveglio |
+| `notcurses_get` svuota tutto il pipe di prontezza, anche con altri eventi in coda | `in.c:2751-2757` | il ciclo legge fino al primo `nil` a ogni risveglio; il primo giro di ogni `run` non attende, così legge subito gli eventi lasciati in coda dal run precedente (uscito con `stop` o con un'eccezione) |
 | A fine input il pipe resta leggibile per sempre; con `drain_input: true` `get` solleva sempre `InputError` | `in.c:2610-2616`, `2702-2710` | `Key::EOF` ferma il ciclo (`:eof`); un contesto che scarta l'input non viene ascoltato (`Context#drain_input?`) |
 | `NCKEY_RESIZE` entra in coda solo insieme ad altro input | `in.c:2439-2445` | di default `trap('WINCH')` durante `run`; dopo ogni render un cambio di dimensioni non segnalato si applica al giro dopo |
 | `"\n"` dopo una riga piena: due a capo | `notcurses.c:1888-1890`, `1903-1904` | corretto nella Parte 0 |
