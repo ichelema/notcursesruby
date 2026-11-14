@@ -4,6 +4,8 @@ source 'https://rubygems.org'
 gem 'ffi', '~> 1.15'
 
 group :development do
+  # parallel 2 richiede Ruby >= 3.3: il job Ruby 3.2 della CI installa dal lockfile
+  gem 'parallel', '< 2', require: false
   gem 'rubocop', '~> 1.91.0', require: false
   gem 'rubocop-performance', '~> 1.26.1', require: false
   gem 'rubocop-thread_safety', '~> 0.8.0', require: false
