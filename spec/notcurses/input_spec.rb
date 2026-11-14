@@ -29,6 +29,18 @@ RSpec.describe Notcurses::Input do
     expect(input).to be_ctrl
     expect(input.eff_text).to eq('É')
     expect(input).to be_frozen
+    expect(input.utf8).to be_frozen
+    expect(input.eff_text).to be_frozen
+  end
+
+  it 'congela utf8 ed eff_text: accumularci sopra non rompe l\'evento' do
+    ev = described_class.synthesize('a'.ord)
+    expect { ev.utf8 << 'bcdef' }.to raise_error(FrozenError)
+    expect { ev.eff_text << 'x' }.to raise_error(FrozenError)
+    expect(ev).to eq(described_class.synthesize('a'.ord))
+    expect(ev).not_to be_alt
+    up = described_class.synthesize(key::UP)
+    expect([up.utf8, up.eff_text]).to all(eq('').and(be_frozen))
   end
 
   it 'rifiuta argomenti che non sono NcInput' do
