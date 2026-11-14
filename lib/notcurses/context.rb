@@ -1154,15 +1154,15 @@ module Notcurses
     # raffica la coda si svuota prima che notcurses scarti altri eventi.
     # @return [Array<Input>, nil] nil senza eventi
     def queued_inputs(count)
-      ptr = to_ptr
       size = FFI::NcInput.size
       blocks = []
       taken = 0
       loop do
         slots = [count - taken, GETVEC_MAX].min
         buf = ::FFI::MemoryPointer.new(FFI::NcInput, slots)
-        # deadline assoluta {0, 0}: già scaduta, quindi la chiamata non attende
-        n = FFI.notcurses_getvec(ptr, FFI::Timespec.new, buf, slots)
+        # deadline assoluta {0, 0}: già scaduta, quindi la chiamata non attende.
+        # to_ptr a ogni blocco: un gestore trap può chiudere il contesto tra due chiamate
+        n = FFI.notcurses_getvec(to_ptr, FFI::Timespec.new, buf, slots)
         raise InputError, 'notcurses_getvec: errore di input' if n.negative?
 
         blocks << [buf, n] if n.positive?

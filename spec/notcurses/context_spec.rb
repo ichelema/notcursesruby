@@ -238,6 +238,22 @@ RSpec.describe Notcurses::Context do
       expect(counts).to eq([8192])
     end
 
+    it 'getvec non chiama il C su un contesto chiuso tra due blocchi (close da un gestore trap)' do
+      counts = []
+      allow(Notcurses::FFI).to receive(:notcurses_getvec) do |_nc, _deadline, _buf, count|
+        counts << count
+        count # blocco pieno: getvec ne chiede un altro
+      end
+      reads = 0
+      allow(nc).to receive(:to_ptr).and_wrap_original do |original|
+        raise Notcurses::ClosedError, 'contesto chiuso' if (reads += 1) > 1
+
+        original.call
+      end
+      expect { nc.getvec(10_000, timeout: 0) }.to raise_error(Notcurses::ClosedError)
+      expect(counts).to eq([8192])
+    end
+
     it 'espone le capacità del terminale' do
       %i[can_truecolor? can_change_color? can_fade? can_utf8? can_halfblock? can_quadrant? can_sextant?
          can_octant? can_braille? can_pixel? can_open_images? can_open_videos?].each do |m|
