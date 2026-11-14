@@ -899,7 +899,12 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
   GPT, 1 round, nessun finding; implementazione fatta dalla sessione (Fable), quindi la review Fable è meno
   indipendente di quella GPT; l'esempio YARD di `Notcurses::UI::App`, già su `master`, in ICH-473. Lotto 16: Fable
   e GPT, 2 round (round 1: un LOW di Fable, l'intestazione di due righe mancante nei due file di spec nuovi,
-  corretto; round 2: nessun finding; GPT nessun finding in tutti i round).
+  corretto; round 2: nessun finding; GPT nessun finding in tutti i round). Lotto 17: Fable e GPT, 3 round (round 1:
+  un LOW di Fable, la perdita della risorsa C con un'eccezione asincrona e la frase falsa di `FdPlane`, testo
+  corretto e protezione in ICH-474, più una lacuna di test della ffi simulata, coperta; round 2: un MEDIUM di Fable,
+  use-after-free chiudendo il contesto durante `decode` in un altro thread, testo corretto e protezione in ICH-475, e
+  un LOW, corretto; round 3: un LOW di Fable, corretto dopo il loop senza review; GPT nessun finding in tutti i
+  round).
 
 ### Lotti
 
@@ -922,6 +927,7 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 | fuori dai lotti | [#16](https://github.com/ichelema/notcursesruby/pull/16) | `ba3367f` | ICH-465 (RuboCop con Standard nel `Gemfile` e nella CI; nessun cambio in `lib/` e `spec/`) | nessuno |
 | 15 | [#17](https://github.com/ichelema/notcursesruby/pull/17) | `28ef91a` | ICH-304, ICH-305; ICH-473 (nata dalla review) | nessuno |
 | 16 | [#18](https://github.com/ichelema/notcursesruby/pull/18) | `9672bd5` | ICH-306, ICH-307, ICH-308, ICH-309, ICH-310, ICH-311 (solo spec e CI, nessun cambio in `lib/`) | nessuno |
+| 17 | [#19](https://github.com/ichelema/notcursesruby/pull/19) | `e3e8737` | ICH-312, ICH-313 (Fase 1, regola 1, approvato dall'utente); ICH-474, ICH-475 (nate dalla review) | nessuno |
 
 ### Cambi dell'API pubblica
 
@@ -1023,6 +1029,14 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
 - `Notcurses.metric`, `.si_prefix`, `.binary_prefix` e `.byte_prefix` sollevano `ArgumentError` per le coppie
   value/decimal che mandano in overflow `ncnmetric`; l'intervallo di `decimal` non cambia, e con `base: 1000.0` o
   `1024.0` il controllo usa la base intera (lotto 14).
+- `Visual.from_file`, `Visual#decode`, `#decode_loop`, `Direct#render_frame`, `#load_image`, `Direct::Image.new` e
+  `Direct#stream` aprono e leggono il file senza il GVL: gli altri thread Ruby girano durante l'I/O di ffmpeg, ma non
+  devono usare lo stesso contesto. Un'eccezione asincrona arriva al ritorno della chiamata C e la risorsa creata dal C
+  va persa (ICH-474); chiudere il visual o il contesto, anche con `at_exit`, mentre un altro thread è dentro `decode`
+  è un use-after-free (ICH-475). Dentro il blocco di un `FdPlane` il kill di `close` arriva anche durante queste
+  chiamate e durante `Visual#stream` (lotto 17, ICH-312).
+- `require 'notcurses'` funziona anche dove il `types.conf` di ffi non ha `wchar_t` o `uintmax_t`; nessun cambio su
+  Linux x86_64 e macOS (lotto 17, ICH-313).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
@@ -1114,3 +1128,9 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
 - ICH-473 — l'esempio YARD di `Notcurses::UI::App` (`lib/notcurses/ui/app.rb:50-60`) stampa `name.text` dentro il
   blocco di `Context.open`, come il README prima di ICH-304: la riga va sullo schermo alternativo (lotto 15, review;
   esiste già su `master`, letto e non eseguito).
+- ICH-474 — un'eccezione asincrona (`Thread#raise`, `Timeout`, Ctrl-C, il kill di `FdPlane#close`) al ritorno di
+  `ncvisual_from_file`, `ncdirectf_from_file` o `ncdirect_render_frame` perde la risorsa C, con il file aperto (lotto
+  17, review round 1; con Ctrl-C esisteva già su `master`).
+- ICH-475 — chiudere il contesto o il visual, anche con `at_exit`, mentre un altro thread è dentro `Visual#decode` o
+  `#decode_loop` è un use-after-free; da verificare le varianti di `Direct`; lo stesso problema esiste già per
+  `Visual#stream` (lotto 17, review round 2; contiene una scelta della regola 14).

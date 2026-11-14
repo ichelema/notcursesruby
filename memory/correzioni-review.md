@@ -981,3 +981,79 @@ dalla issue, che la fa fallire.
   offense; `ruby -w` senza warning; `gem build` riuscito. CI di `master` (run 43642485059) verde su tutta la
   matrice; lo step "Upload su Codecov" con lo SHA fissato è riuscito al primo push su `master` (ultimo criterio di
   ICH-311). Le sei issue sono a Done.
+
+## Lotto 17 — ICH-312, ICH-313 (PR #19, merge `e3e8737`)
+
+### Fix
+
+Fase 1 congelata (regola 1): lotto approvato dall'utente il 2026-11-14. `git diff ab75226 -- lib/notcurses/ffi
+lib/notcurses/ffi.rb` contiene solo le righe delle due issue.
+
+- **ICH-312 (`ffi-01`, GVL durante l'I/O di ffmpeg).** `blocking: true` su `ncvisual_from_file`, `ncvisual_decode`,
+  `ncvisual_decode_loop`, `ncdirect_render_frame` e `ncdirectf_from_file` (`functions.rb:287`, `298-299`, `609`,
+  `611`); firme invariate, `ncdirect_stream` senza flag (il wrapper non la chiama). Commento di testa di
+  `functions.rb`, YARD dei 7 metodi, commenti di classe di `Direct` e `FdPlane`, decisione 20 di
+  `memory/fase1-ffi-raw.md` (ora 15 funzioni, con A3-02), "Modifiche successive" della Fase 1 e `CHANGELOG.md`.
+  Causa radice: la decisione 20 teneva il GVL per "scritture e render brevi", ma queste cinque funzioni fanno I/O di
+  ffmpeg senza limite di tempo (FIFO, URL, file system lento), e lo stesso codice C girava già senza il GVL dentro
+  `ncdirect_render_image` e `ncvisual_stream`. Spec: `pty_spec.rb`, FIFO riempita dopo 0,3 s da un thread del figlio
+  per `Visual.from_file`, `render_frame` e `load_image` (prima il figlio restava bloccato e `run_child` lo uccideva).
+  Repro della issue: `Direct#render_frame: returned after 0.30 s`.
+- **ICH-313 (`ffi-03`, `wchar_t` e `uintmax_t`).** `typedefs.rb` definisce `:wchar_t` (`:int32`) e `:uintmax_t`
+  (`:uint64`) in `Notcurses::FFI` solo se `::FFI.find_type` solleva `TypeError`; su Linux x86_64 il modulo non
+  aggiunge typedef. Le cinque `::FFI::MemoryPointer.new(:wchar_t, n)` (`inline_reimpl.rb:794`, `3042`, `3054`,
+  `3066`, `direct.rb` `Direct#box_chars`) usano `:int32`. Causa radice: il commento di `typedefs.rb` dava per certi i
+  tipi del `types.conf` di ffi, che mancano su FreeBSD, NetBSD, OpenBSD e Linux i386/ppc64/riscv64/s390x; e
+  `MemoryPointer.new(Symbol)` usa la mappa globale di ffi, che non vede le typedef del modulo. Spec:
+  `ffi_sanity_spec.rb` copia la `lib/` di ffi, toglie le due typedef da `types.conf` e avvia un figlio con
+  `--disable-gems` (prima: `TypeError: unable to resolve type 'uintmax_t'` a `functions.rb:541`).
+
+### Decisioni
+
+- Regola 14, ICH-313: typedef solo se `::FFI.find_type` solleva `TypeError` (chiesta dalla issue); una typedef
+  senza condizione avrebbe cambiato `wchar_t` da `uint` a `int32` su aarch64.
+- La spec FIFO di `pty_spec.rb` era già nel worktree, non committata, prima che la sessione la scrivesse; nessuna
+  sessione dice di averla scritta. L'utente ha scelto di tenerla (corrisponde ai requisiti).
+- Review, protezioni non fatte nella PR (non sono fix minimi; per ICH-475 la regola 3 vieta un lock): limite scritto
+  nello YARD, protezione in ICH-474 (LOW, priorità 4) e ICH-475 (MEDIUM, priorità 3), `related` a ICH-312.
+- Implementazione e fix dalla sessione (Opus), senza subagenti.
+
+### Review (3 round, Fable e GPT)
+
+- Round 1 (`6d5c03c`): GPT nessun finding. Fable un LOW: con `blocking: true` un'eccezione asincrona arriva al
+  ritorno della chiamata C e la risorsa creata (visual, frame, immagine, con il file aperto) va persa; `fd_plane.rb`
+  diceva che il kill di `close` non arriva mai a metà di una chiamata (`FdPlane#run` usa `:on_blocking`, e la chiamata
+  FFI senza GVL conta come attesa). Testo corretto in `9589611`, protezione in ICH-474. Lacuna di test: la ffi
+  simulata copriva 2 delle 5 chiamate `:int32`; coperte in `7d4858a` (mutazioni: ognuna fa fallire l'esempio).
+- Round 2 (`7d4858a`): GPT nessun finding. Fable un MEDIUM: chiudere il contesto (anche con `at_exit`) mentre un
+  altro thread è dentro `decode`/`decode_loop` è un use-after-free (5 su 65 del reviewer, 1 blocco su 30 della
+  sessione; 65 su 65 pulite senza `blocking`); un LOW: le frasi di `FdPlane` non elencavano `Visual#stream`.
+  Testo corretto in `0e1d663`, protezione in ICH-475.
+- Round 3 (`0e1d663`): GPT nessun finding. Fable un LOW: il rimedio "ferma il thread" non vale per `Thread#kill`
+  (la chiamata C continua); corretto dopo il loop senza review in `f690db3` (`Thread#join`). Commento riassuntivo
+  sulla PR.
+- Note dei reviewer, non finding: `Direct#render_frame` e simili passano al C la String del chiamante senza copia
+  (come `render_image`); `spec/support/nc_oracle.rb` usa ancora `:wchar_t`/`:uintmax_t`; "8 funzioni" in
+  `memory/fase2-wrapper-idiomatico.md` (da A3-02).
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| `spec/integration/pty_spec.rb` modificato nel worktree prima della scrittura della sessione | origine sconosciuta; la sessione parallela `notcursesruby-14` dice di non averlo toccato | chiesto all'utente, che l'ha tenuto; avvisata l'altra sessione |
+| `findReferences` di ruby-lsp su un `attach_function` restituisce tutte le chiamate | i metodi di `attach_function` sono dinamici; il server indicizza il repository principale, non il worktree | `grep` per i chiamanti delle funzioni FFI |
+| YARD: `Cannot resolve link to Image.new` nel commento di classe di `Direct` | il link di un commento di classe si risolve dal namespace esterno | `{Direct::Image#initialize}` |
+| RuboCop: `Layout/SpaceInsideHashLiteralBraces` nel codice nuovo | Standard vuole `{a: 1}`; i file esistenti sono esclusi cop per cop | hash senza spazi nel codice nuovo |
+| Il primo giro di mutazioni di ICH-313 non provava nulla | il filtro `-e` non trovava l'esempio (0 esempi, nessuna riga `examples,`) | mutazioni rieseguite su tutto il file: 3 su 3 falliscono |
+| Job Ruby 3.1.7 rosso su `0e1d663` in `context_spec.rb:358` (`getvec` chiamata 2 volte) | spec non toccata dal lotto; corsa nell'esempio, non riprodotta | verde su `7d4858a` e `f690db3`; nessuna issue finché non si ripete |
+| `git worktree remove` rifiuta i worktree di review | i reviewer inizializzano il submodule `notcurses` | `--force` (approvato), con `status` vuoto |
+
+### Verifica finale
+
+- Branch (`f690db3`): 1046 esempi, 0 fallimenti su Ruby 4.0.7 (2 esempi in più del lotto 16); `bundle exec rubocop`
+  97 file, 0 offense; YARD 0 warning, 100 %. CI verde su tutta la matrice (Ruby 3.1.7–4.0.9) e Codecov.
+- `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: `functions.rb`, `inline_reimpl.rb` e `typedefs.rb`,
+  solo le righe di ICH-312 e ICH-313.
+- `master` su `e3e8737`: 1046 esempi, 0 fallimenti in ordine normale e con i semi 1234, 4242 e 7; RuboCop senza
+  offense; YARD 0 warning, 100 %; `ruby -w` senza warning; `gem build` riuscito. CI di `master` (run 43652653505)
+  verde su tutta la matrice. ICH-312 e ICH-313 sono a Done.
