@@ -129,6 +129,10 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   cambia (ICH-302).
 - YARD di `Context#refresh` e `#create_pile`: il valore e le opzioni si riferiscono all'area di rendering (il
   terminale meno i margini), come `#dims`, non al terminale (ICH-303).
+- Il gemspec e il `Gemfile` chiedono `ffi ~> 1.16` (prima `~> 1.15`): la suite usa `FFI::Library#attached_functions`,
+  che esiste da ffi 1.16.0, e ffi 1.15.0 e 1.15.1 non cercano le librerie in `/opt/homebrew/lib` (ICH-305).
+- README, esempio `Notcurses::UI`: il risultato si stampa dopo il blocco di `Context.open`; prima la riga finiva
+  sullo schermo alternativo e la chiusura la cancellava (ICH-304).
 
 ## [0.1.0] - 2026-10-27
 
