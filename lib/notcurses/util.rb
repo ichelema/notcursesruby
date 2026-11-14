@@ -323,12 +323,13 @@ module Notcurses
     # Legge un char* allocato dal C (memoria ALLOC), lo libera con free() e
     # restituisce la String UTF-8. NULL diventa nil.
     # @param ptr [::FFI::Pointer, nil] puntatore a un char* allocato dal C
-    # @return [String, nil]
+    # @return [String, nil] UTF-8 valido: i byte che non sono UTF-8 valido
+    #   diventano U+FFFD
     def take_string(ptr)
       return nil if ptr.nil? || ptr.null?
 
       begin
-        ptr.read_string.force_encoding(Encoding::UTF_8)
+        ptr.read_string.force_encoding(Encoding::UTF_8).scrub
       ensure
         FFI.free(ptr)
       end

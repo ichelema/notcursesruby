@@ -368,9 +368,9 @@ module Notcurses
     attr_reader :y
     # @return [Integer] colonna dell'evento del mouse (vedi {#y})
     attr_reader :x
-    # @return [String] {#id} in UTF-8 ("" se non è un carattere). Con il
-    #   protocollo tastiera kitty id è il tasto senza Shift ("1" per Shift+1):
-    #   il testo digitato è {#eff_text}
+    # @return [String] {#id} in UTF-8 ("" se non è un carattere), congelata.
+    #   Con il protocollo tastiera kitty id è il tasto senza Shift ("1" per
+    #   Shift+1): il testo digitato è {#eff_text}
     attr_reader :utf8
     # @return [Symbol] :unknown, :press, :repeat o :release
     attr_reader :evtype
@@ -382,7 +382,8 @@ module Notcurses
     attr_reader :ypx
     # @return [Integer] offset in pixel della colonna, per gli eventi del mouse (-1 se ignoto)
     attr_reader :xpx
-    # @return [String] testo effettivo (con i modificatori applicati), "" se assente
+    # @return [String] testo effettivo (con i modificatori applicati), "" se
+    #   assente, congelata
     attr_reader :eff_text
 
     # @param ncinput [FFI::NcInput] struct compilata da notcurses
@@ -393,14 +394,14 @@ module Notcurses
       @id = ncinput[:id]
       @y = ncinput[:y]
       @x = ncinput[:x]
-      @utf8 = ncinput[:utf8].to_s.force_encoding(Encoding::UTF_8).scrub
+      @utf8 = ncinput[:utf8].to_s.force_encoding(Encoding::UTF_8).scrub.freeze
       @evtype = Util.enum_symbol(Util::EVTYPES, ncinput[:evtype])
       @modifiers = ncinput[:modifiers]
       @modifiers |= FFI::NCKEY_MOD_ALT if ncinput[:alt]
       @ypx = ncinput[:ypx]
       @xpx = ncinput[:xpx]
       cps = ncinput[:eff_text].to_a.take_while(&:positive?)
-      @eff_text = cps.select { |cp| cp <= 0x10ffff && !(0xd800..0xdfff).cover?(cp) }.pack('U*')
+      @eff_text = cps.select { |cp| cp <= 0x10ffff && !(0xd800..0xdfff).cover?(cp) }.pack('U*').freeze
       @ctrl_field = ncinput[:ctrl]
       freeze
     end

@@ -47,6 +47,21 @@ RSpec.describe Notcurses::Stats do
     expect(Notcurses.osversion).to start_with('Linux')
   end
 
+  it 'accountname sostituisce con U+FFFD i byte di LOGNAME che non sono UTF-8' do
+    old = ENV.fetch('LOGNAME', nil)
+    ENV['LOGNAME'] = "Jos\xE9".b # nome Latin-1
+    name = Notcurses.accountname
+    expect(name).to eq('Jos�')
+    expect(name).to be_valid_encoding
+  ensure
+    ENV['LOGNAME'] = old
+  end
+
+  it 'take_string sostituisce i byte non UTF-8 e lascia invariato il testo valido' do
+    expect(Notcurses::Util.take_string(Notcurses::FFI.strdup("a\xFFb".b))).to eq('a�b')
+    expect(Notcurses::Util.take_string(Notcurses::FFI.strdup('kitty 0.35.2'))).to eq('kitty 0.35.2')
+  end
+
   # Struct ncstats con i valori di stats (per provare il costruttore).
   def stats_struct(stats)
     st = Notcurses::FFI::NcStats.new

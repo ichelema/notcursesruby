@@ -88,6 +88,11 @@ RSpec.describe Notcurses::Context do
       NcHelpers.open_context(margins: '1,2,3,4') do |nc|
         expect(nc.stddim).to eq([24 - 1 - 3, 80 - 2 - 4])
         expect(nc.dims).to eq(nc.stddim)
+        # refresh e create_pile lavorano sull'area di rendering, non sul terminale
+        expect(nc.refresh).to eq(nc.dims)
+        root = nc.create_pile(margins: [1, 1, 1, 1])
+        expect(root.dims).to eq([18, 72])
+        root.close
       end
       # come create_child e create_pile: [alto, destra, basso, sinistra]
       NcHelpers.open_context(margins: [1, 2, 3, 4]) { |nc| expect(nc.stddim).to eq([24 - 1 - 3, 80 - 2 - 4]) }

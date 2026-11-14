@@ -17,12 +17,19 @@ module Notcurses
     #   prefisso (per esempio "i" per KiB), solo se c'è un prefisso
     # @return [String]
     # @raise [TypeError, ArgumentError] se un argomento non è valido
+    # @raise [ArgumentError] se 0 < value < decimal e value * base**k supera
+    #   2**64-1 prima di raggiungere decimal (possibile solo con decimal oltre
+    #   (2**64-1)/base). Bug di notcurses 3.0.17: +ncnmetric+ non controlla
+    #   l'overflow e restituirebbe cifre e prefisso sbagliati
     # @raise [Error] se la formattazione fallisce
     def metric(value, decimal: 1, base: 1000, omit_decimal: false, suffix: nil)
       Util.uint64!(value, 'value')
       Util.integer!(decimal, 'decimal', 1..(Util::UINT64.max / 10))
       # con altre basi i prefissi finiscono prima dei valori e il C scrive un NUL
       raise ArgumentError, "base = #{base.inspect} non valida: usa 1000 o 1024" unless [1000, 1024].include?(base)
+
+      # 1000.0 e 1024.0 passano il controllo sopra: il C riceve la base intera
+      check_metric_overflow!(value, decimal, base.to_i)
 
       omit = Util.c_bool(omit_decimal, 'omit_decimal')
       uprefix = 0
@@ -45,9 +52,11 @@ module Notcurses
     # @param omit_decimal [Boolean] come in {.metric}
     # @return [String]
     # @raise [TypeError, ArgumentError] se un argomento non è valido
+    # @raise [ArgumentError] se la coppia value/decimal va in overflow in
+    #   base 1000 (bug di notcurses 3.0.17, come in {.metric})
     # @raise [Error] se la formattazione fallisce
     def si_prefix(value, decimal: 1, omit_decimal: false)
-      buf = prefix_buffer(value, decimal)
+      buf = prefix_buffer(value, decimal, 1000)
       metric_result(FFI.ncqprefix(value, decimal, buf, Util.c_bool(omit_decimal, 'omit_decimal')), 'ncqprefix')
     end
 
@@ -59,9 +68,11 @@ module Notcurses
     # @param omit_decimal [Boolean] come in {.metric}
     # @return [String]
     # @raise [TypeError, ArgumentError] se un argomento non è valido
+    # @raise [ArgumentError] se la coppia value/decimal va in overflow in
+    #   base 1024 (bug di notcurses 3.0.17, come in {.metric})
     # @raise [Error] se la formattazione fallisce
     def binary_prefix(value, decimal: 1, omit_decimal: false)
-      buf = prefix_buffer(value, decimal)
+      buf = prefix_buffer(value, decimal, 1024)
       metric_result(FFI.nciprefix(value, decimal, buf, Util.c_bool(omit_decimal, 'omit_decimal')), 'nciprefix')
     end
 
@@ -73,9 +84,11 @@ module Notcurses
     # @param omit_decimal [Boolean] come in {.metric}
     # @return [String]
     # @raise [TypeError, ArgumentError] se un argomento non è valido
+    # @raise [ArgumentError] se la coppia value/decimal va in overflow in
+    #   base 1024 (bug di notcurses 3.0.17, come in {.metric})
     # @raise [Error] se la formattazione fallisce
     def byte_prefix(value, decimal: 1, omit_decimal: false)
-      buf = prefix_buffer(value, decimal)
+      buf = prefix_buffer(value, decimal, 1024)
       metric_result(FFI.ncbprefix(value, decimal, buf, Util.c_bool(omit_decimal, 'omit_decimal')), 'ncbprefix')
     end
 
@@ -196,10 +209,24 @@ module Notcurses
 
     private
 
-    def prefix_buffer(value, decimal)
+    def prefix_buffer(value, decimal, base)
       Util.uint64!(value, 'value')
       Util.integer!(decimal, 'decimal', 1..(Util::UINT64.max / 10))
+      check_metric_overflow!(value, decimal, base)
       ::FFI::MemoryPointer.new(:char, 64)
+    end
+
+    # Bug di 3.0.17: con 0 < value < decimal ncnmetric moltiplica value per base
+    # fino a decimal senza un controllo di overflow funzionante (metric.c:53-59).
+    # Il ciclo qui ripete quello del C con gli Integer di Ruby.
+    def check_metric_overflow!(value, decimal, base)
+      v = value
+      v *= base while v.positive? && v < decimal
+      return if v <= Util::UINT64.max
+
+      raise ArgumentError,
+            "value = #{value}, decimal = #{decimal}: in base #{base} il calcolo di ncnmetric supera 2**64-1 " \
+            '(bug di notcurses 3.0.17)'
     end
 
     def metric_result(str, what)
