@@ -292,7 +292,9 @@ module Notcurses
 
       # Esegue il blocco ogni seconds secondi (dal thread del ciclo). Se il
       # ciclo è in ritardo di più di un intervallo, le esecuzioni perse non
-      # vengono recuperate.
+      # vengono recuperate. Un'eccezione del blocco esce da {#run}, e il timer
+      # resta programmato: scatta ancora nel run successivo, fino a
+      # {Timer#cancel}.
       #
       # @param seconds [Numeric] intervallo, > 0
       # @yieldparam timer [Timer] il timer (per esempio per {Timer#cancel})
@@ -546,9 +548,13 @@ module Notcurses
           @timers.shift
           next unless timer.active?
 
-          timer.fire
           worked = true
-          reschedule(timer) if timer.interval && timer.active?
+          begin
+            timer.fire
+          ensure
+            # anche se il blocco solleva: un every attivo resta programmato
+            reschedule(timer) if timer.interval && timer.active?
+          end
         end
         worked
       end

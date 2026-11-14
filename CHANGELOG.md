@@ -110,6 +110,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 - `Context#getvec` alloca e chiede a notcurses al massimo 8192 eventi per chiamata, la dimensione della coda di
   input: prima `getvec(2**31 - 1)` chiedeva un buffer di 104 GiB, e a fine input un `count` grande costava secondi e
   centinaia di MB per un solo evento EOF. Gli eventi rimasti arrivano con la chiamata successiva (ICH-295).
+- `EventLoop#every`: un timer il cui blocco solleva resta programmato e scatta ancora nel `run` successivo, fino a
+  `Timer#cancel`; prima non scattava più, mentre `Timer#active?` restava true (ICH-296).
 
 ## [0.1.0] - 2026-10-27
 

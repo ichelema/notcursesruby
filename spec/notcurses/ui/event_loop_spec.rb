@@ -188,6 +188,43 @@ RSpec.describe Notcurses::UI::EventLoop do
       expect(times[2] - times[1]).to be >= 0.005 # senza recupero: nessuna raffica dopo il ritardo
     end
 
+    it 'un timer every il cui blocco solleva resta programmato per il run successivo' do
+      ev = new_loop
+      calls = 0
+      timer = ev.every(0.01) do
+        calls += 1
+        raise 'errore temporaneo' if calls == 2
+      end
+      expect { ev.run }.to raise_error(RuntimeError, 'errore temporaneo')
+      expect(calls).to eq(2)
+      expect(timer).to be_active
+      ev.after(0.1) { ev.stop }
+      expect(run_loop(ev)).to eq(:stop)
+      expect(calls).to be > 2
+      expect(timer).to be_active
+    end
+
+    it 'un timer every che si cancella e poi solleva resta fermo; un timer after che solleva non riparte' do
+      ev = new_loop
+      calls = 0
+      timer = ev.every(0.01) do |t|
+        calls += 1
+        t.cancel
+        raise 'errore definitivo'
+      end
+      expect { ev.run }.to raise_error(RuntimeError, 'errore definitivo')
+      expect(timer).not_to be_active
+      once = ev.after(0) do
+        calls += 10
+        raise 'una volta'
+      end
+      expect { ev.run }.to raise_error(RuntimeError, 'una volta')
+      expect(once).not_to be_active
+      ev.after(0.05) { ev.stop }
+      expect(run_loop(ev)).to eq(:stop)
+      expect(calls).to eq(11)
+    end
+
     it 'un blocco che si ripubblica non ferma il ciclo: ogni giro esegue solo i blocchi già in coda' do
       ev = new_loop
       count = 0
