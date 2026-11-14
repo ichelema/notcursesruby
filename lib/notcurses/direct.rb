@@ -968,7 +968,9 @@ module Notcurses
     # Carica e scala un'immagine senza disegnarla (+ncdirect_render_frame+):
     # la disegna {Frame#raster}. La chiamata C apre e legge il file senza il
     # GVL: gli altri thread Ruby girano, ma non devono usare lo stesso contesto
-    # finché la chiamata non torna.
+    # finché la chiamata non torna. Un'eccezione asincrona (Ctrl-C,
+    # Thread#raise, Timeout) arriva al ritorno della chiamata C: il frame creato
+    # dal C resta allocato fino alla fine del processo.
     #
     # @param path [String] file immagine
     # @param blitter [Symbol, Integer] come in {#render_image}
@@ -997,7 +999,10 @@ module Notcurses
     # Carica un'immagine o un video da renderizzare più volte
     # (+ncdirectf_from_file+). La chiamata C apre e legge il file senza il GVL:
     # gli altri thread Ruby girano, ma non devono usare lo stesso contesto
-    # finché la chiamata non torna.
+    # finché la chiamata non torna. Un'eccezione asincrona (Ctrl-C,
+    # Thread#raise, Timeout) arriva al ritorno della chiamata C: l'immagine
+    # creata dal C resta allocata, con il file aperto, fino alla fine del
+    # processo.
     #
     # @param path [String] file immagine o video
     # @return [Image] senza blocco; con un blocco, il valore del blocco
@@ -1146,7 +1151,9 @@ module Notcurses
       # Carica il file (+ncdirectf_from_file+). Usa di solito {Direct#load_image}.
       # La chiamata C apre e legge il file senza il GVL: gli altri thread Ruby
       # girano, ma non devono usare lo stesso contesto finché la chiamata non
-      # torna.
+      # torna. Un'eccezione asincrona (Ctrl-C, Thread#raise, Timeout) arriva al
+      # ritorno della chiamata C: l'immagine creata dal C resta allocata, con il
+      # file aperto, fino alla fine del processo.
       #
       # @param direct [Direct] contesto aperto
       # @param path [String] file immagine o video

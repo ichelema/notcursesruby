@@ -166,7 +166,10 @@ module Notcurses
     # Thread: la chiamata C apre e legge il file con ffmpeg senza il GVL (una
     # FIFO, un URL o un file system lento non hanno limite di tempo): gli altri
     # thread Ruby girano, ma non devono usare lo stesso contesto finché la
-    # chiamata non torna.
+    # chiamata non torna. Un'eccezione asincrona (Ctrl-C, Thread#raise,
+    # Timeout, il kill di {FdPlane#close}) arriva al ritorno della chiamata C:
+    # il visual creato dal C resta allocato, con il file aperto, fino alla fine
+    # del processo.
     #
     # @param path [String, #to_path] percorso del file
     # @yieldparam visual [Visual] (facoltativo) il visual, chiuso alla fine del blocco
