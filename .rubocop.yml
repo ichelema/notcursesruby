@@ -37,5 +37,10 @@ AllCops:
 Layout/EndOfLine:
   Enabled: false
 
+# Standard turns this cop off: without it nothing
+# checks that the rubocop:disable comments are still needed
+Lint/RedundantCopDisableDirective:
+  Enabled: true
+
 Style/Documentation:
   Enabled: false

@@ -233,6 +233,12 @@ Lint/InterpolationCheck:
   Exclude:
     - 'examples/demo.rb'
 
+# Offense count: 1
+# This cop supports safe autocorrection (--autocorrect).
+Lint/RedundantCopDisableDirective:
+  Exclude:
+    - 'lib/notcurses/ui/component.rb'
+
 # Offense count: 2
 # This cop supports safe autocorrection (--autocorrect).
 # Configuration parameters: AllowPercentLiteralArrayArgument.
@@ -415,7 +421,7 @@ Style/SingleLineMethods:
   Exclude:
     - 'lib/notcurses/ui/component.rb'
 
-# Offense count: 3897
+# Offense count: 3899
 # This cop supports safe autocorrection (--autocorrect).
 # Configuration parameters: EnforcedStyle, ConsistentQuotesInMultiline.
 # SupportedStyles: single_quotes, double_quotes
