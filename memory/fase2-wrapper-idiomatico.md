@@ -322,6 +322,12 @@ fino al ridisegno successivo. Bordi arrotondati, ASCII senza UTF-8; niente PgUp/
 | `ncfdplane_destroy` durante o dentro il callback blocca l'interprete (`fd.c:136-148`); con `follow` busy loop a fine file (`fd.c:50-70`); il ritorno del callback non ferma il thread | `FdPlane` in Ruby: Thread Ruby con `IO#readpartial`, `follow:` ritenta ogni 0,1 s |
 | `ncsubproc_destroy` in deadlock con il figlio vivo (`fd.c:432-436`); 3 fd lasciati aperti (`fd.c:231-234`, `438`); il figlio eredita lo stdin (`fd.c:196`); exec fallito non segnalato (`fd.c:207`); SIGKILL a un PID forse riciclato (`fd.c:411`); `restart_period` ignorato | `Subprocess` in Ruby (sottoclasse di `FdPlane`): stdin da `/dev/null`, `close_others`, exec fallito → `Errno::*` subito, kill solo se `Process.detach` non ha ancora raccolto il figlio |
 
+### Formato (`format.rb`)
+
+| Bug | Workaround |
+| --- | --- |
+| `ncnmetric` con 0 < value < decimal moltiplica value per la base fino a decimal senza un controllo di overflow funzionante (`metric.c:53-59`: la guardia di `metric.c:56` controlla `dv`, che non cambia): cifre e prefisso sbagliati, senza errore. Serve decimal > (2^64-1)/base | `metric`, `si_prefix`, `binary_prefix` e `byte_prefix` ripetono il ciclo del C con gli Integer di Ruby e sollevano `ArgumentError` solo per le coppie che vanno in overflow; l'intervallo di `decimal` resta `1..(2**64-1)/10` (ICH-302) |
+
 ## Bug noti non aggirati (documentati nel YARD)
 
 - **`logrow` dopo il primo scroll** (`notcurses.c:615`, `1777`): `Plane#duplicate`, i resize (anche la crescita per

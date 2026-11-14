@@ -27,6 +27,19 @@ RSpec.describe 'Notcurses: funzioni di formattazione' do
       expect { Notcurses.metric(1, omit_decimal: 1) }.to raise_error(TypeError)
       expect { Notcurses.metric('1') }.to raise_error(TypeError)
     end
+
+    it 'rifiuta le coppie value/decimal che mandano ncnmetric in overflow (bug di 3.0.17)' do
+      expect { Notcurses.metric(10**17, decimal: 10**18) }.to raise_error(ArgumentError)
+      expect { Notcurses.metric(1, decimal: (2**64 - 1) / 10) }.to raise_error(ArgumentError)
+      expect { Notcurses.metric(2**58, decimal: 2**60, base: 1024) }.to raise_error(ArgumentError)
+    end
+
+    it 'accetta le coppie con decimal grande che non vanno in overflow' do
+      expect(Notcurses.metric(10**16, decimal: 10**18)).to eq('10.00m')
+      expect(Notcurses.metric(5 * 10**18, decimal: 10**18)).to eq('5.00')
+      expect(Notcurses.metric(0, decimal: 10**18)).to eq('0.00')
+      expect(Notcurses.si_prefix(10**14, decimal: 10**15)).to eq('100.00m')
+    end
   end
 
   describe 'prefissi standard' do
@@ -38,6 +51,12 @@ RSpec.describe 'Notcurses: funzioni di formattazione' do
       expect(Notcurses.byte_prefix(1023)).to eq('1023.00')
       expect { Notcurses.si_prefix(-5) }.to raise_error(ArgumentError)
       expect { Notcurses.binary_prefix(1, decimal: 0) }.to raise_error(ArgumentError)
+    end
+
+    it 'rifiutano le coppie value/decimal che vanno in overflow (bug di 3.0.17)' do
+      expect { Notcurses.si_prefix(10**17, decimal: 10**18) }.to raise_error(ArgumentError)
+      expect { Notcurses.binary_prefix(2**58, decimal: 2**60) }.to raise_error(ArgumentError)
+      expect { Notcurses.byte_prefix(2**58, decimal: 2**60) }.to raise_error(ArgumentError)
     end
 
     it 'dopo un contesto UTF-8 il prefisso micro è µ' do
