@@ -881,7 +881,10 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
   nessun finding; GPT nessun finding in tutti i round; due difetti già presenti su `master` in ICH-463 e ICH-464).
   Lotto 14: Fable e GPT, 2 round (round 1: due LOW di Fable, il controllo di overflow di `metric` in aritmetica
   Float con `base: 1000.0` o `1024.0` e le voci del CHANGELOG mancanti, corretti; round 2: nessun finding; GPT
-  nessun finding in tutti i round).
+  nessun finding in tutti i round). ICH-465 (fuori dai lotti): `/trinity:workflow:3_independent-review` nella stessa
+  sessione dell'implementazione (non indipendente), 1 round: NON APPROVABILE, un HIGH (`parallel 2.3.0` nel lockfile
+  richiede Ruby >= 3.3: `bundle install` rosso nel job Ruby 3.2.11) e un LOW (`Lint/RedundantCopDisableDirective`
+  spento da Standard), corretti dopo la review senza un nuovo round; CI verde su tutta la matrice.
 
 ### Lotti
 
@@ -901,6 +904,7 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 | 12 | [#13](https://github.com/ichelema/notcursesruby/pull/13) | `4ec4f4c` | ICH-291, ICH-292, ICH-293 | nessuno |
 | 13 | [#14](https://github.com/ichelema/notcursesruby/pull/14) | `7f91ae7` | ICH-294, ICH-295, ICH-296, ICH-298, ICH-299 | con stdin su un pipe, un carattere UTF-8 a cavallo della lettura da 8192 byte (`in.c:56`, `2179`) ferma l'input: `get` non restituisce quel carattere e `notcurses_stop` non ritorna; causa nel C non verificata, non ancora nelle tabelle dei bug (ICH-463). A coda piena notcurses scarta gli eventi (`in.c:523`) e li conta in `Stats#input_errors`: limite già noto, misurato nel lotto |
 | 14 | [#15](https://github.com/ichelema/notcursesruby/pull/15) | `d47e3ac` | ICH-300, ICH-301, ICH-302, ICH-303 | `ncnmetric` con 0 < value < decimal moltiplica value per la base fino a decimal senza un controllo di overflow funzionante (`metric.c:53-59`: la guardia di `metric.c:56` controlla `dv`, che in quel ramo non cambia): con decimal > (2^64 - 1)/base restituisce cifre e prefisso sbagliati senza errore; nuova tabella "Formato (`format.rb`)" di `memory/fase2-wrapper-idiomatico.md` |
+| fuori dai lotti | [#16](https://github.com/ichelema/notcursesruby/pull/16) | `ba3367f` | ICH-465 (RuboCop con Standard nel `Gemfile` e nella CI; nessun cambio in `lib/` e `spec/`) | nessuno |
 
 ### Cambi dell'API pubblica
 
@@ -1005,7 +1009,29 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
-Nessuno.
+- ICH-465: nel gruppo `:development`, con `require: false`, `rubocop ~> 1.91.0`, `rubocop-performance ~> 1.26.1`,
+  `rubocop-thread_safety ~> 0.8.0`, `standard ~> 1.57.0` e `parallel < 2`. Il vincolo su `parallel` serve al job
+  Ruby 3.2.11, che installa dal lockfile: `parallel` 2.x richiede Ruby >= 3.3 (nel lockfile c'è la 1.28.0). Un
+  `bundle lock` o `bundle update` fatto con un Ruby recente può scegliere altre gem che non accettano Ruby 3.2: dopo
+  ogni cambio del lockfile controlla il job Ruby 3.2.11 della CI.
+- Nei lotti 1–14: nessuno.
+
+### RuboCop (ICH-465)
+
+- `.rubocop.yml`: Standard come base (`inherit_gem`), plugin `rubocop-performance` e `rubocop-thread_safety`,
+  `TargetRubyVersion: 3.1`, `NewCops: enable`, `Layout/EndOfLine` e `Style/Documentation` spenti. Una differenza
+  dalla configurazione di riferimento della issue (scelta dell'utente dopo la review):
+  `Lint/RedundantCopDisableDirective` è acceso, perché Standard lo spegne e senza quel cop niente controlla i
+  commenti `# rubocop:disable`.
+- `.rubocop_todo.yml`: generato con `bundle exec rubocop --auto-gen-config --exclude-limit 1000
+  --no-auto-gen-timestamp`; congela 5307 offense in 93 file, solo con `Exclude` per file (46 cop). Nessun cop è
+  spento per tutto il progetto: un file nuovo passa da ogni cop, quindi va scritto nello stile di Standard (stringhe
+  con le virgolette doppie). Una offense nuova di un cop in un file già escluso per quel cop non viene rilevata.
+- Lavoro rimasto, fuori da ICH-465 (elenco nella issue, sezione "Out of scope"): le offense correggibili con
+  `rubocop -a` (la conversione alle virgolette doppie rompe due regex che leggono i sorgenti come testo,
+  `notcursesruby.gemspec:7` e `spec/gemspec_spec.rb:24`: vanno corrette nello stesso commit), le 17 correzioni non
+  sicure, le offense `ThreadSafety/*`. In più, senza issue: il commento `# rubocop:disable
+  Lint/UnusedMethodArgument` di `lib/notcurses/ui/component.rb:223` non serve con Standard (file nel todo).
 
 ### CI
 
@@ -1017,6 +1043,8 @@ Nessuno.
 - Podman 6.1.4 è ora installato sulla macchina di sviluppo: il container della CI si riproduce in locale (immagine
   `docker.io/library/archlinux:base@sha256:52dfbd5a…`, mirror dello snapshot, poi `pacman -Syuu` con i pacchetti di
   `ci.yml`).
+- ICH-465: step «RuboCop senza offense» (`bundle exec rubocop`) solo nel job `full: true` (Ruby 4.0.9), ultimo step
+  del job, così un fallimento del linter non salta gli artifact della coverage e della documentazione.
 
 ### Issue aperte nate dai lotti
 

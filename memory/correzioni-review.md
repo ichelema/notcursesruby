@@ -784,3 +784,61 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 - `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
 - `master` su `d47e3ac`: 1033 esempi, 0 fallimenti con i semi 1234, 4242 e 7 (le immagini ci sono nel checkout
   principale); `gem build` riuscito (warning solo di rdoc, vedi lotto 13); CI verde.
+
+## Fuori dai lotti — ICH-465, RuboCop (PR #16, merge `ba3367f`)
+
+### Cambi
+
+- **ICH-465 (`Improvement`, RuboCop nel `Gemfile` e nella CI).** Cinque commit: `92d8b96` (gem, `.rubocop.yml`,
+  `.rubocop_todo.yml`), `ca327d9` (step della CI), `0829f12` (README), `7cac717` (`parallel < 2`), `e1f5e58`
+  (`Lint/RedundantCopDisableDirective` acceso). Nessun cambio in `lib/`, `spec/`, `examples/` e nel gemspec; nessuna
+  voce nel CHANGELOG (non è un fix e il contenuto della gem non cambia).
+- `.rubocop_todo.yml` si rigenera identico con il comando scritto nella sua intestazione
+  (`--auto-gen-config --exclude-limit 1000 --no-auto-gen-timestamp`): 5307 offense in 93 file, 46 cop, solo
+  `Exclude` per file.
+
+### Decisioni
+
+- `--exclude-limit 1000` (più dei 93 file): nessun cop spento per tutto il progetto, come chiede la issue.
+- Lo step «RuboCop senza offense» è l'ultimo del job `full: true`, non accanto a YARD: un fallimento del linter non
+  salta gli artifact.
+- `parallel < 2` nel `Gemfile`, non solo una correzione del lockfile: il vincolo regge anche ai `bundle update` fatti
+  con un Ruby recente (scelta dell'utente dopo la review: «fixa entrambi»).
+- `Lint/RedundantCopDisableDirective` acceso in `.rubocop.yml`: differenza voluta dalla configurazione di riferimento
+  della issue (scelta dell'utente dopo la review). Il criterio della issue sui 10 commenti `# rubocop:disable`
+  passava a vuoto, perché Standard spegne il cop.
+- I file YAML nuovi non hanno l'intestazione "Generated from notcurses": la regola 7 riguarda i file Ruby generati
+  (`codecov.yml` non la ha).
+- Merge fatto dalla sessione su richiesta dell'utente («chiudila tu adesso»), con la CI verde.
+
+### Review (1 round, stessa sessione dell'implementazione)
+
+- `/trinity:workflow:3_independent-review` su `0829f12`: NON APPROVABILE. HIGH: il lockfile, generato con Ruby
+  4.0.7, bloccava `parallel 2.3.0`, che richiede Ruby >= 3.3; il job Ruby 3.2.11 installa dal lockfile
+  (`BUNDLE_FROZEN`) e `bundle install` falliva. Il job 3.1.7 non lo vedeva, perché non usa il lockfile. LOW: 9
+  commenti `# rubocop:disable` su 10 servono; quello di `lib/notcurses/ui/component.rb:223`
+  (`Lint/UnusedMethodArgument`) no, perché Standard spegne anche quel cop. Corretti in `7cac717` ed `e1f5e58`, senza
+  un nuovo round; il commento resta (la issue vieta i cambi in `lib/`) e il file è nel todo.
+- Prove del reviewer senza finding: `.rubocop.yml` identico al riferimento della issue (prima di `e1f5e58`); un file
+  nuovo con una offense e una offense di un cop non escluso in un file esistente danno esito 1; RuboCop non entra
+  nelle directory nascoste, quindi i worktree in `.claude/worktrees/` non cambiano l'esito.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| `bundle install` rosso nel job Ruby 3.2.11 | `bundle lock` con Ruby 4.0.7 sceglie `parallel 2.3.0` (Ruby >= 3.3) | `gem 'parallel', '< 2'` nel `Gemfile`; lockfile con la 1.28.0 |
+| Su Ruby 3.2 Bundler avvisa per `prism 2.1.0` | le gem precompilate di `prism` richiedono Ruby >= 3.3: su 3.2 si compila la gem generica | nessuna: il job è verde |
+| PR aperta prima dell'esito della CI | `2_work-issue` si ferma dopo l'apertura della PR | il job rosso è emerso nella review: controlla sempre `gh pr checks <n> --watch` prima della review |
+| 10 esempi falliti nel worktree | submodule `notcurses` non inizializzato | `git submodule update --init --depth 1 notcurses` nel worktree; poi `git worktree remove --force` (il `deinit` non basta: Git guarda `.git/worktrees/<nome>/modules`) |
+| Un comando con `rm -rf` in coda, eseguito dall'utente dopo la rimozione del worktree di review | il comando ricreava con `mkdir -p` la directory già rimossa | tre directory vuote tolte con `rmdir`; nei comandi di prova niente `rm` |
+| `linear.py` senza il bit di esecuzione | permessi del file della skill | `chmod +x` su richiesta dell'utente |
+| Chiusura (passo 7) non eseguita dopo il merge e dopo `5_remove-worktree` | la sessione ha seguito solo i command del workflow, senza leggere `RIPRESA.md` | chiusura fatta su richiesta dell'utente; `5_remove-worktree` ora la ricorda |
+
+### Verifica finale
+
+- Branch (`e1f5e58`): `bundle exec rubocop` 95 file, 0 offense; 1033 esempi, 0 fallimenti su Ruby 4.0.7 con il
+  submodule inizializzato; `ruby -w` senza warning. CI verde su tutta la matrice (Ruby 3.1.7–4.0.9) e Codecov.
+- `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+- `master` su `ba3367f`: 1033 esempi, 0 fallimenti in ordine normale e con i semi 1234, 4242 e 7; RuboCop senza
+  offense; `gem build` riuscito; CI verde.
