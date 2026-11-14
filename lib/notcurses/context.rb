@@ -890,7 +890,8 @@ module Notcurses
     def palette_size = FFI.notcurses_palette_size(to_ptr)
 
     # Nome del terminale rilevato (+notcurses_detected_terminal+).
-    # @return [String, nil]
+    # @return [String, nil] i byte che non sono UTF-8 valido (per esempio
+    #   nella versione inviata dal terminale) diventano U+FFFD
     # @raise [ClosedError] se il contesto è chiuso
     def detected_terminal = Util.take_string(FFI.notcurses_detected_terminal(to_ptr))
 

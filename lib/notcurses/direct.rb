@@ -1060,7 +1060,8 @@ module Notcurses
 
     # Nome (e versione, se nota) del terminale rilevato
     # (+ncdirect_detected_terminal+).
-    # @return [String, nil]
+    # @return [String, nil] i byte che non sono UTF-8 valido (per esempio
+    #   nella versione inviata dal terminale) diventano U+FFFD
     # @raise [ClosedError] se il contesto è chiuso
     def detected_terminal = Util.take_string(FFI.ncdirect_detected_terminal(to_ptr))
 

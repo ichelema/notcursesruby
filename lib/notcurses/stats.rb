@@ -202,16 +202,18 @@ module Notcurses
   end
 
   class << self
-    # Nome dell'utente (+notcurses_accountname+).
-    # @return [String, nil]
+    # Nome dell'utente (+notcurses_accountname+): +LOGNAME+ o il nome nel
+    # database degli utenti. Il nome originale, byte per byte, resta in
+    # +ENV['LOGNAME']+.
+    # @return [String, nil] i byte che non sono UTF-8 valido diventano U+FFFD
     def accountname = Util.take_string(FFI.notcurses_accountname)
 
     # Nome dell'host (+notcurses_hostname+).
-    # @return [String, nil]
+    # @return [String, nil] i byte che non sono UTF-8 valido diventano U+FFFD
     def hostname = Util.take_string(FFI.notcurses_hostname)
 
     # Descrizione del sistema operativo (+notcurses_osversion+).
-    # @return [String, nil]
+    # @return [String, nil] i byte che non sono UTF-8 valido diventano U+FFFD
     def osversion = Util.take_string(FFI.notcurses_osversion)
   end
 end
