@@ -888,7 +888,9 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
   richiede Ruby >= 3.3: `bundle install` rosso nel job Ruby 3.2.11) e un LOW (`Lint/RedundantCopDisableDirective`
   spento da Standard), corretti dopo la review senza un nuovo round; CI verde su tutta la matrice. Lotto 15: Fable e
   GPT, 1 round, nessun finding; implementazione fatta dalla sessione (Fable), quindi la review Fable è meno
-  indipendente di quella GPT; l'esempio YARD di `Notcurses::UI::App`, già su `master`, in ICH-473.
+  indipendente di quella GPT; l'esempio YARD di `Notcurses::UI::App`, già su `master`, in ICH-473. Lotto 16: Fable
+  e GPT, 2 round (round 1: un LOW di Fable, l'intestazione di due righe mancante nei due file di spec nuovi,
+  corretto; round 2: nessun finding; GPT nessun finding in tutti i round).
 
 ### Lotti
 
@@ -910,6 +912,7 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 | 14 | [#15](https://github.com/ichelema/notcursesruby/pull/15) | `d47e3ac` | ICH-300, ICH-301, ICH-302, ICH-303 | `ncnmetric` con 0 < value < decimal moltiplica value per la base fino a decimal senza un controllo di overflow funzionante (`metric.c:53-59`: la guardia di `metric.c:56` controlla `dv`, che in quel ramo non cambia): con decimal > (2^64 - 1)/base restituisce cifre e prefisso sbagliati senza errore; nuova tabella "Formato (`format.rb`)" di `memory/fase2-wrapper-idiomatico.md` |
 | fuori dai lotti | [#16](https://github.com/ichelema/notcursesruby/pull/16) | `ba3367f` | ICH-465 (RuboCop con Standard nel `Gemfile` e nella CI; nessun cambio in `lib/` e `spec/`) | nessuno |
 | 15 | [#17](https://github.com/ichelema/notcursesruby/pull/17) | `28ef91a` | ICH-304, ICH-305; ICH-473 (nata dalla review) | nessuno |
+| 16 | [#18](https://github.com/ichelema/notcursesruby/pull/18) | `9672bd5` | ICH-306, ICH-307, ICH-308, ICH-309, ICH-310, ICH-311 (solo spec e CI, nessun cambio in `lib/`) | nessuno |
 
 ### Cambi dell'API pubblica
 
@@ -1023,6 +1026,7 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
 - Lotto 15 (ICH-305): `gem 'ffi', '~> 1.16'` nel `Gemfile` e `ffi ~> 1.16` nel gemspec (prima `~> 1.15`). Nel
   `Gemfile.lock` cambia solo la riga `ffi (~> 1.16)` di `DEPENDENCIES`: `ffi 1.17.4`, le sue piattaforme e
   `BUNDLED WITH 4.0.22` restano uguali.
+- Lotto 16: nessuno.
 
 ### RuboCop (ICH-465)
 
@@ -1053,6 +1057,14 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
   `ci.yml`).
 - ICH-465: step «RuboCop senza offense» (`bundle exec rubocop`) solo nel job `full: true` (Ruby 4.0.9), ultimo step
   del job, così un fallimento del linter non salta gli artifact della coverage e della documentazione.
+- Lotto 16 (ICH-311): `codecov/codecov-action` è fissata allo SHA del commit di `v7.1.1`
+  (`303a32d7a59b442fa8d48b6a1cc6825c09c847a5`, con il commento `# v7.1.1`); `spec/ci_workflow_spec.rb` chiede uno
+  SHA di 40 cifre e il commento della versione per ogni action fuori da `actions/`. Aggiornamento insieme allo
+  snapshot: punto 5 di "Cosa serve alla fase successiva" della Fase 4.
+- Lotto 16 (ICH-309): `spec/ffi_layout_spec.rb` compila in ogni job un programma C contro gli header di notcurses
+  (`gcc` da `base-devel`, nessun cambio a `ci.yml`). Va in skip, senza far fallire la CI, solo se manca un
+  compilatore o se `#include <notcurses/notcurses.h>` non compila: dopo un cambio di `ARCH_SNAPSHOT` controlla che
+  nei log non ci siano esempi `pending`.
 
 ### Issue aperte nate dai lotti
 

@@ -898,3 +898,86 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 - `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
 - `master` su `28ef91a`: 1033 esempi, 0 fallimenti in ordine normale e con i semi 1234, 4242 e 7; RuboCop senza
   offense; `ruby -w` senza warning; `gem build` riuscito; CI verde.
+
+## Lotto 16 — ICH-306…ICH-311 (PR #18, merge `9672bd5`)
+
+### Fix
+
+Solo spec e CI: nessun cambio in `lib/`. Ogni spec nuova passa sul codice attuale; la prova è la mutazione chiesta
+dalla issue, che la fa fallire.
+
+- **ICH-306 (`nucleo-11`, Alt nel campo deprecato).** `spec/notcurses/input_spec.rb`: un `NcInput` con `alt = true`
+  e `modifiers = 0` dà `alt?`, il bit `NCKEY_MOD_ALT`, `modifier_list == [:alt]` e `to_ffi[:modifiers]` con Alt.
+  `get_script` di `spec/integration/pty_spec.rb` scrive `"\ex"` con una sola `master.write` prima dell'Interrupt e
+  si aspetta `alt x true [:alt]`. Causa radice: ogni spec costruiva Alt con `Input.synthesize(modifiers: [:alt])`,
+  quindi nessuna passava da `input.rb:395`. Mutazione (riga tolta in una copia di `lib/`): i due esempi falliscono.
+- **ICH-307 (`nucleo-12`, `Palette#use`).** Dopo `use`, `described_class.open(nc) { |p| p.rgb(3) }` deve dare
+  `[1, 2, 3]`. Causa radice: l'esempio controllava solo il ritorno `self`. Mutazioni: `use` senza `ncpalette_use` e
+  `use` con una copia `ncpalette_new` danno `got: [0, 0, 0]`.
+- **ICH-308 (`direct-visual-04`, `count:` negativo).** Per i quattro `cursor_*`: `count: -1` solleva
+  `ArgumentError` con `/count/` e `ncdirect_cursor_*` non viene chiamata; la chiamata posizionale resta, con
+  `/wrong number of arguments/`. Causa radice: la chiamata posizionale prendeva l'errore di arità di Ruby, non la
+  validazione. Mutazione: senza `Util.nonneg_int!` in uno qualsiasi dei quattro metodi l'esempio fallisce.
+- **ICH-309 (`ffi-05`, layout FFI contro gli header C).** Nuova `spec/ffi_layout_spec.rb`: genera un programma C
+  dalle definizioni Ruby, lo compila con `-D_GNU_SOURCE` (più `pkg-config --cflags notcurses` se c'è) in
+  `Dir.mktmpdir` e confronta 26 struct (sizeof, `_Alignof`, offset e dimensione di 191 campi), gli offset dei flag di
+  `Termios` con `sizeof(struct termios) <= Termios.size`, e le 343 costanti (286 Integer come signed 64 bit, 57
+  String, le 51 wide in UTF-8 con un `_Generic` e una codifica a mano). Mappa esplicita classe → tipo C (27 voci);
+  una classe senza voce o una costante senza macro C fa fallire la spec; un errore di compilazione è un fallimento;
+  skip con il motivo solo senza compilatore o senza header usabili. `version_spec.rb`: `lib_version` deve iniziare
+  con `HEADER_VERSION`. Causa radice: il confronto con il C era stato fatto una volta sola, nella Fase 1, con un
+  programma di appoggio. Mutazioni: scambio `cellelisions`/`cellemissions`, `NCKEY_F60` + 1, un campo rinominato
+  (errore di compilazione), una stringa wide cambiata: la spec fallisce. Nessuna differenza tra Ruby e C.
+- **ICH-310 (`ui-13`, kitty e `Key::RESIZE`).** `spec/integration/ui_pty_spec.rb`: `kitty_app_script` riusa
+  `kitty_prelude` (lotto 7) e manda le sequenze CSI u della issue: testo `abb` con ripetizione e rilasci, Ctrl+X con
+  NumLock una volta, Tab al `Button`, Invio una volta, i 5 rilasci a `on_input` e a nessun componente (un
+  `offer_input` singleton su `TextInput` e `Button` li conta: 0), Ctrl+C → `:interrupt`. `winch_script`
+  (`no_winch_sighandler: false`, pty come terminale di controllo) cambia `winsize` a 30x100, aspetta 0,2 s e manda
+  `z`: log `[[:resize, 30, 100], [:z, [30, 100]]]`. Mutazioni: NumLock in `MOD_OTHER` fa fallire l'esempio kitty
+  nuovo e anche quello dei segnali kitty già esistente; `when Key::RESIZE then nil` fa fallire l'esempio della
+  modalità B (log `[[:z, [24, 80]], [:resize, 30, 100]]`).
+- **ICH-311 (`ffi-02`, codecov-action).** `ci.yml`: `codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
+  # v7.1.1`, `if:` e `with:` invariati. `v7.1.1` è un tag annotato: lo SHA è quello del commit (`gh api
+  .../commits/v7.1.1`), non dell'oggetto tag (`23209167…`). Nuova `spec/ci_workflow_spec.rb` (falliva su `@v7`).
+  Punto 5 di "Cosa serve alla fase successiva" della Fase 4 in `RICONSEGNA.md`: SHA e comando per leggerlo.
+
+### Decisioni
+
+- ICH-310: il terminale finto con kitty esisteva già (lotto 7), quindi il primo criterio era coperto; l'esempio
+  della modalità B ha un preambolo proprio con `setsid` e `TIOCSCTTY`, perché il gestore SIGWINCH di notcurses
+  riceve il segnale solo dal terminale di controllo.
+- ICH-308: la chiamata posizionale resta, come controllo dell'API solo keyword (la issue lo permette).
+- Nessuna voce in `CHANGELOG.md`: il lotto cambia solo spec e CI, come ICH-465.
+- Implementazione: ICH-306, 307, 308 e 311 dalla sessione (Opus); ICH-309 e ICH-310 da due `trinity:fast-worker`
+  (Sonnet) in parallelo, su file separati, senza commit; diff e mutazioni ricontrollati dalla sessione.
+
+### Review (2 round, Fable e GPT)
+
+- Round 1 (`9fb5117`): GPT nessun finding. Fable un LOW: `spec/ci_workflow_spec.rb` e `spec/ffi_layout_spec.rb`
+  senza l'intestazione di due righe (`# Generated from notcurses 3.0.17`, `# Source: ...`) che hanno tutti gli altri
+  93 file Ruby, spec scritte a mano comprese. Corretto in `9213c75`.
+- Round 2 (`9213c75`): nessun finding da Fable e da GPT. Commento riassuntivo sulla PR.
+- Note dei reviewer, non finding: lo skip di `ffi_layout_spec.rb` non fa fallire la CI (come chiede la issue; nota
+  nella sezione CI di `RICONSEGNA.md`); un campo C nuovo dentro il padding finale di una struct non cambia sizeof né
+  offset; `ci_workflow_spec.rb` legge solo `ci.yml`; `winch_script` è la terza copia del preambolo pty senza kitty.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| `echo =====` ha fermato il ciclo di lettura delle issue | in zsh una parola che comincia con `=` è una expansion del percorso | testo tra virgolette o `jq` |
+| La mutazione di ICH-306 non poteva toccare `lib/` del worktree | il worker di ICH-310 usava lo stesso `lib/` in quel momento | mutazione su una copia di `lib/` e `spec/` nello scratchpad; nella copia fallisce anche l'esempio `:pixel`, per le immagini del submodule assenti |
+| `pty_spec.rb:173` fallisce sotto carico (circa 1 su 30, review Fable round 2) | la gara di tempi nota di `getvec` (`getvec x` invece di `getvec x,y,z,UP`), già su `master` | nessuna; la riga nuova di ICH-306 era corretta nello stesso output |
+| Un comando del reviewer Fable con `rm -f` è andato in coda per la conferma | hook Blast Radius | l'utente l'ha approvato; worktree di review rimossi con `status` vuoto |
+| `sleep 0.2` nell'esempio della modalità B | il gestore SIGWINCH deve girare prima del tasto | 0 fallimenti in 5 giri del worker e in 42 giri dei reviewer, 30 sotto carico |
+
+### Verifica finale
+
+- Branch (`9213c75`): 1044 esempi, 0 fallimenti su Ruby 4.0.7 (11 esempi in più del lotto 15), anche con i semi
+  1234, 4242 e 7; `bundle exec rubocop` 97 file, 0 offense; `actionlint` su `ci.yml` senza errori. CI verde su tutta
+  la matrice (Ruby 3.1.7–4.0.9) e Codecov, senza esempi `pending` nei log: `ffi_layout_spec.rb` gira in ogni job.
+- `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+- `master` su `9672bd5`: 1044 esempi, 0 fallimenti in ordine normale e con i semi 1234, 4242 e 7; RuboCop senza
+  offense; `ruby -w` senza warning; `gem build` riuscito. CI di `master` (run 43642485059) verde su tutta la
+  matrice; lo step "Upload su Codecov" con lo SHA fissato è riuscito al primo push su `master` (ultimo criterio di
+  ICH-311). Le sei issue sono a Done.
