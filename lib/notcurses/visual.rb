@@ -604,7 +604,10 @@ module Notcurses
     #
     # Thread: la chiamata C legge il file senza il GVL, come in {.from_file}:
     # gli altri thread Ruby girano, ma non devono usare lo stesso contesto
-    # finché la chiamata non torna.
+    # finché la chiamata non torna. Chiudere il visual o il contesto durante la
+    # chiamata, anche con l'hook at_exit o alla fine del blocco di
+    # {Context.open}, libera la memoria che il C sta usando (crash o blocco):
+    # prima ferma o attendi il thread che decodifica.
     #
     # @return [Boolean] true se c'è un nuovo frame, false a fine stream (il
     #   visual conserva l'ultimo frame; il C restituisce 1, che non è un errore)
@@ -621,7 +624,8 @@ module Notcurses
     # Come {#decode}, ma a fine stream riparte dal primo frame
     # (+ncvisual_decode_loop+). Come {#decode}, la chiamata C legge il file
     # senza il GVL: gli altri thread Ruby girano, ma non devono usare lo stesso
-    # contesto finché la chiamata non torna.
+    # contesto finché la chiamata non torna, e il visual o il contesto non
+    # vanno chiusi durante la chiamata (anche con at_exit).
     #
     # @return [Boolean] true se c'è il frame successivo, false se è ripartito
     #   dall'inizio (il visual contiene il primo frame)
