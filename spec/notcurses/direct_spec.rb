@@ -400,7 +400,10 @@ RSpec.describe Notcurses::Direct do
         expect(written { d.cursor_down.cursor_left.cursor_right }).to eq("\v\e[1D\e[1C")
         expect(written { d.cursor_up(count: 0).cursor_down(count: 0).cursor_left(count: 0).cursor_right(count: 0) }).to eq('')
         %i[cursor_up cursor_down cursor_left cursor_right].each do |m|
-          expect { d.public_send(m, -1) }.to raise_error(ArgumentError), m.to_s
+          allow(ffi).to receive(:"ncdirect_#{m}").and_call_original
+          expect { d.public_send(m, count: -1) }.to raise_error(ArgumentError, /count/), m.to_s
+          expect(ffi).not_to have_received(:"ncdirect_#{m}")
+          expect { d.public_send(m, -1) }.to raise_error(ArgumentError, /wrong number of arguments/), m.to_s
         end
       end
 
