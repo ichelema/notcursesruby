@@ -320,6 +320,17 @@ RSpec.describe Notcurses::Context do
       expect(evs.first.id).to eq(Notcurses::Key::EOF)
       expect(@nc.get(timeout: (2**31) - 1).id).to eq(Notcurses::Key::EOF) # il timeout massimo è valido
     end
+
+    it 'getvec passa al C al massimo 8192 slot, la dimensione della coda di notcurses' do
+      allow(Notcurses::FFI).to receive(:notcurses_getvec).and_call_original
+      expect(@nc.getvec(1_000_000, timeout: 1).map(&:id)).to eq([Notcurses::Key::EOF])
+      expect(Notcurses::FFI).to have_received(:notcurses_getvec).with(anything, anything, anything, 8192)
+      expect(@nc.getvec(5, timeout: 1).size).to eq(1)
+      expect(Notcurses::FFI).to have_received(:notcurses_getvec).with(anything, anything, anything, 5)
+      # senza il limite il buffer sarebbe di 104 GiB (NoMemoryError)
+      expect(@nc.getvec((2**31) - 1, timeout: 1).map(&:id)).to eq([Notcurses::Key::EOF])
+      expect(Notcurses::FFI).not_to have_received(:notcurses_getvec).with(anything, anything, anything, be > 8192)
+    end
   end
 
   describe '.align' do

@@ -180,6 +180,11 @@ module Notcurses
       all: FFI::NCMICE_ALL_EVENTS
     }.freeze
 
+    # Slot massimi di una chiamata a {#getvec}: la coda di input di notcurses
+    # tiene al più BUFSIZ eventi (8192 con glibc, in.c:1961).
+    GETVEC_MAX = 8192
+    private_constant :GETVEC_MAX
+
     # @return [Integer] pid del processo che ha creato il contesto
     # @api private
     attr_reader :pid
@@ -676,17 +681,20 @@ module Notcurses
 
     # Legge fino a count eventi già pronti (+notcurses_getvec+). Attende come
     # {#get} finché ce n'è almeno uno. Il risultato si ferma al primo evento
-    # {Key::EOF} (il C riempirebbe tutto il vettore di EOF).
+    # {Key::EOF} (il C riempirebbe tutto il vettore di EOF). Una chiamata
+    # restituisce al massimo 8192 eventi, la dimensione della coda di input di
+    # notcurses: gli eventi rimasti arrivano con la chiamata successiva.
     #
     # @param count [Integer] numero massimo di eventi, 1..INT_MAX
     # @param timeout [Numeric, nil] come in {#get}: 0..2147483647, o nil
-    # @return [Array<Input>] da 1 a count eventi; vuoto se il timeout scade
+    # @return [Array<Input>] da 1 a count eventi, al massimo 8192; vuoto se il
+    #   timeout scade
     # @raise [InputError] se notcurses segnala un errore di input
     # @raise [TypeError, ArgumentError] se un argomento non è valido (count
     #   fuori da 1..INT_MAX, timeout fuori da 0..2147483647)
     # @raise [ClosedError] se il contesto è chiuso
     def getvec(count, timeout: nil)
-      Util.integer!(count, 'count', 1..Util::INT32.max)
+      count = [Util.integer!(count, 'count', 1..Util::INT32.max), GETVEC_MAX].min
       result = wait_input(timeout) do
         buf = ::FFI::MemoryPointer.new(FFI::NcInput, count)
         # deadline assoluta {0, 0}: già scaduta, quindi la chiamata non attende
