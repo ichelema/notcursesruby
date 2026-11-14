@@ -21,9 +21,10 @@ module Notcurses
   #
   # Thread. Il blocco e on_done: girano nel thread di lettura, non in quello
   # che ha creato l'FdPlane. Le chiamate a notcurses tengono il GVL, quindi
-  # due chiamate C non si sovrappongono, tranne {Visual#stream}, che lo
-  # rilascia: durante uno stream il blocco gira insieme al C dello stream (non
-  # scrivere sulla stessa pila senza un lock). Una sequenza di chiamate del
+  # due chiamate C non si sovrappongono, tranne {Visual#stream} e le chiamate
+  # che leggono un file ({Visual.from_file}, {Visual#decode},
+  # {Visual#decode_loop}), che lo rilasciano: durante queste chiamate il blocco
+  # gira insieme al loro C (non scrivere sulla stessa pila senza un lock). Una sequenza di chiamate del
   # thread principale (per esempio putstr seguito da render) può essere
   # interrotta tra una chiamata e l'altra dal blocco. Il wrapper non aggiunge
   # lock: se il blocco e il thread principale usano gli stessi oggetti,
@@ -32,8 +33,12 @@ module Notcurses
   # piano mentre l'FdPlane è aperto: tra un blocco e l'altro il blocco
   # troverebbe un piano chiuso (ClosedError); durante il blocco l'accesso non
   # è protetto. Dentro il blocco le interruzioni asincrone (Thread#kill,
-  # Thread#raise, Timeout) arrivano solo alle attese (sleep, IO, Queue, ...),
-  # mai a metà di una chiamata del wrapper. Eccezione su Ruby 3.1 (su 4.0.7
+  # Thread#raise, Timeout) arrivano solo alle attese (sleep, IO, Queue, ...)
+  # e alle chiamate che rilasciano il GVL ({Visual#stream} e le letture di un
+  # file: {Visual.from_file}, {Visual#decode}, {Visual#decode_loop}), mai a
+  # metà delle altre chiamate del wrapper. Durante una lettura l'interruzione arriva al ritorno della
+  # chiamata C: il visual di {Visual.from_file} resta allocato, con il file
+  # aperto, fino alla fine del processo. Eccezione su Ruby 3.1 (su 4.0.7
   # no): anche +String#grapheme_clusters+ e +each_grapheme_cluster+ sono
   # attese, e i metodi di testo del wrapper li usano (per esempio
   # {Plane#putstr}), quindi lì un'interruzione può fermarli a metà testo.
@@ -191,7 +196,8 @@ module Notcurses
     # Corpo del thread. Il kill di {#close} arriva subito durante le attese
     # del wrapper (:immediate), e dentro il blocco solo alle attese del blocco
     # (:on_blocking): mai a metà di una chiamata del wrapper, che lascerebbe
-    # il suo stato incoerente con il C.
+    # il suo stato incoerente con il C, tranne le chiamate che rilasciano il
+    # GVL (vedi il commento della classe).
     def run
       Thread.handle_interrupt(Object => :on_blocking) do
         Util.guard(@errors, nil) do

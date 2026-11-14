@@ -12,6 +12,13 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Visual.from_file`, `Visual#decode`, `Visual#decode_loop`, `Direct#render_frame`, `Direct#load_image`,
+  `Direct::Image.new` e `Direct#stream` aprono e leggono il file con ffmpeg senza il GVL: con una FIFO, un URL o un
+  file system lento gli altri thread Ruby girano. Prima una FIFO riempita da un thread dello stesso processo
+  bloccava la chiamata per sempre (ICH-312).
+- `require 'notcurses'` funziona anche dove il `types.conf` della gem ffi non ha `wchar_t` o `uintmax_t` (FreeBSD,
+  NetBSD, OpenBSD, Linux i386, ppc64, riscv64 e s390x): prima sollevava `TypeError`. Anche `Direct#box` non dipende
+  più dalla mappa globale dei tipi di ffi (ICH-313).
 - `Context#close`, `Direct#close` e `Context#drop_planes`: un'eccezione durante la chiamata C (per esempio un
   Ctrl-C) lascia l'oggetto chiuso, i piani distrutti invalidi e il registro libero; prima l'hook `at_exit`
   richiamava lo stop su memoria liberata (SIGSEGV) (ICH-268).

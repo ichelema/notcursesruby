@@ -87,7 +87,13 @@
     `blocking: true`, quindi ogni chiamata teneva il GVL. Ora lo hanno le 8 funzioni che aspettano il terminale o il
     tempo dentro il C: `notcurses_init`, `notcurses_core_init`, `ncdirect_init`, `ncdirect_core_init`,
     `ncdirect_cursor_yx`, `ncdirect_cursor_move_yx`, `ncdirect_readline`, `ncvisual_stream`. Motivo e verifiche in
-    `memory/fase2-wrapper-idiomatico.md` (sezione "Thread e GVL").
+    `memory/fase2-wrapper-idiomatico.md` (sezione "Thread e GVL"). Nella review della Fase 2, su autorizzazione
+    dell'utente, anche `ncdirect_render_image` e `ncdirect_raster_frame` (A3-02). Il 2026-11-14 (ICH-312), su
+    autorizzazione dell'utente, anche le 5 funzioni che aprono o leggono un file con ffmpeg: `ncvisual_from_file`,
+    `ncvisual_decode`, `ncvisual_decode_loop`, `ncdirect_render_frame`, `ncdirectf_from_file`. Quell'I/O non ha limite
+    di tempo (FIFO, URL, file system lento) e lo stesso codice C girava già senza il GVL dentro `ncdirect_render_image`
+    e `ncvisual_stream`. Totale: 15 funzioni. `ncdirect_stream` apre anch'essa il file, ma il wrapper non la chiama e
+    resta senza `blocking: true`.
 
 ## Problemi incontrati e soluzioni
 

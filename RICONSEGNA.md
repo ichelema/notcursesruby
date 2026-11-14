@@ -12,6 +12,15 @@
 - **Modifiche successive (2026-10-27, ICH-229):** su autorizzazione dell'utente, `tcgetattr` e `tcsetattr` della libc,
   la struct `Termios` (i quattro flag e una coda opaca), la typedef `:tcflag_t` e le costanti `IXON`, `ISIG` e
   `TCSANOW`, con i valori per sistema. Dettagli nella sezione "ICH-229" in fondo.
+- **Modifiche successive (2026-11-14, ICH-312):** su autorizzazione dell'utente (lotto 17), `blocking: true` anche su
+  `ncvisual_from_file`, `ncvisual_decode`, `ncvisual_decode_loop`, `ncdirect_render_frame` e `ncdirectf_from_file`,
+  che aprono o leggono un file con ffmpeg senza limite di tempo (FIFO, URL, file system lento); decisione 20 di
+  `memory/fase1-ffi-raw.md`.
+- **Modifiche successive (2026-11-14, ICH-313):** su autorizzazione dell'utente (lotto 17), `typedefs.rb` definisce
+  `:wchar_t` come `:int32` e `:uintmax_t` come `:uint64` dentro `Notcurses::FFI` solo quando il `types.conf` di ffi
+  non li ha (FreeBSD, NetBSD, OpenBSD, Linux i386/ppc64/riscv64/s390x): prima `require 'notcurses'` sollevava
+  `TypeError`. Le quattro `::FFI::MemoryPointer.new(:wchar_t, n)` di `inline_reimpl.rb` (e quella di
+  `Direct#box_chars`) usano `:int32`, perché la mappa globale dei tipi di ffi non vede le typedef del modulo.
 
 ### File generati
 

@@ -163,6 +163,14 @@ module Notcurses
     # (+ncvisual_from_file+). Formati: tutto ciò che ffmpeg apre con uno stream
     # video (PNG, JPEG, GIF, MKV, ...).
     #
+    # Thread: la chiamata C apre e legge il file con ffmpeg senza il GVL (una
+    # FIFO, un URL o un file system lento non hanno limite di tempo): gli altri
+    # thread Ruby girano, ma non devono usare lo stesso contesto finché la
+    # chiamata non torna. Un'eccezione asincrona (Ctrl-C, Thread#raise,
+    # Timeout, il kill di {FdPlane#close}) arriva al ritorno della chiamata C:
+    # il visual creato dal C resta allocato, con il file aperto, fino alla fine
+    # del processo.
+    #
     # @param path [String, #to_path] percorso del file
     # @yieldparam visual [Visual] (facoltativo) il visual, chiuso alla fine del blocco
     # @return [Visual] il visual; con un blocco, il valore del blocco
@@ -594,6 +602,14 @@ module Notcurses
     # diventano quelli del nuovo frame. {.from_file} ha già decodificato il
     # primo; un'immagine ha un solo frame.
     #
+    # Thread: la chiamata C legge il file senza il GVL, come in {.from_file}:
+    # gli altri thread Ruby girano, ma non devono usare lo stesso contesto
+    # finché la chiamata non torna. Chiudere il visual o il contesto durante la
+    # chiamata, anche con l'hook at_exit o alla fine del blocco di
+    # {Context.open}, libera la memoria che il C sta usando (crash o blocco):
+    # prima attendi la fine del thread che decodifica (Thread#join).
+    # Thread#kill non basta: la chiamata C continua fino al suo ritorno.
+    #
     # @return [Boolean] true se c'è un nuovo frame, false a fine stream (il
     #   visual conserva l'ultimo frame; il C restituisce 1, che non è un errore)
     # @raise [VisualError] se il visual non viene da un file o se la
@@ -607,7 +623,11 @@ module Notcurses
     end
 
     # Come {#decode}, ma a fine stream riparte dal primo frame
-    # (+ncvisual_decode_loop+).
+    # (+ncvisual_decode_loop+). Come {#decode}, la chiamata C legge il file
+    # senza il GVL: gli altri thread Ruby girano, ma non devono usare lo stesso
+    # contesto finché la chiamata non torna, e il visual o il contesto non
+    # vanno chiusi durante la chiamata (anche con at_exit): prima attendi il
+    # thread con Thread#join, perché Thread#kill non ferma la chiamata C.
     #
     # @return [Boolean] true se c'è il frame successivo, false se è ripartito
     #   dall'inizio (il visual contiene il primo frame)

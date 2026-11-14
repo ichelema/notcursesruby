@@ -4,9 +4,18 @@
 
 module Notcurses
   module FFI
-    # I tipi di piattaforma usati dall'API (:size_t, :wchar_t, :uintmax_t,
-    # :time_t) sono già definiti dalla gem ffi (types.conf della piattaforma).
-    #
+    # I tipi di piattaforma usati dall'API vengono dal types.conf della gem ffi:
+    # :size_t e :time_t sempre, :wchar_t e :uintmax_t quando ci sono (mancano
+    # per esempio su FreeBSD, OpenBSD, NetBSD e Linux i386/ppc64/riscv64/s390x).
+    # Dove mancano, qui sotto diventano :int32 (wchar_t è di 32 bit su ogni
+    # sistema con termios) e :uint64. Queste typedef valgono solo dentro
+    # Notcurses::FFI: ::FFI::MemoryPointer.new usa :int32, non :wchar_t.
+    {wchar_t: :int32, uintmax_t: :uint64}.each do |name, type|
+      ::FFI.find_type(name)
+    rescue TypeError
+      typedef type, name
+    end
+
     # Le typedef di struct (nccell, ncplane_options, ...) sono classe
     # ::FFI::Struct in structs.rb. Le struct opache (struct notcurses,
     # struct ncplane, ... e i typedef ncdirectv/ncdirectf di direct.h)

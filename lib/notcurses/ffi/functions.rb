@@ -11,7 +11,10 @@ module Notcurses
     # con un tty), ncdirect_cursor_yx, ncdirect_cursor_move_yx, ncdirect_readline,
     # ncvisual_stream, ncdirect_render_image e ncdirect_raster_frame (con un
     # blitter pixel, o con un allineamento su un terminale senza hpa, chiedono
-    # la posizione del cursore: direct.c:225 e 439). Le altre tengono il GVL
+    # la posizione del cursore: direct.c:225 e 439). Anche ncvisual_from_file,
+    # ncvisual_decode, ncvisual_decode_loop, ncdirect_render_frame e
+    # ncdirectf_from_file: aprono o leggono il file con ffmpeg, un I/O senza
+    # limite di tempo (FIFO, URL, file system lento). Le altre tengono il GVL
     # durante la chiamata.
 
     # ═══════════════════════════════════════
@@ -281,7 +284,7 @@ module Notcurses
     # ═══════════════════════════════════════
 
     # --- ncvisual ---
-    attach_function :ncvisual_from_file, [:string], :pointer
+    attach_function :ncvisual_from_file, [:string], :pointer, blocking: true
     attach_function :ncvisual_from_rgba, [:pointer, :int, :int, :int], :pointer
     attach_function :ncvisual_from_rgb_packed, [:pointer, :int, :int, :int, :int], :pointer
     attach_function :ncvisual_from_rgb_loose, [:pointer, :int, :int, :int, :int], :pointer
@@ -292,8 +295,8 @@ module Notcurses
     attach_function :ncvisual_from_sixel, [:string, :uint, :uint], :pointer
     attach_function :ncvisual_geom, [:pointer, :pointer, NcVisualOptions.by_ref, NcVgeom.by_ref], :int
     attach_function :ncvisual_destroy, [:pointer], :void
-    attach_function :ncvisual_decode, [:pointer], :int
-    attach_function :ncvisual_decode_loop, [:pointer], :int
+    attach_function :ncvisual_decode, [:pointer], :int, blocking: true
+    attach_function :ncvisual_decode_loop, [:pointer], :int, blocking: true
     attach_function :ncvisual_rotate, [:pointer, :double], :int
     attach_function :ncvisual_resize, [:pointer, :int, :int], :int
     attach_function :ncvisual_resize_noninterpolative, [:pointer, :int, :int], :int
@@ -603,9 +606,9 @@ module Notcurses
 
     # --- immagini ---
     attach_function :ncdirect_render_image, [:pointer, :string, :ncalign_e, :ncblitter_e, :ncscale_e], :int, blocking: true
-    attach_function :ncdirect_render_frame, [:pointer, :string, :ncblitter_e, :ncscale_e, :int, :int], :pointer
+    attach_function :ncdirect_render_frame, [:pointer, :string, :ncblitter_e, :ncscale_e, :int, :int], :pointer, blocking: true
     attach_function :ncdirect_raster_frame, [:pointer, :pointer, :ncalign_e], :int, blocking: true
-    attach_function :ncdirectf_from_file, [:pointer, :string], :pointer
+    attach_function :ncdirectf_from_file, [:pointer, :string], :pointer, blocking: true
     attach_function :ncdirectf_free, [:pointer], :void
     attach_function :ncdirectf_render, [:pointer, :pointer, NcVisualOptions.by_ref], :pointer
     attach_function :ncdirectf_geom, [:pointer, :pointer, NcVisualOptions.by_ref, NcVgeom.by_ref], :int

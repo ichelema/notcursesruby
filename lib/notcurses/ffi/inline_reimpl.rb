@@ -791,7 +791,7 @@ module Notcurses
     #      return ncplane_putwstr_stained(n, warr);
     #    }
     def self.ncplane_putwc_stained(n, w)
-      warr = ::FFI::MemoryPointer.new(:wchar_t, 2).put_array_of_int32(0, [w, 0])
+      warr = ::FFI::MemoryPointer.new(:int32, 2).put_array_of_int32(0, [w, 0])
       ncplane_putwstr_stained(n, warr)
     end
 
@@ -3039,7 +3039,7 @@ module Notcurses
     #    }
     def self.ncdirect_light_box(n, ul, ur, ll, lr, ylen, xlen, ctlword)
       wchars = NCBOXLIGHTW.codepoints << 0 # L"..." come vettore wchar_t terminato da 0
-      ncdirect_box(n, ul, ur, ll, lr, ::FFI::MemoryPointer.new(:wchar_t, wchars.size).put_array_of_int32(0, wchars),
+      ncdirect_box(n, ul, ur, ll, lr, ::FFI::MemoryPointer.new(:int32, wchars.size).put_array_of_int32(0, wchars),
                    ylen, xlen, ctlword)
     end
 
@@ -3051,7 +3051,7 @@ module Notcurses
     #    }
     def self.ncdirect_heavy_box(n, ul, ur, ll, lr, ylen, xlen, ctlword)
       wchars = NCBOXHEAVYW.codepoints << 0 # L"..." come vettore wchar_t terminato da 0
-      ncdirect_box(n, ul, ur, ll, lr, ::FFI::MemoryPointer.new(:wchar_t, wchars.size).put_array_of_int32(0, wchars),
+      ncdirect_box(n, ul, ur, ll, lr, ::FFI::MemoryPointer.new(:int32, wchars.size).put_array_of_int32(0, wchars),
                    ylen, xlen, ctlword)
     end
 
@@ -3063,7 +3063,7 @@ module Notcurses
     #    }
     def self.ncdirect_ascii_box(n, ul, ur, ll, lr, ylen, xlen, ctlword)
       wchars = NCBOXASCIIW.codepoints << 0 # L"..." come vettore wchar_t terminato da 0
-      ncdirect_box(n, ul, ur, ll, lr, ::FFI::MemoryPointer.new(:wchar_t, wchars.size).put_array_of_int32(0, wchars),
+      ncdirect_box(n, ul, ur, ll, lr, ::FFI::MemoryPointer.new(:int32, wchars.size).put_array_of_int32(0, wchars),
                    ylen, xlen, ctlword)
     end
 
