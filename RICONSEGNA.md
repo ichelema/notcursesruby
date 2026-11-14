@@ -872,7 +872,10 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
   `/trinity:workflow:3_independent-review` nella stessa sessione dell'implementazione (non indipendente), 1 round:
   APPROVABILE CON RISERVE, un LOW (frase nel YARD) e due spec mancanti, aggiunti dopo la review senza un nuovo round.
   Lotto 11: Fable e GPT, 3 round (round 1: un HIGH, la spec di Plot rossa in CI, e due LOW, corretti; round 2: un
-  LOW di Fable, corretto, GPT nessun finding; round 3: nessun finding).
+  LOW di Fable, corretto, GPT nessun finding; round 3: nessun finding). Lotto 12: Fable e GPT, 3 round (round 1: un
+  HIGH, tre MEDIUM e due LOW, corretti; round 2: due MEDIUM e quattro LOW, quattro corretti e uno in ICH-459, più il
+  formato del CHANGELOG; round 3: un MEDIUM di GPT scartato (`Interrupt` nella pulizia), un LOW di Fable in ICH-460;
+  tre rischi già presenti su `master` in ICH-461).
 
 ### Lotti
 
@@ -889,10 +892,12 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 | 9 | [#10](https://github.com/ichelema/notcursesruby/pull/10) | `106c700` | ICH-284; ICH-458 (nata dalla review) | `ncdirect_stream` sale di `rows - 1` righe (`direct.c:1550-1559`), ma il raster a celle lascia il cursore sotto il frame (`direct.c:558`): ogni frame scende di una riga; con `:pixel` un frame che finisce sull'ultima riga porta il cursore con una CUP alla riga sotto lo schermo (`direct.c:607-613`); tabella "Direct" di `memory/fase2-wrapper-idiomatico.md` |
 | 10 | [#11](https://github.com/ichelema/notcursesruby/pull/11) | `23fd73a` | ICH-285, ICH-286 | nessuno nuovo: il bug noto dello ZWJ (`egcpool.h:126-128`) tocca anche `ncdirect_putegc` (`direct.c:49-66`) e `ncstrwidth` (`notcurses.c:3311-3333`); tabelle "Piani" e "Direct" di `memory/fase2-wrapper-idiomatico.md` |
 | 11 | [#12](https://github.com/ichelema/notcursesruby/pull/12) | `cb3f0ba` | ICH-287, ICH-288, ICH-289, ICH-290 | i piani delle voci di `nctree` non cambiano mai larghezza (`tree.c:456`), tabella "Reel, Tree, Tabbed"; le etichette di `ncplot` sopra circa 1,84e17 passano da double a `uintmax_t` fuori intervallo (`plot.c:128-136`, `298-306`, comportamento indefinito: "184.47P" su x86-64-v4, "0.00" su x86-64 generico) e la riga alta esponenziale `uint64` va in wrap (`plot.c:300`); la regola dei colori di `ncprogbar` su 1 colonna o 1 riga (`fill.c:192-197`, `238-255`); "Bug noti non aggirati" di `memory/fase2-wrapper-idiomatico.md` |
+| 12 | [#13](https://github.com/ichelema/notcursesruby/pull/13) | `4ec4f4c` | ICH-291, ICH-292, ICH-293 | nessuno |
 
 ### Cambi dell'API pubblica
 
-Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lotto 7). Comportamenti nuovi:
+Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lotto 7), `Util.plane_channels_value`,
+`UI::App#focus_state` e `#restore_focus_state` (`@api private`, lotto 12). Comportamenti nuovi:
 
 - `Context#close`, `Direct#close`, `Context#drop_planes`: un'eccezione al ritorno della chiamata C (Ctrl-C) lascia
   l'oggetto chiuso, i piani distrutti invalidi e il registro libero (lotto 1).
@@ -955,6 +960,19 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
   un blocco che restringe da sé il piano della voce lo ritrova largo al redraw successivo (lotto 11).
 - `Tab#move(before:)` del primo tab mostrato verso il tab alla sua destra non cambia più il primo tab mostrato
   (lotto 11).
+- UI: un componente (anche un `Dialog`) che solleva durante la creazione si chiude, esce dal contenitore, dall'App e
+  dalle finestre modali, e lo stato del focus torna quello di prima; `new` propaga l'eccezione originale.
+  `Component#close` e `Dialog#close` completano la chiusura anche se il ridisegno del focus solleva (lotto 12).
+- I costruttori di `Container`, `Label`, `Button`, `TextInput`, `ListView`, `LogView` e `Dialog` sollevano
+  `ArgumentError` per `channels:` o `focused_channels:` con lo sfondo `:highcontrast`, prima di creare il piano; prima
+  un `Container` senza titolo li accettava (scelta dell'utente, regola 14). Il messaggio di `Plane#channels=` comincia
+  ora con il nome del parametro (`channels: ...`) (lotto 12).
+- `UI::App`: se un resize nasconde tutti i componenti focusabili, il resize che li mostra ridà il focus al componente
+  che lo aveva prima del resize (o al primo candidato visibile), prima di `on_resize`, anche se nel frattempo un
+  dialogo si apre o si chiude; `focus(nil)` esplicito resta. Senza focus un tasto va alla radice attiva (Esc arriva a
+  un `Dialog`) (lotto 12).
+- `UI::Dialog`: i pulsanti hanno peso `strwidth(etichetta) + 5`, così ogni etichetta entra intera; la larghezza del
+  dialogo non cambia (lotto 12).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
@@ -990,3 +1008,10 @@ Nessuno.
 - ICH-458 — `Direct#stream` con `:pixel`: un frame più basso dello schermo che finisce sull'ultima riga fa partire i
   frame successivi una riga più in alto, su un terminale che ferma la CUP sull'ultima riga; per i frame più stretti
   del terminale è una regressione rispetto a prima del lotto 9 (lotto 9, review round 1).
+- ICH-459 — `Container#close_parts` si ferma al primo figlio che solleva, e in `Component#close` un `release_focus`
+  che solleva salta `close_parts`: figli aperti e registrati (lotto 12, review round 2; esiste già su `master`).
+- ICH-460 — con i pesi di ICH-293 una riga di pulsanti di 4-6 colonne può dare 0 colonne all'etichetta più corta,
+  che si nasconde e perde il focus (prima solo a 3 colonne) (lotto 12, review round 3).
+- ICH-461 — un componente che diventa visibile fuori dal ripristino dopo un resize (dialogo aperto a terminale
+  piccolo senza focus in attesa, componente nato nascosto, fratello mostrato dopo la chiusura del focus) non prende
+  il focus (lotto 12, review round 3; esiste già su `master`).

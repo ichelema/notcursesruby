@@ -590,3 +590,65 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 - `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
 - `master` su `cb3f0ba`: 1000 esempi, 0 fallimenti, anche con i semi 1234, 4242 e 7; `gem build` senza warning; CI
   verde.
+
+## Lotto 12 — ICH-291, ICH-292, ICH-293 (PR #13, merge `4ec4f4c`)
+
+### Fix
+
+- **ICH-291 (`ui-06`, rollback alla creazione).** `Component#close_on_error` (privato) avvolge l'attach di
+  `attach_component!` e il corpo di `Dialog#initialize`: se la creazione solleva, chiude il componente, rimette lo
+  stato del focus letto prima dell'attach (`App#focus_state`/`#restore_focus_state`, `@api private`) e propaga
+  l'eccezione originale; un errore `StandardError` della pulizia è ingoiato. `Component#close` fa `unregister` e
+  `remove_child` in un `ensure`, `Dialog#close` chiama `super` in un `ensure` dopo `close_modal`. Il nuovo
+  `Util.plane_channels_value` rifiuta lo sfondo `:highcontrast` nei 9 punti della UI e in `Plane#channels=`. Causa
+  radice: `add_child` disegna il figlio prima di `App#attached`, e niente toglieva un figlio la cui creazione falliva;
+  il controllo dei canali stava solo nel disegno.
+- **ICH-292 (`ui-08`, focus dopo il resize).** `release_focus` ricorda in `@lost_focus` il componente che non trova un
+  sostituto visibile; `resized` lo sostituisce con il focus di prima del layout e chiama `restore_focus` dopo
+  `root.layout` e `place`, prima di `super`. Solo `App#focus` e un focus non nil cancellano la memoria; un `Dialog`
+  salva anche il focus in attesa e `close_modal` restituisce al ripristino un componente salvato ma nascosto.
+  `offer` dà un tasto alla radice attiva quando nessuno ha il focus. Causa radice: il focus si sceglieva solo alla
+  creazione e in `close_modal`, mai quando un layout mostrava di nuovo i componenti.
+- **ICH-293 (`ui-10`, pulsanti del Dialog).** I pulsanti nascono con `weight: strwidth(label) + 5`, la quantità che
+  `place` somma. Causa radice: pesi tutti 1, quindi `distribute` divideva la riga in parti uguali.
+
+### Decisioni
+
+- Regola 14 (ICH-291): l'utente ha scelto l'opzione A, rollback più controllo anticipato, anche se `Container`
+  senza titolo con lo sfondo `:highcontrast`, prima accettato, ora solleva `ArgumentError`.
+- `Plane#channels=` usa l'helper nuovo: il messaggio comincia con il nome del parametro (`channels: ...`).
+- Il rollback non ingoia le eccezioni fuori da `StandardError` della pulizia (`Interrupt`, `SystemExit`): una
+  richiesta di fermarsi conta più dell'errore di creazione (finding GPT del round 3, scartato).
+- I fix dei round 1 e 2 toccano ICH-291 e ICH-292 nello stesso `app_spec.rb` e nello stesso helper: un commit per
+  round, con `Refs` alle due issue.
+
+### Review (3 round, Fable e GPT)
+
+- Round 1 (`6019a93`): GPT NON APPROVABILE, Fable APPROVABILE CON RISERVE; cinque finding distinti, tutti corretti
+  in `cab0681`: `close` saltava `remove_child`/`unregister` se il ridisegno del focus sollevava (HIGH); il rollback non
+  ridava il focus al fratello nascosto dal figlio nuovo; dopo il resize tornava l'ultimo candidato transitorio del
+  layout sequenziale, non il focus di prima; `change_focus(nil)` interno (dialogo aperto o chiuso) cancellava il focus
+  da ripristinare; tre buchi di test trovati con i mutation test di Fable.
+- Round 2 (`cab0681`): GPT due MEDIUM (`Dialog#close` senza `ensure`; focus in attesa perso da un pulsante del
+  dialogo o da un rollback), Fable quattro LOW (stesso tema, `Dialog.new` fallito con focus nil, `close_parts`,
+  CHANGELOG). Corretti in `6a3592f`, tranne `Container#close_parts`/`release_focus` già su `master`: ICH-459.
+- Round 3 (`6a3592f`): Fable APPROVABILE, un LOW (riga di pulsanti di 4-6 colonne: ICH-460) e tre rischi già su
+  `master` (ICH-461); GPT un MEDIUM scartato (`Interrupt` nella pulizia). Commento riassuntivo sulla PR.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| Lavoro ripreso su una VPS invece della macchina locale | checkout in `/mnt/data/...`, lo stesso disco di `/Dati/...`; notcurses 3.0.17-3 generico di Arch, come la CI | nessun cambio ai comandi; la differenza di build della spec di ICH-290 non tocca la VPS |
+| Semi e coverage non partivano in uno script | `E="env ..."` in una variabile: zsh non la divide in parole | array `E=(env ...)` e `"${E[@]}"` |
+| Due spec controllavano `component_at` = nil | sotto ogni punto c'è `root`, che copre tutto lo schermo | attesa `equal(app.root)` o `not_to equal(componente)` |
+| `Plane` non ha `children` | la spec voleva contare i piani figli dello stdplane | controllo su `app.root.children` |
+
+### Verifica finale
+
+- Branch (`6a3592f`): 1019 esempi, 0 fallimenti su Ruby 4.0.7, anche con i semi 1234, 4242 e 7; line coverage
+  98,24 %; YARD 100 %, 0 warning; `ruby -w` senza warning. CI verde su tutta la matrice (Ruby 3.1.7–4.0.9) e Codecov.
+- Ogni spec nuova falliva sul codice di prima (controllato prima di ogni fix; per `change_focus` togliendo il fix).
+- `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+- `master` su `4ec4f4c`: 1019 esempi, 0 fallimenti, anche con i semi 1234, 4242 e 7; `gem build` senza warning; CI
+  verde.
