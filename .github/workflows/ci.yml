@@ -190,3 +190,8 @@ jobs:
         with:
           name: doc
           path: doc/
+
+      # una sola esecuzione: l'esito non dipende dal Ruby della matrice
+      - name: RuboCop senza offense
+        if: matrix.full
+        run: bundle exec rubocop

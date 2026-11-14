@@ -133,6 +133,7 @@ TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 bundle exec rspec < /dev/nu
 - Il submodule `notcurses/` serve alle spec delle immagini (`notcurses/data`).
 - La spec differenziale del layer FFI usa `libnotcurses-ffi.so.3`; se la libreria manca, va in skip.
 - Coverage: `bundle exec rspec --require ./spec/support/coverage.rb`, report in `coverage/`.
+- Linter: `bundle exec rubocop` (Standard); le offense già presenti sono elencate in `.rubocop_todo.yml`.
 
 ## Licenza
 
