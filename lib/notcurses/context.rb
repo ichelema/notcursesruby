@@ -655,13 +655,14 @@ module Notcurses
     # sul descrittore di +notcurses_inputready_fd+, che rilascia il GVL, quindi
     # gli altri thread Ruby e i segnali (Ctrl-C → Interrupt) restano serviti.
     #
-    # @param timeout [Numeric, nil] secondi di attesa massima; nil = attende
-    #   senza limite; 0 = non attende
+    # @param timeout [Numeric, nil] secondi di attesa massima, 0..2147483647
+    #   (2^31 - 1, circa 68 anni); nil = attende senza limite; 0 = non attende
     # @return [Input, nil] l'evento, o nil se il timeout scade. Con stdin chiuso
     #   restituisce un evento con id {Key::EOF}
     # @raise [InputError] se notcurses segnala un errore di input, o se il
     #   contesto scarta l'input (drain_input: true)
-    # @raise [TypeError, ArgumentError] se timeout non è un numero >= 0
+    # @raise [TypeError, ArgumentError] se timeout non è un numero in
+    #   0..2147483647
     # @raise [ClosedError] se il contesto è chiuso
     def get(timeout: nil)
       wait_input(timeout) do
@@ -678,10 +679,11 @@ module Notcurses
     # {Key::EOF} (il C riempirebbe tutto il vettore di EOF).
     #
     # @param count [Integer] numero massimo di eventi, 1..INT_MAX
-    # @param timeout [Numeric, nil] come in {#get}
+    # @param timeout [Numeric, nil] come in {#get}: 0..2147483647, o nil
     # @return [Array<Input>] da 1 a count eventi; vuoto se il timeout scade
     # @raise [InputError] se notcurses segnala un errore di input
-    # @raise [TypeError, ArgumentError] se un argomento non è valido
+    # @raise [TypeError, ArgumentError] se un argomento non è valido (count
+    #   fuori da 1..INT_MAX, timeout fuori da 0..2147483647)
     # @raise [ClosedError] se il contesto è chiuso
     def getvec(count, timeout: nil)
       Util.integer!(count, 'count', 1..Util::INT32.max)
@@ -1150,7 +1152,7 @@ module Notcurses
     # dal C tra un tentativo e l'altro.
     def wait_input(timeout)
       unless timeout.nil?
-        Util.float!(timeout, 'timeout', 0.0..)
+        Util.float!(timeout, 'timeout', Util::TIMEOUT)
         deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
       end
       loop do

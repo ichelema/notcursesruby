@@ -104,6 +104,9 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   resize (ICH-292).
 - `Dialog`: ogni pulsante ha spazio per tutta l'etichetta; prima la riga si divideva in parti uguali e
   un'etichetta più lunga della media restava tagliata. La larghezza del dialogo non cambia (ICH-293).
+- `Context#get`, `Context#getvec` e `Direct#get` sollevano `ArgumentError` per un `timeout` sopra 2147483647 secondi
+  (2^31 - 1, circa 68 anni); prima un valore oltre `time_t` (per esempio `1e19` o `Float::MAX`) dava un `RangeError`
+  non documentato durante l'attesa. `nil` resta il modo per attendere senza limite (ICH-294).
 
 ## [0.1.0] - 2026-10-27
 

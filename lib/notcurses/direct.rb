@@ -861,17 +861,18 @@ module Notcurses
     # L'attesa non avviene dentro il C: il wrapper attende con +IO#wait_readable+
     # sul descrittore di +ncdirect_inputready_fd+, che rilascia il GVL.
     #
-    # @param timeout [Numeric, nil] secondi di attesa massima; nil = senza
-    #   limite; 0 = non attende
+    # @param timeout [Numeric, nil] secondi di attesa massima, 0..2147483647
+    #   (2^31 - 1, circa 68 anni); nil = senza limite; 0 = non attende
     # @return [Input, nil] l'evento, o nil se il timeout scade. A fine input
     #   (stdin chiuso, o Ctrl+D letto da {#readline}) restituisce un evento con
     #   id {Key::EOF}, poi lo stesso evento a ogni chiamata
     # @raise [InputError] se il contesto scarta l'input (drain_input: true)
-    # @raise [TypeError, ArgumentError] se timeout non è un numero >= 0
+    # @raise [TypeError, ArgumentError] se timeout non è un numero in
+    #   0..2147483647
     # @raise [ClosedError] se il contesto è chiuso
     def get(timeout: nil)
       to_ptr
-      timeout = Util.float!(timeout, 'timeout', 0.0..) unless timeout.nil?
+      timeout = Util.float!(timeout, 'timeout', Util::TIMEOUT) unless timeout.nil?
       raise InputError, 'ncdirect_get: l\'input è scartato (drain_input: true)' if @drain_input
       return @eof_input if @eof_input
 

@@ -218,6 +218,10 @@ RSpec.describe Notcurses::Context do
       expect { nc.getvec(2, timeout: 0) }.to raise_error(Notcurses::InputError)
       expect { nc.getvec(0) }.to raise_error(ArgumentError)
       expect { nc.get(timeout: -1) }.to raise_error(ArgumentError)
+      # oltre il massimo: ArgumentError prima di ogni attesa (IO#wait_readable solleverebbe RangeError)
+      expect { nc.get(timeout: 1e19) }.to raise_error(ArgumentError, /0\.0\.\.2147483647\.0/)
+      expect { nc.get(timeout: Float::MAX) }.to raise_error(ArgumentError)
+      expect { nc.getvec(2, timeout: 1e19) }.to raise_error(ArgumentError)
       expect(nc.inputready_fd).to be >= 0
     end
 
@@ -314,6 +318,7 @@ RSpec.describe Notcurses::Context do
       evs = @nc.getvec(5, timeout: 2)
       expect(evs.size).to eq(1)
       expect(evs.first.id).to eq(Notcurses::Key::EOF)
+      expect(@nc.get(timeout: (2**31) - 1).id).to eq(Notcurses::Key::EOF) # il timeout massimo è valido
     end
   end
 
