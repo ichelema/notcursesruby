@@ -233,7 +233,7 @@ module Notcurses
           component.layout(*context.dims)
         else
           @modals << component
-          @saved_focus << @focused
+          @saved_focus << (@focused || @lost_focus) # anche il focus che un resize deve ridare
           change_focus(nil)
           component.place(*context.dims)
         end
@@ -281,8 +281,31 @@ module Notcurses
         saved = @saved_focus.delete_at(index)
         return if @closing || index < @modals.size
 
-        saved = nil unless saved && !saved.closed? && saved.visible? && inside?(saved, active_root)
-        change_focus(saved || focus_candidates.first)
+        usable = saved && !saved.closed? && saved.visible? && inside?(saved, active_root)
+        target = usable ? saved : focus_candidates.first
+        change_focus(target)
+        @lost_focus = saved if target.nil? && saved && !saved.closed? # nascosto: resized lo ridà
+      end
+
+      # Stato del focus prima di una creazione: il componente con il focus e
+      # quello che un resize deve ridare.
+      #
+      # @return [Array(Component, Component)] i due componenti, o nil
+      # @api private
+      def focus_state = [@focused, @lost_focus]
+
+      # Rimette lo stato del focus dopo una creazione fallita.
+      #
+      # @param state [Array(Component, Component)] valore di {#focus_state}
+      # @return [void]
+      # @raise [ArgumentError, ClosedError] come {#focus}, se il componente
+      #   non può più avere il focus
+      # @api private
+      def restore_focus_state(state)
+        focused, lost = state
+        focus(focused) unless @focused.equal?(focused)
+      ensure
+        @lost_focus = lost if @focused.nil?
       end
 
       private

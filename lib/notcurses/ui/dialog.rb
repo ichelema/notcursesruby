@@ -46,8 +46,9 @@ module Notcurses
         @buttons = buttons.each_with_index.map { |label, i| Text.check!(label, "buttons[#{i}]") }.freeze
         @block = block
         @body = nil
+        before = app.focus_state # prima che il dialogo prenda il focus
         super(app, border: true, title: title, channels: channels)
-        close_on_error do
+        close_on_error(before) do
           @body = Label.new(self, text: '', align: :center, channels: channels)
           row = Container.new(self, direction: :horizontal, size: 1, channels: channels)
           # i pesi sono le larghezze che place somma: ogni etichetta entra intera
@@ -78,8 +79,12 @@ module Notcurses
       def close
         return nil if @closed
 
-        @app.close_modal(self)
-        super
+        begin
+          @app.close_modal(self)
+        ensure
+          super # anche se il ridisegno del focus che torna solleva
+        end
+        nil
       end
 
       # Dimensioni e posizione al centro dell'area di rendering: largo quanto

@@ -423,6 +423,27 @@ RSpec.describe Notcurses::UI::App do
       expect(app.focused).to be_nil
     end
 
+    it 'una creazione fallita a terminale piccolo non perde il focus da ridare al resize (ICH-291, ICH-292)' do
+      shy = Class.new(probe_class) do
+        private
+
+        def draw = (raise ArgumentError, 'disegno con il focus' if focused?)
+      end
+      box = Notcurses::UI::Container.new(app.root, size: 2)
+      Notcurses::UI::TextInput.new(app.root, size: 1)
+      second = Notcurses::UI::TextInput.new(app.root, size: 1)
+      app.focus(second)
+      failed = false
+      shrink_and_restore do
+        shy.new(box, size: 1)
+      rescue ArgumentError
+        failed = true
+      end
+      expect(failed).to be(true)
+      expect(box.children).to eq([])
+      expect(app.focused).to equal(second)
+    end
+
     it 'focus(nil) mentre i componenti sono nascosti resta dopo il resize che li mostra (ICH-292)' do
       Notcurses::UI::Label.new(app.root, text: 'x', size: 2)
       Notcurses::UI::TextInput.new(app.root, size: 1)

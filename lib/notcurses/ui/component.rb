@@ -373,9 +373,9 @@ module Notcurses
       # Esegue il blocco; se il blocco solleva, chiude il componente (che
       # esce dal contenitore e dall'App), rimette il focus dove era e
       # propaga l'eccezione originale, anche se la chiusura fallisce.
+      # @param before [Array] stato del focus da rimettere ({App#focus_state})
       # @return [void]
-      def close_on_error
-        before = @app.focused
+      def close_on_error(before = @app.focus_state)
         yield
       rescue Exception => e # rubocop:disable Lint/RescueException
         begin
@@ -384,8 +384,7 @@ module Notcurses
           nil # conta l'errore della creazione, non quello della pulizia
         end
         begin
-          # un Dialog lo rimette già con App#close_modal
-          @app.focus(before) unless is_a?(Dialog) || @app.focused.equal?(before)
+          @app.restore_focus_state(before)
         rescue StandardError
           nil # before non può più avere il focus (chiuso, nascosto o fuori dal dialogo)
         end
