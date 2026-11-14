@@ -488,12 +488,14 @@ module Notcurses
       end
 
       # Timeout di IO.select: 0 con blocchi in coda o un resize da applicare,
-      # nil senza timer.
+      # nil senza timer. Al massimo un giorno: oltre time_t IO.select solleva
+      # RangeError (after(Float::MAX)); il ciclo si sveglia, non trova timer
+      # scaduti e riattende.
       def select_timeout
         return 0 if @resize_requested || !@queue.empty?
 
         timer = @timers.first
-        timer && [timer.deadline - clock, 0].max
+        timer && (timer.deadline - clock).clamp(0, 86_400)
       end
 
       def live? = !@stop_requested && !@context.closed?

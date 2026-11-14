@@ -225,6 +225,19 @@ RSpec.describe Notcurses::UI::EventLoop do
       expect(calls).to eq(11)
     end
 
+    it 'un ritardo enorme non fa sollevare IO.select: il timer resta attivo e non scatta' do
+      [[:after, 1e20], [:after, Float::MAX], [:every, 1e20]].each do |kind, seconds|
+        ev = described_class.new(nc) # senza new_loop: il suo timer di 5 s sarebbe la prima scadenza
+        fired = false
+        timer = ev.public_send(kind, seconds) { fired = true }
+        stopper = Thread.new { sleep 0.05; ev.stop }
+        expect(ev.run).to eq(:stop)
+        stopper.join
+        expect(timer).to be_active
+        expect(fired).to be(false)
+      end
+    end
+
     it 'un blocco che si ripubblica non ferma il ciclo: ogni giro esegue solo i blocchi già in coda' do
       ev = new_loop
       count = 0
