@@ -4,17 +4,18 @@
 > prompt». Scritto il 2026-11-06, con il repository su `ab75226`, dopo la revisione completa del codice. La
 > sessione corregge i difetti trovati dalla revisione, un lotto di issue Linear alla volta.
 
-## Stato e prossimo step (aggiornato il 2026-11-14, dopo il lotto 14)
+## Stato e prossimo step (aggiornato il 2026-11-14, dopo ICH-465)
 
 Questa sezione prevale sul resto del file quando i dati sono in conflitto.
 
 **Stato.** I lotti 1–14 sono chiusi. Lotto 14: PR #15, merge `d47e3ac`, ICH-300, ICH-301, ICH-302 e ICH-303 a
 Done. Scelta dell'utente: `scrub` in `Util.take_string` (ICH-301, confermata dopo la review: il piano non aveva
 mostrato le alternative). Il bug di `ncnmetric` (overflow con decimal > (2^64 - 1)/base) è nella nuova tabella
-"Formato (`format.rb`)" di `memory/fase2-wrapper-idiomatico.md`. `master` è sul commit docs del lotto 14; suite:
-1033 esempi, 0 fallimenti. Leggi in `RICONSEGNA.md` la sezione "Correzioni della revisione del 2026-11-06" e il log
-`memory/correzioni-review.md` (lotti 1–14). In Todo, fuori dai lotti: ICH-465 (RuboCop con Standard nel `Gemfile` e
-nella CI), da fare prima del lotto 15 (scelta dell'utente). Restano
+"Formato (`format.rb`)" di `memory/fase2-wrapper-idiomatico.md`. Dopo il lotto 14, fuori dai lotti: ICH-465 a
+Done (PR #16, merge `ba3367f`): RuboCop con Standard nel `Gemfile` e nella CI, 5307 offense congelate in
+`.rubocop_todo.yml`, nessun cambio in `lib/` e `spec/`. `master` è sul commit docs di ICH-465; suite: 1033 esempi,
+0 fallimenti; `bundle exec rubocop`: 0 offense. Leggi in `RICONSEGNA.md` la sezione "Correzioni della revisione del
+2026-11-06" (con "RuboCop (ICH-465)") e il log `memory/correzioni-review.md` (lotti 1–14 e ICH-465). Restano
 aperte in Backlog, fuori dai lotti: ICH-441 (`Process.daemon`),
 ICH-448 (stato del controllo dei bordi per wrapper `Plane`), ICH-449 (double free dopo `merge_down` + `Plane#at`),
 ICH-450 (`polyfill`, `gradient` ed `erase_region` su metà di un glifo largo), ICH-454 (ISIG del terminale e
@@ -39,9 +40,10 @@ lettura da 8192 byte: notcurses si blocca con stdin rediretto), ICH-464 (`to_ptr
 
 **Da fare per primo:**
 
-1. Recall in Hindsight, bank `notcursesruby`: decisioni e cause radice dei lotti 1–14 sono salvate (retain del lotto
-   14: operazione `6f0289e8`).
-2. Fai le verifiche di "Prima di iniziare", passi 1–5 (suite attesa: 1033 esempi, 0 fallimenti). Salta il passo 6.
+1. Recall in Hindsight, bank `notcursesruby`: decisioni e cause radice dei lotti 1–14 e di ICH-465 sono salvate
+   (retain del lotto 14: operazione `6f0289e8`; retain di ICH-465: operazione `5b1f0505`).
+2. Fai le verifiche di "Prima di iniziare", passi 1–5 (suite attesa: 1033 esempi, 0 fallimenti; `bundle exec
+   rubocop`: 0 offense). Salta il passo 6.
 3. Controlla il proxy LiteLLM con `curl -sS -m 10 http://127.0.0.1:4000/health/liveliness`. Controlla anche il
    limite di utilizzo del modello GPT: nei lotti 2 e 5 il modello restituiva `usage_limit_reached` e la review GPT
    finiva senza report; nei lotti 6–13 rispondeva. Se uno dei due controlli fallisce, dillo all'utente prima di
@@ -51,16 +53,12 @@ lettura da 8192 byte: notcurses si blocca con stdin rediretto), ICH-464 (`to_ptr
      -H 'Content-Type: application/json' \
      -d '{"model":"claude-gpt-6-1-sol-high","max_tokens":20,"messages":[{"role":"user","content":"ok"}]}'
    ```
-4. Prima ICH-465 (`Improvement`, prefisso `improvments`): leggi la issue da Linear e di' all'utente il comando,
-   `/trinity:workflow:1_create-worktree master ICH-465 opus`. La issue aggiunge Standard, `rubocop-performance` e
-   `rubocop-thread_safety` al `Gemfile`, `.rubocop.yml`, un `.rubocop_todo.yml` generato e uno step nella CI; non
-   cambia `lib/` né `spec/`. La conversione alle virgolette doppie è una issue successiva: due regex leggono i
-   sorgenti come testo e vanno corrette insieme (`notcursesruby.gemspec:7`, `spec/gemspec_spec.rb:24`).
-   Poi il lotto 15 (ICH-304 `ffi-04`, risultato di `Context.open` nell'esempio `Notcurses::UI` del README; ICH-305
-   `ffi-06`, limite minimo di `ffi` a `~> 1.16` nel gemspec e nel `Gemfile`), con
-   `/trinity:workflow:1_create-worktree master ICH-304 ICH-305 opus`. ICH-465 e ICH-305 cambiano entrambe `Gemfile`
-   e `Gemfile.lock`: apri il lotto 15 solo dopo il merge di ICH-465. ICH-305 cambia anche la riga di `ffi` che
-   `spec/gemspec_spec.rb:24` cerca nel `Gemfile`.
+4. Prepara il lotto 15 (ICH-304 `ffi-04`, risultato di `Context.open` nell'esempio `Notcurses::UI` del README;
+   ICH-305 `ffi-06`, limite minimo di `ffi` a `~> 1.16` nel gemspec e nel `Gemfile`): leggi le issue da Linear e di'
+   all'utente il comando, `/trinity:workflow:1_create-worktree master ICH-304 ICH-305 opus`. ICH-305 cambia `Gemfile`
+   e `Gemfile.lock` (ora con le gem di RuboCop e il vincolo `parallel < 2`) e la riga di `ffi` che
+   `spec/gemspec_spec.rb:24` cerca nel `Gemfile`: dopo `bundle lock` controlla che il diff del lockfile tocchi solo
+   `ffi`, e nella CI il job Ruby 3.2.11.
 5. Una spec che fissa un comportamento di notcurses (non un fix) può dipendere dalla build: la CI usa il pacchetto
    Arch generico. Prima della review controlla la CI della PR (`gh pr checks <n> --watch`).
 6. Segui la "Procedura per ogni lotto": l'utente lancia `1_create-worktree`, `2_work-issue`, `4_review-fix-loop`,
@@ -69,6 +67,17 @@ lettura da 8192 byte: notcurses si blocca con stdin rediretto), ICH-464 (`to_ptr
 
 **Note:**
 
+- RuboCop (da ICH-465): `bundle exec rubocop` deve uscire con 0 prima della PR; nella CI gira solo nel job Ruby
+  4.0.9. Un file nuovo passa da ogni cop di Standard (stringhe con le virgolette doppie); i file esistenti sono
+  esclusi cop per cop in `.rubocop_todo.yml`, che non va rigenerato per far passare codice nuovo. La conversione
+  alle virgolette doppie dei file esistenti è lavoro successivo, senza issue: due regex leggono i sorgenti come
+  testo e vanno corrette nello stesso commit (`notcursesruby.gemspec:7`, `spec/gemspec_spec.rb:24`). Senza issue
+  anche il commento `# rubocop:disable` inutile di `lib/notcurses/ui/component.rb:223`.
+- Il lockfile si genera con Ruby 4.0.7, ma il job Ruby 3.2.11 lo installa con `BUNDLE_FROZEN`: in ICH-465
+  `parallel 2.3.0` (Ruby >= 3.3) ha rotto quel job, da qui `parallel < 2` nel `Gemfile`. `2_work-issue` apre la PR
+  prima dell'esito della CI: controlla `gh pr checks <n> --watch` prima della review.
+- In ICH-465 la chiusura del passo 7 è stata saltata dopo il merge e dopo `5_remove-worktree`, e fatta solo su
+  richiesta dell'utente. `5_remove-worktree` ora la ricorda alla fine.
 - Regola 14: la tabella delle opzioni va nel piano di `2_work-issue`, prima del fix. Nel lotto 14 il piano di
   ICH-301 mostrava solo la soluzione della issue, e la scelta è arrivata dopo la review.
 - Nel lotto 14 il submodule `notcurses` non è stato inizializzato nel worktree (per non dover usare `--force` alla
@@ -341,6 +350,7 @@ all'utente e, dopo la conferma, aggiorna la issue su Linear.
 
 - Suite completa: 0 fallimenti, in ordine normale e con i semi 1234, 4242 e 7.
 - `ruby -w -Ilib -e 'require "notcurses"'` senza warning.
+- `bundle exec rubocop` senza offense.
 - `yard doc --fail-on-warning` 0 warning, `yard stats --list-undoc` 100 %; `gem build` senza warning.
 - Coverage >= 98 % totale e >= 90 % per file; `spec/coverage_spec.rb` e `spec/notcurses/api_spec.rb` passano.
 - CI verde su tutta la matrice sull'ultimo commit di `master`.
