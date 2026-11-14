@@ -77,16 +77,16 @@ end
 ```ruby
 require 'notcurses'
 
-Notcurses::Context.open do |nc|
+reason, text = Notcurses::Context.open do |nc|
   app = Notcurses::UI::App.new(nc)
   form = Notcurses::UI::Container.new(app.root, border: true, title: 'Accesso')
   Notcurses::UI::Label.new(form, text: 'Nome:', size: 1)
   name = Notcurses::UI::TextInput.new(form, size: 1)
   Notcurses::UI::Button.new(form, 'Entra', size: 3) { app.stop }
   app.on_key('x', ctrl: true) { app.stop }
-  reason = app.run # :stop, :eof o :interrupt (Ctrl+C)
-  puts "#{reason}: #{name.text}"
+  [app.run, name.text] # :stop, :eof o :interrupt (Ctrl+C)
 end
+puts "#{reason}: #{text}"
 ```
 
 Tab e Shift+Tab spostano il focus. Ctrl+S, Ctrl+Q, Ctrl+C, Ctrl+Z e Ctrl+\ di default restano al terminale; con

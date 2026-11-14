@@ -1015,6 +1015,9 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
   `bundle lock` o `bundle update` fatto con un Ruby recente può scegliere altre gem che non accettano Ruby 3.2: dopo
   ogni cambio del lockfile controlla il job Ruby 3.2.11 della CI.
 - Nei lotti 1–14: nessuno.
+- Lotto 15 (ICH-305): `gem 'ffi', '~> 1.16'` nel `Gemfile` e `ffi ~> 1.16` nel gemspec (prima `~> 1.15`). Nel
+  `Gemfile.lock` cambia solo la riga `ffi (~> 1.16)` di `DEPENDENCIES`: `ffi 1.17.4`, le sue piattaforme e
+  `BUNDLED WITH 4.0.22` restano uguali.
 
 ### RuboCop (ICH-465)
 
