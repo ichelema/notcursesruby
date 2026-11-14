@@ -1028,9 +1028,9 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
   spento per tutto il progetto: un file nuovo passa da ogni cop, quindi va scritto nello stile di Standard (stringhe
   con le virgolette doppie). Una offense nuova di un cop in un file già escluso per quel cop non viene rilevata.
 - Lavoro rimasto, fuori da ICH-465 (elenco nella issue, sezione "Out of scope"): le offense correggibili con
-  `rubocop -a` (la conversione alle virgolette doppie rompe due regex che leggono i sorgenti come testo,
-  `notcursesruby.gemspec:7` e `spec/gemspec_spec.rb:24`: vanno corrette nello stesso commit), le 17 correzioni non
-  sicure, le offense `ThreadSafety/*`. In più, senza issue: il commento `# rubocop:disable
+  `rubocop -a` (ICH-469: la conversione alle virgolette doppie rompe due regex che leggono i sorgenti come testo,
+  `notcursesruby.gemspec:7` e `spec/gemspec_spec.rb:24`: vanno corrette nello stesso commit); senza issue le 17
+  correzioni non sicure e le offense `ThreadSafety/*`. In più (ICH-470): il commento `# rubocop:disable
   Lint/UnusedMethodArgument` di `lib/notcurses/ui/component.rb:223` non serve con Standard (file nel todo).
 
 ### CI
@@ -1078,3 +1078,7 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
 - ICH-464 — `to_ptr` e la chiamata C non sono atomici per i gestori `trap`: un gestore che chiude il contesto e
   lascia proseguire il codice può dare SIGSEGV in ogni metodo del wrapper (lotto 13, review round 3; esiste già su
   `master`, misurato solo dal reviewer: 1 caso su 40; contiene una scelta della regola 14).
+- ICH-469 — autocorrezioni sicure di RuboCop (`rubocop -a`) e conversione alle virgolette doppie di Standard, con le
+  due regex del gemspec e di `spec/gemspec_spec.rb` da correggere nello stesso commit; `Improvement` (ICH-465).
+- ICH-470 — il commento `# rubocop:disable Lint/UnusedMethodArgument` di `lib/notcurses/ui/component.rb:223` non
+  serve con Standard; `Improvement` (ICH-465, review).

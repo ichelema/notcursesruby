@@ -25,7 +25,8 @@ partito, `Improvement`), ICH-458 (`Direct#stream` con `:pixel` in fondo allo sch
 (`Container#close_parts` si ferma al primo figlio che solleva), ICH-460 (pulsanti del `Dialog` su 4-6 colonne),
 ICH-461 (focus a un componente che diventa visibile fuori dal resize), ICH-463 (carattere UTF-8 a cavallo della
 lettura da 8192 byte: notcurses si blocca con stdin rediretto), ICH-464 (`to_ptr` e chiamata C non atomici per un
-`close` da `trap`; contiene una scelta della regola 14).
+`close` da `trap`; contiene una scelta della regola 14), ICH-469 (autocorrezioni sicure di RuboCop e virgolette
+doppie, `Improvement`), ICH-470 (commento `# rubocop:disable` inutile in `ui/component.rb`, `Improvement`).
 
 **Decisioni già prese, da non richiedere:**
 
@@ -70,9 +71,9 @@ lettura da 8192 byte: notcurses si blocca con stdin rediretto), ICH-464 (`to_ptr
 - RuboCop (da ICH-465): `bundle exec rubocop` deve uscire con 0 prima della PR; nella CI gira solo nel job Ruby
   4.0.9. Un file nuovo passa da ogni cop di Standard (stringhe con le virgolette doppie); i file esistenti sono
   esclusi cop per cop in `.rubocop_todo.yml`, che non va rigenerato per far passare codice nuovo. La conversione
-  alle virgolette doppie dei file esistenti è lavoro successivo, senza issue: due regex leggono i sorgenti come
-  testo e vanno corrette nello stesso commit (`notcursesruby.gemspec:7`, `spec/gemspec_spec.rb:24`). Senza issue
-  anche il commento `# rubocop:disable` inutile di `lib/notcurses/ui/component.rb:223`.
+  alle virgolette doppie dei file esistenti è in ICH-469 (Backlog): due regex leggono i sorgenti come testo e
+  vanno corrette nello stesso commit (`notcursesruby.gemspec:7`, `spec/gemspec_spec.rb:24`). Il commento
+  `# rubocop:disable` inutile di `lib/notcurses/ui/component.rb:223` è in ICH-470 (Backlog).
 - Il lockfile si genera con Ruby 4.0.7, ma il job Ruby 3.2.11 lo installa con `BUNDLE_FROZEN`: in ICH-465
   `parallel 2.3.0` (Ruby >= 3.3) ha rotto quel job, da qui `parallel < 2` nel `Gemfile`. `2_work-issue` apre la PR
   prima dell'esito della CI: controlla `gh pr checks <n> --watch` prima della review.
