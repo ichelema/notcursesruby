@@ -660,6 +660,8 @@ RSpec.describe Notcurses::Direct do
       expect(ev.id).to eq(Notcurses::Key::EOF)
       allow(Notcurses::FFI).to receive(:ncdirect_get).and_call_original
       expect(@d.get(timeout: 0)).to equal(ev)
+      expect(@d.get(timeout: (2**31) - 1)).to equal(ev) # il timeout massimo è valido
+      expect { @d.get(timeout: 1e19) }.to raise_error(ArgumentError, /0\.0\.\.2147483647\.0/)
       expect(@d.get).to equal(ev)
       expect(Notcurses::FFI).not_to have_received(:ncdirect_get)
       expect(@d.readline(prompt: '> ')).to be_nil

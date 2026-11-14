@@ -104,6 +104,20 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   resize (ICH-292).
 - `Dialog`: ogni pulsante ha spazio per tutta l'etichetta; prima la riga si divideva in parti uguali e
   un'etichetta più lunga della media restava tagliata. La larghezza del dialogo non cambia (ICH-293).
+- `Context#get`, `Context#getvec` e `Direct#get` sollevano `ArgumentError` per un `timeout` sopra 2147483647 secondi
+  (2^31 - 1, circa 68 anni); prima un valore oltre `time_t` (per esempio `1e19` o `Float::MAX`) dava un `RangeError`
+  non documentato durante l'attesa. `nil` resta il modo per attendere senza limite (ICH-294).
+- `Context#getvec` legge a blocchi di 8192 eventi, la dimensione della coda di input di notcurses, finché la coda è
+  vuota o `count` è raggiunto: prima `getvec(2**31 - 1)` chiedeva un buffer di 104 GiB, e a fine input un `count`
+  grande costava secondi e centinaia di MB per un solo evento EOF. La memoria dipende dagli eventi letti, non da
+  `count` (ICH-295).
+- `EventLoop#every`: un timer il cui blocco solleva resta programmato e scatta ancora nel `run` successivo, fino a
+  `Timer#cancel`; prima non scattava più, mentre `Timer#active?` restava true (ICH-296).
+- `EventLoop#run` consegna subito i tasti che il run precedente ha lasciato in coda (uscito con `stop` o con
+  l'eccezione di un handler): il primo giro non attende. Prima arrivavano solo con il tasto, il timer o il `post`
+  successivo (ICH-298).
+- `EventLoop#run` non solleva più `RangeError` con un timer dal ritardo enorme (`after(1e20)`, `after(Float::MAX)`,
+  `every(1e20)`): l'attesa di un giro dura al massimo un giorno, e il timer resta attivo (ICH-299).
 
 ## [0.1.0] - 2026-10-27
 

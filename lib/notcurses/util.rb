@@ -18,6 +18,9 @@ module Notcurses
     UINT64 = (0..0xffff_ffff_ffff_ffff).freeze
     NONNEG_INT = (0..0x7fff_ffff).freeze
     INT64 = (-0x8000_0000_0000_0000..0x7fff_ffff_ffff_ffff).freeze
+    # Secondi di attesa dell'input: oltre time_t IO#wait_readable solleva
+    # RangeError; 2^31 - 1 (circa 68 anni) sta anche in un time_t a 32 bit.
+    TIMEOUT = (0.0..0x7fff_ffff.to_f).freeze
 
     ALPHAS = {
       opaque: FFI::NCALPHA_OPAQUE,

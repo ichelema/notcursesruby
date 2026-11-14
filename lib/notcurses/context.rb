@@ -180,6 +180,11 @@ module Notcurses
       all: FFI::NCMICE_ALL_EVENTS
     }.freeze
 
+    # Slot di un blocco di lettura di {#getvec}: la coda di input di notcurses
+    # tiene al più BUFSIZ eventi (8192 con glibc, in.c:1961).
+    GETVEC_MAX = 8192
+    private_constant :GETVEC_MAX
+
     # @return [Integer] pid del processo che ha creato il contesto
     # @api private
     attr_reader :pid
@@ -655,13 +660,14 @@ module Notcurses
     # sul descrittore di +notcurses_inputready_fd+, che rilascia il GVL, quindi
     # gli altri thread Ruby e i segnali (Ctrl-C → Interrupt) restano serviti.
     #
-    # @param timeout [Numeric, nil] secondi di attesa massima; nil = attende
-    #   senza limite; 0 = non attende
+    # @param timeout [Numeric, nil] secondi di attesa massima, 0..2147483647
+    #   (2^31 - 1, circa 68 anni); nil = attende senza limite; 0 = non attende
     # @return [Input, nil] l'evento, o nil se il timeout scade. Con stdin chiuso
     #   restituisce un evento con id {Key::EOF}
     # @raise [InputError] se notcurses segnala un errore di input, o se il
     #   contesto scarta l'input (drain_input: true)
-    # @raise [TypeError, ArgumentError] se timeout non è un numero >= 0
+    # @raise [TypeError, ArgumentError] se timeout non è un numero in
+    #   0..2147483647
     # @raise [ClosedError] se il contesto è chiuso
     def get(timeout: nil)
       wait_input(timeout) do
@@ -675,24 +681,21 @@ module Notcurses
 
     # Legge fino a count eventi già pronti (+notcurses_getvec+). Attende come
     # {#get} finché ce n'è almeno uno. Il risultato si ferma al primo evento
-    # {Key::EOF} (il C riempirebbe tutto il vettore di EOF).
+    # {Key::EOF} (il C riempirebbe tutto il vettore di EOF). Legge a blocchi di
+    # 8192 eventi, la dimensione della coda di input di notcurses, finché la
+    # coda è vuota o count è raggiunto: la memoria dipende dagli eventi letti,
+    # non da count.
     #
     # @param count [Integer] numero massimo di eventi, 1..INT_MAX
-    # @param timeout [Numeric, nil] come in {#get}
+    # @param timeout [Numeric, nil] come in {#get}: 0..2147483647, o nil
     # @return [Array<Input>] da 1 a count eventi; vuoto se il timeout scade
     # @raise [InputError] se notcurses segnala un errore di input
-    # @raise [TypeError, ArgumentError] se un argomento non è valido
+    # @raise [TypeError, ArgumentError] se un argomento non è valido (count
+    #   fuori da 1..INT_MAX, timeout fuori da 0..2147483647)
     # @raise [ClosedError] se il contesto è chiuso
     def getvec(count, timeout: nil)
       Util.integer!(count, 'count', 1..Util::INT32.max)
-      result = wait_input(timeout) do
-        buf = ::FFI::MemoryPointer.new(FFI::NcInput, count)
-        # deadline assoluta {0, 0}: già scaduta, quindi la chiamata non attende
-        n = FFI.notcurses_getvec(to_ptr, FFI::Timespec.new, buf, count)
-        raise InputError, 'notcurses_getvec: errore di input' if n.negative?
-
-        Array.new(n) { |i| Input.new(FFI::NcInput.new(buf + (i * FFI::NcInput.size))) } if n.positive?
-      end
+      result = wait_input(timeout) { queued_inputs(count) }
       return [] if result.nil?
 
       eof = result.index { |ev| ev.id == Key::EOF }
@@ -1146,11 +1149,37 @@ module Notcurses
       end
     end
 
+    # Eventi già in coda, al massimo count, letti a blocchi di GETVEC_MAX slot.
+    # Le chiamate C sono consecutive e gli Input nascono dopo: durante una
+    # raffica la coda si svuota prima che notcurses scarti altri eventi.
+    # @return [Array<Input>, nil] nil senza eventi
+    def queued_inputs(count)
+      size = FFI::NcInput.size
+      blocks = []
+      taken = 0
+      loop do
+        slots = [count - taken, GETVEC_MAX].min
+        buf = ::FFI::MemoryPointer.new(FFI::NcInput, slots)
+        # deadline assoluta {0, 0}: già scaduta, quindi la chiamata non attende.
+        # to_ptr a ogni blocco: un gestore trap può chiudere il contesto tra due chiamate
+        n = FFI.notcurses_getvec(to_ptr, FFI::Timespec.new, buf, slots)
+        raise InputError, 'notcurses_getvec: errore di input' if n.negative?
+
+        blocks << [buf, n] if n.positive?
+        taken += n
+        # blocco non pieno: la coda è vuota. A fine input il C riempie ogni blocco di EOF
+        break if n < slots || taken == count || FFI::NcInput.new(buf + ((n - 1) * size))[:id] == Key::EOF
+      end
+      return nil if blocks.empty?
+
+      blocks.flat_map { |buf, n| Array.new(n) { |i| Input.new(FFI::NcInput.new(buf + (i * size))) } }
+    end
+
     # Ripete il blocco finché restituisce un valore, attendendo l'input fuori
     # dal C tra un tentativo e l'altro.
     def wait_input(timeout)
       unless timeout.nil?
-        Util.float!(timeout, 'timeout', 0.0..)
+        Util.float!(timeout, 'timeout', Util::TIMEOUT)
         deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
       end
       loop do

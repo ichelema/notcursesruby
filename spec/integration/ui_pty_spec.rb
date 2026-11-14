@@ -126,6 +126,42 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     end
   RUBY
 
+  # Due tasti arrivati insieme su un pipe (fd 0, senza pty): il primo chiude il
+  # run con stop o con un'eccezione, il secondo resta nella coda di notcurses
+  # con il pipe di prontezza già vuoto. Ogni run ha un timer di sicurezza di 3 s.
+  def queued_keys_script = <<~'RUBY'
+    require 'notcurses'
+    $stdout.sync = true
+    keys_r, keys_w = IO.pipe
+    STDIN.reopen(keys_r) # notcurses legge i tasti dal fd 0
+    opts = { output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true, drain_input: false }
+    Notcurses::Context.open(**opts) do |nc|
+      # un ciclo per coppia: i timer di sicurezza già scaduti dell'altra coppia sveglierebbero il run
+      [['ab', 'stop'], ['cd', 'eccezione']].each do |keys, label|
+        ev = Notcurses::UI::EventLoop.new(nc)
+        got = []
+        ev.on_key('a') { got << :a; ev.stop }
+        ev.on_key('b') { got << :b; ev.stop }
+        ev.on_key('c') { got << :c; raise 'boom' }
+        ev.on_key('d') { got << :d; ev.stop }
+        keys_w.write(keys)
+        [label, "dopo #{label}"].each do |name|
+          safety = ev.after(3) { got << :timeout; ev.stop }
+          t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          reason = begin
+            ev.run
+          rescue RuntimeError => e
+            e.message
+          end
+          fast = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0 < 1
+          puts "#{name}: #{reason} #{got.inspect} #{fast ? 'subito' : 'in ritardo'}"
+          safety.cancel
+        end
+      end
+    end
+    puts 'fine'
+  RUBY
+
   # Otto run sullo stesso pty: ognuno stampa il motivo d'uscita, i tasti
   # arrivati a on_key e se stty -g dopo run è uguale a prima.
   def ctrl_keys_script = <<~'RUBY'
@@ -344,6 +380,15 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(timed_out).to be(false), out
     expect(status.exitstatus).to eq(0), out
     expect(out).to include('reason eof')
+  end
+
+  it 'un tasto rimasto in coda dopo stop o dopo un\'eccezione arriva subito nel run successivo' do
+    out, status, timed_out = run_child(queued_keys_script, timeout: 30)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(status.exitstatus).to eq(0), out
+    expect(out).to include("stop: stop [:a] subito\n", "dopo stop: stop [:a, :b] subito\n")
+    expect(out).to include("eccezione: boom [:c] subito\n", "dopo eccezione: stop [:c, :d] subito\n")
+    expect(out).to end_with("fine\n")
   end
 
   it 'no_flow_control e no_linesigs: Ctrl+Q, Ctrl+S e Ctrl+C arrivano a on_key, e stty -g torna quello di prima' do

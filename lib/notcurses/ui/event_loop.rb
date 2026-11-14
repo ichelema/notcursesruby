@@ -74,7 +74,9 @@ module Notcurses
     # (notcurses svuota il pipe di prontezza a ogni lettura, anche con altri
     # eventi in coda), i blocchi di {#post}, i timer scaduti, e un
     # {Context#render} se il giro ha consegnato qualcosa. {#run} rende anche lo
-    # schermo all'avvio.
+    # schermo all'avvio. Il primo giro di ogni {#run} non attende: consegna
+    # subito gli eventi che il run precedente ha lasciato nella coda di
+    # notcurses (uscito con {#stop} o con un'eccezione).
     #
     # Thread. Solo il thread che esegue {#run} chiama notcurses: gli handler, i
     # timer e i blocchi di {#post} girano lì. {#post} e {#stop} sono gli unici
@@ -224,8 +226,12 @@ module Notcurses
           @dims = @context.dims
           render_frame
           watched = [@input, wake_r].compact
+          # il primo giro non attende: il run precedente può aver lasciato eventi nella
+          # coda di notcurses con il pipe di prontezza già vuoto
+          wait = false
           until @stop_requested
-            IO.select(watched, nil, nil, select_timeout)
+            IO.select(watched, nil, nil, wait ? select_timeout : 0)
+            wait = true
             drain(wake_r)
             step
           end
@@ -292,7 +298,9 @@ module Notcurses
 
       # Esegue il blocco ogni seconds secondi (dal thread del ciclo). Se il
       # ciclo è in ritardo di più di un intervallo, le esecuzioni perse non
-      # vengono recuperate.
+      # vengono recuperate. Un'eccezione del blocco esce da {#run}, e il timer
+      # resta programmato: scatta ancora nel run successivo, fino a
+      # {Timer#cancel}.
       #
       # @param seconds [Numeric] intervallo, > 0
       # @yieldparam timer [Timer] il timer (per esempio per {Timer#cancel})
@@ -486,12 +494,14 @@ module Notcurses
       end
 
       # Timeout di IO.select: 0 con blocchi in coda o un resize da applicare,
-      # nil senza timer.
+      # nil senza timer. Al massimo un giorno: oltre time_t IO.select solleva
+      # RangeError (after(Float::MAX)); il ciclo si sveglia, non trova timer
+      # scaduti e riattende.
       def select_timeout
         return 0 if @resize_requested || !@queue.empty?
 
         timer = @timers.first
-        timer && [timer.deadline - clock, 0].max
+        timer && (timer.deadline - clock).clamp(0, 86_400)
       end
 
       def live? = !@stop_requested && !@context.closed?
@@ -546,9 +556,13 @@ module Notcurses
           @timers.shift
           next unless timer.active?
 
-          timer.fire
           worked = true
-          reschedule(timer) if timer.interval && timer.active?
+          begin
+            timer.fire
+          ensure
+            # anche se il blocco solleva: un every attivo resta programmato
+            reschedule(timer) if timer.interval && timer.active?
+          end
         end
         worked
       end

@@ -218,7 +218,40 @@ RSpec.describe Notcurses::Context do
       expect { nc.getvec(2, timeout: 0) }.to raise_error(Notcurses::InputError)
       expect { nc.getvec(0) }.to raise_error(ArgumentError)
       expect { nc.get(timeout: -1) }.to raise_error(ArgumentError)
+      # oltre il massimo: ArgumentError prima di ogni attesa (IO#wait_readable solleverebbe RangeError)
+      expect { nc.get(timeout: 1e19) }.to raise_error(ArgumentError, /0\.0\.\.2147483647\.0/)
+      expect { nc.get(timeout: Float::MAX) }.to raise_error(ArgumentError)
+      expect { nc.getvec(2, timeout: 1e19) }.to raise_error(ArgumentError)
       expect(nc.inputready_fd).to be >= 0
+    end
+
+    it 'getvec legge più blocchi da 8192 slot finché un blocco non è pieno o count è raggiunto' do
+      counts = []
+      allow(Notcurses::FFI).to receive(:notcurses_getvec) do |_nc, _deadline, _buf, count|
+        counts << count
+        counts.size == 1 ? count : 5 # il primo blocco torna pieno, il secondo no: coda vuota
+      end
+      expect(nc.getvec(10_000, timeout: 0).size).to eq(8197)
+      expect(counts).to eq([8192, 1808])
+      counts.clear
+      expect(nc.getvec(8192, timeout: 0).size).to eq(8192) # count raggiunto: nessun altro blocco
+      expect(counts).to eq([8192])
+    end
+
+    it 'getvec non chiama il C su un contesto chiuso tra due blocchi (close da un gestore trap)' do
+      counts = []
+      allow(Notcurses::FFI).to receive(:notcurses_getvec) do |_nc, _deadline, _buf, count|
+        counts << count
+        count # blocco pieno: getvec ne chiede un altro
+      end
+      reads = 0
+      allow(nc).to receive(:to_ptr).and_wrap_original do |original|
+        raise Notcurses::ClosedError, 'contesto chiuso' if (reads += 1) > 1
+
+        original.call
+      end
+      expect { nc.getvec(10_000, timeout: 0) }.to raise_error(Notcurses::ClosedError)
+      expect(counts).to eq([8192])
     end
 
     it 'espone le capacità del terminale' do
@@ -314,6 +347,18 @@ RSpec.describe Notcurses::Context do
       evs = @nc.getvec(5, timeout: 2)
       expect(evs.size).to eq(1)
       expect(evs.first.id).to eq(Notcurses::Key::EOF)
+      expect(@nc.get(timeout: (2**31) - 1).id).to eq(Notcurses::Key::EOF) # il timeout massimo è valido
+    end
+
+    it 'getvec passa al C al massimo 8192 slot, la dimensione della coda di notcurses' do
+      allow(Notcurses::FFI).to receive(:notcurses_getvec).and_call_original
+      expect(@nc.getvec(1_000_000, timeout: 1).map(&:id)).to eq([Notcurses::Key::EOF])
+      expect(Notcurses::FFI).to have_received(:notcurses_getvec).with(anything, anything, anything, 8192)
+      expect(@nc.getvec(5, timeout: 1).size).to eq(1)
+      expect(Notcurses::FFI).to have_received(:notcurses_getvec).with(anything, anything, anything, 5)
+      # senza il limite il buffer sarebbe di 104 GiB (NoMemoryError)
+      expect(@nc.getvec((2**31) - 1, timeout: 1).map(&:id)).to eq([Notcurses::Key::EOF])
+      expect(Notcurses::FFI).not_to have_received(:notcurses_getvec).with(anything, anything, anything, be > 8192)
     end
   end
 
