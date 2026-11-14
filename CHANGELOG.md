@@ -118,6 +118,17 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   successivo (ICH-298).
 - `EventLoop#run` non solleva più `RangeError` con un timer dal ritardo enorme (`after(1e20)`, `after(Float::MAX)`,
   `every(1e20)`): l'attesa di un giro dura al massimo un giorno, e il timer resta attivo (ICH-299).
+- `Input#utf8` e `Input#eff_text` restituiscono stringhe congelate: `ev.utf8 << ...` solleva `FrozenError`. Prima
+  modificava l'evento, e da lì `to_ffi`, `==` e i predicati dei modificatori sollevavano `IndexError` (ICH-300).
+- `Notcurses.accountname`, `.hostname`, `.osversion` e `detected_terminal` di `Context` e `Direct` restituiscono
+  sempre UTF-8 valido: i byte non validi (per esempio un `LOGNAME` Latin-1) diventano U+FFFD. Prima la String non
+  era valida, e `Plane#putstr` o una regex sollevavano `ArgumentError` (ICH-301).
+- `Notcurses.metric`, `.si_prefix`, `.binary_prefix` e `.byte_prefix` sollevano `ArgumentError` per le coppie
+  value/decimal che mandano in overflow `ncnmetric` (bug di notcurses 3.0.17, solo con `decimal` oltre
+  (2^64 - 1)/base); prima restituivano cifre e prefisso sbagliati senza errore. L'intervallo di `decimal` non
+  cambia (ICH-302).
+- YARD di `Context#refresh` e `#create_pile`: il valore e le opzioni si riferiscono all'area di rendering (il
+  terminale meno i margini), come `#dims`, non al terminale (ICH-303).
 
 ## [0.1.0] - 2026-10-27
 
