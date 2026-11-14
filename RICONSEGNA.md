@@ -875,7 +875,10 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
   LOW di Fable, corretto, GPT nessun finding; round 3: nessun finding). Lotto 12: Fable e GPT, 3 round (round 1: un
   HIGH, tre MEDIUM e due LOW, corretti; round 2: due MEDIUM e quattro LOW, quattro corretti e uno in ICH-459, più il
   formato del CHANGELOG; round 3: un MEDIUM di GPT scartato (`Interrupt` nella pulizia), un LOW di Fable in ICH-460;
-  tre rischi già presenti su `master` in ICH-461).
+  tre rischi già presenti su `master` in ICH-461). Lotto 13: Fable e GPT, 3 round (round 1: un LOW di Fable, il
+  limite secco di `getvec` perdeva più eventi di `master` in raffica, corretto con la lettura a blocchi scelta
+  dall'utente; round 2: un MEDIUM di Fable, SIGSEGV con un `close` da `trap` tra due blocchi, corretto; round 3:
+  nessun finding; GPT nessun finding in tutti i round; due difetti già presenti su `master` in ICH-463 e ICH-464).
 
 ### Lotti
 
@@ -893,6 +896,7 @@ Docker e Podman non sono installati sulla macchina di sviluppo: il workflow è p
 | 10 | [#11](https://github.com/ichelema/notcursesruby/pull/11) | `23fd73a` | ICH-285, ICH-286 | nessuno nuovo: il bug noto dello ZWJ (`egcpool.h:126-128`) tocca anche `ncdirect_putegc` (`direct.c:49-66`) e `ncstrwidth` (`notcurses.c:3311-3333`); tabelle "Piani" e "Direct" di `memory/fase2-wrapper-idiomatico.md` |
 | 11 | [#12](https://github.com/ichelema/notcursesruby/pull/12) | `cb3f0ba` | ICH-287, ICH-288, ICH-289, ICH-290 | i piani delle voci di `nctree` non cambiano mai larghezza (`tree.c:456`), tabella "Reel, Tree, Tabbed"; le etichette di `ncplot` sopra circa 1,84e17 passano da double a `uintmax_t` fuori intervallo (`plot.c:128-136`, `298-306`, comportamento indefinito: "184.47P" su x86-64-v4, "0.00" su x86-64 generico) e la riga alta esponenziale `uint64` va in wrap (`plot.c:300`); la regola dei colori di `ncprogbar` su 1 colonna o 1 riga (`fill.c:192-197`, `238-255`); "Bug noti non aggirati" di `memory/fase2-wrapper-idiomatico.md` |
 | 12 | [#13](https://github.com/ichelema/notcursesruby/pull/13) | `4ec4f4c` | ICH-291, ICH-292, ICH-293 | nessuno |
+| 13 | [#14](https://github.com/ichelema/notcursesruby/pull/14) | `7f91ae7` | ICH-294, ICH-295, ICH-296, ICH-298, ICH-299 | con stdin su un pipe, un carattere UTF-8 a cavallo della lettura da 8192 byte (`in.c:56`, `2179`) ferma l'input: `get` non restituisce quel carattere e `notcurses_stop` non ritorna; causa nel C non verificata, non ancora nelle tabelle dei bug (ICH-463). A coda piena notcurses scarta gli eventi (`in.c:523`) e li conta in `Stats#input_errors`: limite già noto, misurato nel lotto |
 
 ### Cambi dell'API pubblica
 
@@ -973,6 +977,18 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
   un `Dialog`) (lotto 12).
 - `UI::Dialog`: i pulsanti hanno peso `strwidth(etichetta) + 5`, così ogni etichetta entra intera; la larghezza del
   dialogo non cambia (lotto 12).
+- `Context#get`, `Context#getvec` e `Direct#get`: un `timeout` sopra 2147483647 secondi (2^31 - 1) solleva
+  `ArgumentError`; prima un valore oltre `time_t` dava `RangeError` durante l'attesa (scelta dell'utente, regola 14:
+  non "vale come `nil`"). L'intervallo è `Util::TIMEOUT` (lotto 13).
+- `Context#getvec`: legge a blocchi di 8192 slot (`GETVEC_MAX`, costante privata) finché un blocco non torna pieno,
+  finisce con EOF o `count` è raggiunto; la memoria dipende dagli eventi letti, non da `count`. Il primo fix, un
+  limite secco di 8192 eventi per chiamata, è stato tolto nel round 1 della review (scelta dell'utente); i criteri di
+  ICH-295 su Linear sono stati aggiornati (lotto 13).
+- `UI::EventLoop#every`: un timer il cui blocco solleva resta programmato e scatta nel `run` successivo, fino a
+  `Timer#cancel` (scelta dell'utente, regola 14: non "il timer si ferma") (lotto 13).
+- `UI::EventLoop#run`: il primo giro non attende, quindi consegna subito i tasti lasciati in coda dal run precedente;
+  l'attesa di un giro dura al massimo 86 400 s, così `after(Float::MAX)` resta valido come "mai" (scelta dell'utente,
+  regola 14: non `ArgumentError` in `after` ed `every`) (lotto 13).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
@@ -1015,3 +1031,9 @@ Nessuno.
 - ICH-461 — un componente che diventa visibile fuori dal ripristino dopo un resize (dialogo aperto a terminale
   piccolo senza focus in attesa, componente nato nascosto, fratello mostrato dopo la chiusura del focus) non prende
   il focus (lotto 12, review round 3; esiste già su `master`).
+- ICH-463 — con stdin rediretto, un carattere UTF-8 a cavallo della lettura da 8192 byte blocca notcurses: `get`
+  restituisce 2730 caratteri CJK su 2731 e `Context#close` non ritorna (lotto 13, review round 3; esiste già su
+  `master`, riprodotto; causa nel C non verificata).
+- ICH-464 — `to_ptr` e la chiamata C non sono atomici per i gestori `trap`: un gestore che chiude il contesto e
+  lascia proseguire il codice può dare SIGSEGV in ogni metodo del wrapper (lotto 13, review round 3; esiste già su
+  `master`, misurato solo dal reviewer: 1 caso su 40; contiene una scelta della regola 14).

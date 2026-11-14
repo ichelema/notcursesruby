@@ -652,3 +652,72 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 - `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
 - `master` su `4ec4f4c`: 1019 esempi, 0 fallimenti, anche con i semi 1234, 4242 e 7; `gem build` senza warning; CI
   verde.
+
+## Lotto 13 — ICH-294, ICH-295, ICH-296, ICH-298, ICH-299 (PR #14, merge `7f91ae7`)
+
+### Fix
+
+- **ICH-294 (`nucleo-06`, timeout massimo).** `Util::TIMEOUT` (`0.0..2147483647.0`) è l'intervallo usato da
+  `Context#wait_input` e `Direct#get`: sopra il massimo `ArgumentError` prima di ogni attesa, con l'intervallo nel
+  messaggio. Causa radice: `Util.float!` controllava solo che il valore fosse finito e >= 0, e `IO#wait_readable`
+  solleva `RangeError` oltre `time_t`.
+- **ICH-295 (`nucleo-08`, buffer di `getvec`).** `Context#queued_inputs` (privato) legge a blocchi di `GETVEC_MAX`
+  (8192) slot: chiama ancora il C solo se il blocco è tornato pieno, l'ultimo evento non è EOF e `count` non è
+  raggiunto; gli `Input` nascono dopo l'ultima chiamata C; `to_ptr` è valutato prima di ogni blocco. Causa radice:
+  il buffer era di `count` × 52 byte a ogni tentativo, e a fine input il C riempie tutti gli slot di EOF.
+- **ICH-296 (`ui-07`, timer `every`).** `run_timers` riprogramma il timer in un `ensure` attorno a `Timer#fire`.
+  Causa radice: il timer usciva dalla lista prima del blocco e rientrava solo dopo un blocco riuscito.
+- **ICH-298 (`ui-09`, tasti in coda).** Il primo `IO.select` di ogni `run` usa timeout 0. Causa radice: `read_input`
+  si ferma appena `live?` è false, ma notcurses ha già svuotato il pipe di prontezza: gli eventi rimasti nella coda
+  C non svegliavano il run successivo.
+- **ICH-299 (`ui-12`, ritardi enormi).** `select_timeout` limita il valore a `0..86_400`. Causa radice: il tempo
+  alla prima scadenza passava a `IO.select` senza limite superiore.
+
+### Decisioni
+
+- Regola 14, scelte dell'utente prima del fix: ICH-294 `ArgumentError` sopra il massimo (non "vale come `nil`");
+  ICH-296 il timer resta programmato (non "si ferma"), dopo un approfondimento con tabella dei due contratti;
+  ICH-299 limite in `select_timeout` (non `ArgumentError` in `after` ed `every`).
+- Regola 14, round 1 della review (ICH-295): tra "solo documentazione", "più blocchi per chiamata", "issue
+  separata" e "nessun cambio" l'utente ha scelto più blocchi per chiamata. I criteri 1 e 4, il vincolo tecnico e i
+  test richiesti di ICH-295 sono stati riscritti su Linear dopo la conferma del testo.
+- ICH-298: timeout 0 al primo `IO.select`, non uno `step` dopo il render iniziale: uno `stop` chiesto prima di `run`
+  esce ancora senza eseguire i blocchi di `post`.
+- Il massimo del timeout è in `Util` e non in `Context`, perché lo usa anche `Direct`.
+- Buffer dei blocchi azzerati: la variante senza azzeramento (`MemoryPointer.new(type, n, false)`) non dava un
+  guadagno misurabile e la spec con il C simulato leggeva memoria non inizializzata.
+
+### Review (3 round, Fable e GPT)
+
+- Round 1 (`f45d76d`): GPT APPROVABILE, nessun finding; Fable APPROVABILE CON RISERVE, un LOW: con il limite secco
+  `getvec(count > 8192)` perdeva più eventi di `master` in una raffica più grande della coda (30000 tasti: 0 raffiche
+  complete su 20, 4 su 20 su `master`). Corretto in `74d4573` con la lettura a blocchi.
+- Round 2 (`74d4573`): GPT APPROVABILE, nessun finding; Fable un MEDIUM: `queued_inputs` leggeva `to_ptr` una sola
+  volta, e un `close` da un gestore `trap` tra due blocchi portava a un SIGSEGV (9 prove su 28, 0 su `master`).
+  Corretto in `1a68d5f`, con una spec che simula il contesto chiuso al secondo `to_ptr`.
+- Round 3 (`1a68d5f`): nessun finding da entrambi; 9 mutazioni in memoria tutte rilevate dalle spec. Fuori dalla
+  PR, già su `master`: ICH-463 (carattere UTF-8 a cavallo della lettura da 8192 byte) e ICH-464 (`to_ptr` e chiamata
+  C non atomici per i gestori `trap`), create dopo la conferma dell'utente. Commento riassuntivo sulla PR.
+- Il codice l'ha scritto una sessione Fable: la review Fable era meno indipendente di quella GPT, ma i due finding
+  reali sono venuti da Fable.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| La spec di ICH-298 passava già per il caso dell'eccezione | i timer di sicurezza cancellati dei run precedenti erano già scaduti e svegliavano il ciclo | un `EventLoop` nuovo per ogni coppia di tasti |
+| `pty_spec.rb:170` fallito una volta con il seme 4242 | gara di tempi dell'esempio esistente: `getvec` si sveglia dopo il primo dei 4 tasti | non toccato (regola 16); 25 esecuzioni isolate su 25 verdi sul branch e su `master` |
+| La CI della PR non partiva subito | ritardo di GitHub, circa 3 minuti | attesa in background con un ciclo `until gh run list ...` |
+| Misure della raffica molto rumorose | distribuzione bimodale: la raffica arriva tutta o si ferma vicino a 8192-16384 | 40 esecuzioni alternate tra `master` e branch; con il fix 6 complete su 40, `master` 10 su 40: parità non raggiunta |
+| Il reviewer Fable del round 2 non poteva cancellare `.review-tmp/` | il sistema di permessi ha negato `find -delete` | conferma dell'utente per `git worktree remove --force` con file non tracciati; nel round 3 il prompt chiede file di appoggio piccoli |
+| `gem build` in locale stampa 18 warning | rdoc 7.2.0 e 8.1.0 installati insieme sulla VPS | nessun cambio: la gem si costruisce, la CI fa lo stesso passo ed è verde |
+
+### Verifica finale
+
+- Branch (`1a68d5f`): 1026 esempi, 0 fallimenti su Ruby 4.0.7, anche con i semi 1234, 4242 e 7; line coverage
+  98,15 %; YARD 100 %, 0 warning; `ruby -w` senza warning. CI verde su tutta la matrice (Ruby 3.1.7–4.0.9) e Codecov.
+- Ogni spec nuova falliva sul codice di prima (controllato prima di ogni fix); la seconda spec di ICH-296 (`cancel`
+  e poi eccezione, `after` che solleva) è una guardia dei casi invariati e passa anche su `master`.
+- `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+- `master` su `7f91ae7`: 1026 esempi, 0 fallimenti, anche con i semi 1234, 4242 e 7; `gem build` riuscito (warning
+  solo di rdoc, vedi sopra); CI verde.
