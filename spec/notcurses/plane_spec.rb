@@ -429,6 +429,69 @@ RSpec.describe Notcurses::Plane do
         end
       end
 
+      # ncplane_at_yx_cell duplica l'EGC nell'egcpool: con due EGC da 6 MB nel piano la copia non ci sta (limite
+      # di 16 MiB) e la lettura fallisce. Prima del fix il wrapper non riconosceva la metà tagliata (ICH-487).
+      context 'con un glifo che notcurses non riesce a leggere (egcpool pieno)' do
+        it 'la metà sinistra tagliata dal resize diventa una cella vuota: la scrittura lascia intatta la riga sotto (prima: "XY")' do
+          big = "漢#{"́" * 3_000_000}"
+          with_parent(rows: 3, cols: 4) do |p|
+            p.putstr(big, y: 0, x: 0)
+            p.putstr(big, y: 1, x: 2)
+            p.putstr('WXYZ', y: 2, x: 0)
+            p.resize(3, 3)
+            expect(p.at(y: 1, x: 2).egc.bytesize).to eq(0) # prima: i 6 MB del glifo
+            p.putstr('x', y: 1, x: 2)
+            expect(p.contents(y: 2, rows: 1)).to eq('WXY')
+          end
+        end
+
+        it 'un glifo stretto nell\'ultima colonna e un glifo largo intero nelle ultime due restano dove sono' do
+          narrow = "a#{"́" * 3_000_000}"
+          wide = "漢#{"́" * 3_000_000}"
+          with_parent(rows: 2, cols: 4) do |p|
+            p.putstr(narrow, y: 0, x: 2)
+            p.putstr(wide, y: 1, x: 1)
+            p.resize(2, 3)
+            expect(p.at(y: 0, x: 2).egc.bytesize).to eq(narrow.bytesize)
+            expect(p.at(y: 1, x: 2).egc.bytesize).to eq(wide.bytesize) # prima: "", la metà destra cancellata
+          end
+        end
+
+        it 'la sequenza di un bitmap, che ncplane_at_yx restituisce al posto di un EGC, non viene letta come glifo' do
+          with_parent(rows: 1, cols: 3) do |p|
+            p.name = "\e_Gbitmap"
+            p.putstr('ab', y: 0, x: 0)
+            allow(Notcurses::FFI).to receive(:ncplane_at_yx_cell).and_return(-1) # come su un piano con un bitmap
+            allow(Notcurses::FFI).to receive(:ncplane_at_yx) { Notcurses::FFI.ncplane_name(p.to_ptr) }
+            allow(Notcurses::FFI).to receive(:ncstrwidth).and_call_original
+            p.resize(1, 2)
+            expect(Notcurses::FFI).not_to have_received(:ncstrwidth) # la sequenza non viene copiata né misurata
+            allow(Notcurses::FFI).to receive(:ncplane_at_yx).and_call_original
+            expect(p.at(y: 0, x: 1).egc).to eq('b')
+          end
+        end
+
+        it "la scrittura sulla metà tagliata nell'ultima riga non corrompe l'heap (prima: abort di glibc)" do
+          skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
+          script = <<~'RUBY'
+            require 'notcurses'
+            Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                    drain_input: true) do |nc|
+              big = "漢#{"́" * 3_000_000}"
+              pl = nc.stdplane.create_child(rows: 3, cols: 4)
+              pl.putstr(big, y: 0, x: 0)
+              pl.putstr('WXYZ', y: 1, x: 0)
+              pl.putstr(big, y: 2, x: 2)
+              pl.resize(3, 3)
+              pl.putstr('x', y: 2, x: 2) # prima: scriveva oltre il framebuffer, e la free del piano abortiva
+              pl.close
+            end
+            puts 'ok'
+          RUBY
+          expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+        end
+      end
+
       it "le scritture sulla metà orfana non corrompono l'heap (prima: abort di glibc)" do
         skip 'serve libc_malloc_debug di glibc' unless File.exist?('/usr/lib/libc_malloc_debug.so.0')
         script = <<~'RUBY'

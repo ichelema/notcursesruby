@@ -424,6 +424,13 @@ module Notcurses
     # in prestito (tracked: false) usano il suo; senza un Plane tracciato aperto
     # ogni scrittura controlla i bordi.
     #
+    # Il controllo legge le celle dei bordi con +ncplane_at_yx_cell+, che copia
+    # l'EGC nell'egcpool del piano e fallisce se il pool è pieno (16 MiB; solo
+    # per gli EGC di più di 4 byte). Quelle celle il wrapper le legge con
+    # +ncplane_at_yx+, che non usa il pool, e ne misura la larghezza: anche un
+    # glifo largo che notcurses non riesce a rileggere, se viene tagliato,
+    # diventa una cella vuota.
+    #
     # @param rows [Integer] nuove righe, >= 1
     # @param cols [Integer] nuove colonne, >= 1
     # @return [self]
@@ -2501,12 +2508,13 @@ module Notcurses
     end
 
     # :left o :right se (y, x) è una metà di un glifo largo, :none se no, nil se
-    # notcurses non riesce a leggere la cella: ncplane_at_yx_cell duplica l'EGC
-    # nell'egcpool, quindi fallisce con il pool pieno (solo per gli EGC di più
-    # di 4 byte, che stanno nel pool) e sempre su un piano con un bitmap.
+    # la cella non si può leggere (piano con un bitmap). ncplane_at_yx_cell
+    # duplica l'EGC nell'egcpool, quindi fallisce anche con il pool pieno, ma
+    # solo per gli EGC di più di 4 byte, che stanno nel pool: quelle celle le
+    # legge unreadable_half.
     def half_at(ptr, y, x)
       cell = FFI::NcCell.new
-      return nil if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
+      return unreadable_half(ptr, y, x) if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
 
       if FFI.nccell_wide_left_p(cell) then :left
       elsif FFI.nccell_wide_right_p(cell) then :right
@@ -2514,6 +2522,22 @@ module Notcurses
       end
     ensure
       FFI.nccell_release(ptr, cell)
+    end
+
+    # half_at per una cella che ncplane_at_yx_cell non legge (ICH-487). Con l'egcpool pieno è una cella con
+    # un EGC di più di 4 byte, quindi mai una metà destra, che non ha un EGC: ncplane_at_yx copia l'EGC con
+    # strdup, senza passare dal pool, e la larghezza dice se è una metà sinistra. Su un piano con un bitmap
+    # ncplane_at_yx restituisce invece la sequenza dello sprixel (notcurses.c:236-243), che comincia con
+    # ESC e può essere di qualche megabyte: nil, senza copiarla.
+    def unreadable_half(ptr, y, x)
+      egc = FFI.ncplane_at_yx(ptr, y, x, nil, nil)
+      return nil if egc.null?
+
+      if egc.get_uint8(0) == 0x1b
+        Util.free(egc)
+        return nil
+      end
+      FFI.ncstrwidth(Util.take_string(egc), nil, nil) > 1 ? :left : :none
     end
 
     # Cancella le metà orfane che un resize lascia sul bordo tagliando un glifo
@@ -2574,11 +2598,11 @@ module Notcurses
     # rettangolo dato) e poi svuota l'altra metà dei glifi larghi che ha
     # coperto solo a metà. I glifi da controllare si leggono prima della
     # chiamata: quelli a cavallo dei lati del rettangolo, o con all: true tutti
-    # quelli del piano. Una metà sinistra che notcurses non riesce a leggere
-    # (egcpool pieno, vedi half_at) conta come glifo se la metà destra c'è.
-    # Dopo la chiamata la stessa cella illeggibile è ancora quella di prima,
-    # salvo con long_fill (il riempimento scrive un EGC di più di 4 byte, che
-    # sta nel pool): allora nel dubbio si svuotano le due metà. La pulizia gira
+    # quelli del piano. Una metà sinistra che half_at non riesce a leggere
+    # (nil: da ICH-487 non più per l'egcpool pieno) conta come glifo se la
+    # metà destra c'è. Dopo la chiamata la stessa cella illeggibile è ancora
+    # quella di prima, salvo con long_fill (il riempimento scrive un EGC di più
+    # di 4 byte): allora nel dubbio si svuotano le due metà. La pulizia gira
     # anche se il blocco solleva: il C può fallire dopo aver già cambiato celle
     # (egcpool pieno), e in quel caso cerca anche le metà destre orfane nel
     # rettangolo.

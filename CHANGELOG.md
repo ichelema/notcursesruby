@@ -30,6 +30,14 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   piano, scrivendo nei campi privati del piano C: lo fa solo con la libreria 3.0.17, altrimenti il bug resta. Non
   corregge gli scroll fatti con le funzioni di `Notcurses::FFI`, né il resize del terminale visto dal render che
   notcurses esegue dentro lo scroll di uno stdplane che scorre (ICH-214).
+- `Plane#resize`, `#resize_region`, `#resize_maximize` e il controllo dei bordi prima delle scritture svuotano la
+  metà di un glifo largo tagliato dal resize anche quando notcurses non riesce a rileggere il glifo. Con l'egcpool
+  del piano pieno (16 MiB) `ncplane_at_yx_cell` fallisce sugli EGC di più di 4 byte: il wrapper ora legge quelle
+  celle con `ncplane_at_yx`, che non usa il pool, e ne misura la larghezza. Prima la metà sinistra tagliata restava
+  nell'ultima colonna, e la scrittura successiva su quella cella cancellava la prima cella della riga sotto o,
+  sull'ultima riga, corrompeva l'heap; un glifo largo illeggibile rimasto intero nelle ultime due colonne perdeva
+  invece la metà destra. Anche `#erase_region`, `#gradient`, `#gradient2x1` e `#polyfill` ora leggono quelle celle,
+  e non svuotano più nel dubbio le due metà (ICH-487).
 - Le stringhe e i buffer allocati da notcurses (`Plane#at`, `Plane#name`, `Plane#as_rgba`, `Context#stats`,
   `Context#at`, `detected_terminal`, `Notcurses.hostname` e gli altri) si liberano con la `free` di notcurses. Prima
   il wrapper usava la `free` di glibc anche quando `LD_PRELOAD` mette un altro allocatore (jemalloc, tcmalloc,
