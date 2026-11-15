@@ -129,11 +129,20 @@ e il wrapper ripete la chiamata. Se fallisce, ripeti la suite; nessuna issue (la
 
 Causa confermata e spec corretta nella Parte 3 (macOS): vedi "Parte 3 — macOS", "Problemi e soluzioni".
 
-## Parte 3 — macOS (in corso)
+## Parte 3 — macOS (fatta: PR #21, merge `6cc619b`, ICH-478)
 
 - Data: 2026-11-15. Branch `test/fase5-macos` da `master` dopo i commit del log; 4 commit, PR
   [#21](https://github.com/ichelema/notcursesruby/pull/21), CI verde su tutta la matrice e su Codecov (1047 esempi,
-  0 fallimenti, nessun pending per job). Merge non ancora fatto.
+  0 fallimenti, nessun pending per job). Merge `6cc619b` fatto dall'utente; branch remoto e locale eliminati.
+- Issue Linear ICH-478, creata dopo l'apertura della PR su richiesta dell'utente e associata con `Fixes ICH-478`.
+- Review del 2026-11-15 (`/trinity:workflow:3_independent-review`, fatta dallo stesso agente: non indipendente).
+  F1 (MEDIUM): con il GVL rilasciato un `Thread#raise` o un `Timeout` durante `Context#close` sblocca
+  `tcsetattr` con `EINTR` e lascia il termios di notcurses; corretto nel commit `db15e62` con
+  `Context#stop_notcurses` (stop in un thread, `Thread.handle_interrupt(Object => :never)` intorno all'attesa;
+  `handle_interrupt` da solo, senza il thread, non basta). F2 (LOW): i 2 esempi della chiusura passano su Linux
+  anche senza il fix, e la CI gira solo su Linux. F3 (LOW): YARD di `Context#close`, corretto in `db15e62`.
+  Dopo `db15e62`: 1048 esempi, 0 fallimenti su macOS con tutti gli ordini e in CI.
+- Hindsight: retain di 10 fatti il 2026-11-15, quando il server ha risposto.
 - Hindsight: il server `127.0.0.1:8888` non risponde su questa macchina (`curl` esce con 7). Fonti: `RICONSEGNA.md`
   e i file `memory/`.
 

@@ -16,6 +16,8 @@
   `ncvisual_from_file`, `ncvisual_decode`, `ncvisual_decode_loop`, `ncdirect_render_frame` e `ncdirectf_from_file`,
   che aprono o leggono un file con ffmpeg senza limite di tempo (FIFO, URL, file system lento); decisione 20 di
   `memory/fase1-ffi-raw.md`.
+- **Modifiche successive (2026-11-15, ICH-478):** su autorizzazione dell'utente (Fase 5, Parte 3), `notcurses_stop`
+  con `blocking: ::FFI::Platform.mac?`: solo su macOS la chiamata rilascia il GVL. Dettagli nella sezione "Fase 5".
 - **Modifiche successive (2026-11-14, ICH-313):** su autorizzazione dell'utente (lotto 17), `typedefs.rb` definisce
   `:wchar_t` come `:int32` e `:uintmax_t` come `:uint64` dentro `Notcurses::FFI` solo quando il `types.conf` di ffi
   non li ha (FreeBSD, NetBSD, OpenBSD, Linux i386/ppc64/riscv64/s390x): prima `require 'notcurses'` sollevava
@@ -75,7 +77,9 @@ e offset di ogni campo delle 26 struct contro il C compilato.
   - Arch Linux: `pacman -S notcurses` (provato con 3.0.17-3: il pacchetto contiene librerie, header e `libnotcurses-ffi.so.3`).
   - Altre distribuzioni: `libnotcurses-dev` o equivalente (non provato). Basta anche il solo runtime, perché `ffi_lib`
     cerca pure i nomi versionati (`libnotcurses.so.3`, `libnotcurses-core.so.3`).
-  - macOS: i nomi `.dylib` sono in `ffi_lib`, ma non sono provati.
+  - macOS: `brew install notcurses` (provato con 3.0.17_1 su macOS 26.5.2, Apple Silicon, nella Fase 5): la gem ffi
+    trova le librerie in `/opt/homebrew/lib` senza variabili d'ambiente. Per i test serve anche
+    `brew install coreutils` (comando `timeout`).
 - **Facoltativa:** `libnotcurses-ffi.so.3`, solo per la spec differenziale. Se manca, quella spec va in skip.
 - **libc** (glibc su Linux): `fopen`, `fclose`, `free`, `tcgetattr`, `tcsetattr` e le funzioni usate dalle
   reimplementazioni.
@@ -1134,3 +1138,86 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
 - ICH-475 — chiudere il contesto o il visual, anche con `at_exit`, mentre un altro thread è dentro `Visual#decode` o
   `#decode_loop` è un use-after-free; da verificare le varianti di `Direct`; lo stesso problema esiste già per
   `Visual#stream` (lotto 17, review round 2; contiene una scelta della regola 14).
+
+## Fase 5 — blitter su un terminale vero e macOS
+
+- **Data:** 2026-11-15. Design: `memory/fase5-design.md`. Log con ambienti, risultati e problemi:
+  `memory/fase5-terminali-macos.md`.
+- **PR:** [#20](https://github.com/ichelema/notcursesruby/pull/20) (Linux, merge `4d3430a`, senza issue) e
+  [#21](https://github.com/ichelema/notcursesruby/pull/21) (macOS, merge `6cc619b`, ICH-478).
+- **Stato al `6cc619b`:** 1048 esempi, 0 fallimenti (su macOS 11 pending con il motivo); coverage su macOS: righe
+  98,47 %; `bundle exec rubocop` 0 offense (99 file). Nessun cambio a `Gemfile`, `Gemfile.lock` e alla CI.
+
+### File
+
+| File | Contenuto |
+| --- | --- |
+| `spec/graphics/terminal_spec.rb`, `spec/graphics/probe.rb` | spec grafiche su un terminale vero, solo con `NC_GRAPHICS=1` |
+| `lib/notcurses/util.rb` | rimosso `Util.timespec` (senza chiamanti) |
+| `lib/notcurses/ffi/functions.rb` | `notcurses_stop` con `blocking: ::FFI::Platform.mac?` |
+| `lib/notcurses/context.rb` | metodo privato `stop_notcurses`: su macOS lo stop gira in un thread, con le interruzioni rimandate |
+| `spec/support/nc_helpers.rb` | `NcHelpers::FD_DIR`, `NcHelpers.open_fd_count`, `NcHelpers::TIMEOUT` |
+| `spec/integration/pty_spec.rb` | 2 esempi nuovi sulla chiusura del contesto su macOS |
+| altre spec | attese per macOS in `stats`, `reader`, `subprocess`, `visual`; `context_spec.rb:358` aspetta l'EOF |
+
+### Come avviare le prove grafiche
+
+Da Kitty o Ghostty, dalla radice del progetto, con il `TERM` del terminale:
+
+```sh
+NC_GRAPHICS=1 bundle exec rspec spec/graphics
+NC_GRAPHICS=1 NC_GRAPHICS_HOLD=3 bundle exec rspec spec/graphics   # controllo a vista
+```
+
+Senza `NC_GRAPHICS=1` RSpec esclude il gruppo. Gli esempi dei tasti girano solo in Kitty con il remote control
+(`allow_remote_control yes` e `listen_on`). Da una sessione senza tty serve una finestra nuova: comandi nel log.
+
+### Risultati per sistema, terminale e blitter
+
+| Voce | Linux, Kitty 0.50.0 | Linux, Ghostty 1.4.0 | macOS, Kitty 0.50.0 | macOS, Ghostty 1.4.0 |
+| --- | --- | --- | --- | --- |
+| spec grafiche | 5 esempi verdi | 3 verdi, 2 in skip | 5 esempi verdi | 3 verdi, 2 in skip |
+| `pixel_support` | `:kitty_animated` | `:kitty_static` | `:kitty_animated` | `:kitty_static` |
+| `:pixel`, `:quad`, `:sextant`, `:braille`, `:half`, `:ascii` | riusciti | riusciti | riusciti | riusciti |
+| `:octant` | assente | assente | assente | assente |
+| controllo a vista dell'utente | sì | sì | sì | sì |
+| Shift+1 in un `TextInput` (ICH-279), tastiera vera | `"!@"` | `"!@"` | `"!@"` | `"!@"` |
+| termios di `EventLoop#run`, tastiera vera | — | — | flag corretti e ripristinati | flag corretti e ripristinati |
+
+Sixel non è provato: nessuno dei due terminali lo supporta.
+
+### Stato di macOS
+
+- **Passa:** caricamento della gem senza variabili d'ambiente; suite completa in ordine normale e con `rand:1234`,
+  `rand:4242`, `rand:7`; spec differenziale con `libnotcurses-ffi.dylib`; `ffi_layout_spec.rb` con Apple clang.
+- **In skip (11):** `va_list` solo con l'ABI System V x86_64 (1); `libc_malloc_debug` di glibc (3); `TIOCSCTTY` e
+  `/proc` in `ui_pty_spec.rb` (6); `visual_spec.rb:673`, perché su macOS `rxvt-256color` non attiva i quadranti
+  (`unix_early_matches` è dentro `#ifndef __APPLE__`, `termdesc.c:1137-1155`) (1).
+- **Limite:** la CI gira solo su Linux. I 2 esempi sulla chiusura del contesto passano su Linux anche senza il fix:
+  dopo un cambio a `notcurses_stop` o a `Context#close` la suite va eseguita a mano su macOS.
+
+### Problemi trovati
+
+| Problema | Causa | Gestione |
+| --- | --- | --- |
+| Su macOS `Context#close` si blocca con un pty letto da un thread Ruby dello stesso processo | `notcurses_stop` chiama `tcsetattr(TCSAFLUSH)` (`notcurses.c:147`), che su macOS aspetta il lettore del pty, e teneva il GVL | `blocking: ::FFI::Platform.mac?`; su Linux la chiamata non cambia (scelta dell'utente) |
+| Con il GVL rilasciato un `Thread#raise` o un `Timeout` durante la chiusura lascia il terminale nel modo di notcurses | Ruby sblocca la chiamata, `tcsetattr` esce con `EINTR` e notcurses non riprova; `Thread.handle_interrupt` da solo non basta | `Context#stop_notcurses`: stop in un thread dedicato, atteso con le interruzioni rimandate |
+| Bug di notcurses 3.0.17, non corretto: un segnale gestito da Ruby durante l'attesa di `tcsetattr` fa fallire `notcurses_stop` con -1, e il termios non viene ripristinato | `tcsetattr` interrotta (`EINTR`) non viene ripetuta (`notcurses.c:147`); succede solo dove `TCSAFLUSH` aspetta (macOS), anche con il GVL tenuto | nessuna: `Context#close` solleva `ContextError` |
+| `context_spec.rb:358` fallisce con `rand:4242` | l'esempio è il primo del gruppo e l'EOF non è ancora in coda: il wrapper ripete `notcurses_getvec` (corretto) | la spec aspetta l'EOF prima di contare le chiamate |
+| Differenze di macOS nelle spec | niente `/proc`; `osversion` inizia con `macOS`; `wcwidth(U+2028)` vale 0; `ls` di BSD apre 2 descrittori; manca `timeout` | spec portabili, con le attese di Linux invariate |
+
+**Punto aperto:** una volta su 62 esecuzioni con `rand:2026`, su macOS rspec si è bloccato in `Context#close`
+(`notcurses_stop` → `stop_inputlayer` → `pthread_join`, con il thread di input di notcurses fermo in `poll` dopo
+`pthread_cancel`). Causa non trovata; stack e ipotesi nel log, "Punti aperti". Nessuna issue.
+
+Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che interrompe un `run` arriva al
+`run(no_linesigs: true)` successivo).
+
+### Cosa serve alla fase successiva
+
+1. **Linux:** suite completa con `rand:1234`, `rand:4242`, `rand:7` sulla macchina dell'utente dopo il merge della
+   PR #21 (la CI copre solo l'ordine casuale).
+2. **Blocco raro su macOS** (punto aperto): cercare la causa con la traccia degli esempi e `sample`.
+3. **Sixel:** serve un terminale che lo supporta (per esempio foot o xterm con `-ti vt340`).
+4. **Job macOS in CI:** escluso dall'utente; senza, i fix di macOS non hanno una protezione automatica.
+5. **Pubblicazione** della gem: fuori scope, richiede la conferma dell'utente.

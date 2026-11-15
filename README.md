@@ -32,7 +32,7 @@ La gem è scritta in Ruby puro sopra la gem [ffi](https://github.com/ffi/ffi): n
 | Arch Linux | `pacman -S notcurses` | provato con 3.0.17-3 |
 | Ubuntu 26.04 LTS | `apt install libnotcurses3 libnotcurses-core3` | non provato; Ubuntu 24.04 ha 3.0.7, non supportata |
 | Fedora 44 | `dnf install notcurses` | non provato; Fedora 43 ha 3.0.16 |
-| macOS (Homebrew) | `brew install notcurses` | non provato |
+| macOS (Homebrew) | `brew install notcurses` | provato con 3.0.17_1 su macOS 26.5 (Apple Silicon) |
 | Windows | — | non supportato |
 
 Per le immagini e i video notcurses deve essere compilato con ffmpeg (è così nei pacchetti sopra).
@@ -105,7 +105,10 @@ ruby "$(gem contents notcursesruby | grep examples/demo.rb)"
 - Alcuni bug di notcurses 3.0.17 sono aggirati nel wrapper; alcune funzioni C non sono offerte perché in 3.0.17 non
   funzionano (render su buffer o su file, cancellazione delle voci di un `Selector`).
 - Ctrl+S, Ctrl+Q e i tasti dei segnali non arrivano all'applicazione senza le opzioni di `run` descritte sopra.
-- Provata solo su Linux x86_64. Le spec non provano i blitter a pixel (sixel, kitty) su un terminale vero.
+- Provata su Linux x86_64 e su macOS arm64 (Homebrew). La CI gira solo su Linux: su macOS la suite va eseguita a
+  mano.
+- I blitter a pixel sono provati su un terminale vero solo con la grafica kitty (Kitty e Ghostty, spec in
+  `spec/graphics/`). Sixel non è provato.
 
 ## Documentazione
 
@@ -132,6 +135,8 @@ TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 bundle exec rspec < /dev/nu
 - `COLORTERM=truecolor` serve alle spec dei colori RGB: senza, notcurses non abilita i 24 bit e 10 esempi falliscono.
 - Il submodule `notcurses/` serve alle spec delle immagini (`notcurses/data`).
 - La spec differenziale del layer FFI usa `libnotcurses-ffi.so.3`; se la libreria manca, va in skip.
+- Spec grafiche su un terminale vero, da Kitty o Ghostty: `NC_GRAPHICS=1 bundle exec rspec spec/graphics`.
+- macOS: alcune spec usano il comando `timeout` di coreutils (`brew install coreutils`).
 - Coverage: `bundle exec rspec --require ./spec/support/coverage.rb`, report in `coverage/`.
 - Linter: `bundle exec rubocop` (Standard); le offense già presenti sono elencate in `.rubocop_todo.yml`.
 
