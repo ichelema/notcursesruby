@@ -307,3 +307,28 @@ Prove interattive con la tastiera dell'utente (script `interactive.sh`, `termios
    (`before`/`after` di RSpec su stderr), e al primo blocco campiona il processo con `sample <pid> 2`. Se il blocco
    torna, la traccia dice l'esempio. Un bug di notcurses va nelle tabelle di `RICONSEGNA.md`; un bug del wrapper
    segue la regola 11.
+
+## Parte 4 — controlli finali su Linux (fatta il 2026-11-15)
+
+- Macchina: quella dell'utente, non la VPS. `uname -a`: `Linux browserino 7.3.4-1-cachyos #1 SMP PREEMPT_DYNAMIC
+  Thu, 12 Nov 2026 08:16:20 +0000 x86_64 GNU/Linux`; `ruby 4.0.7 (2026-09-15 revision 229531a6cf) +PRISM
+  [x86_64-linux]` (mise); notcurses 3.0.17 (`/usr/lib/libnotcurses.so.3`, anche `libnotcurses-ffi.so.3`).
+  Sessione di Claude Code in Kitty (`TERM=xterm-kitty`). Checkout su `master` al `01a0534`.
+- Hindsight: il server risponde; recall all'inizio, retain dell'esito alla fine.
+
+| Controllo | Esito |
+| --- | --- |
+| suite, ordine normale | 1048 esempi, 0 fallimenti, 0 pending (circa 31 s) |
+| suite, `rand:1234` e `rand:7` | 1048 esempi, 0 fallimenti per ogni seme |
+| suite, `rand:4242`, 3 esecuzioni della suite completa | 1048 esempi, 0 fallimenti in tutte e 3: `context_spec.rb:358` passa sempre |
+| coverage | righe 98,46 % (5481/5567), branch 91,45 %; file più basso `lib/notcurses/context.rb` 93,32 % |
+| `ruby -w -Ilib -e 'require "notcurses"'` | nessun warning |
+| `bundle exec rubocop` | 99 file, 0 offense |
+| `yard doc --fail-on-warning`, `yard stats --list-undoc` | exit 0, 100 % documentato |
+| `gem build` | gem costruita |
+| `git diff b2fed69 -- lib/notcurses/ffi lib/notcurses/ffi.rb` | solo `29b56f8` (`notcurses_stop` con `blocking: ::FFI::Platform.mac?`, approvato nella Parte 3) |
+| `NC_GRAPHICS=1 bundle exec rspec spec/graphics` in Kitty (finestra nuova con `kitty @ launch`) | 5 esempi, 0 fallimenti |
+
+- I 2 esempi nuovi di `pty_spec.rb` passano anche su Linux; come previsto, su Linux non provano il fix di macOS
+  (F2 della review). `pty_spec.rb:173` non è fallito in nessuna delle 6 esecuzioni.
+- Nessun fallimento nuovo, nessun cambio in `lib/` o nelle spec.

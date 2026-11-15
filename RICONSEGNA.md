@@ -1147,6 +1147,9 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
   [#21](https://github.com/ichelema/notcursesruby/pull/21) (macOS, merge `6cc619b`, ICH-478).
 - **Stato al `6cc619b`:** 1048 esempi, 0 fallimenti (su macOS 11 pending con il motivo); coverage su macOS: righe
   98,47 %; `bundle exec rubocop` 0 offense (99 file). Nessun cambio a `Gemfile`, `Gemfile.lock` e alla CI.
+- **Controlli finali su Linux** (2026-11-15, dopo il merge): suite con l'ordine normale e con `rand:1234`,
+  `rand:4242` (3 volte), `rand:7`: 1048 esempi, 0 fallimenti; coverage righe 98,46 %; spec grafiche in Kitty
+  verdi. Dettagli nel log, sezione "Parte 4".
 
 ### File
 
@@ -1215,9 +1218,7 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
 
 ### Cosa serve alla fase successiva
 
-1. **Linux:** suite completa con `rand:1234`, `rand:4242`, `rand:7` sulla macchina dell'utente dopo il merge della
-   PR #21 (la CI copre solo l'ordine casuale).
-2. **Blocco raro su macOS** (punto aperto): cercare la causa con la traccia degli esempi e `sample`.
-3. **Sixel:** serve un terminale che lo supporta (per esempio foot o xterm con `-ti vt340`).
-4. **Job macOS in CI:** escluso dall'utente; senza, i fix di macOS non hanno una protezione automatica.
-5. **Pubblicazione** della gem: fuori scope, richiede la conferma dell'utente.
+1. **Blocco raro su macOS** (punto aperto): cercare la causa con la traccia degli esempi e `sample`.
+2. **Sixel:** serve un terminale che lo supporta (per esempio foot o xterm con `-ti vt340`).
+3. **Job macOS in CI:** escluso dall'utente; senza, i fix di macOS non hanno una protezione automatica.
+4. **Pubblicazione** della gem: fuori scope, richiede la conferma dell'utente.
