@@ -256,9 +256,15 @@ RSpec.describe Notcurses::Reader do
           expect([reader.write(text).contents, reader.plane.cursor]).to eq([text, cursor]), text.inspect
         end
       end
-      new_reader(rows: 1, cols: 10) do |reader| # nccell_load legge 1 byte di U+2028: il C riceve il carattere intero
-        expect { reader.write("a\u2028b") }.to raise_error(Notcurses::WidgetError, /"\\u2028"/)
-        expect(reader.contents).to eq('a')
+      # U+2028 dipende da wcwidth della libc (egcpool.h:130-137). glibc: -1, nccell_load legge 1 byte e
+      # il C riceve il carattere intero, che rifiuta. macOS: 0, U+2028 è un EGC intero e il C lo scrive.
+      new_reader(rows: 1, cols: 10) do |reader|
+        if ::FFI::Platform.mac?
+          expect(reader.write("a\u2028b").contents).to eq("a\u2028b")
+        else
+          expect { reader.write("a\u2028b") }.to raise_error(Notcurses::WidgetError, /"\\u2028"/)
+          expect(reader.contents).to eq('a')
+        end
       end
     end
 

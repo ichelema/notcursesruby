@@ -17,7 +17,19 @@ module NcHelpers
     output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true, drain_input: true
   }.freeze
 
+  # Cartella dei descrittori aperti del processo: /proc/self/fd su Linux,
+  # /dev/fd su macOS, che non ha /proc.
+  FD_DIR = File.directory?('/proc/self/fd') ? '/proc/self/fd' : '/dev/fd'
+
   module_function
+
+  # Numero dei descrittori aperti del processo, compreso quello con cui Dir
+  # legge {FD_DIR}.
+  #
+  # @return [Integer]
+  def open_fd_count
+    Dir.children(FD_DIR).size
+  end
 
   # Apre un Context di test. Le opzioni sostituiscono quelle di
   # {CONTEXT_OPTIONS} (per esempio drain_input: false per leggere l'input, che

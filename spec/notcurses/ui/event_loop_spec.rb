@@ -23,7 +23,7 @@ RSpec.describe Notcurses::UI::EventLoop do
     @timed_out ? :timeout : reason
   end
 
-  def open_fds = Dir.children('/proc/self/fd').size
+  def open_fds = NcHelpers.open_fd_count
 
   context 'con un contesto notcurses' do
     include_context 'con un contesto notcurses'

@@ -9,7 +9,7 @@ RSpec.describe Notcurses::Subprocess do
   # ogni esempio usa processi e thread: un blocco del wrapper non deve fermare la suite
   around { |example| Timeout.timeout(20) { example.run } }
 
-  def open_fds = Dir.children('/proc/self/fd').size
+  def open_fds = NcHelpers.open_fd_count
 
   def now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
@@ -94,7 +94,7 @@ RSpec.describe Notcurses::Subprocess do
       expect(out).to eq('')
       expect(status.exitstatus).to eq(0)
       sub.close
-      out, _status, sub = run_command(plane, 'sh', '-c', 'ls /proc/self/fd')
+      out, _status, sub = run_command(plane, 'sh', '-c', "ls #{NcHelpers::FD_DIR}")
       expect(out.split.map(&:to_i).sort.first(3)).to eq([0, 1, 2])
       expect(out.split.size).to be <= 4 # 0, 1, 2 e il fd con cui ls legge la directory
       sub.close

@@ -38,9 +38,9 @@ RSpec.describe Notcurses::Context do
 
     it 'un secondo contesto rifiutato non lascia aperto il file di output' do
       NcHelpers.open_context do
-        fds = Dir.children('/proc/self/fd').size
+        fds = NcHelpers.open_fd_count
         expect { NcHelpers.open_context(output: '/dev/null') }.to raise_error(Notcurses::InitError, /già attivo/)
-        expect(Dir.children('/proc/self/fd').size).to eq(fds)
+        expect(NcHelpers.open_fd_count).to eq(fds)
       end
     end
 
