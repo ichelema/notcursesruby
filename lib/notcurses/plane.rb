@@ -2351,10 +2351,18 @@ module Notcurses
       [y, x]
     end
 
+    # Copia in cell la cella (y, x) (+ncplane_at_yx_cell+). Il C duplica l'EGC
+    # nell'egcpool del piano, quindi con il pool pieno fallisce anche su
+    # coordinate valide: un PlaneError, non una cella letta come vuota (un
+    # glifo largo non visto lascerebbe una metà orfana).
+    def load_cell!(ptr, y, x, cell)
+      Util.check!(FFI.ncplane_at_yx_cell(ptr, y, x, cell), PlaneError, "ncplane_at_yx_cell(#{y}, #{x})")
+    end
+
     # true se la cella (y, x) è la metà destra di un glifo largo.
     def wide_right?(ptr, y, x)
       cell = FFI::NcCell.new
-      return false if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
+      load_cell!(ptr, y, x, cell)
 
       FFI.nccell_wide_right_p(cell)
     ensure
@@ -2408,7 +2416,7 @@ module Notcurses
     # uguali a una cella vuota.
     def orphan_half?(ptr, y, x, cols)
       cell = FFI::NcCell.new
-      return false if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
+      load_cell!(ptr, y, x, cell)
 
       if FFI.nccell_wide_left_p(cell)
         x == cols - 1
@@ -2468,7 +2476,7 @@ module Notcurses
     # true se la cella (y, x) è la metà sinistra di un glifo largo.
     def wide_left?(ptr, y, x)
       cell = FFI::NcCell.new
-      return false if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
+      load_cell!(ptr, y, x, cell)
 
       FFI.nccell_wide_left_p(cell)
     ensure

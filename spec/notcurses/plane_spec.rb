@@ -1275,6 +1275,21 @@ RSpec.describe Notcurses::Plane do
         end
       end
 
+      it 'se la lettura dei glifi da tenere interi fallisce il riempimento solleva prima di cambiare il piano' do
+        # ncplane_at_yx_cell duplica l'EGC nell'egcpool: il terzo da 6 MB non ci sta e la lettura fallisce
+        egc = '漢' + ("́" * 3_000_000)
+        with_parent(rows: 2, cols: 4) do |p|
+          p.putstr(egc, y: 0, x: 0)
+          p.putstr(egc, y: 0, x: 2)
+          p.putstr('WXYZ', y: 1, x: 0)
+          [->(q) { q.erase_region(0, 2, 1, 1) }, ->(q) { q.gradient('x', 0, 0, 0, 0, x: 2, rows: 1, cols: 1) },
+            ->(q) { q.gradient2x1(0, 0, 0, 0, x: 2, rows: 1, cols: 1) }, ->(q) { q.polyfill('x', y: 0, x: 2) }].each do |fill|
+            expect { fill.call(p) }.to raise_error(Notcurses::PlaneError, /ncplane_at_yx_cell/) # prima: riusciva e lasciava la metà destra
+          end
+          p.close # libera l'egcpool, prima che altre letture lo trovino pieno
+        end
+      end
+
       it 'senza glifi larghi i riempimenti non cambiano' do
         with_parent(rows: 1, cols: 4) do |p|
           p.putstr('abcd', y: 0, x: 0)
