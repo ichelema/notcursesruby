@@ -356,6 +356,9 @@ RSpec.describe Notcurses::Context do
     end
 
     it 'getvec passa al C al massimo 8192 slot, la dimensione della coda di notcurses' do
+      # L'EOF arriva in coda dal thread di input di notcurses. Se l'esempio è il primo del gruppo, la coda
+      # può essere ancora vuota: il primo notcurses_getvec restituisce 0 e il wrapper ripete la chiamata.
+      expect(@nc.get(timeout: 2).id).to eq(Notcurses::Key::EOF)
       allow(Notcurses::FFI).to receive(:notcurses_getvec).and_call_original
       expect(@nc.getvec(1_000_000, timeout: 1).map(&:id)).to eq([Notcurses::Key::EOF])
       expect(Notcurses::FFI).to have_received(:notcurses_getvec).with(anything, anything, anything, 8192)
