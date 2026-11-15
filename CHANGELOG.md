@@ -55,7 +55,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 - `Plane#merge_down` ripetuto su un `dst` con EGC di più di 4 byte (emoji con un modificatore, lettere con più segni
   combinanti) lascia invariato il contenuto di `dst`. Prima notcurses 3.0.17 copiava a ogni merge quegli EGC
   nell'egcpool di `dst` senza rilasciare le copie vecchie: il pool cresceva fino al limite di 16 MiB, poi le celle
-  di `dst` restavano vuote senza errore (ICH-482).
+  di `dst` restavano vuote senza errore (ICH-482). Se durante una fusione le copie nuove non entrano nel pool (EGC di
+  `dst` per più di circa 8 MiB), `merge_down` lascia `dst` com'era e solleva `PlaneError`.
 - Le stringhe e i buffer allocati da notcurses (`Plane#at`, `Plane#name`, `Plane#as_rgba`, `Context#stats`,
   `Context#at`, `detected_terminal`, `Notcurses.hostname` e gli altri) si liberano con la `free` di notcurses. Prima
   il wrapper usava la `free` di glibc anche quando `LD_PRELOAD` mette un altro allocatore (jemalloc, tcmalloc,

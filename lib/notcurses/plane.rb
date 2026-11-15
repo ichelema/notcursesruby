@@ -1404,12 +1404,15 @@ module Notcurses
     # al limite di 16 MiB, le celle di dst restavano vuote senza errore. Il
     # wrapper rilascia le copie vecchie, che legge dai campi privati di dst con
     # le stesse condizioni di "Scroll" nella classe (altrimenti il pool cresce
-    # come prima).
+    # come prima). Durante la fusione le copie vecchie e quelle nuove stanno
+    # insieme nel pool: se le nuove non entrano (EGC di dst per più di circa
+    # 8 MiB), il wrapper annulla la fusione e solleva PlaneError.
     #
     # @param dst [Plane] piano di destinazione, della stessa pila
     # @return [self]
-    # @raise [PlaneError] se dst è il piano stesso o sta in un'altra pila, o se
-    #   la fusione fallisce (per esempio con un bitmap)
+    # @raise [PlaneError] se dst è il piano stesso o sta in un'altra pila, se
+    #   la fusione fallisce (per esempio con un bitmap), o se l'egcpool di dst
+    #   non ha spazio per copiare i suoi EGC (dst non cambia)
     # @raise [TypeError] se dst non è un Plane
     # @raise [ClosedError] se uno dei piani è chiuso
     def merge_down(dst)
@@ -1418,13 +1421,18 @@ module Notcurses
       raise PlaneError, 'merge_down: dst è il piano stesso' if target.address == ptr.address
       raise PlaneError, "merge_down: dst è in un'altra pila" unless FFI.ncpile_top(ptr).address == FFI.ncpile_top(target).address
 
-      old = pooled_gclusters(target)
+      old = (st = internals(target)) && fb_bytes(st)
       Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
       # il C ha copiato ogni EGC nel framebuffer nuovo e ha liberato quello vecchio senza rilasciarli (ICH-482)
-      cell = FFI::NcCell.new
-      old.each do |gcluster|
-        cell[:gcluster] = gcluster
-        FFI.nccell_release(target, cell)
+      if old
+        st = internals(target)
+        fresh = fb_bytes(st)
+        if lost_egc?(fresh)
+          release_gclusters!(target, fresh)
+          st[:fb].write_bytes(old)
+          raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (dst non è cambiato)"
+        end
+        release_gclusters!(target, old)
       end
       restore_wide_glyphs!(target)
       # glifi larghi nuovi senza le scritture: un resize del C li può tagliare a dimensioni già controllate
@@ -2482,14 +2490,27 @@ module Notcurses
       st[:logrow] = 0
     end
 
-    # gcluster delle celle di ptr che tengono l'EGC nell'egcpool (byte alto 0x01, cell_extended_p di
-    # egcpool.h:195); [] se internals non è disponibile.
-    def pooled_gclusters(ptr)
-      st = internals(ptr)
-      return [] unless st
+    # Byte del framebuffer di st (Internals), in ordine fisico.
+    def fb_bytes(st) = st[:fb].read_bytes(st[:leny] * st[:lenx] * FFI::NcCell.size)
 
-      cells = st[:leny] * st[:lenx]
-      st[:fb].read_bytes(cells * FFI::NcCell.size).unpack("Lx#{FFI::NcCell.size - 4}" * cells).select { |g| g >> 24 == 1 }
+    # Rilascia dall'egcpool di ptr gli EGC delle celle in bytes (byte alto di gcluster 0x01, cell_extended_p
+    # di egcpool.h:195).
+    def release_gclusters!(ptr, bytes)
+      cell = FFI::NcCell.new
+      bytes.unpack("Lx#{FFI::NcCell.size - 4}" * (bytes.bytesize / FFI::NcCell.size)).each do |gcluster|
+        next unless gcluster >> 24 == 1
+
+        cell[:gcluster] = gcluster
+        FFI.nccell_release(ptr, cell)
+      end
+    end
+
+    # true se in bytes c'è una cella che ncplane_mergedown non è riuscita a copiare: cell_duplicate_far
+    # scrive la larghezza e poi, senza spazio nel pool, lascia gcluster a 0 (internal.h:909-922).
+    def lost_egc?(bytes)
+      bytes.unpack("LxCx#{FFI::NcCell.size - 6}" * (bytes.bytesize / FFI::NcCell.size)).each_slice(2).any? do |g, w|
+        g.zero? && w.positive?
+      end
     end
 
     # true se la cella (y, x) è la metà destra di un glifo largo.

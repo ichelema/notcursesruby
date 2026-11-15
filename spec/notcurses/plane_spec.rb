@@ -1439,6 +1439,20 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    # Durante la fusione il C tiene nel pool le copie vecchie e quelle nuove: con più di metà dei 16 MiB già usati
+    # le copie nuove non entrano, le celle restano vuote e ncplane_mergedown_simple restituisce 0 (ICH-482, review).
+    it 'merge_down con un egcpool di dst senza spazio per le copie solleva PlaneError e lascia dst com\'era (prima: EGC persi)' do
+      with_parent(rows: 2, cols: 4) do |dst|
+        src = dst.create_child(rows: 2, cols: 4)
+        big = "a#{"́" * 3_000_000}" # 6 MB
+        2.times { |y| dst.putstr(big, y: y, x: 0) }
+        expect { src.merge_down(dst) }.to raise_error(Notcurses::PlaneError, /egcpool/)
+        expect(Array.new(2) { |y| dst.at(y: y, x: 0).egc.bytesize }).to eq([big.bytesize] * 2) # prima: [0, 0]
+        dst.putstr('xy', y: 0, x: 1)
+        expect(dst.at(y: 0, x: 0).egc.bytesize).to eq(big.bytesize)
+      end
+    end
+
     context 'con glifi larghi' do
       def merged(text, rows: 1, cols: 6)
         dst = std.create_child(rows: rows, cols: cols)
