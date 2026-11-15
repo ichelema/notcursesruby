@@ -225,6 +225,45 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(status.exitstatus).to eq(0), out
   end
 
+  # Context#close: notcurses_stop chiama tcsetattr(TCSAFLUSH) (notcurses.c:147),
+  # che su macOS aspetta che il master del pty legga l'output in coda. Il thread
+  # del terminale finto resta fuori da read(2) per 0,3 s dopo l'inizio della
+  # chiusura: per leggere gli serve il GVL. Su Linux tcsetattr non aspetta il
+  # master, e l'esempio passa anche con il GVL tenuto.
+  def stop_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    clock = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
+    read_after = 0.0
+    Thread.new do
+      loop do
+        sleep 0.01 while clock.call < read_after
+        data = master.readpartial(65_536)
+        data.scan(/\e\[6n|\e\[c/) { |q| master.write(q == "\e[6n" ? "\e[1;1R" : "\e[?62;22c") }
+      end
+    rescue IOError, Errno::EIO
+    end
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      read_after = clock.call + 0.3
+      slave.write(' ') # il thread esce da read(2) e resta nel ciclo di sleep
+      sleep 0.1
+      puts "aperto #{nc.stdplane.dims.join('x')}"
+    end
+    puts 'fine'
+  RUBY
+
+  it 'Context#close lascia girare i thread Ruby mentre il termios aspetta il terminale' do
+    out, status, timed_out = run_child(stop_script, timeout: 20)
+    expect(timed_out).to be(false), "processo figlio bloccato in Context#close (GVL tenuto in notcurses_stop?):\n#{out}"
+    expect(out).to include('aperto 24x80', 'fine')
+    expect(status.exitstatus).to eq(0), out
+  end
+
   # Ogni caso legge l'immagine da una FIFO che un thread di questo processo
   # riempie dopo 0,3 s: con il GVL tenuto durante l'apertura il thread non gira.
   def fifo_script = <<~'RUBY'

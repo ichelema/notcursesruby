@@ -14,8 +14,10 @@ module Notcurses
     # la posizione del cursore: direct.c:225 e 439). Anche ncvisual_from_file,
     # ncvisual_decode, ncvisual_decode_loop, ncdirect_render_frame e
     # ncdirectf_from_file: aprono o leggono il file con ffmpeg, un I/O senza
-    # limite di tempo (FIFO, URL, file system lento). Le altre tengono il GVL
-    # durante la chiamata.
+    # limite di tempo (FIFO, URL, file system lento). Solo su macOS anche
+    # notcurses_stop: tcsetattr(TCSAFLUSH) (notcurses.c:147) aspetta che il
+    # terminale legga l'output in coda, mentre su Linux un pty non aspetta. Le
+    # altre tengono il GVL durante la chiamata.
 
     # ═══════════════════════════════════════
     # Notcurses lifecycle
@@ -28,7 +30,7 @@ module Notcurses
     # --- init/stop ---
     attach_function :notcurses_init, [NotcursesOptions.by_ref, :pointer], :pointer, blocking: true
     attach_function :notcurses_core_init, [NotcursesOptions.by_ref, :pointer], :pointer, blocking: true
-    attach_function :notcurses_stop, [:pointer], :int
+    attach_function :notcurses_stop, [:pointer], :int, blocking: ::FFI::Platform.mac?
 
     # --- opzioni ---
     attach_function :notcurses_lex_margins, [:string, NotcursesOptions.by_ref], :int
