@@ -131,7 +131,7 @@ Causa confermata e spec corretta nella Parte 3 (macOS): vedi "Parte 3 — macOS"
 
 ## Parte 3 — macOS (in corso)
 
-- Data: 2026-11-15. Branch `test/fase5-macos` da `4054480` (prima da `76cd883`, poi rebase); commit `1fdc78d`, `b667bb3`, `4ea5d3d`, non ancora
+- Data: 2026-11-15. Branch `test/fase5-macos` da `master` dopo i commit del log; 3 commit, non ancora
   inviati né in una PR.
 - Hindsight: il server `127.0.0.1:8888` non risponde su questa macchina (`curl` esce con 7). Fonti: `RICONSEGNA.md`
   e i file `memory/`.
@@ -178,12 +178,12 @@ in `ui_pty_spec.rb` (6), quadranti di `rxvt-256color` (1, nuovo).
 
 | Commit | Cambio |
 | --- | --- |
-| `1fdc78d` `fix(ffi): su macOS notcurses_stop rilascia il GVL` | `lib/notcurses/ffi/functions.rb`: `notcurses_stop` con `blocking: ::FFI::Platform.mac?` (cambio della Fase 1 approvato dall'utente il 2026-11-15, solo su macOS: su Linux la chiamata non cambia); spec nuova in `spec/integration/pty_spec.rb`; voce in «Corretto» di `CHANGELOG.md` |
-| `b667bb3` `test(macos): spec portabili su macOS` | `NcHelpers::FD_DIR` e `NcHelpers.open_fd_count` (`/proc/self/fd` su Linux, `/dev/fd` su macOS) in 5 file; `osversion` con il prefisso `macOS`; U+2028 in `Reader#write` con attese per glibc e per macOS; `visual_spec.rb:673` in skip su macOS |
-| `4ea5d3d` `test(contesto): aspetta l'EOF prima di contare le chiamate a notcurses_getvec` | `spec/notcurses/context_spec.rb:358` |
+| `fix(ffi): su macOS notcurses_stop rilascia il GVL` | `lib/notcurses/ffi/functions.rb`: `notcurses_stop` con `blocking: ::FFI::Platform.mac?` (cambio della Fase 1 approvato dall'utente il 2026-11-15, solo su macOS: su Linux la chiamata non cambia); spec nuova in `spec/integration/pty_spec.rb`; voce in «Corretto» di `CHANGELOG.md` |
+| `test(macos): spec portabili su macOS` | `NcHelpers::FD_DIR` e `NcHelpers.open_fd_count` (`/proc/self/fd` su Linux, `/dev/fd` su macOS) in 5 file; `osversion` con il prefisso `macOS`; U+2028 in `Reader#write` con attese per glibc e per macOS; `visual_spec.rb:673` in skip su macOS |
+| `test(contesto): aspetta l'EOF prima di contare le chiamate a notcurses_getvec` | `spec/notcurses/context_spec.rb:358` |
 
 Le attese delle spec su Linux non cambiano (regola 17). `git diff b2fed69 -- lib/notcurses/ffi lib/notcurses/ffi.rb`
-non è più vuoto: contiene solo il cambio di `1fdc78d`.
+non è più vuoto: contiene solo il cambio del commit `fix(ffi)`.
 
 ### Problemi e soluzioni
 
