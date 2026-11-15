@@ -131,7 +131,7 @@ Causa confermata e spec corretta nella Parte 3 (macOS): vedi "Parte 3 — macOS"
 
 ## Parte 3 — macOS (in corso)
 
-- Data: 2026-11-15. Branch `test/fase5-macos` da `76cd883`; commit `458c310`, `7f5f926`, `b2e796b`, non ancora
+- Data: 2026-11-15. Branch `test/fase5-macos` da `4054480` (prima da `76cd883`, poi rebase); commit `1fdc78d`, `b667bb3`, `4ea5d3d`, non ancora
   inviati né in una PR.
 - Hindsight: il server `127.0.0.1:8888` non risponde su questa macchina (`curl` esce con 7). Fonti: `RICONSEGNA.md`
   e i file `memory/`.
@@ -178,12 +178,12 @@ in `ui_pty_spec.rb` (6), quadranti di `rxvt-256color` (1, nuovo).
 
 | Commit | Cambio |
 | --- | --- |
-| `458c310` `fix(ffi): su macOS notcurses_stop rilascia il GVL` | `lib/notcurses/ffi/functions.rb`: `notcurses_stop` con `blocking: ::FFI::Platform.mac?` (cambio della Fase 1 approvato dall'utente il 2026-11-15, solo su macOS: su Linux la chiamata non cambia); spec nuova in `spec/integration/pty_spec.rb`; voce in «Corretto» di `CHANGELOG.md` |
-| `7f5f926` `test(macos): spec portabili su macOS` | `NcHelpers::FD_DIR` e `NcHelpers.open_fd_count` (`/proc/self/fd` su Linux, `/dev/fd` su macOS) in 5 file; `osversion` con il prefisso `macOS`; U+2028 in `Reader#write` con attese per glibc e per macOS; `visual_spec.rb:673` in skip su macOS |
-| `b2e796b` `test(contesto): aspetta l'EOF prima di contare le chiamate a notcurses_getvec` | `spec/notcurses/context_spec.rb:358` |
+| `1fdc78d` `fix(ffi): su macOS notcurses_stop rilascia il GVL` | `lib/notcurses/ffi/functions.rb`: `notcurses_stop` con `blocking: ::FFI::Platform.mac?` (cambio della Fase 1 approvato dall'utente il 2026-11-15, solo su macOS: su Linux la chiamata non cambia); spec nuova in `spec/integration/pty_spec.rb`; voce in «Corretto» di `CHANGELOG.md` |
+| `b667bb3` `test(macos): spec portabili su macOS` | `NcHelpers::FD_DIR` e `NcHelpers.open_fd_count` (`/proc/self/fd` su Linux, `/dev/fd` su macOS) in 5 file; `osversion` con il prefisso `macOS`; U+2028 in `Reader#write` con attese per glibc e per macOS; `visual_spec.rb:673` in skip su macOS |
+| `4ea5d3d` `test(contesto): aspetta l'EOF prima di contare le chiamate a notcurses_getvec` | `spec/notcurses/context_spec.rb:358` |
 
 Le attese delle spec su Linux non cambiano (regola 17). `git diff b2fed69 -- lib/notcurses/ffi lib/notcurses/ffi.rb`
-non è più vuoto: contiene solo il cambio di `458c310`.
+non è più vuoto: contiene solo il cambio di `1fdc78d`.
 
 ### Problemi e soluzioni
 
@@ -224,7 +224,7 @@ TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5
    perché nessun thread Ruby gira durante il blocco, ma un solo caso non basta a provarlo.
 
    Ipotesi da controllare, nessuna provata:
-   - su macOS `block_on_input` chiama `poll` senza la maschera dei segnali (`in.c:2552-2554`, «FIXME smask?»); alcune
+   - su macOS `block_on_input` chiama `poll` senza la maschera dei segnali (`in.c:2556-2558`, «FIXME smask?»); alcune
      spec mandano USR1, USR2, TERM, WINCH e CONT al processo (`lifecycle_spec.rb:397` e `:406`,
      `event_loop_spec.rb:78-80` e `:347-361`, `dialog_spec.rb:127-169`);
    - una gara tra `pthread_cancel` e l'entrata del thread di input in `poll` su Darwin.
