@@ -1044,10 +1044,6 @@ module Notcurses
     end
 
     # @api private
-    # @return [Boolean] true se è in corso un callback chiamato dal C
-    def in_callback? = @callback_depth.positive?
-
-    # @api private
     # @raise [Error] (della classe error) se è in corso un callback chiamato dal C
     def check_not_in_callback!(what, error)
       raise error, "#{what} non è permesso dentro un callback chiamato da notcurses" if @callback_depth.positive?

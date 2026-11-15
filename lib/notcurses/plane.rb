@@ -32,28 +32,15 @@ module Notcurses
   # possono distruggere o riparentare piani: il C sta ancora percorrendo le sue
   # liste (use-after-free). Il wrapper lo impedisce con un'eccezione.
   #
-  # Scroll. Un piano che ha fatto scroll tiene le righe nell'ordine in cui si
-  # vedono anche in {#duplicate}, nei resize, in {#rotate_cw}/{#rotate_ccw},
-  # come destinazione di {#merge_down} e nelle dissolvenze. Bug di 3.0.17
-  # aggirato: dopo uno scroll notcurses tiene la prima riga del piano in una
-  # riga qualsiasi del suo buffer (+logrow+), e in quelle operazioni permuta o
-  # perde righe; succede anche nei resize che fa da sé (lo stdplane quando
-  # cambia il terminale, i figli con resize: :maximize, la crescita per
-  # autogrow). Il wrapper rimette in ordine le righe del buffer subito dopo ogni
-  # sua chiamata che può far scorrere il piano ({#putstr}, {#printf},
-  # {#putegc}, {#putc}, {#puttext}, {#hline}, {#scrollup}, {#scrollup_child}).
-  # Per farlo scrive nei campi privati del piano C, quindi solo con la libreria
-  # 3.0.17 e se quei campi coincidono con i valori dell'API pubblica:
-  # altrimenti non fa nulla e il bug resta. Ogni scroll copia così tutto il
-  # buffer del piano in un buffer nuovo: costa circa 25 µs per riga su un
-  # piano 24x80, 45 µs su 50x200 e 0,25 ms su 200x400. Un altro thread che
-  # legge il piano vede le righe sempre in ordine (lo scambio dei buffer è
-  # una sola scrittura), salvo per gli scroll fatti dentro un callback di
-  # resize, dove il buffer si riscrive sul posto. Limiti: uno
-  # scroll fatto con le funzioni di +Notcurses::FFI+ non viene corretto; su
-  # uno stdplane che scorre notcurses esegue lo scroll e il render nella
-  # stessa chiamata C, quindi un resize del terminale visto da quel render
-  # permuta ancora le righe.
+  # Bug noto di 3.0.17 non aggirato: dopo il primo scroll, {#duplicate}, i
+  # resize (anche la crescita per autogrow), {#rotate_cw}/{#rotate_ccw} e il
+  # merge sul piano di destinazione permutano o perdono righe.
+  #
+  # Campi privati. Alcuni workaround ({#duplicate}, {#merge_down},
+  # {#resize_region}, il controllo dei glifi larghi tagliati) leggono o
+  # scrivono campi privati del piano C: lo fanno solo con la libreria 3.0.17
+  # e se quei campi coincidono con i valori dell'API pubblica; altrimenti non
+  # fanno nulla e il bug resta.
   class Plane
     include Resource
 
@@ -96,8 +83,9 @@ module Notcurses
 
     # Campi privati di +struct ncplane+ fino ad autogrow (notcurses 3.0.17,
     # src/lib/internal.h:76-125): l'API pubblica non lascia leggere o scrivere
-    # fb, logrow, valign e fixedbound. I workaround li usano solo attraverso
-    # internals, che controlla la versione della libreria e i campi.
+    # fb, egcpool, cella base, sprite, valign e fixedbound. I workaround li
+    # usano solo attraverso internals, che controlla la versione della libreria
+    # e i campi.
     #
     # @api private
     class Internals < ::FFI::Struct
@@ -384,12 +372,10 @@ module Notcurses
     #
     # Bug di 3.0.17 aggirati: il C posiziona la copia usando le coordinate
     # assolute come relative, la mette in cima alla pila e azzera scrolling e
-    # autogrow; il wrapper sposta la copia e ripristina i due flag. Di un piano
-    # che ha fatto scroll il C copierebbe le righe ruotate: la copia le ha
-    # nell'ordine in cui si vedono (vedi "Scroll" nella classe). Il C non copia
-    # nemmeno il flag fixed e l'allineamento verticale (per {#resize_realign}):
-    # il wrapper li scrive nei campi privati della copia, con le stesse
-    # condizioni di "Scroll" nella classe. Un callback di resize interno di un
+    # autogrow; il wrapper sposta la copia e ripristina i due flag. Il C non
+    # copia nemmeno il flag fixed e l'allineamento verticale (per
+    # {#resize_realign}): il wrapper li scrive nei campi privati della copia
+    # (vedi "Campi privati" nella classe). Un callback di resize interno di un
     # widget non viene copiato (con il C la copia andrebbe in crash al primo
     # resize).
     #
@@ -421,10 +407,7 @@ module Notcurses
     # --- resize ---
 
     # Ridimensiona il piano tenendo l'origine e il contenuto che ci sta
-    # (+ncplane_resize_simple+). Chiama i callback di resize dei figli. Su un
-    # piano che ha fatto scroll le righe restano nell'ordine in cui si vedono,
-    # come in {#resize_region} e {#resize_maximize} (vedi "Scroll" nella
-    # classe).
+    # (+ncplane_resize_simple+). Chiama i callback di resize dei figli.
     #
     # Un glifo largo tagliato dal nuovo bordo destro diventa una cella vuota:
     # notcurses 3.0.17 ne lascia la metà sinistra nell'ultima colonna, e la
@@ -442,9 +425,9 @@ module Notcurses
     # per gli EGC di più di 4 byte). Quelle celle il wrapper le legge con
     # +ncplane_at_yx+, che non usa il pool, e ne misura la larghezza: anche un
     # glifo largo che notcurses non riesce a rileggere, se viene tagliato,
-    # diventa una cella vuota. Questa lettura richiede i campi privati del
-    # piano, con le condizioni di "Scroll" nella classe (per riconoscere un
-    # piano con un bitmap): senza, quelle celle non contano come glifi.
+    # diventa una cella vuota. Questa lettura usa i campi privati del piano
+    # per riconoscere un piano con un bitmap (vedi "Campi privati" nella
+    # classe): senza, quelle celle non contano come glifi.
     #
     # @param rows [Integer] nuove righe, >= 1
     # @param cols [Integer] nuove colonne, >= 1
@@ -1117,11 +1100,7 @@ module Notcurses
       raise PlaneError, 'scrollup: il piano non ha lo scrolling attivo' unless scrolling?
 
       FFI.ncplane_cursor_move_yx(ptr, dim_y - 1, 0)
-      rc = begin
-        FFI.ncplane_scrollup(ptr, lines)
-      ensure
-        unscroll!(ptr)
-      end
+      rc = FFI.ncplane_scrollup(ptr, lines)
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, 'ncplane_scrollup')
       self
@@ -1138,12 +1117,7 @@ module Notcurses
     # @raise [TypeError] se child non è un Plane
     # @raise [ClosedError] se uno dei piani è chiuso
     def scrollup_child(child)
-      ptr = to_ptr
-      rc = begin
-        FFI.ncplane_scrollup_child(ptr, same_context_plane!(child, 'child'))
-      ensure
-        unscroll!(ptr)
-      end
+      rc = FFI.ncplane_scrollup_child(to_ptr, same_context_plane!(child, 'child'))
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, 'ncplane_scrollup_child')
       self
@@ -1153,8 +1127,6 @@ module Notcurses
     # diventano colonne/2 e le colonne righe*2, l'origine non cambia. Servono
     # un numero pari di colonne e celle con soli "", " ", "▀", "▄" o "█"; la
     # rotazione perde informazione (cw e poi ccw non restituisce l'originale).
-    # Su un piano che ha fatto scroll ruota le righe nell'ordine in cui si
-    # vedono (vedi "Scroll" nella classe).
     #
     # @return [self]
     # @raise [PlaneError] se la rotazione non è possibile (anche sullo
@@ -1169,7 +1141,7 @@ module Notcurses
     end
 
     # Ruota il piano di 90° in senso antiorario (+ncplane_rotate_ccw+), con le
-    # stesse regole di {#rotate_cw}, anche su un piano che ha fatto scroll.
+    # stesse regole di {#rotate_cw}.
     #
     # @return [self]
     # @raise [PlaneError] se la rotazione non è possibile
@@ -1402,8 +1374,7 @@ module Notcurses
 
     # Fonde questo piano sopra dst (+ncplane_mergedown_simple+): dst prende il
     # risultato del render dei due piani nelle loro posizioni (alpha, cella
-    # base, ...); questo piano non cambia. Un dst che ha fatto scroll tiene le
-    # righe nell'ordine in cui si vedono (vedi "Scroll" nella classe).
+    # base, ...); questo piano non cambia.
     #
     # Bug di 3.0.17: +ncplane_mergedown+ ignora la regione che riceve, quindi
     # il wrapper offre solo la fusione completa; lascia anche la metà destra
@@ -1421,7 +1392,7 @@ module Notcurses
     # dst senza rilasciare le copie vecchie: il pool cresceva a ogni fusione e,
     # al limite di 16 MiB, le celle di dst restavano vuote senza errore. Il
     # wrapper rilascia le copie vecchie, che legge dai campi privati di dst con
-    # le stesse condizioni di "Scroll" nella classe (altrimenti il pool cresce
+    # le condizioni di "Campi privati" nella classe (altrimenti il pool cresce
     # come prima). Durante la fusione le copie vecchie e quelle nuove stanno
     # insieme nel pool: se le nuove non entrano (EGC di dst per più di circa
     # 8 MiB), il wrapper annulla la fusione e solleva PlaneError.
@@ -1619,14 +1590,10 @@ module Notcurses
         if seg.start_with?("\n") && (i.positive? || tx == -1) && cursor_x == dim_x
           Util.check!(FFI.ncplane_cursor_move_yx(ptr, i.zero? ? ty : -1, dim_x - 1), PlaneError, 'ncplane_cursor_move_yx')
         end
-        rc = begin
-          if stained then FFI.ncplane_putstr_stained(ptr, seg)
-          elsif i.zero? then FFI.ncplane_putstr_yx(ptr, ty, tx, seg)
-          else FFI.ncplane_putstr(ptr, seg)
-          end
-        ensure
-          unscroll!(ptr)
-        end
+        rc = if stained then FFI.ncplane_putstr_stained(ptr, seg)
+             elsif i.zero? then FFI.ncplane_putstr_yx(ptr, ty, tx, seg)
+             else FFI.ncplane_putstr(ptr, seg)
+             end
         @context.raise_callback_errors!
         written += rc.abs
         raise PlaneError, "putstr: notcurses ha scritto #{written} colonne su #{widths.sum}" unless rc == widths[i]
@@ -1682,11 +1649,7 @@ module Notcurses
       single_egc!(ptr, text)
       cols = Notcurses.strwidth(text)
       ty, tx = text_target!(text, cols, cols, y: y, x: x, align: nil, stained: stained)
-      rc = begin
-        stained ? FFI.ncplane_putegc_stained(ptr, text, nil) : FFI.ncplane_putegc_yx(ptr, ty, tx, text, nil)
-      ensure
-        unscroll!(ptr)
-      end
+      rc = stained ? FFI.ncplane_putegc_stained(ptr, text, nil) : FFI.ncplane_putegc_yx(ptr, ty, tx, text, nil)
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, "ncplane_putegc_yx(#{text.inspect})")
     end
@@ -1712,11 +1675,7 @@ module Notcurses
 
       cols = [cell.width, 1].max
       ty, tx = text_target!(cell.egc, cols, cols, y: y, x: x, align: nil, stained: false)
-      rc = begin
-        with_nccells(ptr, [cell]) { |nc| FFI.ncplane_putc_yx(ptr, ty, tx, nc) }
-      ensure
-        unscroll!(ptr)
-      end
+      rc = with_nccells(ptr, [cell]) { |nc| FFI.ncplane_putc_yx(ptr, ty, tx, nc) }
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, "ncplane_putc_yx(#{cell.egc.inspect})")
     end
@@ -2071,12 +2030,8 @@ module Notcurses
       c1, c2 = interp_channels!(from, to)
       sync_scrolling_stdplane!(ptr, len > cols - left)
       move_cursor(top, left)
-      rc = begin
-        with_nccells(ptr, [line]) do |nc|
-          c1.nil? ? FFI.ncplane_hline(ptr, nc, len) : FFI.ncplane_hline_interp(ptr, nc, len, c1, c2)
-        end
-      ensure
-        unscroll!(ptr)
+      rc = with_nccells(ptr, [line]) do |nc|
+        c1.nil? ? FFI.ncplane_hline(ptr, nc, len) : FFI.ncplane_hline_interp(ptr, nc, len, c1, c2)
       end
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, 'ncplane_hline_interp')
@@ -2499,59 +2454,6 @@ module Notcurses
       st = Internals.new(ptr)
       st if st[:leny] == FFI.ncplane_dim_y(ptr) && st[:lenx] == FFI.ncplane_dim_x(ptr) &&
             st[:scrolling] == FFI.ncplane_scrolling_p(ptr) && st[:autogrow] == FFI.ncplane_autogrow_p(ptr)
-    end
-
-    # Rimette le righe del framebuffer nell'ordine in cui si vedono e azzera logrow. Dopo uno scroll la
-    # prima riga logica sta nella riga fisica logrow (notcurses.c:1777), ma ncplane_dup (notcurses.c:788),
-    # ncplane_resize_internal (notcurses.c:898-1002), rotate_merge (fill.c:450-451), ncplane_mergedown
-    # (render.c:602-603) e i passi delle dissolvenze (fade.c:122, 185) usano le righe fisiche, e nessuna
-    # funzione pubblica azzera logrow (ICH-214). Va chiamata subito dopo ogni chiamata C che può far
-    # scorrere il piano, in un ensure (un'eccezione asincrona può arrivare prima): così logrow vale 0
-    # anche quando il resize lo fa notcurses (lo stdplane nel render, i figli con :maximize, la crescita
-    # per autogrow).
-    def unscroll!(ptr)
-      # quasi sempre 0: una lettura di 4 byte dentro la struct, prima dei controlli di internals
-      return if Internals.new(ptr)[:logrow].zero?
-
-      st = internals(ptr)
-      return unless st
-
-      row = st[:lenx] * FFI::NcCell.size
-      head = (st[:logrow] % st[:leny]) * row
-      bytes = st[:fb].read_bytes(st[:leny] * row)
-      rows = bytes.byteslice(head..) + bytes.byteslice(0, head)
-      Thread.handle_interrupt(Object => :never) do
-        # dentro un callback del C non si distruggono piani: lì il buffer si riscrive sul posto
-        next if !@context.in_callback? && swap_fb!(st, rows)
-
-        st[:fb].write_bytes(rows)
-        st[:logrow] = 0
-      end
-    end
-
-    # Mette rows (il buffer con le righe in ordine) in un framebuffer nuovo, allocato da notcurses in un piano
-    # temporaneo di un'altra pila, e lo scambia con quello di st insieme a logrow = 0 con una sola scrittura:
-    # fb e logrow sono adiacenti (offset 0 e 8), quindi un altro thread vede o il buffer vecchio con il suo
-    # logrow o quello nuovo con 0, mai il buffer ruotato con il logrow vecchio. Il piano temporaneo libera poi
-    # il buffer vecchio (free_plane, notcurses.c:467-498, non rilascia le celle). false se il piano non si crea.
-    def swap_fb!(st, rows)
-      opts = FFI::NcPlaneOptions.new
-      opts[:rows] = st[:leny]
-      opts[:cols] = st[:lenx]
-      tmp = FFI.ncpile_create(@context.to_ptr, opts)
-      return false if tmp.null?
-
-      old = st[:fb]
-      fresh = Internals.new(tmp)[:fb]
-      begin
-        fresh.write_bytes(rows)
-        st.pointer.write_bytes([fresh.address, 0].pack('Jl'))
-      ensure
-        # il piano temporaneo libera il buffer che st non usa
-        Internals.new(tmp)[:fb] = old if st[:fb].address == fresh.address
-        FFI.ncplane_destroy(tmp)
-      end
-      true
     end
 
     # Byte del framebuffer di st (Internals), in ordine fisico.
@@ -3162,10 +3064,9 @@ module Notcurses
   # fotografia è solo memoria, non dipende dalla vita del piano o del
   # contesto: {#close} la libera, e se dimentichi di chiuderla la libera il GC.
   #
-  # Su un piano che ha già fatto scroll i passi colorano le righe giuste (bug
-  # di 3.0.17 aggirato: vedi "Scroll" in {Plane}). La fotografia vale per le
-  # righe dello schermo: dopo un resize o uno scroll del piano i colori non
-  # corrispondono più al contenuto (senza rischi per la memoria).
+  # Bug noto di 3.0.17 non aggirato: su un piano che ha già fatto scroll i
+  # colori fotografati vengono applicati alle righe sbagliate. Dopo un resize
+  # del piano i colori non corrispondono più (senza rischi per la memoria).
   #
   # @example
   #   plane.fade_context do |fc|

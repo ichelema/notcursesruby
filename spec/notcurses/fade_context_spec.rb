@@ -50,23 +50,6 @@ RSpec.describe Notcurses::FadeContext do
     end
   end
 
-  it 'su un piano che ha fatto scroll i passi colorano le righe giuste (prima: i colori di un\'altra riga, ICH-214)' do
-    nc.stdplane.create_child(rows: 3, cols: 2, vscroll: true) do |p|
-      [0xc80000, 0x00c800, 0x0000c8, 0x646400].each_with_index do |rgb, i|
-        p.set_fg_rgb24(rgb)
-        p.putstr(i.zero? ? 'ab' : "\nab") # la quarta riga fa scorrere il piano
-      end
-      colors = -> { Array.new(3) { |y| p.at(y: y, x: 0).channels.fg_rgb24 } }
-      expect(colors.call).to eq([0x00c800, 0x0000c8, 0x646400])
-      p.fade_context do |fc|
-        fc.fadeout(0)
-        expect(colors.call).to eq([0x00c800, 0x0000c8, 0x646400])
-        fc.fadein(fc.iterations)
-        expect(colors.call).to eq([0x00c800, 0x0000c8, 0x646400])
-      end
-    end
-  end
-
   it 'rifiuta i passi fuori intervallo e l\'uso dopo close' do
     with_colored_plane do |p|
       fc = p.fade_context
