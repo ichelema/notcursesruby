@@ -4,30 +4,33 @@
 > prompt». Scritto il 2026-11-06, con il repository su `ab75226`, dopo la revisione completa del codice. La
 > sessione corregge i difetti trovati dalla revisione, un lotto di issue Linear alla volta.
 
-## Stato e prossimo step (aggiornato il 2026-11-14, dopo il lotto 16)
+## Stato e prossimo step (aggiornato il 2026-11-15, dopo il lotto 17)
 
 Questa sezione prevale sul resto del file quando i dati sono in conflitto.
 
-**Stato.** I lotti 1–16 sono chiusi. Lotto 16: PR #18, merge `9672bd5`, ICH-306…ICH-311 a Done. Solo spec e CI,
-nessun cambio in `lib/`: Alt nel campo deprecato (`input_spec.rb`, `pty_spec.rb`), `Palette#use` letto da una copia
-nuova, `count: -1` nei `Direct#cursor_*`, nuova `spec/ffi_layout_spec.rb` (programma C generato contro gli header:
-26 struct, flag di `Termios`, 343 costanti), esempi kitty e `Key::RESIZE` in `ui_pty_spec.rb`,
-`codecov/codecov-action` fissata allo SHA del commit di `v7.1.1` con `spec/ci_workflow_spec.rb`. Review Fable e GPT,
-2 round, un solo LOW (intestazione dei due file di spec nuovi), corretto. Lo step Codecov è riuscito al primo push su
-`master`. `master` è sul commit docs del lotto 16; suite: 1044 esempi, 0 fallimenti; `bundle exec rubocop`: 0
-offense. Leggi in `RICONSEGNA.md` la sezione "Correzioni della revisione del 2026-11-06" e il log
-`memory/correzioni-review.md` (lotti 1–16 e ICH-465). Restano aperte in Backlog, fuori dai lotti: ICH-441
-(`Process.daemon`), ICH-448 (stato del controllo dei bordi per wrapper `Plane`), ICH-449 (double free dopo
-`merge_down` + `Plane#at`), ICH-450 (`polyfill`, `gradient` ed `erase_region` su metà di un glifo largo), ICH-454
-(ISIG del terminale e `ictx->linesigs` divergono), ICH-455 (Ctrl+C in coda consegnato a un `run(no_linesigs: true)`
-successivo), ICH-456 (segnale anche per ripetizione e rilascio del Ctrl+C di kitty), ICH-457 (drag consegnato al
-componente dove è partito, `Improvement`), ICH-458 (`Direct#stream` con `:pixel` in fondo allo schermo), ICH-459
-(`Container#close_parts` si ferma al primo figlio che solleva), ICH-460 (pulsanti del `Dialog` su 4-6 colonne),
-ICH-461 (focus a un componente che diventa visibile fuori dal resize), ICH-463 (carattere UTF-8 a cavallo della
-lettura da 8192 byte: notcurses si blocca con stdin rediretto), ICH-464 (`to_ptr` e chiamata C non atomici per un
-`close` da `trap`; contiene una scelta della regola 14), ICH-469 (autocorrezioni sicure di RuboCop e virgolette
-doppie, `Improvement`), ICH-470 (commento `# rubocop:disable` inutile in `ui/component.rb`, `Improvement`), ICH-473
-(esempio YARD di `Notcurses::UI::App` che stampa dentro il blocco di `Context.open`, come il README prima di ICH-304).
+**Stato.** I lotti 1–17 sono chiusi: le 45 issue della revisione del 2026-11-06 sono a Done. Lotto 17 (Fase 1,
+regola 1, approvato dall'utente): PR #19, merge `e3e8737`, ICH-312 e ICH-313 a Done. ICH-312: `blocking: true` su
+`ncvisual_from_file`, `ncvisual_decode`, `ncvisual_decode_loop`, `ncdirect_render_frame` e `ncdirectf_from_file`
+(I/O di ffmpeg senza limite di tempo). ICH-313: `typedefs.rb` definisce `:wchar_t` e `:uintmax_t` solo dove il
+`types.conf` di ffi non li ha; le cinque `MemoryPointer.new(:wchar_t, n)` usano `:int32`. Review Fable e GPT, 3
+round: i limiti nuovi del GVL rilasciato sono scritti nello YARD e le protezioni sono in ICH-474 e ICH-475. `git diff
+ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb` contiene solo le righe di ICH-312 e ICH-313. `master` è sul
+commit docs del lotto 17; suite: 1046 esempi, 0 fallimenti; `bundle exec rubocop`: 0 offense. Leggi in
+`RICONSEGNA.md` la sezione "Correzioni della revisione del 2026-11-06" e il log `memory/correzioni-review.md` (lotti
+1–17 e ICH-465). Restano aperte in Backlog, fuori dai lotti: ICH-441 (`Process.daemon`), ICH-448 (stato del
+controllo dei bordi per wrapper `Plane`), ICH-449 (double free dopo `merge_down` + `Plane#at`), ICH-450 (`polyfill`,
+`gradient` ed `erase_region` su metà di un glifo largo), ICH-454 (ISIG del terminale e `ictx->linesigs` divergono),
+ICH-455 (Ctrl+C in coda consegnato a un `run(no_linesigs: true)` successivo), ICH-456 (segnale anche per ripetizione
+e rilascio del Ctrl+C di kitty), ICH-457 (drag consegnato al componente dove è partito, `Improvement`), ICH-458
+(`Direct#stream` con `:pixel` in fondo allo schermo), ICH-459 (`Container#close_parts` si ferma al primo figlio che
+solleva), ICH-460 (pulsanti del `Dialog` su 4-6 colonne), ICH-461 (focus a un componente che diventa visibile fuori
+dal resize), ICH-463 (carattere UTF-8 a cavallo della lettura da 8192 byte: notcurses si blocca con stdin
+rediretto), ICH-464 (`to_ptr` e chiamata C non atomici per un `close` da `trap`; contiene una scelta della regola
+14), ICH-469 (autocorrezioni sicure di RuboCop e virgolette doppie, `Improvement`), ICH-470 (commento `#
+rubocop:disable` inutile in `ui/component.rb`, `Improvement`), ICH-473 (esempio YARD di `Notcurses::UI::App` che
+stampa dentro il blocco di `Context.open`), ICH-474 (risorsa C persa con un'eccezione asincrona al ritorno di
+`Visual.from_file`, `Direct#load_image`, `Direct#render_frame`), ICH-475 (use-after-free chiudendo il contesto
+durante `Visual#decode` in un altro thread; contiene una scelta della regola 14).
 
 **Decisioni già prese, da non richiedere:**
 
@@ -42,28 +45,15 @@ doppie, `Improvement`), ICH-470 (commento `# rubocop:disable` inutile in `ui/com
 
 **Da fare per primo:**
 
-1. Recall in Hindsight, bank `notcursesruby`: decisioni e cause radice dei lotti 1–16 e di ICH-465 sono salvate
-   (retain del lotto 15: operazione `893e206c`; retain del lotto 16: operazione `d192cee3`).
-2. Fai le verifiche di "Prima di iniziare", passi 1–5 (suite attesa: 1044 esempi, 0 fallimenti; `bundle exec
-   rubocop`: 0 offense). Salta il passo 6.
-3. Controlla il proxy LiteLLM con `curl -sS -m 10 http://127.0.0.1:4000/health/liveliness`. Controlla anche il
-   limite di utilizzo del modello GPT: nei lotti 2 e 5 il modello restituiva `usage_limit_reached` e la review GPT
-   finiva senza report; nei lotti 6–16 rispondeva. Se uno dei due controlli fallisce, dillo all'utente prima di
-   iniziare: nei lotti 2 e 5 l'utente ha scelto di proseguire con il solo Fable, ma la scelta va chiesta ogni volta.
-   ```sh
-   curl -sS -m 60 http://127.0.0.1:4000/v1/chat/completions -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
-     -H 'Content-Type: application/json' \
-     -d '{"model":"claude-gpt-6-1-sol-high","max_tokens":20,"messages":[{"role":"user","content":"ok"}]}'
-   ```
-4. Lotto 17 (prefisso `bug`, ICH-312 `ffi-01`, ICH-313 `ffi-03`), approvato dall'utente (regola 1): leggi le issue
-   da Linear e di' all'utente il comando `/trinity:workflow:1_create-worktree master ICH-312 ICH-313 opus`.
-   Con il lotto 17 il controllo `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb` non è più vuoto: nella verifica finale controlla che il diff
-   contenga solo le righe delle due issue. `spec/ffi_layout_spec.rb` (lotto 16) confronta struct e costanti con gli
-   header: deve restare verde anche dopo il lotto 17.
-5. Prima della review controlla la CI della PR (`gh pr checks <n> --watch`).
-6. Segui la "Procedura per ogni lotto": l'utente lancia `1_create-worktree`, `2_work-issue`, `4_review-fix-loop`,
-   il merge e `5_remove-worktree`. **Dopo ogni merge esegui subito la chiusura del lotto** (passo 7 della procedura),
-   senza aspettare che l'utente la chieda. Dopo il lotto 17 segui le "Consegne" (punto 6: proposta della Fase 5).
+1. Se il worktree `.claude/worktrees/bug+ICH-312-313-opus` esiste ancora, di' all'utente il comando
+   `/trinity:workflow:5_remove-worktree bug+ICH-312-313-opus` (rimuove anche il branch remoto, vedi le decisioni). La
+   chiusura del lotto 17 (passo 7 della procedura) è già fatta: commit `28d77ab` e questo commit; retain in
+   Hindsight, bank `notcursesruby`, operazione `07a843b1`.
+2. Fai le verifiche di "Prima di iniziare", passi 1–4 (suite attesa: 1046 esempi, 0 fallimenti; `bundle exec
+   rubocop`: 0 offense).
+3. Segui le "Consegne", punto 6: proponi il passo successivo (la Fase 5 di `git show 49732a3:RIPRESA.md`) e chiedi
+   all'utente se riscrivere `RIPRESA.md` con quel prompt. Le issue aperte in Backlog qui sopra restano fuori, salvo
+   una scelta diversa dell'utente.
 
 **Note:**
 
