@@ -1442,6 +1442,92 @@ RSpec.describe Notcurses::Plane do
         RUBY
         expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
       end
+
+      # Per riscrivere un glifo il wrapper lo legge con ncplane_at_yx_cell, che duplica l'EGC nell'egcpool di
+      # dst: con due EGC da 6 MB la copia non ci sta (limite di 16 MiB) e la lettura fallisce. Prima del fix
+      # quei glifi restavano con la metà destra larga 0 (ICH-485).
+      context 'che notcurses non riesce a leggere (egcpool pieno)' do
+        let(:big) { "漢#{"́" * 3_000_000}" }
+
+        # dst 3x4 dopo la fusione di un piano con due glifi da 6 MB: "a" e il glifo nella riga 0, "WXYZ"
+        # nella riga 1, il glifo nella riga 2. Il blocco gira subito prima della fusione.
+        def merged_big(dst)
+          src = std.create_child(rows: 3, cols: 4, y: dst.y, x: dst.x)
+          src.set_fg_rgb24(0xff0000)
+          src.styles = :bold
+          src.putstr("a#{big}", y: 0, x: 0)
+          src.putstr('WXYZ', y: 1, x: 0)
+          src.putstr(big, y: 2, x: 0)
+          yield if block_given?
+          src.merge_down(dst)
+          src.close
+        end
+
+        it 'la metà destra torna una metà destra: le scritture lasciano intatta la riga sotto (prima: "XYZ")' do
+          with_parent(rows: 3, cols: 4) do |dst|
+            dst.set_fg_rgb24(0x00ff00)
+            dst.styles = :italic
+            dst.move_cursor(1, 2)
+            merged_big(dst)
+            expect(dst.at(y: 0, x: 2).egc.bytesize).to eq(big.bytesize) # prima: 0, la cella base
+            glyph = dst.at(y: 0, x: 1)
+            expect([glyph.styles, glyph.channels.fg_rgb24]).to eq([[:bold], 0xff0000])
+            expect([dst.cursor, dst.styles, dst.fg_rgb24]).to eq([[1, 2], [:italic], 0x00ff00])
+            dst.putstr('中', y: 0, x: 2)
+            dst.putstr('x', y: 0, x: 1)
+            dst.putstr('中', y: 0, x: 2)
+            expect([dst.contents(y: 0, rows: 1), dst.contents(y: 1, rows: 1)]).to eq(%w[ax中 WXYZ])
+          end
+        end
+
+        it 'il cursore di dst resta oltre l\'ultima colonna, dopo un glifo che notcurses non riesce a leggere' do
+          with_parent(rows: 3, cols: 4) do |dst|
+            dst.putstr('abcd', y: 0, x: 0) # cursore in (0, 4)
+            src = std.create_child(rows: 3, cols: 4, y: dst.y, x: dst.x)
+            src.putstr(big, y: 0, x: 2)
+            src.putstr(big, y: 2, x: 0)
+            src.merge_down(dst)
+            src.close
+            expect(dst.cursor).to eq([0, 4])
+            expect { dst.putstr('Z') }.to raise_error(Notcurses::PlaneError, /non entra/)
+            expect(dst.at(y: 2, x: 1).egc.bytesize).to eq(big.bytesize)
+          end
+        end
+
+        it 'se nemmeno la riscrittura riesce le due metà del glifo diventano celle vuote' do
+          with_parent(rows: 3, cols: 4) do |dst|
+            merged_big(dst) { allow(Notcurses::FFI).to receive(:ncplane_putegc_yx).and_return(-1) }
+            expect([dst.at(y: 0, x: 1).egc, dst.at(y: 0, x: 2).egc]).to eq(['', ''])
+            expect([dst.contents(y: 0, rows: 1), dst.contents(y: 1, rows: 1)]).to eq(%w[a WXYZ])
+            # svuotato il primo glifo nel pool c'è posto: il secondo si legge e torna intero
+            expect(dst.at(y: 2, x: 1).egc.bytesize).to eq(big.bytesize)
+          end
+        end
+
+        it "le scritture sull'ultima riga non corrompono l'heap (prima: abort di glibc)" do
+          skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
+          script = <<~'RUBY'
+            require 'notcurses'
+            Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                    drain_input: true) do |nc|
+              big = "漢#{"́" * 3_000_000}"
+              dst = nc.stdplane.create_child(rows: 3, cols: 4)
+              src = nc.stdplane.create_child(rows: 3, cols: 4)
+              src.putstr(big, y: 0, x: 0)
+              src.putstr('WXYZ', y: 1, x: 0)
+              src.putstr("a#{big}", y: 2, x: 0)
+              src.merge_down(dst)
+              src.close
+              dst.putstr('中', y: 2, x: 2)
+              dst.putstr('x', y: 2, x: 1)
+              dst.putstr('中', y: 2, x: 2) # prima: scriveva oltre il framebuffer, e la free del piano abortiva
+              dst.close
+            end
+            puts 'ok'
+          RUBY
+          expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+        end
+      end
     end
 
     it "le stringhe e i buffer del C si liberano con l'allocatore di notcurses (prima: abort sotto LD_PRELOAD)" do

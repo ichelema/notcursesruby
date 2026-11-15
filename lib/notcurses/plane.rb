@@ -1369,7 +1369,12 @@ module Notcurses
     # dei glifi larghi di dst con larghezza 0, e il wrapper riscrive quei glifi
     # (il cursore di dst non cambia). Per trovarli legge ogni cella di dst: su
     # un piano grande (per esempio 50x200) la fusione costa qualche
-    # millisecondo invece di una frazione.
+    # millisecondo invece di una frazione. La lettura (+ncplane_at_yx_cell+)
+    # copia l'EGC nell'egcpool di dst e fallisce se il pool è pieno (16 MiB;
+    # solo per gli EGC di più di 4 byte): quei glifi il wrapper li riscrive
+    # leggendo l'EGC con +ncplane_at_yx+, che non usa il pool, con gli stili e
+    # i colori della cella. Se nemmeno questa riscrittura riesce, le due metà
+    # del glifo diventano celle vuote.
     #
     # @param dst [Plane] piano di destinazione, della stessa pila
     # @return [self]
@@ -2448,8 +2453,8 @@ module Notcurses
     # una scrittura sulla metà sinistra non la cancella; da lì si arriva a una
     # metà destra orfana e a scritture fuori dalla riga (ICH-481). Il wrapper
     # riscrive quei glifi con ncplane_putc_yx, che rimette la metà destra; il
-    # cursore di dst torna dov'era. Le celle illeggibili (egcpool pieno, vedi
-    # half_at) restano come sono.
+    # cursore di dst torna dov'era. Un glifo che ncplane_at_yx_cell non riesce
+    # a leggere (egcpool pieno) lo riscrive rewrite_unreadable! (ICH-485).
     def restore_wide_glyphs!(dst)
       rows = ::FFI::MemoryPointer.new(:uint)
       cols = ::FFI::MemoryPointer.new(:uint)
@@ -2461,7 +2466,10 @@ module Notcurses
       moved = false
       rows.read_uint.times do |y|
         (cols.read_uint - 1).times do |x|
-          next if FFI.ncplane_at_yx_cell(dst, y, x, cell).negative?
+          if FFI.ncplane_at_yx_cell(dst, y, x, cell).negative?
+            moved = true if stale_right_half?(dst, y, x + 1) && rewrite_unreadable!(dst, y, x, 2)
+            next
+          end
 
           begin
             if FFI.nccell_wide_left_p(cell) && stale_right_half?(dst, y, x + 1)
@@ -2481,20 +2489,44 @@ module Notcurses
     # scrittura che riempie la riga: lì il wrapper riscrive con il suo stesso
     # contenuto l'ultima cella della riga (la metà sinistra, se è una metà
     # destra), e ncplane_putc_yx lascia il cursore subito dopo. Se notcurses
-    # non riesce a leggere quella cella (egcpool pieno) il cursore resta dove
-    # l'ha lasciato la riscrittura dei glifi (ICH-485).
+    # non riesce a leggere quella cella (egcpool pieno) la riscrive
+    # rewrite_unreadable!, con lo stesso effetto sul cursore (ICH-485).
     def restore_cursor!(ptr, y, x, cols)
       return Util.check!(FFI.ncplane_cursor_move_yx(ptr, y, x), PlaneError, 'ncplane_cursor_move_yx') if x < cols
 
       last = cols > 1 && wide_right?(ptr, y, cols - 1) ? cols - 2 : cols - 1
       cell = FFI::NcCell.new
-      return if FFI.ncplane_at_yx_cell(ptr, y, last, cell).negative?
+      return rewrite_unreadable!(ptr, y, last, 0) if FFI.ncplane_at_yx_cell(ptr, y, last, cell).negative?
 
       begin
         Util.check!(FFI.ncplane_putc_yx(ptr, y, last, cell), PlaneError, 'ncplane_putc_yx')
       ensure
         FFI.nccell_release(ptr, cell)
       end
+    end
+
+    # Riscrive la cella (y, x) con il suo stesso contenuto quando ncplane_at_yx_cell non la legge (egcpool
+    # pieno): ncplane_at_yx copia l'EGC con strdup, senza passare dal pool, e ncplane_putegc_yx lo rimette
+    # con gli stili e i canali della cella al posto di quelli del piano, ripristinati subito dopo.
+    # ncplane_put rilascia la vecchia copia prima di salvare la nuova, quindi nel pool lo spazio c'è. Un EGC
+    # più stretto di min_width resta com'è. Se la scrittura fallisce svuota la cella e quella dopo, cioè le
+    # due metà di un glifo largo.
+    # @return [Boolean] true se ha scritto (il cursore finisce dopo il glifo) o svuotato la cella
+    def rewrite_unreadable!(ptr, y, x, min_width)
+      styles = ::FFI::MemoryPointer.new(:uint16)
+      channels = ::FFI::MemoryPointer.new(:uint64)
+      egc = Util.take_string(FFI.ncplane_at_yx(ptr, y, x, styles, channels))
+      return false if egc.nil? || FFI.ncstrwidth(egc, nil, nil) < min_width
+
+      plane_styles = FFI.ncplane_styles(ptr)
+      plane_channels = FFI.ncplane_channels(ptr)
+      FFI.ncplane_set_styles(ptr, styles.read_uint16)
+      FFI.ncplane_set_channels(ptr, channels.read_uint64)
+      rc = FFI.ncplane_putegc_yx(ptr, y, x, egc, nil)
+      FFI.ncplane_set_styles(ptr, plane_styles)
+      FFI.ncplane_set_channels(ptr, plane_channels)
+      FFI.ncplane_erase_region(ptr, y, x, 1, 2) if rc.negative?
+      true
     end
 
     # true se (y, x) è vuota e larga 0: la metà destra lasciata da ncplane_mergedown.
@@ -2583,9 +2615,9 @@ module Notcurses
     # true se (y, x) è una metà di glifo largo senza l'altra metà: una metà
     # sinistra nell'ultima colonna, una metà destra in colonna 0 o senza la
     # metà sinistra prima. Una metà sinistra seguita da una cella vuota non
-    # conta: una metà destra con width 0 è uguale a una cella vuota, e dopo
-    # merge_down ne restano dove la riscrittura non riesce a leggere il glifo
-    # (egcpool pieno, vedi restore_wide_glyphs!).
+    # conta: una metà destra con width 0 è uguale a una cella vuota, e
+    # notcurses ne lascia (ncplane_mergedown, che restore_wide_glyphs!
+    # corregge; la vista del Reader, ICH-484).
     def orphan_half?(ptr, y, x, cols)
       case half_at(ptr, y, x)
       when :left then x == cols - 1
