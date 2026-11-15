@@ -1,9 +1,9 @@
 # RIPRESA — prompt per la prossima sessione
 
 > Avvio: incolla questo file nella nuova sessione di Claude Code, oppure scrivi «Leggi RIPRESA.md ed esegui il
-> prompt». Scritto il 2026-11-15, dopo la Parte 3 della Fase 5 su macOS: la PR #21 (ICH-478, branch
-> `test/fase5-macos`, ultimo commit `db15e62`) è aperta, con la CI verde, e aspetta la conferma del merge. Il
-> prossimo passo è il merge della PR #21, poi la Parte 4 (sezione "Parte 4 — cosa resta"). Il prompt
+> prompt». Scritto il 2026-11-15, dopo il merge della PR #21 (`6cc619b`, ICH-478: Parte 3 della Fase 5 su macOS).
+> Il prossimo passo è la fine della Parte 4 (sezione "Parte 4 — cosa resta"): resta la suite con i semi su
+> Linux. Il prompt
 > riprende quello della Fase 5 scritto il 2026-10-27 (`git show 49732a3:RIPRESA.md`), aggiornato allo stato attuale.
 
 ## Contesto
@@ -21,11 +21,10 @@
 - **Fase 5, Parti 1 e 2 (Linux):** fatte il 2026-11-15. Design approvato in `memory/fase5-design.md`, log in
   `memory/fase5-terminali-macos.md`. PR #20 (merge `4d3430a`): spec grafiche in `spec/graphics/` (solo con
   `NC_GRAPHICS=1` in Kitty o Ghostty) e rimozione di `Util.timespec`.
-- **Fase 5, Parte 3 (macOS):** fatta il 2026-11-15 su un MacBook Pro M1 (macOS 26.5.2), PR #21 aperta (ICH-478).
+- **Fase 5, Parte 3 (macOS):** fatta il 2026-11-15 su un MacBook Pro M1 (macOS 26.5.2), PR #21 (ICH-478, merge `6cc619b`).
   Ambiente, esiti, problemi e punto aperto in `memory/fase5-terminali-macos.md`, sezione "Parte 3 — macOS".
   Review del 2026-11-15 (stesso agente, non indipendente): F1 corretto in `db15e62`; F2 e F3 in "Parte 4".
-- **Stato al `db15e62` (branch della PR #21):** 1048 esempi, 0 fallimenti (su macOS 11 pending con il motivo);
-  su `master` prima del merge 1046 esempi. Valori di `master`: `bundle exec rubocop` 0 offense (99 file). Soglie di coverage:
+- **Stato al `6cc619b`:** 1048 esempi, 0 fallimenti (su macOS 11 pending con il motivo); `bundle exec rubocop` 0 offense (99 file). Soglie di coverage:
   98 % totale, 90 % per file, layer FFI escluso.
 - **CI:** container `archlinux:base` fissato per digest, pacchetti dello snapshot `2026/10/26` dell'Arch Linux Archive
   (`notcurses 3.0.17-3`, `ffmpeg 2:9.0.2-2`), Ruby da mise, matrice 3.1.7, 3.2.11, 3.3.13, 3.4.12, 4.0.9. Lo step
@@ -113,8 +112,8 @@ aperte in Backlog, pubblicazione della gem, job grafici in CI, Windows.
    versione di notcurses (`pkg-config --modversion notcurses` o il pacchetto), Ruby (`ruby -v`), dove sono le
    librerie (`ldconfig -p | grep notcurses` su Linux, `ls "$(brew --prefix)/lib" | grep notcurses` su macOS).
 6. Il submodule `notcurses/` serve alle spec delle immagini: `git submodule update --init --depth 1 notcurses`.
-7. Esegui `bundle install`, la suite completa e `bundle exec rubocop` (comandi in "Comandi"): 1048 esempi dopo il
-   merge della PR #21 (1046 prima), 0 fallimenti; 0 offense.
+7. Esegui `bundle install`, la suite completa e `bundle exec rubocop` (comandi in "Comandi"): 1048 esempi, 0
+   fallimenti; 0 offense.
 8. Leggi `memory/fase5-design.md` (sezioni 2 e 4) e `memory/fase5-terminali-macos.md` (soprattutto "Problemi e
    soluzioni"), poi `spec/graphics/terminal_spec.rb` e `spec/graphics/probe.rb`.
 
@@ -197,21 +196,17 @@ Non scrivere codice della Parte 2 nel repository prima dell'approvazione.
 
 ## Parte 4 — cosa resta
 
-1. **Merge della PR #21:** serve la conferma dell'utente (regola 13). Dopo il merge elimina il branch remoto e
-   controlla che ICH-478 passi a Done.
-2. **Linux (CachyOS):** suite completa in ordine normale e con `rand:1234`, `rand:4242`, `rand:7`. La PR #21 cambia
-   anche le spec di Linux, e la CI copre solo l'ordine casuale.
-3. **`RICONSEGNA.md`:** sezione "Fase 5" (consegna 3). Scrivi anche: il cambio della Fase 1 (`notcurses_stop` con
-   `blocking: ::FFI::Platform.mac?`); il limite F2 (la spec del fix non protegge in CI, che gira solo su Linux: la
-   suite su macOS va eseguita a mano); il bug di notcurses «`tcsetattr` interrotta da un segnale (`EINTR`) non viene
-   ripetuta in `notcurses_stop`» nella tabella dei bug; "Dipendenze di sistema" con macOS provato e coreutils.
-4. **README:** tabella di installazione con macOS, e i limiti.
-5. **Punto aperto:** blocco raro in `Context#close` su macOS (`pthread_join`, 1 volta su 62 con `rand:2026`), causa
-   non trovata: log, "Punti aperti". Chiedi all'utente se aprire una issue.
-6. **Controlli finali** (sezione omonima) e chiusura (consegne 4 e 5). Hindsight: retain della Parte 3 fatto il
-   2026-11-15 (10 fatti); sul Mac il server risponde solo a volte.
+Fatto il 2026-11-15: merge della PR #21 (branch eliminato), sezione "Fase 5" di `RICONSEGNA.md`, README, log,
+retain in Hindsight (10 fatti); su macOS coverage 98,47 %, YARD al 100 %, `gem build` riuscito.
 
-## Parte 3 — macOS (fatta: PR #21, in attesa del merge)
+1. **Linux (CachyOS):** suite completa in ordine normale e con `rand:1234`, `rand:4242`, `rand:7`. La PR #21 cambia
+   anche le spec di Linux, e la CI copre solo l'ordine casuale. Scrivi l'esito nel log.
+2. **ICH-478:** controlla in Linear che la issue sia a Done dopo il merge e che mostri la PR #21.
+3. **Punto aperto:** blocco raro in `Context#close` su macOS (`pthread_join`, 1 volta su 62 con `rand:2026`), causa
+   non trovata: log, "Punti aperti". Chiedi all'utente se aprire una issue.
+4. **Chiusura:** proponi il passo successivo e chiedi all'utente se scrivere qui il prompt della fase dopo.
+
+## Parte 3 — macOS (fatta: PR #21, merge `6cc619b`)
 
 
 Lavora sul branch `test/fase5-macos`, da `master` aggiornato dopo il merge della Parte 2.
