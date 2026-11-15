@@ -893,7 +893,7 @@ RSpec.describe Notcurses::Plane do
             p.putstr('cccc', y: 2, x: 0) # cursore a fine piano
             scroll.call(p)
             expect(rows_of(p).first).to eq('bbbb')
-            expect(rows_of(p.duplicate)).to eq(rows_of(p))
+            expect(p.duplicate { |d| rows_of(d) }).to eq(rows_of(p))
           end
         end
       end
@@ -902,13 +902,13 @@ RSpec.describe Notcurses::Plane do
         with_parent(rows: 3, cols: 4, vscroll: true) do |p|
           allow(Notcurses).to receive(:lib_version_components).and_return([3, 0, 16, 0])
           p.putstr("a\nb\nc\nd")
-          expect(rows_of(p.duplicate)).to eq(%w[d b c])
+          expect(p.duplicate { |d| rows_of(d) }).to eq(%w[d b c])
         end
         with_parent(rows: 3, cols: 4, vscroll: true) do |p|
           allow(Notcurses).to receive(:lib_version_components).and_call_original
           allow(Notcurses::FFI).to receive(:ncplane_autogrow_p).and_return(true) # diverso dal campo privato
           p.putstr("a\nb\nc\nd")
-          expect(rows_of(p.duplicate)).to eq(%w[d b c])
+          expect(p.duplicate { |d| rows_of(d) }).to eq(%w[d b c])
         end
       end
     end
