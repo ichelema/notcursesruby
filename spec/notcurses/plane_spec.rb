@@ -1173,6 +1173,59 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    context 'con glifi larghi' do
+      def merged(text, rows: 1, cols: 6)
+        dst = std.create_child(rows: rows, cols: cols)
+        src = std.create_child(rows: 1, cols: cols)
+        src.putstr(text, y: 0, x: 0)
+        src.merge_down(dst)
+        src.close
+        dst
+      end
+
+      it 'le metà destre restano metà destre: at restituisce il glifo come sul piano sorgente (prima: "")' do
+        dst = merged('漢漢漢')
+        expect([dst.at(y: 0, x: 1).egc, dst.at(y: 0, x: 5).egc]).to eq(%w[漢 漢])
+        expect(dst.contents).to eq('漢漢漢')
+      ensure
+        dst&.close
+      end
+
+      it 'una scrittura stretta e poi una larga sulla stessa colonna lasciano intatta la riga sotto (prima: "XYZ")' do
+        dst = merged('a漢', rows: 2, cols: 4)
+        dst.putstr('WXYZ', y: 1, x: 0)
+        dst.putstr('中', y: 0, x: 2)
+        dst.putstr('x', y: 0, x: 1)
+        dst.putstr('中', y: 0, x: 2)
+        expect([dst.contents(y: 0, rows: 1), dst.contents(y: 1, rows: 1)]).to eq(%w[ax中 WXYZ])
+      ensure
+        dst&.close
+      end
+
+      it "le scritture dopo merge_down sull'ultima riga non corrompono l'heap (prima: abort di glibc)" do
+        skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
+        script = <<~'RUBY'
+          require 'notcurses'
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            40.times do
+              dst = nc.stdplane.create_child(rows: 1, cols: 4)
+              src = nc.stdplane.create_child(rows: 1, cols: 4)
+              src.putstr('a漢', y: 0, x: 0)
+              src.merge_down(dst)
+              src.close
+              dst.putstr('中', y: 0, x: 2)
+              dst.putstr('x', y: 0, x: 1)
+              dst.putstr('中', y: 0, x: 2)
+              dst.close
+            end
+          end
+          puts 'ok'
+        RUBY
+        expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+      end
+    end
+
     it "le stringhe e i buffer del C si liberano con l'allocatore di notcurses (prima: abort sotto LD_PRELOAD)" do
       skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
       script = <<~'RUBY'
@@ -1237,10 +1290,10 @@ RSpec.describe Notcurses::Plane do
         end
       end
 
-      # Dopo merge_down notcurses lascia le metà destre con width 0 (ICH-481):
-      # il glifo è intero e nessun controllo deve cancellarlo.
+      # Il glifo largo arrivato da merge_down è intero e nessun controllo deve
+      # cancellarlo (prima del fix di ICH-481 la sua metà destra aveva width 0).
       {
-        'una scrittura' => ['日本語テキ', ->(p) { p.putstr('*', y: 0, x: 9) }, '日本語テキ*'],
+        'una scrittura' => ['日本語テ', ->(p) { p.putstr('*', y: 0, x: 9) }, '日本語テ*'],
         'un resize alle stesse dimensioni' => ['漢字ab', ->(p) { p.resize(1, 10) }, '漢字ab'],
         'erase_region prima del glifo' => ['ab漢cd', ->(p) { p.erase_region(0, 0, 1, 2) }, '漢cd'],
         'erase_region accanto al glifo' => ['ab漢cd', ->(p) { p.erase_region(0, 1, 1, 1) }, 'a漢cd'],

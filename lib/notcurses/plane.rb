@@ -1315,7 +1315,9 @@ module Notcurses
     # base, ...); questo piano non cambia.
     #
     # Bug di 3.0.17: +ncplane_mergedown+ ignora la regione che riceve, quindi
-    # il wrapper offre solo la fusione completa.
+    # il wrapper offre solo la fusione completa; lascia anche la metà destra
+    # dei glifi larghi di dst con larghezza 0, e il wrapper riscrive quei glifi
+    # (il cursore di dst non cambia).
     #
     # @param dst [Plane] piano di destinazione, della stessa pila
     # @return [self]
@@ -1330,6 +1332,7 @@ module Notcurses
       raise PlaneError, "merge_down: dst è in un'altra pila" unless FFI.ncpile_top(ptr).address == FFI.ncpile_top(target).address
 
       Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
+      restore_wide_glyphs!(target)
       # glifi larghi nuovi senza le scritture: un resize del C li può tagliare a dimensioni già controllate
       @context.tracked_plane(target.address)&.cut_glyphs_cols = nil
       self
@@ -2353,6 +2356,47 @@ module Notcurses
 
     # true se la cella (y, x) è la metà destra di un glifo largo.
     def wide_right?(ptr, y, x) = half_at(ptr, y, x) == :right
+
+    # Dopo ncplane_mergedown la metà destra di ogni glifo largo di dst ha width
+    # 0 (render.c:393-395, 471-485): per notcurses non è più una metà destra, e
+    # una scrittura sulla metà sinistra non la cancella; da lì si arriva a una
+    # metà destra orfana e a scritture fuori dalla riga (ICH-481). Il wrapper
+    # riscrive quei glifi con ncplane_putc_yx, che rimette la metà destra; il
+    # cursore di dst torna dov'era. Le celle illeggibili (egcpool pieno, vedi
+    # half_at) restano come sono.
+    def restore_wide_glyphs!(dst)
+      rows = ::FFI::MemoryPointer.new(:uint)
+      cols = ::FFI::MemoryPointer.new(:uint)
+      FFI.ncplane_dim_yx(dst, rows, cols)
+      cy = ::FFI::MemoryPointer.new(:uint)
+      cx = ::FFI::MemoryPointer.new(:uint)
+      FFI.ncplane_cursor_yx(dst, cy, cx)
+      cell = FFI::NcCell.new
+      rows.read_uint.times do |y|
+        (cols.read_uint - 1).times do |x|
+          next if FFI.ncplane_at_yx_cell(dst, y, x, cell).negative?
+
+          begin
+            if FFI.nccell_wide_left_p(cell) && stale_right_half?(dst, y, x + 1)
+              Util.check!(FFI.ncplane_putc_yx(dst, y, x, cell), PlaneError, 'ncplane_putc_yx')
+            end
+          ensure
+            FFI.nccell_release(dst, cell)
+          end
+        end
+      end
+      FFI.ncplane_cursor_move_yx(dst, cy.read_uint, cx.read_uint)
+    end
+
+    # true se (y, x) è vuota e larga 0: la metà destra lasciata da ncplane_mergedown.
+    def stale_right_half?(ptr, y, x)
+      cell = FFI::NcCell.new
+      return false if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
+
+      cell[:gcluster].zero? && cell[:width].zero?
+    ensure
+      FFI.nccell_release(ptr, cell)
+    end
 
     # :left o :right se (y, x) è una metà di un glifo largo, :none se no, nil se
     # notcurses non riesce a leggere la cella: ncplane_at_yx_cell duplica l'EGC

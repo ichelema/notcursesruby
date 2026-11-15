@@ -36,6 +36,11 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   `Plane` tracciato controlla i bordi a ogni scrittura. Prima un glifo largo scritto da un secondo wrapper e tagliato
   da un resize del terminale sfuggiva al controllo del primo, e la sua scrittura successiva cancellava la prima cella
   della riga sotto o, sull'ultima riga, corrompeva l'heap (ICH-448).
+- `Plane#merge_down` lascia in `dst` glifi larghi con la metà destra normale: `dst.at` sulla metà destra restituisce
+  il glifo, e una scrittura su una delle due metà cancella il glifo intero, come su ogni altro piano. Prima la metà
+  destra restava con larghezza 0 (bug di notcurses 3.0.17): `at` restituiva la cella base, e alcune sequenze di
+  scritture lasciavano una metà destra orfana, cancellavano la prima cella della riga sotto o corrompevano l'heap
+  (ICH-481).
 - macOS: `Context#close` rilascia il GVL durante `notcurses_stop`, che con `tcsetattr(TCSAFLUSH)` aspetta che il
   terminale legga l'output in coda. Prima un terminale servito da un thread dello stesso processo (per esempio un
   pty nei test) bloccava la chiusura per sempre. Un'eccezione asincrona (`Thread#raise`, `Timeout`) per il thread
