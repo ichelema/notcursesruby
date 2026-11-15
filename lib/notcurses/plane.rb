@@ -536,9 +536,12 @@ module Notcurses
       # il C rifiuta senza toccare il piano solo lo stdplane e una regione fuori dal piano (notcurses.c:842-849,
       # 1013): negli altri casi il primo resize è applicato e va completato, anche quando ha restituito il -1 del
       # callback di un figlio (che può anche aver spostato il piano)
-      applied = address != @context.stdplane.address && keep_y + keep_rows <= cur_rows && keep_x + keep_cols <= cur_cols
+      two_steps = extra.positive? && address != @context.stdplane.address &&
+                  keep_y + keep_rows <= cur_rows && keep_x + keep_cols <= cur_cols
+      old = two_steps && (st = internals(ptr)) && fb_bytes(st)
       rc = FFI.ncplane_resize(ptr, keep_y, keep_x, keep_rows, keep_cols, y_off - extra, x_off, rows + extra, cols)
-      rc |= FFI.ncplane_resize(ptr, extra, 0, rows, cols, 0, 0, rows, cols) if extra.positive? && applied
+      rc |= FFI.ncplane_resize(ptr, extra, 0, rows, cols, 0, 0, rows, cols) if two_steps
+      release_dropped!(ptr, old) if old
       clear_cut_glyphs!(ptr, force: true) # con keep_x > 0 il contenuto si sposta anche a dimensioni invariate
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, 'ncplane_resize')
@@ -1438,11 +1441,11 @@ module Notcurses
         st = internals(target)
         fresh = fb_bytes(st)
         if lost_egc?(fresh)
-          release_gclusters!(target, fresh)
+          release_gclusters!(target, pooled(fresh))
           st[:fb].write_bytes(old)
           raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (dst non è cambiato)"
         end
-        release_gclusters!(target, old)
+        release_gclusters!(target, pooled(old))
       end
       restore_wide_glyphs!(target)
       # glifi larghi nuovi senza le scritture: un resize del C li può tagliare a dimensioni già controllate
@@ -2516,16 +2519,36 @@ module Notcurses
     # Byte del framebuffer di st (Internals), in ordine fisico.
     def fb_bytes(st) = st[:fb].read_bytes(st[:leny] * st[:lenx] * FFI::NcCell.size)
 
-    # Rilascia dall'egcpool di ptr gli EGC delle celle in bytes (byte alto di gcluster 0x01, cell_extended_p
-    # di egcpool.h:195).
-    def release_gclusters!(ptr, bytes)
-      cell = FFI::NcCell.new
-      bytes.unpack("Lx#{FFI::NcCell.size - 4}" * (bytes.bytesize / FFI::NcCell.size)).each do |gcluster|
-        next unless gcluster >> 24 == 1
+    # gcluster delle celle in bytes che tengono l'EGC nell'egcpool (byte alto 0x01, cell_extended_p di
+    # egcpool.h:195).
+    def pooled(bytes)
+      bytes.unpack("Lx#{FFI::NcCell.size - 4}" * (bytes.bytesize / FFI::NcCell.size)).select { |g| g >> 24 == 1 }
+    end
 
+    # Rilascia dall'egcpool di ptr gli EGC dei gcluster dati.
+    def release_gclusters!(ptr, gclusters)
+      cell = FFI::NcCell.new
+      gclusters.each do |gcluster|
         cell[:gcluster] = gcluster
         FFI.nccell_release(ptr, cell)
       end
+    end
+
+    # Dopo il resize in due passi di resize_region rilascia gli EGC delle celle scartate (old: byte del
+    # framebuffer di prima): con le righe in più il ciclo del C parte oltre la fine della riga e non li
+    # rilascia. Salta quelli ancora nel framebuffer e quelli che il C ha già rilasciato (primo byte 0:
+    # egcpool_release, egcpool.h:168-176, toglierebbe comunque un byte da poolused); rilascia solo da un
+    # inizio di EGC (byte prima 0), nel caso un callback di resize abbia scritto nel pool.
+    def release_dropped!(ptr, old)
+      st = internals(ptr)
+      return unless st
+
+      pool = st[:pool]
+      dropped = pooled(old) - pooled(fb_bytes(st))
+      release_gclusters!(ptr, dropped.select do |g|
+        idx = g & 0xffffff
+        pool.get_uint8(idx).nonzero? && (idx.zero? || pool.get_uint8(idx - 1).zero?)
+      end)
     end
 
     # true se in bytes c'è una cella che ncplane_mergedown non è riuscita a copiare: cell_duplicate_far

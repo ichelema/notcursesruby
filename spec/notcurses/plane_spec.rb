@@ -262,6 +262,21 @@ RSpec.describe Notcurses::Plane do
         end
       end
 
+      # Con le righe in più del primo passo il ciclo di rilascio del C (notcurses.c:995-997) parte oltre la fine
+      # della riga e non rilascia nemmeno gli EGC delle celle scartate: restavano nel pool (review del round 2).
+      it 'rilascia gli EGC delle celle scartate: ritagli ripetuti non riempiono l\'egcpool (prima: ArgumentError al terzo)' do
+        with_parent(rows: 1, cols: 4) do |p|
+          big = "a#{"́" * 3_000_000}" # 6 MB: tre copie superano i 16 MiB del pool
+          4.times do
+            p.putstr('K', y: 0, x: 1)
+            p.putstr(big, y: 0, x: 2)
+            p.resize_region(rows: 1, cols: 3, keep_x: 1, keep_rows: 1, keep_cols: 1)
+            expect(p.contents).to eq('K')
+            p.resize(1, 4)
+          end
+        end
+      end
+
       it 'completa il secondo passo anche se il callback di un figlio rimette il piano nella colonna di prima ' \
          '(prima: alto 3, con una riga vuota in cima)' do
         with_parent(rows: 2, cols: 8, y: 3, x: 4) do |p|
