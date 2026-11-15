@@ -10,6 +10,16 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ## [Non rilasciato]
 
+### Aggiunto
+
+- Spec grafiche su un terminale vero (`spec/graphics/`), solo con `NC_GRAPHICS=1` in Kitty o Ghostty: rilevamento
+  del terminale, capacità, blit con ogni blitter (anche `:pixel`), `Direct#render_image` e `Direct#stream` con
+  `:pixel`, e in Kitty i tasti di controllo con `kitty @ send-key`. Senza la variabile la suite non le esegue.
+
+### Rimosso
+
+- `Notcurses::Util.timespec` (`@api private`): non aveva chiamanti.
+
 ### Corretto
 
 - `Visual.from_file`, `Visual#decode`, `Visual#decode_loop`, `Direct#render_frame`, `Direct#load_image`,
