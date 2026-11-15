@@ -894,6 +894,25 @@ RSpec.describe Notcurses::Plane do
         end
       end
 
+      # Un'eccezione asincrona (Timeout, Thread#raise, Interrupt) può arrivare dopo lo scroll fatto dal C e prima che
+      # il wrapper rimetta in ordine le righe: lo simula una chiamata C che scrive e poi solleva (ICH-214, review).
+      {
+        'putstr' => [:ncplane_putstr_yx, ->(p) { p.putstr("\nd", y: 2, x: 0) }],
+        'scrollup' => [:ncplane_scrollup, ->(p) { p.scrollup(lines: 1) }]
+      }.each do |name, (fn, scroll)|
+        it "le righe restano in ordine anche se un'eccezione interrompe #{name} dopo lo scroll (prima: ruotate)" do
+          with_parent(rows: 3, cols: 4, vscroll: true) do |p|
+            p.putstr("a\nb\nc", y: 0, x: 0)
+            allow(Notcurses::FFI).to receive(fn).and_wrap_original do |m, *args|
+              m.call(*args)
+              raise Interrupt
+            end
+            expect { scroll.call(p) }.to raise_error(Interrupt)
+            expect(p.duplicate { |d| rows_of(d) }).to eq(rows_of(p))
+          end
+        end
+      end
+
       it 'senza un layout di ncplane verificato non tocca i campi privati: resta il bug di notcurses' do
         with_parent(rows: 3, cols: 4, vscroll: true) do |p|
           allow(Notcurses).to receive(:lib_version_components).and_return([3, 0, 16, 0])

@@ -1106,8 +1106,11 @@ module Notcurses
       raise PlaneError, 'scrollup: il piano non ha lo scrolling attivo' unless scrolling?
 
       FFI.ncplane_cursor_move_yx(ptr, dim_y - 1, 0)
-      rc = FFI.ncplane_scrollup(ptr, lines)
-      unscroll!(ptr)
+      rc = begin
+        FFI.ncplane_scrollup(ptr, lines)
+      ensure
+        unscroll!(ptr)
+      end
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, 'ncplane_scrollup')
       self
@@ -1125,8 +1128,11 @@ module Notcurses
     # @raise [ClosedError] se uno dei piani è chiuso
     def scrollup_child(child)
       ptr = to_ptr
-      rc = FFI.ncplane_scrollup_child(ptr, same_context_plane!(child, 'child'))
-      unscroll!(ptr)
+      rc = begin
+        FFI.ncplane_scrollup_child(ptr, same_context_plane!(child, 'child'))
+      ensure
+        unscroll!(ptr)
+      end
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, 'ncplane_scrollup_child')
       self
@@ -1600,11 +1606,14 @@ module Notcurses
         if seg.start_with?("\n") && (i.positive? || tx == -1) && cursor_x == dim_x
           Util.check!(FFI.ncplane_cursor_move_yx(ptr, i.zero? ? ty : -1, dim_x - 1), PlaneError, 'ncplane_cursor_move_yx')
         end
-        rc = if stained then FFI.ncplane_putstr_stained(ptr, seg)
-             elsif i.zero? then FFI.ncplane_putstr_yx(ptr, ty, tx, seg)
-             else FFI.ncplane_putstr(ptr, seg)
-             end
-        unscroll!(ptr)
+        rc = begin
+          if stained then FFI.ncplane_putstr_stained(ptr, seg)
+          elsif i.zero? then FFI.ncplane_putstr_yx(ptr, ty, tx, seg)
+          else FFI.ncplane_putstr(ptr, seg)
+          end
+        ensure
+          unscroll!(ptr)
+        end
         @context.raise_callback_errors!
         written += rc.abs
         raise PlaneError, "putstr: notcurses ha scritto #{written} colonne su #{widths.sum}" unless rc == widths[i]
@@ -1660,8 +1669,11 @@ module Notcurses
       single_egc!(ptr, text)
       cols = Notcurses.strwidth(text)
       ty, tx = text_target!(text, cols, cols, y: y, x: x, align: nil, stained: stained)
-      rc = stained ? FFI.ncplane_putegc_stained(ptr, text, nil) : FFI.ncplane_putegc_yx(ptr, ty, tx, text, nil)
-      unscroll!(ptr)
+      rc = begin
+        stained ? FFI.ncplane_putegc_stained(ptr, text, nil) : FFI.ncplane_putegc_yx(ptr, ty, tx, text, nil)
+      ensure
+        unscroll!(ptr)
+      end
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, "ncplane_putegc_yx(#{text.inspect})")
     end
@@ -1687,8 +1699,11 @@ module Notcurses
 
       cols = [cell.width, 1].max
       ty, tx = text_target!(cell.egc, cols, cols, y: y, x: x, align: nil, stained: false)
-      rc = with_nccells(ptr, [cell]) { |nc| FFI.ncplane_putc_yx(ptr, ty, tx, nc) }
-      unscroll!(ptr)
+      rc = begin
+        with_nccells(ptr, [cell]) { |nc| FFI.ncplane_putc_yx(ptr, ty, tx, nc) }
+      ensure
+        unscroll!(ptr)
+      end
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, "ncplane_putc_yx(#{cell.egc.inspect})")
     end
@@ -2043,10 +2058,13 @@ module Notcurses
       c1, c2 = interp_channels!(from, to)
       sync_scrolling_stdplane!(ptr, len > cols - left)
       move_cursor(top, left)
-      rc = with_nccells(ptr, [line]) do |nc|
-        c1.nil? ? FFI.ncplane_hline(ptr, nc, len) : FFI.ncplane_hline_interp(ptr, nc, len, c1, c2)
+      rc = begin
+        with_nccells(ptr, [line]) do |nc|
+          c1.nil? ? FFI.ncplane_hline(ptr, nc, len) : FFI.ncplane_hline_interp(ptr, nc, len, c1, c2)
+        end
+      ensure
+        unscroll!(ptr)
       end
-      unscroll!(ptr)
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, 'ncplane_hline_interp')
       self
@@ -2475,8 +2493,9 @@ module Notcurses
     # ncplane_resize_internal (notcurses.c:898-1002), rotate_merge (fill.c:450-451), ncplane_mergedown
     # (render.c:602-603) e i passi delle dissolvenze (fade.c:122, 185) usano le righe fisiche, e nessuna
     # funzione pubblica azzera logrow (ICH-214). Va chiamata subito dopo ogni chiamata C che può far
-    # scorrere il piano: così logrow vale 0 anche quando il resize lo fa notcurses (lo stdplane nel
-    # render, i figli con :maximize, la crescita per autogrow).
+    # scorrere il piano, in un ensure (un'eccezione asincrona può arrivare prima): così logrow vale 0
+    # anche quando il resize lo fa notcurses (lo stdplane nel render, i figli con :maximize, la crescita
+    # per autogrow).
     def unscroll!(ptr)
       # quasi sempre 0: una lettura di 4 byte dentro la struct, prima dei controlli di internals
       return if Internals.new(ptr)[:logrow].zero?
