@@ -126,3 +126,110 @@ Sixel: non provato, nessuno dei due terminali lo supporta.
 (`0f347b5`, worktree separato, 2 volte su 2) e sul branch 1 volta su 2: non dipende dalla Fase 5. Causa non cercata:
 con stdin chiuso e l'ordine del seme 4242, il primo `getvec` del gruppo probabilmente non trova ancora l'EOF in coda
 e il wrapper ripete la chiamata. Se fallisce, ripeti la suite; nessuna issue (la Fase 5 non ha issue Linear).
+
+Causa confermata e spec corretta nella Parte 3 (macOS): vedi "Parte 3 — macOS", "Problemi e soluzioni".
+
+## Parte 3 — macOS (in corso)
+
+- Data: 2026-11-15. Branch `test/fase5-macos` da `76cd883`; commit `458c310`, `7f5f926`, `b2e796b`, non ancora
+  inviati né in una PR.
+- Hindsight: il server `127.0.0.1:8888` non risponde su questa macchina (`curl` esce con 7). Fonti: `RICONSEGNA.md`
+  e i file `memory/`.
+
+### Ambiente macOS
+
+| Voce | Valore |
+| --- | --- |
+| Macchina | MacBook Pro, Apple M1 (arm64), macOS 26.5.2 (build `25F84`), Darwin 25.5.0 |
+| Checkout | `/Users/sphynx/Sviluppo/Progetti/Personali/20261027_notcursesruby` |
+| notcurses | 3.0.17 (`pkg-config`), Homebrew `notcurses 3.0.17_1`; in `/opt/homebrew/lib` anche `libnotcurses-ffi.3.dylib` |
+| ffmpeg | Homebrew `9.0.2_1` |
+| Ruby | 4.0.9 da frum (`/opt/homebrew/bin/frum`), Bundler 4.0.22, gem ffi 1.17.4 |
+| Compilatore | `/usr/bin/gcc` = Apple clang 21.0.0 |
+| coreutils | 9.12 da Homebrew, installato in questa sessione (`brew install coreutils`): `timeout` solo come `gtimeout`, o con `/opt/homebrew/opt/coreutils/libexec/gnubin` nel `PATH` |
+| Terminale | Ghostty 1.4.0 (`TERM=xterm-ghostty`, `TERM_PROGRAM=ghostty`, `COLORTERM=truecolor`) |
+| Kitty | non installato |
+
+### Caricamento
+
+- `ruby -w -Ilib -e 'require "notcurses"'` funziona senza `DYLD_FALLBACK_LIBRARY_PATH` e senza warning: la gem ffi
+  trova `/opt/homebrew/lib/libnotcurses.dylib` e `libnotcurses-core.dylib`. `ffi_lib` non cambia.
+- ICH-313: il `types.conf` di ffi 1.17.4 su arm64-darwin ha `wchar_t` e `uintmax_t`.
+- Oracolo: `spec/support/nc_oracle.rb:29` trova la libreria con il nome `notcurses-ffi`. `spec/inline_reimpl_spec.rb`:
+  253 esempi passati, 1 pending (`va_list` solo con l'ABI System V x86_64).
+- `spec/ffi_layout_spec.rb`: 6 esempi passati con Apple clang.
+
+### Suite completa
+
+| Momento | Esito |
+| --- | --- |
+| `master` (`76cd883`), senza `timeout` | 1046 esempi, 22 fallimenti, 10 pending, 2 min 22 s |
+| `master`, con coreutils | 1046 esempi, 16 fallimenti, 10 pending, 1 min 33 s |
+| branch, dopo i 3 commit | 1047 esempi, 0 fallimenti, 11 pending, circa 25 s |
+| branch, ordine normale, `rand:1234`, `rand:4242`, `rand:7` | 0 fallimenti, 3 esecuzioni per ordine (12 in tutto) |
+| branch, `rand:1`, `rand:31337`, `rand:99` | 0 fallimenti |
+| branch, `rand:2026` | 0 fallimenti in 61 esecuzioni; 1 blocco in un'altra esecuzione (punto aperto 1) |
+| `bundle exec rubocop` | 0 offense, 99 file |
+
+Gli 11 pending hanno tutti un motivo scritto: `va_list` (1), `libc_malloc_debug` di glibc (3), `TIOCSCTTY` e `/proc`
+in `ui_pty_spec.rb` (6), quadranti di `rxvt-256color` (1, nuovo).
+
+### Cambi sul branch
+
+| Commit | Cambio |
+| --- | --- |
+| `458c310` `fix(ffi): su macOS notcurses_stop rilascia il GVL` | `lib/notcurses/ffi/functions.rb`: `notcurses_stop` con `blocking: ::FFI::Platform.mac?` (cambio della Fase 1 approvato dall'utente il 2026-11-15, solo su macOS: su Linux la chiamata non cambia); spec nuova in `spec/integration/pty_spec.rb`; voce in «Corretto» di `CHANGELOG.md` |
+| `7f5f926` `test(macos): spec portabili su macOS` | `NcHelpers::FD_DIR` e `NcHelpers.open_fd_count` (`/proc/self/fd` su Linux, `/dev/fd` su macOS) in 5 file; `osversion` con il prefisso `macOS`; U+2028 in `Reader#write` con attese per glibc e per macOS; `visual_spec.rb:673` in skip su macOS |
+| `b2e796b` `test(contesto): aspetta l'EOF prima di contare le chiamate a notcurses_getvec` | `spec/notcurses/context_spec.rb:358` |
+
+Le attese delle spec su Linux non cambiano (regola 17). `git diff b2fed69 -- lib/notcurses/ffi lib/notcurses/ffi.rb`
+non è più vuoto: contiene solo il cambio di `458c310`.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| 4 esempi di `pty_spec.rb` (`:386`, `:426`, `:433`, `:442`) bloccati fino al timeout, a volte | `Context#close` → `notcurses_stop` → `tcsetattr(TCSAFLUSH)` (`notcurses.c:147`). Su macOS `TCSAFLUSH` aspetta che il master del pty legga l'output in coda; il master è letto da un thread Ruby dello stesso processo, e `notcurses_stop` teneva il GVL. Su Linux il pty non aspetta. Stack con `sample`: thread principale in `tcsetattr` → `ioctl`, thread del pty in attesa del GVL | `blocking: ::FFI::Platform.mac?` su `notcurses_stop`. Spec deterministica: il thread del pty resta fuori da `read(2)` per 0,3 s dopo l'inizio della chiusura; prima del fix 15 blocchi su 15, dopo 0 su 15 |
+| 12 esempi con `Errno::ENOENT` su `/proc/self/fd` | macOS non ha `/proc` | `/dev/fd` su macOS (`NcHelpers.open_fd_count`) |
+| `stats_spec.rb:41` | su macOS `notcurses_osversion` restituisce `macOS <versione>` (`util.c:100-108`) | attesa `macOS` su macOS, `Linux` altrove |
+| `reader_spec.rb:247`: `write("a b")` non solleva `WidgetError` | `wcwidth(U+2028)` vale 0 su macOS e -1 su glibc (`egcpool.h:130-137`): su macOS `nccell_load` legge il carattere intero e il C lo scrive | attese diverse per macOS e glibc; nessun cambio in `lib/` |
+| `visual_spec.rb:673`: il figlio esce con «niente quadranti» | `unix_early_matches`, che riconosce `rxvt` da `TERM`, sta dentro `#ifndef __APPLE__` (`termdesc.c:1137-1155`): su macOS `rxvt-256color` non attiva i quadranti | skip su macOS con il motivo; le guardie di ICH-272 sollevano `ArgumentError` prima del C e le provano anche le spec normali |
+| `context_spec.rb:358` con `rand:4242`: 2 chiamate a `notcurses_getvec` con 8192 slot (anche su `master`, su macOS 4 volte su 4) | con quel seme l'esempio è il primo del gruppo: l'EOF di `/dev/null` non è ancora in coda, il primo `notcurses_getvec` restituisce 0 e il wrapper ripete la chiamata (comportamento corretto) | la spec aspetta l'EOF con `get` prima di contare le chiamate; il controllo sul limite di 8192 slot resta |
+| 5 esempi con `Errno::ENOENT` su `timeout` | macOS non ha `timeout`; Homebrew lo installa come `gtimeout` | `/opt/homebrew/opt/coreutils/libexec/gnubin` nel `PATH` prima della suite |
+| `bundle exec rspec` fallisce con `Bundler::GemNotFound` a metà sessione | la shell è passata dal Ruby 4.0.9 di frum al Ruby 4.0.7 di mise, che non ha le gem del progetto | la cartella `bin` del Ruby di frum all'inizio del `PATH` |
+
+Comando della suite usato su macOS:
+
+```sh
+export PATH="/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"
+TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 bundle exec rspec < /dev/null
+```
+
+### Punti aperti
+
+1. **Blocco raro in `Context#close` (macOS, causa non trovata).** Una volta in 62 esecuzioni della suite con
+   `--order rand:2026` (sul branch, con `notcurses_stop` senza GVL), rspec si è fermato fino al timeout di 600 s
+   (exit 137). Stack con `sample`:
+   - thread principale: `rbffi_do_blocking_call` → `rb_nogvl` → `notcurses_stop` → `free_terminfo_cache` →
+     `stop_inputlayer` → `pthread_join`;
+   - thread di input di notcurses: `input_thread` → `poll`, anche dopo il `pthread_cancel` di `cancel_and_join`
+     (`internal.h:1830-1839`, `in.c:2655-2670`);
+   - nessun altro thread Ruby attivo: il timer thread in `kevent`, l'FFI Callback Dispatcher in
+     `pthread_cond_wait`.
+
+   L'esempio bloccato non è noto: quella esecuzione non aveva la traccia degli esempi. Dopo il blocco, altre 61
+   esecuzioni con lo stesso seme non si sono bloccate: 46 con il GVL rilasciato (31 della suite completa, 15 senza
+   `pty_spec.rb`) e 15 con il GVL tenuto come su `master` (senza `pty_spec.rb`). Anche 2000 aperture e chiusure di
+   `Context` di fila, con e senza `drain_input`, non si bloccano. Il GVL rilasciato probabilmente non è la causa,
+   perché nessun thread Ruby gira durante il blocco, ma un solo caso non basta a provarlo.
+
+   Ipotesi da controllare, nessuna provata:
+   - su macOS `block_on_input` chiama `poll` senza la maschera dei segnali (`in.c:2552-2554`, «FIXME smask?»); alcune
+     spec mandano USR1, USR2, TERM, WINCH e CONT al processo (`lifecycle_spec.rb:397` e `:406`,
+     `event_loop_spec.rb:78-80` e `:347-361`, `dialog_spec.rb:127-169`);
+   - una gara tra `pthread_cancel` e l'entrata del thread di input in `poll` su Darwin.
+
+   Per riprodurlo: lo script `hunt.sh` della sessione esegue la suite con un seme e la traccia degli esempi
+   (`before`/`after` di RSpec su stderr), e al primo blocco campiona il processo con `sample <pid> 2`. Se il blocco
+   torna, la traccia dice l'esempio. Un bug di notcurses va nelle tabelle di `RICONSEGNA.md`; un bug del wrapper
+   segue la regola 11.
