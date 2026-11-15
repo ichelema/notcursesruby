@@ -1282,8 +1282,8 @@ module Notcurses
 
     # Cancella un rettangolo di celle (+ncplane_erase_region+), dalla cella
     # (y, x) compresa verso destra e verso il basso, tagliato al bordo. Le
-    # celle tornano vuote con stile e colori di default. Cancellare metà di un
-    # glifo largo lascia l'altra metà orfana.
+    # celle tornano vuote con stile e colori di default. Se la regione copre
+    # solo metà di un glifo largo, anche l'altra metà diventa una cella vuota.
     #
     # @param y [Integer] riga di partenza, 0...righe
     # @param x [Integer] colonna di partenza, 0...colonne
@@ -1301,6 +1301,7 @@ module Notcurses
       Util.integer!(rows, 'rows', 1..Util::INT32.max)
       Util.integer!(cols, 'cols', 1..Util::INT32.max)
       Util.check!(FFI.ncplane_erase_region(ptr, y, x, rows, cols), PlaneError, 'ncplane_erase_region')
+      clear_region_orphans!(ptr, y, x, [rows, prows - y].min, [cols, pcols - x].min)
       self
     end
 
@@ -2031,8 +2032,9 @@ module Notcurses
     # Riempimento a macchia d'olio dalla cella (y, x) (+ncplane_polyfill_yx+):
     # sostituisce con cell la regione 4-connessa di celle con lo stesso EGC
     # della cella di partenza (stile e colori non contano). Riempire celle
-    # vuote sovrascrive anche le metà destre dei glifi larghi. Il cursore non
-    # si sposta.
+    # vuote sovrascrive anche le metà destre dei glifi larghi. Se il
+    # riempimento copre solo metà di un glifo largo, l'altra metà diventa una
+    # cella vuota. Il cursore non si sposta.
     #
     # @param cell [Cell, String] carattere largo 1 colonna; una String usa
     #   stile e colori del piano
@@ -2049,11 +2051,14 @@ module Notcurses
       top, left = line_start!(y, x)
       rc = with_nccells(ptr, [fill]) { |nc| FFI.ncplane_polyfill_yx(ptr, top, left, nc) }
       Util.check!(rc, PlaneError, 'ncplane_polyfill_yx')
+      clear_orphan_halves!(ptr, 0...dim_y, 0...dim_x) if rc.positive? # la regione riempita non è nota
+      rc
     end
 
     # Riempie un rettangolo con egc e colori sfumati tra i quattro angoli
-    # (+ncplane_gradient+). Il contenuto precedente si perde; il cursore non
-    # si sposta. Il wrapper controlla i vincoli del C prima della chiamata (il
+    # (+ncplane_gradient+). Il contenuto precedente si perde; un glifo largo
+    # coperto solo a metà diventa una cella vuota anche nell'altra metà. Il
+    # cursore non si sposta. Il wrapper controlla i vincoli del C prima della chiamata (il
     # C fallirebbe dopo aver già cambiato celle): per primo piano e sfondo, o
     # tutti gli angoli hanno il colore di default o nessuno, gli alpha sono
     # uguali, niente colori di palette; con una riga servono ul == ll e
@@ -2086,8 +2091,10 @@ module Notcurses
       corners = corner_values([ul, ur, ll, lr], 64)
       top, left, height, width = region!(y, x, rows, cols)
       corners_shape!(corners, height, width, rows_rule: true)
-      Util.check!(FFI.ncplane_gradient(ptr, top, left, height, width, text, Util.styles_value(styles), *corners),
-                  PlaneError, 'ncplane_gradient')
+      rc = Util.check!(FFI.ncplane_gradient(ptr, top, left, height, width, text, Util.styles_value(styles), *corners),
+                       PlaneError, 'ncplane_gradient')
+      clear_region_orphans!(ptr, top, left, height, width)
+      rc
     end
 
     # Riempie un rettangolo con mezzi blocchi "▀" a doppia risoluzione
@@ -2095,7 +2102,8 @@ module Notcurses
     # sfumate tra i quattro angoli; lo stile delle celle resta. Con un angolo
     # di default primo piano e sfondo diventano di default. Vincoli come in
     # {#gradient}, su canali singoli; con una colonna servono ul == ur e
-    # ll == lr. Serve un terminale UTF-8.
+    # ll == lr. Un glifo largo coperto solo a metà diventa una cella vuota
+    # anche nell'altra metà. Serve un terminale UTF-8.
     #
     # @param ul [Channel, Integer] colore dell'angolo superiore sinistro
     # @param ur [Channel, Integer] superiore destro
@@ -2116,12 +2124,16 @@ module Notcurses
       corners_shape!(corners, height, width, rows_rule: false)
       raise PlaneError, 'gradient2x1 richiede un terminale UTF-8' unless @context.can_utf8?
 
-      Util.check!(FFI.ncplane_gradient2x1(ptr, top, left, height, width, *corners), PlaneError, 'ncplane_gradient2x1')
+      rc = Util.check!(FFI.ncplane_gradient2x1(ptr, top, left, height, width, *corners), PlaneError,
+                       'ncplane_gradient2x1')
+      clear_region_orphans!(ptr, top, left, height, width)
+      rc
     end
 
     # Sfuma i colori di un rettangolo tra i quattro angoli lasciando EGC e
     # stili (+ncplane_stain+). Le celle vuote e le metà destre dei glifi larghi
-    # non cambiano. Vincoli sui colori come in {#gradient}, senza quelli sulla
+    # non cambiano. Non tocca gli EGC: su metà di un glifo largo non lascia
+    # metà orfane. Vincoli sui colori come in {#gradient}, senza quelli sulla
     # forma.
     #
     # @param ul [Channels, Integer] colori dell'angolo superiore sinistro
@@ -2144,7 +2156,8 @@ module Notcurses
     end
 
     # Imposta gli stili di un rettangolo lasciando EGC e colori
-    # (+ncplane_format+; il nome evita di nascondere Kernel#format).
+    # (+ncplane_format+; il nome evita di nascondere Kernel#format). Non tocca
+    # gli EGC: su metà di un glifo largo non lascia metà orfane.
     #
     # @param styles [Integer, Symbol, Array<Symbol>]
     # @param y [Integer] prima riga
@@ -2352,25 +2365,52 @@ module Notcurses
     # resize fatti dal C (stdplane nel render, callback :maximize). Un cambio di
     # sole righe non sposta le celle di bordo (le righe nuove sono vuote), e
     # un piano che scorre con autogrow cresce di una riga a ogni a capo.
-    # Non le vede quando nascono senza resize: erase_region, gradient e
-    # polyfill su una sola metà di un glifo largo (ICH-450).
+    # Le metà orfane che nascono senza resize (erase_region, gradient,
+    # gradient2x1 e polyfill su una sola metà) le svuotano quei metodi.
     def clear_cut_glyphs!(ptr, force: false)
       rows, cols = dims
       return if !force && @cut_glyphs_cols == cols
 
-      cell = FFI::NcCell.new
-      rows.times do |y|
-        [0, cols - 1].uniq.each do |x|
-          next if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
+      clear_orphan_halves!(ptr, 0...rows, [0, cols - 1])
+      @cut_glyphs_cols = cols
+    end
 
-          right = FFI.nccell_wide_right_p(cell)
-          orphan = (x.zero? && right) ||
-                   (x == cols - 1 && (FFI.nccell_wide_left_p(cell) || (right && !wide_left?(ptr, y, x - 1))))
-          FFI.nccell_release(ptr, cell)
-          Util.check!(FFI.ncplane_erase_region(ptr, y, x, 1, 1), PlaneError, 'ncplane_erase_region') if orphan
+    # Svuota le metà orfane dei glifi larghi nelle colonne xs delle righe ys
+    # (colonne fuori dal piano ignorate). ncplane_put di 3.0.17 scrive fuori
+    # dalla riga partendo da una metà destra orfana (notcurses.c:1956-1962).
+    def clear_orphan_halves!(ptr, ys, xs)
+      cols = dim_x
+      xs = xs.select { |x| x >= 0 && x < cols }.uniq
+      ys.each do |y|
+        xs.each do |x|
+          next unless orphan_half?(ptr, y, x, cols)
+
+          Util.check!(FFI.ncplane_erase_region(ptr, y, x, 1, 1), PlaneError, 'ncplane_erase_region')
         end
       end
-      @cut_glyphs_cols = cols
+    end
+
+    # true se (y, x) è una metà di glifo largo senza l'altra metà: una metà
+    # sinistra nell'ultima colonna o senza la metà destra dopo, una metà destra
+    # in colonna 0 o senza la metà sinistra prima.
+    def orphan_half?(ptr, y, x, cols)
+      cell = FFI::NcCell.new
+      return false if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
+
+      if FFI.nccell_wide_left_p(cell)
+        x == cols - 1 || !wide_right?(ptr, y, x + 1)
+      elsif FFI.nccell_wide_right_p(cell)
+        x.zero? || !wide_left?(ptr, y, x - 1)
+      else
+        false
+      end
+    ensure
+      FFI.nccell_release(ptr, cell)
+    end
+
+    # Svuota le metà orfane ai lati del rettangolo appena riempito.
+    def clear_region_orphans!(ptr, top, left, height, width)
+      clear_orphan_halves!(ptr, top...(top + height), [left - 1, left, left + width - 1, left + width])
     end
 
     # Su uno stdplane che scorre ogni a capo ("\n" o a capo automatico) fa un

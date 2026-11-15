@@ -1215,6 +1215,59 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    context 'su metà di un glifo largo' do
+      red = Notcurses::Channel.rgb(255, 0, 0)
+      {
+        'polyfill dalla metà sinistra' => ['ab漢', ->(p) { p.polyfill('x', y: 0, x: 2) }, 'abx'],
+        'polyfill da una cella vuota fino a una metà destra' => ['漢', ->(p) { p.polyfill('x', y: 0, x: 3) }, 'xxx'],
+        'erase_region sulla metà sinistra' => ['ab漢', ->(p) { p.erase_region(0, 2, 1, 1) }, 'ab'],
+        'erase_region sulla metà destra' => ['ab漢', ->(p) { p.erase_region(0, 3, 1, 1) }, 'ab'],
+        'gradient fino alla metà sinistra' => ['ab漢', ->(p) { p.gradient('g', 0, 0, 0, 0, rows: 1, cols: 3) }, 'ggg'],
+        'gradient2x1 sulla metà destra' => ['ab漢', ->(p) { p.gradient2x1(red, red, red, red, x: 3, rows: 1, cols: 1) }, 'ab▀']
+      }.each do |name, (text, fill, row0)|
+        it "#{name}: l'altra metà diventa una cella vuota e una scrittura larga lascia intatta la riga sotto" do
+          with_parent(rows: 2, cols: 4) do |p|
+            p.putstr(text, y: 0, x: 0)
+            p.putstr('WXYZ', y: 1, x: 0)
+            fill.call(p)
+            expect(p.contents(y: 0, rows: 1)).to eq(row0)
+            p.putstr('中', y: 0, x: 2)
+            expect(p.contents(y: 1, rows: 1)).to eq('WXYZ') # prima: "XYZ" quando restava la metà destra
+          end
+        end
+      end
+
+      it 'senza glifi larghi i riempimenti non cambiano' do
+        with_parent(rows: 1, cols: 4) do |p|
+          p.putstr('abcd', y: 0, x: 0)
+          p.erase_region(0, 1, 1, 2)
+          expect(p.contents).to eq('ad')
+          expect(p.polyfill('x', y: 0, x: 1)).to eq(2)
+          expect(p.contents).to eq('axxd')
+        end
+      end
+
+      it "la scrittura larga sull'ultima riga non corrompe l'heap (prima: abort di glibc)" do
+        skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
+        script = <<~'RUBY'
+          require 'notcurses'
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            fills = [->(q) { q.erase_region(0, 2, 1, 1) }, ->(q) { q.polyfill('x', y: 0, x: 2) },
+                     ->(q) { q.gradient('g', 0, 0, 0, 0, rows: 1, cols: 3) }]
+            fills.each do |fill|
+              planes = Array.new(20) { nc.stdplane.create_child(rows: 1, cols: 4).tap { |q| q.putstr('ab漢', y: 0, x: 0) } }
+              planes.each { |q| fill.call(q) }
+              planes.each { |q| q.putstr('中', y: 0, x: 2) }
+              planes.each(&:close)
+            end
+          end
+          puts 'ok'
+        RUBY
+        expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+      end
+    end
+
     it 'greyscale converte i colori delle celle, non quelli del piano' do
       with_parent(rows: 1, cols: 1) do |g|
         g.set_fg_rgb24(0xff0000)

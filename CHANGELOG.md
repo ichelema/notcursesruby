@@ -26,6 +26,9 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   `Context#at`, `detected_terminal`, `Notcurses.hostname` e gli altri) si liberano con la `free` di notcurses. Prima
   il wrapper usava la `free` di glibc anche quando `LD_PRELOAD` mette un altro allocatore (jemalloc, tcmalloc,
   `libc_malloc_debug`), e il processo terminava con `double free or corruption` (ICH-449).
+- `Plane#erase_region`, `#gradient`, `#gradient2x1` e `#polyfill` su una sola metà di un glifo largo svuotano anche
+  l'altra metà. Prima la metà orfana restava, e una scrittura larga vicina cancellava la prima cella della riga dopo,
+  o sull'ultima riga scriveva fuori dal piano e corrompeva l'heap (ICH-450).
 - macOS: `Context#close` rilascia il GVL durante `notcurses_stop`, che con `tcsetattr(TCSAFLUSH)` aspetta che il
   terminale legga l'output in coda. Prima un terminale servito da un thread dello stesso processo (per esempio un
   pty nei test) bloccava la chiusura per sempre. Un'eccezione asincrona (`Thread#raise`, `Timeout`) per il thread
