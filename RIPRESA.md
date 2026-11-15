@@ -8,7 +8,11 @@
 
 ## Stato e prossimo step (aggiornato il 2026-11-15, prima del lotto 1)
 
-- Prossimo step: "Prima di iniziare", poi il lotto 1.
+- "Prima di iniziare" fatto il 2026-11-15: suite 1048 esempi, 0 fallimenti; RuboCop 0 offense; log e decisioni in
+  `memory/backlog-issue.md`.
+- Scelte dell'utente: lotti approvati con 4 cambi (già nella tabella di "Ordine di lavoro"); modello `opus`;
+  ICH-231 e ICH-457 nella fase (lotto 13); ICH-225 con audit e fix.
+- Prossimo step: lotto 1 (ICH-449, ICH-450, ICH-448, ICH-225), branch `bug/ICH-449-450-448-225-opus`.
 - Nessun lotto fatto.
 
 ## Contesto
@@ -111,8 +115,9 @@ successivi.
 
 ## Ordine di lavoro
 
-Proposta del 2026-11-15, costruita solo dai titoli e dalle priorità di Linear: il passo 5 di "Prima di iniziare"
-la controlla con le descrizioni, il passo 6 la fa approvare all'utente. Criteri:
+Proposta del 2026-11-15, controllata con le descrizioni di Linear e approvata dall'utente con 4 cambi: ICH-225 nel
+lotto 1, ICH-214 nel lotto 2, ICH-464 nel lotto 5, ICH-474 nel lotto 7 (motivi in `memory/backlog-issue.md`).
+Criteri:
 
 1. prima la priorità di Linear (High, poi Medium, poi Low);
 2. le issue che toccano lo stesso codice stanno nello stesso lotto;
@@ -126,7 +131,8 @@ la controlla con le descrizioni, il passo 6 la fa approvare all'utente. Criteri:
 | 1 | `bug` | ICH-449 | High | Fix the double free after merge_down with wide glyphs followed by Plane#at |
 | 1 | `bug` | ICH-450 | High | Keep polyfill, gradient and erase_region from leaving an orphan half of a wide glyph |
 | 1 | `bug` | ICH-448 | Medium | Keep the cut-glyph check state per C plane, not per Plane wrapper |
-| 2 | `bug` | ICH-225 | Medium | Audit cross-plane cell copies for the wide-glyph width mismatch (spike) |
+| 1 | `bug` | ICH-225 | Medium | Audit cross-plane cell copies for the wide-glyph width mismatch (spike) |
+| 2 | `bug` | ICH-214 | Medium | Work around row reordering after scroll (notcurses logrow bug) |
 | 2 | `bug` | ICH-215 | Low | Prevent long-EGC corruption in Plane#resize_region with keep_x > 0 |
 | 2 | `bug` | ICH-216 | Low | Restore the fixed flag and vertical alignment in Plane#duplicate |
 | 3 | `bug` | ICH-454 | Medium | Keep notcurses' internal line-signal flag in sync with ISIG in EventLoop#run |
@@ -134,17 +140,16 @@ la controlla con le descrizioni, il passo 6 la fa approvare all'utente. Criteri:
 | 3 | `bug` | ICH-455 | Low | Do not deliver the queued Ctrl+C of an interrupted run to a following run(no_linesigs: true) |
 | 4 | `bug` | ICH-463 | Medium | Stop notcurses from blocking when a UTF-8 character is split across the 8192-byte input read |
 | 5 | `bug` | ICH-475 | Medium | Closing the context or the visual while another thread is inside Visual#decode is a use-after-free |
-| 5 | `bug` | ICH-474 | Low | Keep the C resource when an async exception arrives during Visual.from_file, Direct#load_image or Direct#render_frame |
+| 5 | `bug` | ICH-464 | Low | Close the window between to_ptr and the C call for a close from a trap handler |
 | 6 | `bug` | ICH-458 | Medium | Make Direct#stream redraw :pixel frames in place when they end on the last screen row |
 | 6 | `bug` | ICH-222 | Low | Free Direct::Frame memory on close and keep the Direct#stop reset off stdout |
 | 6 | `bug` | ICH-223 | Low | Fix Visual.from_palidx palette colors and Visual#rotate pixel loss |
 | 7 | `bug` | ICH-441 | Medium | Handle Process.daemon with an open Context or Direct without leaving the terminal altered |
 | 7 | `bug` | ICH-226 | Low | Harden Context and Direct init against a second Ctrl-C and Thread#kill |
-| 7 | `bug` | ICH-464 | Low | Close the window between to_ptr and the C call for a close from a trap handler |
+| 7 | `bug` | ICH-474 | Low | Keep the C resource when an async exception arrives during Visual.from_file, Direct#load_image or Direct#render_frame |
 | 8 | `bug` | ICH-218 | Medium | Make Reader delete the character in column 0 |
 | 8 | `bug` | ICH-217 | Low | Handle graphemes that notcurses segments differently from Ruby |
 | 8 | `bug` | ICH-232 | Low | Reject graphemes that notcurses splits differently in UI widget text checks |
-| 9 | `bug` | ICH-214 | Medium | Work around row reordering after scroll (notcurses logrow bug) |
 | 9 | `bug` | ICH-230 | Medium | Bound the unfinished line in LogView#append by bytes |
 | 10 | `bug` | ICH-220 | Medium | Make the Tabbed header follow plane resizes |
 | 10 | `bug` | ICH-221 | Medium | Fix Tree focus drift with items of different heights |
@@ -165,9 +170,8 @@ ICH-224, ICH-228 e ICH-229 sono già a Done.
 ### Scelte aperte (regola 14)
 
 - ICH-464 e ICH-475: la descrizione segnala una scelta con due letture valide. Chiedi all'utente prima del fix.
-- ICH-225: spike, vedi il passo 6 di "Prima di iniziare".
-- ICH-231 e ICH-457: funzionalità nuove, vedi il passo 6. Se l'utente le esclude, restano in Backlog con un commento
-  su Linear.
+- ICH-225: spike; scelta dell'utente: audit e fix nello stesso lotto dei casi confermati.
+- ICH-231 e ICH-457: funzionalità nuove; scelta dell'utente: restano nella fase, lotto 13.
 
 ### Note sulle issue
 
