@@ -277,6 +277,44 @@ RSpec.describe Notcurses::Plane do
         end
       end
 
+      # I callback di resize dei figli girano fra i due passi e possono svuotare il pool del piano: il rilascio degli
+      # EGC scartati non deve leggere un pool vuoto né rilasciare la cella base o gli EGC scritti dal callback
+      # (review del round 3).
+      it 'un callback che svuota il piano non rompe il rilascio degli EGC scartati (prima: NullPointerError, cella base persa)' do
+        marked = "á̂" # 5 byte, nel pool
+        with_parent(rows: 1, cols: 4) do |p|
+          p.putstr(marked, y: 0, x: 2)
+          p.create_child(rows: 1, cols: 1, resize: ->(_) { p.erase })
+          expect { p.resize_region(rows: 1, cols: 3, keep_x: 1, keep_rows: 1, keep_cols: 1) }.not_to raise_error
+        end
+        with_parent(rows: 1, cols: 4) do |p|
+          p.putstr(marked, y: 0, x: 2)
+          p.create_child(rows: 1, cols: 1, resize: lambda { |_|
+            p.erase
+            p.set_base(egc: "B́̂")
+          })
+          p.resize_region(rows: 1, cols: 3, keep_x: 1, keep_rows: 1, keep_cols: 1)
+          expect(p.base.egc).to eq("B́̂")
+        end
+      end
+
+      it "un callback che svuota e riscrive il piano non fa rilasciare offset fuori dal pool nuovo (prima: abort)" do
+        skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
+        script = <<~'RUBY'
+          require 'notcurses'
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true, drain_input: true) do |nc|
+            pl = nc.stdplane.create_child(rows: 60, cols: 200)
+            60.times { |y| pl.putstr('👍🏽' * 100, y: y, x: 0) }
+            pl.create_child(rows: 1, cols: 1, resize: ->(_) { pl.erase; pl.putstr('👍🏽 title', y: 0, x: 0) })
+            pl.resize_region(rows: 60, cols: 190, keep_x: 10, keep_rows: 60, keep_cols: 190)
+            puts pl.contents(y: 0, rows: 1)
+          end
+        RUBY
+        status, out = NcHelpers.heap_check(script)
+        expect(status).to eq(0), out
+        expect(out).to include('👍🏽 title')
+      end
+
       it 'completa il secondo passo anche se il callback di un figlio rimette il piano nella colonna di prima ' \
          '(prima: alto 3, con una riga vuota in cima)' do
         with_parent(rows: 2, cols: 8, y: 3, x: 4) do |p|

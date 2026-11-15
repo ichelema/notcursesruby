@@ -2576,16 +2576,19 @@ module Notcurses
     # framebuffer di prima): con le righe in più il ciclo del C parte oltre la fine della riga e non li
     # rilascia. Salta quelli ancora nel framebuffer e quelli che il C ha già rilasciato (primo byte 0:
     # egcpool_release, egcpool.h:168-176, toglierebbe comunque un byte da poolused); rilascia solo da un
-    # inizio di EGC (byte prima 0), nel caso un callback di resize abbia scritto nel pool.
+    # inizio di EGC (byte prima 0). I callback di resize dei figli girano fra i due passi e possono svuotare o
+    # riscrivere il pool (Plane#erase, set_base): salta un pool vuoto, gli offset oltre il pool di adesso e la
+    # cella base, che non sta nel framebuffer.
     def release_dropped!(ptr, old)
       st = internals(ptr)
-      return unless st
+      return if st.nil? || st[:pool].null?
 
       pool = st[:pool]
-      dropped = pooled(old) - pooled(fb_bytes(st))
+      size = st[:poolsize]
+      dropped = pooled(old) - pooled(fb_bytes(st)) - [st[:basecell][:gcluster]]
       release_gclusters!(ptr, dropped.select do |g|
         idx = g & 0xffffff
-        pool.get_uint8(idx).nonzero? && (idx.zero? || pool.get_uint8(idx - 1).zero?)
+        idx < size && pool.get_uint8(idx).nonzero? && (idx.zero? || pool.get_uint8(idx - 1).zero?)
       end)
     end
 
