@@ -1,6 +1,6 @@
 # Fase 5 — design: blitter su un terminale vero e macOS
 
-Data: 2026-11-15. Base: `667e5bc`. Stato: **proposto, in attesa dell'approvazione dell'utente**.
+Data: 2026-11-15. Base: `667e5bc`. Stato: **approvato dall'utente il 2026-11-15**.
 
 La Fase 5 prova i blitter grafici su un terminale vero e porta il binding su macOS. Non aggiunge funzionalità al
 binding. Risultati delle prove della Parte 1, ambiente e problemi: `memory/fase5-terminali-macos.md`. Le scelte segnate
