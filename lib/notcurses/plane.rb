@@ -2606,16 +2606,15 @@ module Notcurses
     # half_at per una cella che ncplane_at_yx_cell non legge (ICH-487). Con l'egcpool pieno è una cella con
     # un EGC di più di 4 byte, quindi mai una metà destra, che non ha un EGC: ncplane_at_yx copia l'EGC con
     # strdup, senza passare dal pool, e la larghezza dice se è una metà sinistra. Su un piano con un bitmap
-    # ncplane_at_yx restituisce invece la sequenza dello sprixel (notcurses.c:236-243), che comincia con
-    # ESC e può essere di qualche megabyte: nil, senza copiarla.
+    # ncplane_at_yx copierebbe invece la sequenza dello sprixel (notcurses.c:236-243), che con Kitty è già
+    # stata liberata dopo il disegno (kitty.c:1186-1188: strdup(NULL)): nil, come senza internals.
     def unreadable_half(ptr, y, x)
+      st = internals(ptr)
+      return nil if st.nil? || !st[:sprite].null?
+
       egc = FFI.ncplane_at_yx(ptr, y, x, nil, nil)
       return nil if egc.null?
 
-      if egc.get_uint8(0) == 0x1b
-        Util.free(egc)
-        return nil
-      end
       FFI.ncstrwidth(Util.take_string(egc), nil, nil) > 1 ? :left : :none
     end
 

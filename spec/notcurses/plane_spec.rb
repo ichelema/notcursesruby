@@ -536,20 +536,6 @@ RSpec.describe Notcurses::Plane do
           end
         end
 
-        it 'la sequenza di un bitmap, che ncplane_at_yx restituisce al posto di un EGC, non viene letta come glifo' do
-          with_parent(rows: 1, cols: 3) do |p|
-            p.name = "\e_Gbitmap"
-            p.putstr('ab', y: 0, x: 0)
-            allow(Notcurses::FFI).to receive(:ncplane_at_yx_cell).and_return(-1) # come su un piano con un bitmap
-            allow(Notcurses::FFI).to receive(:ncplane_at_yx) { Notcurses::FFI.ncplane_name(p.to_ptr) }
-            allow(Notcurses::FFI).to receive(:ncstrwidth).and_call_original
-            p.resize(1, 2)
-            expect(Notcurses::FFI).not_to have_received(:ncstrwidth) # la sequenza non viene copiata né misurata
-            allow(Notcurses::FFI).to receive(:ncplane_at_yx).and_call_original
-            expect(p.at(y: 0, x: 1).egc).to eq('b')
-          end
-        end
-
         it "la scrittura sulla metà tagliata nell'ultima riga non corrompe l'heap (prima: abort di glibc)" do
           skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
           script = <<~'RUBY'
