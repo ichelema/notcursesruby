@@ -357,30 +357,6 @@ module Notcurses
       ptr
     end
 
-    # Secondi Ruby come struct timespec.
-    # @param name [String] nome usato nel messaggio d'errore
-    # @param seconds [Numeric] secondi >= 0
-    # @return [FFI::Timespec]
-    # @raise [TypeError, ArgumentError] se seconds non è un numero reale finito >= 0
-    def timespec(seconds, name = 'timeout')
-      unless seconds.is_a?(Numeric) && seconds.real?
-        raise TypeError, "#{name} deve essere un numero di secondi, non #{seconds.class}"
-      end
-      raise ArgumentError, "#{name} = #{seconds} deve essere >= 0" if seconds.negative?
-      raise ArgumentError, "#{name} = #{seconds} non è finito" if seconds.is_a?(Float) && !seconds.finite?
-
-      sec, frac = seconds.to_r.divmod(1)
-      nsec = (frac * 1_000_000_000).round
-      if nsec >= 1_000_000_000
-        sec += 1
-        nsec -= 1_000_000_000
-      end
-      ts = FFI::Timespec.new
-      ts[:tv_sec] = sec
-      ts[:tv_nsec] = nsec
-      ts
-    end
-
     # Bit di un flag se l'opzione booleana è attiva: si combinano con +|+.
     # @param value [Object] opzione booleana
     # @param bit [Integer] bit da attivare

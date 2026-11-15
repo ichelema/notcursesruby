@@ -10,6 +10,10 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ## [Non rilasciato]
 
+### Rimosso
+
+- `Notcurses::Util.timespec` (`@api private`): non aveva chiamanti.
+
 ### Corretto
 
 - `Visual.from_file`, `Visual#decode`, `Visual#decode_loop`, `Direct#render_frame`, `Direct#load_image`,
