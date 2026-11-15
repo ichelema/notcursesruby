@@ -17,7 +17,27 @@ module NcHelpers
     output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true, drain_input: true
   }.freeze
 
+  # Cartella dei descrittori aperti del processo: /proc/self/fd su Linux,
+  # /dev/fd su macOS, che non ha /proc.
+  FD_DIR = File.directory?('/proc/self/fd') ? '/proc/self/fd' : '/dev/fd'
+
+  # Comando timeout di coreutils per i processi figli: "timeout", altrimenti
+  # "gtimeout", il nome con il prefisso g di coreutils di Homebrew (brew
+  # install coreutils; la 9.12 installa anche "timeout", che macOS non ha).
+  # Senza nessuno dei due resta "timeout", e la spec fallisce con Errno::ENOENT.
+  TIMEOUT = %w[timeout gtimeout].find do |cmd|
+    ENV.fetch('PATH', '').split(File::PATH_SEPARATOR).any? { |dir| File.executable?(File.join(dir, cmd)) }
+  end || 'timeout'
+
   module_function
+
+  # Numero dei descrittori aperti del processo, compreso quello con cui Dir
+  # legge {FD_DIR}.
+  #
+  # @return [Integer]
+  def open_fd_count
+    Dir.children(FD_DIR).size
+  end
 
   # Apre un Context di test. Le opzioni sostituiscono quelle di
   # {CONTEXT_OPTIONS} (per esempio drain_input: false per leggere l'input, che

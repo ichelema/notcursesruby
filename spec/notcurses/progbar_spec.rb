@@ -221,7 +221,7 @@ RSpec.describe Notcurses::ProgBar do
     RUBY
     env = { 'TERM' => 'xterm-256color', 'LANG' => 'C', 'LC_ALL' => 'C' }
     lib = File.expand_path('../../lib', __dir__)
-    out, status = Open3.capture2e(env, 'timeout', '-k', '5', '-s', 'KILL', '30', RbConfig.ruby, '-I', lib, '-e', script,
+    out, status = Open3.capture2e(env, NcHelpers::TIMEOUT, '-k', '5', '-s', 'KILL', '30', RbConfig.ruby, '-I', lib, '-e', script,
                                   stdin_data: '')
     expect([status.exitstatus, out]).to eq([0, "can_utf8? false\n1x40: ncprogbar_set_progress fallita (-1)\n2x40: ok\n"])
   end

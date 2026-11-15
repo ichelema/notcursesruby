@@ -44,7 +44,8 @@ RSpec.describe Notcurses::Stats do
       expect(value).to be_a(String).or be_nil
       expect(value.encoding).to eq(Encoding::UTF_8) if value
     end
-    expect(Notcurses.osversion).to start_with('Linux')
+    # macOS: prefisso fisso "macOS" (util.c:100-108); altrove il sysname di uname
+    expect(Notcurses.osversion).to start_with(::FFI::Platform.mac? ? 'macOS' : 'Linux')
   end
 
   it 'accountname sostituisce con U+FFFD i byte di LOGNAME che non sono UTF-8' do

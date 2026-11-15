@@ -192,7 +192,7 @@ RSpec.describe Notcurses::Reader do
       RUBY
       env = { 'TERM' => 'xterm-256color', 'LD_PRELOAD' => '/usr/lib/libc_malloc_debug.so.0', 'MALLOC_CHECK_' => '3' }
       lib = File.expand_path('../../lib', __dir__)
-      out, status = Open3.capture2e(env, 'timeout', '-k', '5', '-s', 'KILL', '30', RbConfig.ruby, '-I', lib, '-e', script,
+      out, status = Open3.capture2e(env, NcHelpers::TIMEOUT, '-k', '5', '-s', 'KILL', '30', RbConfig.ruby, '-I', lib, '-e', script,
                                     stdin_data: '')
       expect([status.exitstatus, out]).to eq([0, "ok\n"])
     end
@@ -238,7 +238,7 @@ RSpec.describe Notcurses::Reader do
       RUBY
       lib = File.expand_path('../../lib', __dir__)
       %w[left ctrl_b ctrl_w move_left].each do |final|
-        out, status = Open3.capture2e({ 'TERM' => 'xterm-256color' }, 'timeout', '-k', '5', '-s', 'KILL', '30',
+        out, status = Open3.capture2e({ 'TERM' => 'xterm-256color' }, NcHelpers::TIMEOUT, '-k', '5', '-s', 'KILL', '30',
                                       RbConfig.ruby, '-I', lib, '-e', script, final, stdin_data: '')
         expect([status.exitstatus, out]).to eq([0, "ok\n"]), final
       end
@@ -256,9 +256,15 @@ RSpec.describe Notcurses::Reader do
           expect([reader.write(text).contents, reader.plane.cursor]).to eq([text, cursor]), text.inspect
         end
       end
-      new_reader(rows: 1, cols: 10) do |reader| # nccell_load legge 1 byte di U+2028: il C riceve il carattere intero
-        expect { reader.write("a\u2028b") }.to raise_error(Notcurses::WidgetError, /"\\u2028"/)
-        expect(reader.contents).to eq('a')
+      # U+2028 dipende da wcwidth della libc (egcpool.h:130-137). glibc: -1, nccell_load legge 1 byte e
+      # il C riceve il carattere intero, che rifiuta. macOS: 0, U+2028 è un EGC intero e il C lo scrive.
+      new_reader(rows: 1, cols: 10) do |reader|
+        if ::FFI::Platform.mac?
+          expect(reader.write("a\u2028b").contents).to eq("a\u2028b")
+        else
+          expect { reader.write("a\u2028b") }.to raise_error(Notcurses::WidgetError, /"\\u2028"/)
+          expect(reader.contents).to eq('a')
+        end
       end
     end
 

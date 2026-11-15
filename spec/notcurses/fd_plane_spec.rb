@@ -10,7 +10,7 @@ RSpec.describe Notcurses::FdPlane do
   # ogni esempio usa thread: un blocco del wrapper non deve fermare la suite
   around { |example| Timeout.timeout(20) { example.run } }
 
-  def open_fds = Dir.children('/proc/self/fd').size
+  def open_fds = NcHelpers.open_fd_count
 
   def now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 

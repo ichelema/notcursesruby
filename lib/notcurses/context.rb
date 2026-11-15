@@ -316,7 +316,7 @@ module Notcurses
         @closed = false
       rescue Exception # rubocop:disable Lint/RescueException
         ptr = init&.value
-        FFI.notcurses_stop(ptr) if ptr && !ptr.null?
+        stop_notcurses(ptr) if ptr && !ptr.null?
         # notcurses ha già scritto termtype in TERM: un init successivo senza termtype fallirebbe
         ENV['TERM'] = old_term unless termtype.nil?
         Notcurses.release_context(self)
@@ -333,6 +333,11 @@ module Notcurses
     # mentre +notcurses_stop+ ripristina il terminale) esce da close, ma lascia
     # il contesto chiuso, i piani invalidi e il registro libero: un close
     # successivo e l'hook +at_exit+ non richiamano lo stop.
+    #
+    # Su macOS +notcurses_stop+ gira senza il GVL, perché aspetta che il
+    # terminale legga l'output in coda: durante l'attesa gli altri thread Ruby
+    # girano, e un'eccezione asincrona (Thread#raise, Timeout) per il thread
+    # che chiude arriva solo dopo lo stop.
     #
     # In un processo figlio creato con +fork+ lo stato C appartiene al padre:
     # close non chiama notcurses (né il close degli oggetti figli), non scrive
@@ -361,7 +366,7 @@ module Notcurses
       # prima della chiamata: Ruby consegna un Ctrl-C al suo ritorno, quando il C ha già liberato il contesto
       @closed = true
       begin
-        rc = FFI.notcurses_stop(@ptr)
+        rc = stop_notcurses(@ptr)
       ensure
         mark_closed!(fclose: @own_fp)
       end
@@ -1059,6 +1064,18 @@ module Notcurses
         first_error ||= e
       end
       first_error
+    end
+
+    # +notcurses_stop+. Su macOS la chiamata rilascia il GVL (functions.rb):
+    # un'eccezione asincrona per il thread chiamante la sbloccherebbe, tcsetattr
+    # uscirebbe con EINTR e il terminale resterebbe nel modo di notcurses. Lo
+    # stop gira quindi in un altro thread, e il chiamante lo aspetta con le
+    # interruzioni rimandate.
+    # @return [Integer] il ritorno di +notcurses_stop+
+    def stop_notcurses(ptr)
+      return FFI.notcurses_stop(ptr) unless ::FFI::Platform.mac?
+
+      Thread.handle_interrupt(Object => :never) { Thread.new { FFI.notcurses_stop(ptr) }.value }
     end
 
     # Stato Ruby di un contesto chiuso: piani invalidi, FILE* chiuso (se

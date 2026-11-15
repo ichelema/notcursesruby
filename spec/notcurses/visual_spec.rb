@@ -671,6 +671,9 @@ RSpec.describe Notcurses::Visual do
 
   context 'con i quadranti (rxvt-256color, come Kitty e Ghostty)' do
     it 'from_plane e as_rgba rifiutano i blitter dei plot invece di andare in SIGSEGV' do
+      # Su macOS notcurses non riconosce rxvt da TERM (unix_early_matches è dentro
+      # #ifndef __APPLE__, termdesc.c:1137-1155): senza un terminale vero niente quadranti.
+      skip 'rxvt-256color attiva i quadranti solo fuori da macOS' if ::FFI::Platform.mac?
       # Il blitset 4x1/8x1 ha egcs NULL (blit.c:1279, 1282): prima del fix il figlio moriva con 139.
       script = <<~'RUBY'
         require 'notcurses'
@@ -696,7 +699,7 @@ RSpec.describe Notcurses::Visual do
         puts 'ok'
       RUBY
       lib = File.expand_path('../../lib', __dir__)
-      out, status = Open3.capture2e({ 'TERM' => 'xterm-256color' }, 'timeout', '-k', '5', '-s', 'KILL', '30',
+      out, status = Open3.capture2e({ 'TERM' => 'xterm-256color' }, NcHelpers::TIMEOUT, '-k', '5', '-s', 'KILL', '30',
                                     RbConfig.ruby, '-I', lib, '-e', script, stdin_data: '')
       expect([status.exitstatus, out]).to eq([0, "ok\n"])
     end
