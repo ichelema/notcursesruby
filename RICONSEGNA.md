@@ -1097,10 +1097,10 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
 
 - ICH-441 — `Process.daemon` con un `Context` o un `Direct` aperto lascia il terminale nel modo dell'init (lotto 1,
   review round 3).
-- ICH-448 — lo stato del controllo dei bordi è del singolo wrapper `Plane`, non del piano C (lotto 2, review round 3).
-- ICH-449 — double free dopo `merge_down` con glifi larghi seguito da `Plane#at` (lotto 2; esiste già su `master`).
+- ICH-448 — lo stato del controllo dei bordi è del singolo wrapper `Plane`, non del piano C (lotto 2, review round 3). Chiusa nel lotto 1 delle issue in Backlog (PR #22).
+- ICH-449 — double free dopo `merge_down` con glifi larghi seguito da `Plane#at` (lotto 2; esiste già su `master`). Chiusa nel lotto 1 delle issue in Backlog (PR #22): la causa era la `free` del wrapper.
 - ICH-450 — `polyfill`, `gradient` ed `erase_region` su metà di un glifo largo lasciano una metà orfana (lotto 2;
-  esiste già su `master`).
+  esiste già su `master`). Chiusa nel lotto 1 delle issue in Backlog (PR #22).
 - ICH-454 — lo stato ISIG del terminale e il flag interno `linesigs` di notcurses possono divergere (`stty` fuori da
   notcurses), e `run` allora sbaglia per il Ctrl+C di kitty (lotto 7, review round 1).
 - ICH-455 — dopo un `run` uscito con `:interrupt`, il Ctrl+C rimasto in coda arriva a un `run(no_linesigs: true)`
@@ -1222,3 +1222,57 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
 2. **Sixel:** serve un terminale che lo supporta (per esempio foot o xterm con `-ti vt340`).
 3. **Job macOS in CI:** escluso dall'utente; senza, i fix di macOS non hanno una protezione automatica.
 4. **Pubblicazione** della gem: fuori scope, richiede la conferma dell'utente.
+
+## Issue in Backlog
+
+- **Inizio:** 2026-11-15. Modello passato ai comandi del workflow: `opus`. Lotti: la proposta di `RIPRESA.md` con 4
+  cambi approvati dall'utente (ICH-225 nel lotto 1, ICH-214 nel lotto 2, ICH-464 nel lotto 5, ICH-474 nel lotto 7).
+  ICH-231 e ICH-457 restano nella fase; ICH-225 con audit e fix. Log lotto per lotto in `memory/backlog-issue.md`.
+- **Review di ogni lotto:** `/trinity:workflow:4_review-fix-loop`, due reviewer in parallelo (Fable e GPT via
+  LiteLLM), al massimo 3 round. Lotto 1: 3 round (round 1: due HIGH; round 2: tre HIGH e un MEDIUM, di cui due nati
+  dal fix del round 2 stesso; round 3: un HIGH, un MEDIUM e due LOW); il HIGH del round 3 e i LOW corretti dopo il loop
+  senza review, su richiesta dell'utente.
+
+### Lotti
+
+| Lotto | PR | Merge | Issue | Bug di notcurses nuovi |
+| --- | --- | --- | --- | --- |
+| 1 | [#22](https://github.com/ichelema/notcursesruby/pull/22) | `74deb80` | ICH-449, ICH-450, ICH-448, ICH-225; ICH-481 (nata dall'audit, nel lotto per scelta dell'utente) | `ncplane_erase_region`, `ncplane_gradient`, `ncplane_gradient2x1` e `ncplane_polyfill_yx` cambiano le celle una per una e lasciano metà orfane (ICH-450); `ncplane_mergedown` lascia le metà destre dei glifi larghi con width 0 (`render.c:393-395`, `471-485`, ICH-481); tabella "Piani" di `memory/fase2-wrapper-idiomatico.md` |
+
+### Cambi dell'API pubblica
+
+Nessun metodo nuovo né rimosso, salvo `Util.free` (`Util` è `@api private`). Comportamenti nuovi:
+
+- La memoria allocata da notcurses (`Plane#at`, `#name`, `#as_rgba`, `Context#stats`, `Context#at`,
+  `detected_terminal`, `Notcurses.hostname` e gli altri) si libera con la `free` di notcurses (`ncpalette_free`), non
+  con la `free` di glibc: il wrapper funziona anche con un allocatore messo da `LD_PRELOAD` (lotto 1, ICH-449).
+- `Plane#erase_region`, `#gradient`, `#gradient2x1` e `#polyfill` su una sola metà di un glifo largo svuotano anche
+  l'altra metà, anche quando la chiamata C fallisce a metà. I glifi da tenere interi si leggono prima della chiamata;
+  una cella che notcurses non riesce a leggere (egcpool pieno, piano con un bitmap) non solleva mai, e con l'egcpool
+  pieno e un riempimento con un EGC di più di 4 byte il wrapper nel dubbio svuota le due metà (lotto 1, ICH-450).
+- Lo stato del controllo dei bordi dopo i resize del C vale per il piano C: un `Plane` preso in prestito usa quello
+  del `Plane` tracciato, e senza un `Plane` tracciato aperto controlla i bordi a ogni scrittura (lotto 1, ICH-448).
+- `Plane#merge_down` riscrive i glifi larghi di `dst` con la metà destra a width 0: `dst.at` sulla metà destra
+  restituisce il glifo, e una scrittura su una delle due metà cancella il glifo intero. Il cursore di `dst` non
+  cambia, anche a fine riga. La fusione legge ogni cella di `dst`: su un piano 50x200 costa qualche millisecondo
+  (lotto 1, ICH-481).
+
+### Cambi a `Gemfile` e `Gemfile.lock`
+
+- Lotto 1: nessuno.
+
+### Issue aperte nate dai lotti
+
+- ICH-482 — `ncplane_mergedown` non rilascia l'egcpool di `dst` (lotto 1, audit di ICH-225).
+- ICH-483 — `FFI.ncplane_putwegc` libera la stringa con la `free` di glibc, lo stesso difetto di ICH-449 nel layer FFI
+  (Fase 1, regola 1) (lotto 1, audit di ICH-225).
+- ICH-484 — nella vista del `Reader`, dopo Backspace, Ctrl+U e Ctrl+W, le metà destre dei glifi larghi hanno width 0
+  (lotto 1, audit di ICH-225).
+- ICH-485 — con l'egcpool pieno `merge_down` non riesce a riscrivere i glifi larghi e la loro metà destra resta a
+  width 0 (lotto 1, review round 3; MEDIUM).
+- ICH-486 — `Visual.blit_*` sopra metà di un glifo largo lascia una metà orfana (lotto 1, review; esiste già su
+  `master`).
+- ICH-487 — un resize che taglia un glifo largo che notcurses non riesce a leggere (egcpool pieno) lascia la metà
+  sinistra orfana (lotto 1, review round 3; esiste già su `master`).
+- ICH-488 — controllare `Plane#qrcode` sopra metà di un glifo largo (lotto 1, review; non verificabile con la build
+  di Arch, che ha solo lo stub).
