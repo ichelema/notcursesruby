@@ -29,7 +29,10 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   perdeva righe (`logrow`). Il wrapper rimette in ordine le righe subito dopo ogni sua chiamata che fa scorrere il
   piano, scrivendo nei campi privati del piano C: lo fa solo con la libreria 3.0.17, altrimenti il bug resta. Non
   corregge gli scroll fatti con le funzioni di `Notcurses::FFI`, né il resize del terminale visto dal render che
-  notcurses esegue dentro lo scroll di uno stdplane che scorre (ICH-214).
+  notcurses esegue dentro lo scroll di uno stdplane che scorre (ICH-214). Ogni scroll copia tutto il buffer del piano
+  (circa 25 µs per riga su 24x80). Un piano che riceve righe durante una dissolvenza ora sfuma i colori per posizione
+  sullo schermo: le righe salite prendono i colori delle righe che stavano in quella posizione (prima su un piano che
+  non aveva mai fatto scroll tenevano i loro).
 - `Plane#resize`, `#resize_region`, `#resize_maximize` e il controllo dei bordi prima delle scritture svuotano la
   metà di un glifo largo tagliato dal resize anche quando notcurses non riesce a rileggere il glifo. Con l'egcpool
   del piano pieno (16 MiB) `ncplane_at_yx_cell` fallisce sugli EGC di più di 4 byte: il wrapper ora legge quelle
@@ -37,7 +40,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   nell'ultima colonna, e la scrittura successiva su quella cella cancellava la prima cella della riga sotto o,
   sull'ultima riga, corrompeva l'heap; un glifo largo illeggibile rimasto intero nelle ultime due colonne perdeva
   invece la metà destra. Anche `#erase_region`, `#gradient`, `#gradient2x1` e `#polyfill` ora leggono quelle celle,
-  e non svuotano più nel dubbio le due metà (ICH-487).
+  e non svuotano più nel dubbio le due metà. La lettura vale solo con la libreria 3.0.17, perché il wrapper deve
+  riconoscere i piani con un bitmap dai campi privati del piano C (ICH-487).
 - `Plane#merge_down` rimette la metà destra anche ai glifi larghi di `dst` che notcurses non riesce a rileggere
   (egcpool di `dst` pieno, EGC di più di 4 byte): li legge con `ncplane_at_yx`, che non usa il pool, e li riscrive
   con gli stili e i colori della cella; se nemmeno la riscrittura riesce, le due metà diventano celle vuote. Stili,
