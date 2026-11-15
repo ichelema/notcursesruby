@@ -12,7 +12,7 @@
 - **Lotto 2 in corso: PR #23 in draft**, branch `bug/ICH-214-485-215-216-482-487-opus`, worktree
   `.claude/worktrees/bug+ICH-214-485-215-216-482-487-opus`, HEAD `be426b1`. Issue nella PR: ICH-485, ICH-215, ICH-216,
   ICH-482, ICH-487 (tutte In Progress). Suite 1103 esempi, 0 fallimenti (ordine normale, semi 1234, 4242, 7); coverage
-  98,31 %; RuboCop 0; YARD 100 %; layer FFI invariato.
+  98,31 %; RuboCop 0; YARD 100 %; layer FFI invariato. CI di `be426b1` verde su tutta la matrice e su Codecov.
 - **Prossimo step:** una review dei commit dopo il round 3, in una sessione nuova (il contesto della sessione del
   lotto 2 era pieno): `5bb2a4e` (controlli di `release_dropped!`) e `be426b1` (rimozione di ICH-214). Poi CI verde, via
   il draft (`gh pr ready 23`), merge con la conferma dell'utente e chiusura del lotto (procedura, passo 7). Comando:
