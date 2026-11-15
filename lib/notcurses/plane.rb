@@ -44,10 +44,13 @@ module Notcurses
   # {#putegc}, {#putc}, {#puttext}, {#hline}, {#scrollup}, {#scrollup_child}).
   # Per farlo scrive nei campi privati del piano C, quindi solo con la libreria
   # 3.0.17 e se quei campi coincidono con i valori dell'API pubblica:
-  # altrimenti non fa nulla e il bug resta. Limiti: uno scroll fatto con le
-  # funzioni di +Notcurses::FFI+ non viene corretto; su uno stdplane che scorre
-  # notcurses esegue lo scroll e il render nella stessa chiamata C, quindi un
-  # resize del terminale visto da quel render permuta ancora le righe.
+  # altrimenti non fa nulla e il bug resta. Ogni scroll riscrive così tutto
+  # il buffer del piano: su un piano grande come un terminale costa qualche
+  # microsecondo, su un piano 200x400 circa 0,2 ms per riga. Limiti: uno
+  # scroll fatto con le funzioni di +Notcurses::FFI+ non viene corretto; su
+  # uno stdplane che scorre notcurses esegue lo scroll e il render nella
+  # stessa chiamata C, quindi un resize del terminale visto da quel render
+  # permuta ancora le righe.
   class Plane
     include Resource
 
