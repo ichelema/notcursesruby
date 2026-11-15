@@ -184,6 +184,63 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    # Con keep_x > 0 il C di 3.0.17 rilascia dall'egcpool gli EGC di una parte della regione conservata
+    # (notcurses.c:995-997): prima del fix quelle celle restavano vuote (ICH-215).
+    context 'resize_region con keep_x > 0 e EGC di più di 4 byte nella regione conservata' do
+      # Riga di 8 celle strette, ognuna con un EGC di 5 byte: una lettera da first in poi e due segni combinanti.
+      def marked(first) = Array.new(8) { |i| "#{(first.ord + i).chr}́̂" }
+
+      it 'conserva emoji con ZWJ e con modificatore e lettere con segni combinanti (prima: celle vuote nella riga 0)' do
+        with_parent(rows: 2, cols: 8) do |p|
+          p.putstr('ab👍🏽cd', y: 0, x: 0)
+          p.putegc('👨‍🚀', y: 0, x: 6)
+          p.putstr(marked('a').join, y: 1, x: 0)
+          p.move_cursor(1, 7)
+          p.resize_region(rows: 2, cols: 6, keep_x: 2, keep_rows: 2, keep_cols: 6)
+          expect([p.dims, p.yx, p.cursor]).to eq([[2, 6], [3, 6], [1, 5]])
+          expect(p.contents(y: 0, rows: 1)).to eq('👍🏽cd👨‍🚀') # prima: "👍🏽cd"
+          expect([p.at(y: 0, x: 0).egc, p.at(y: 0, x: 4).egc, p.at(y: 0, x: 5).egc]).to eq(%w[👍🏽 👨‍🚀 👨‍🚀])
+          expect(Array.new(6) { |x| p.at(y: 1, x: x).egc }).to eq(marked('c').first(6))
+        end
+      end
+
+      it 'conserva gli EGC anche quando keep_x supera le nuove colonne (prima: vuote le righe 0 e 1)' do
+        with_parent(rows: 3, cols: 8) do |p|
+          3.times { |y| p.putstr(marked('a'.ord + (8 * y)).join, y: y, x: 0) }
+          p.resize_region(rows: 3, cols: 3, keep_x: 5, keep_rows: 3, keep_cols: 3)
+          expect(p.dims).to eq([3, 3])
+          3.times do |y|
+            expect(Array.new(3) { |x| p.at(y: y, x: x).egc }).to eq(marked('a'.ord + (8 * y))[5, 3])
+          end
+          p.putstr(marked('A').first(3).join, y: 0, x: 0) # una cella corrotta mostrerebbe l'EGC di un'altra
+          expect(Array.new(3) { |x| p.at(y: 1, x: x).egc }).to eq(marked('i')[5, 3])
+        end
+      end
+
+      it 'chiama due volte i callback di resize dei figli (il resize è in due passi), una sola senza keep_x' do
+        with_parent(rows: 2, cols: 8) do |p|
+          seen = []
+          p.create_child(rows: 1, cols: 1, resize: ->(_) { seen << p.dims })
+          p.resize_region(rows: 2, cols: 6, keep_x: 2, keep_rows: 2, keep_cols: 6)
+          expect(seen).to eq([[3, 6], [2, 6]])
+          p.resize_region(rows: 2, cols: 4, keep_rows: 2, keep_cols: 4)
+          expect(seen.size).to eq(3)
+        end
+      end
+
+      it 'arriva alle dimensioni chieste anche se il callback di un figlio solleva; una regione fuori dal piano non lo cambia' do
+        with_parent(rows: 2, cols: 8) do |p|
+          expect { p.resize_region(rows: 2, cols: 6, keep_y: 2, keep_x: 2, keep_rows: 1, keep_cols: 6) }
+            .to raise_error(Notcurses::PlaneError)
+          expect([p.dims, p.yx]).to eq([[2, 8], [3, 4]])
+          p.create_child(rows: 1, cols: 1, resize: ->(_) { raise ArgumentError, 'dal callback' })
+          expect { p.resize_region(rows: 2, cols: 6, keep_x: 2, keep_rows: 2, keep_cols: 6) }
+            .to raise_error(ArgumentError, 'dal callback')
+          expect([p.dims, p.yx]).to eq([[2, 6], [3, 6]])
+        end
+      end
+    end
+
     it 'resize_maximize usa le dimensioni della pila' do
       with_parent do |p|
         c = p.create_child(rows: 1, cols: 1)

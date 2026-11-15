@@ -43,6 +43,12 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   con gli stili e i colori della cella; se nemmeno la riscrittura riesce, le due metà diventano celle vuote. Stili,
   colori e cursore di `dst` non cambiano. Prima quei glifi restavano con la metà destra larga 0, e alcune sequenze
   di scritture cancellavano la prima cella della riga sotto o corrompevano l'heap (ICH-485).
+- `Plane#resize_region` con `keep_x > 0` conserva gli EGC di più di 4 byte della regione (emoji con ZWJ o con un
+  modificatore, lettere con più segni combinanti). Prima notcurses 3.0.17 ne rilasciava una parte dall'egcpool:
+  quelle celle restavano vuote, `Plane#contents` sollevava `PlaneError`, e dopo altre scritture una cella poteva
+  mostrare l'EGC di un'altra. Il wrapper fa il resize in due passi (prima con qualche riga vuota in più in alto,
+  poi le toglie): quando serve, cioè con `keep_x + x_off > -y_off * cols`, i callback di resize dei figli vengono
+  chiamati due volte (ICH-215).
 - Le stringhe e i buffer allocati da notcurses (`Plane#at`, `Plane#name`, `Plane#as_rgba`, `Context#stats`,
   `Context#at`, `detected_terminal`, `Notcurses.hostname` e gli altri) si liberano con la `free` di notcurses. Prima
   il wrapper usava la `free` di glibc anche quando `LD_PRELOAD` mette un altro allocatore (jemalloc, tcmalloc,

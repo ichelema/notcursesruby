@@ -459,9 +459,15 @@ module Notcurses
     # positivi, una regione che non entra nel nuovo piano (con x_off < 0 il C
     # scrive oltre il buffer), un resize che il C ignora (stesse dimensioni e
     # regione da (0, 0)) e y_off diverso da 0 con la larghezza intera
-    # conservata (il C sposta l'origine ma non il contenuto). Bug non
-    # aggirato: con keep_x > 0 gli EGC di più di 4 byte nella regione
-    # conservata possono risultare corrotti.
+    # conservata (il C sposta l'origine ma non il contenuto).
+    #
+    # Bug di 3.0.17 aggirato: con keep_x > 0 il C rilascia per errore gli EGC
+    # di più di 4 byte di una parte della regione conservata, e quelle celle
+    # restano vuote o mostrano l'EGC di un'altra cella. Il wrapper fa allora il
+    # resize in due passi: prima con qualche riga vuota in più in alto, poi le
+    # toglie. In quel caso, cioè quando keep_x + x_off > -y_off * cols, i
+    # callback di resize dei figli vengono chiamati due volte: la prima con il
+    # piano più alto e spostato in su rispetto al risultato.
     #
     # Un glifo largo tagliato che resta sul bordo del piano diventa una cella
     # vuota, come in {#resize}: con keep_x dentro un glifo largo ne resterebbe
@@ -511,7 +517,17 @@ module Notcurses
       end
 
       ptr = to_ptr
-      rc = FFI.ncplane_resize(ptr, keep_y, keep_x, keep_rows, keep_cols, y_off, x_off, rows, cols)
+      # Il ciclo che rilascia gli EGC delle celle perse (notcurses.c:995-997) parte dall'indice nel
+      # framebuffer nuovo, riga di destinazione * cols - x_off + keep_cols, usato come colonna di quello
+      # vecchio: finché è minore di keep_x + keep_cols rilascia EGC della regione conservata (ICH-215).
+      # extra righe vuote in più in alto portano la prima riga copiata oltre quel punto; il secondo resize
+      # le toglie (con keep_x == 0 il ciclo non tocca la regione).
+      extra = keep_rows.zero? ? 0 : [((keep_x + x_off + cols - 1) / cols) + y_off, 0].max
+      left = abs_x
+      rc = FFI.ncplane_resize(ptr, keep_y, keep_x, keep_rows, keep_cols, y_off - extra, x_off, rows + extra, cols)
+      # con extra > 0 il primo resize sposta l'origine a destra: se l'ha fatto va completato, anche quando
+      # ha restituito il -1 del callback di un figlio
+      rc |= FFI.ncplane_resize(ptr, extra, 0, rows, cols, 0, 0, rows, cols) if extra.positive? && abs_x != left
       clear_cut_glyphs!(ptr, force: true) # con keep_x > 0 il contenuto si sposta anche a dimensioni invariate
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, 'ncplane_resize')
