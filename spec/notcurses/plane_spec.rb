@@ -261,6 +261,16 @@ RSpec.describe Notcurses::Plane do
           expect([p.dims, p.yx]).to eq([[2, 6], [3, 6]])
         end
       end
+
+      it 'completa il secondo passo anche se il callback di un figlio rimette il piano nella colonna di prima ' \
+         '(prima: alto 3, con una riga vuota in cima)' do
+        with_parent(rows: 2, cols: 8, y: 3, x: 4) do |p|
+          p.putstr('abcdefgh', y: 0, x: 0)
+          p.create_child(rows: 1, cols: 1, resize: ->(_) { p.move(p.y, 4) })
+          p.resize_region(rows: 2, cols: 6, keep_x: 2, keep_rows: 2, keep_cols: 6)
+          expect([p.dims, p.yx, p.contents(y: 0, rows: 1)]).to eq([[2, 6], [3, 4], 'cdefgh'])
+        end
+      end
     end
 
     it 'resize_maximize usa le dimensioni della pila' do

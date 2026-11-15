@@ -530,11 +530,12 @@ module Notcurses
       # extra righe vuote in più in alto portano la prima riga copiata oltre quel punto; il secondo resize
       # le toglie (con keep_x == 0 il ciclo non tocca la regione).
       extra = keep_rows.zero? ? 0 : [((keep_x + x_off + cols - 1) / cols) + y_off, 0].max
-      left = abs_x
+      # il C rifiuta senza toccare il piano solo lo stdplane e una regione fuori dal piano (notcurses.c:842-849,
+      # 1013): negli altri casi il primo resize è applicato e va completato, anche quando ha restituito il -1 del
+      # callback di un figlio (che può anche aver spostato il piano)
+      applied = address != @context.stdplane.address && keep_y + keep_rows <= cur_rows && keep_x + keep_cols <= cur_cols
       rc = FFI.ncplane_resize(ptr, keep_y, keep_x, keep_rows, keep_cols, y_off - extra, x_off, rows + extra, cols)
-      # con extra > 0 il primo resize sposta l'origine a destra: se l'ha fatto va completato, anche quando
-      # ha restituito il -1 del callback di un figlio
-      rc |= FFI.ncplane_resize(ptr, extra, 0, rows, cols, 0, 0, rows, cols) if extra.positive? && abs_x != left
+      rc |= FFI.ncplane_resize(ptr, extra, 0, rows, cols, 0, 0, rows, cols) if extra.positive? && applied
       clear_cut_glyphs!(ptr, force: true) # con keep_x > 0 il contenuto si sposta anche a dimensioni invariate
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, 'ncplane_resize')
