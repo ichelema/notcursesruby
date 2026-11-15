@@ -13,10 +13,12 @@
 - Lotto 1 fatto: PR #22, merge `74deb80`; ICH-449, ICH-450, ICH-448, ICH-225 e ICH-481 (aggiunta dall'utente) a Done.
   Log in `memory/backlog-issue.md`, esito in `RICONSEGNA.md`, sezione "Issue in Backlog".
 - `master` su `74deb80`: 1084 esempi, 0 fallimenti con i semi 1234, 4242 e 7; RuboCop 0 offense.
-- Issue nuove dal lotto 1, fuori dalla tabella dei lotti: ICH-482, ICH-483 (Fase 1, regola 1), ICH-484, ICH-485
-  (MEDIUM), ICH-486 (MEDIUM), ICH-487, ICH-488. Prima del lotto 2 chiedi all'utente se e in quale lotto metterle:
-  ICH-485 e ICH-487 toccano `plane.rb` come il lotto 2, ICH-484 il `Reader` del lotto 8.
-- Prossimo step: lotto 2 (ICH-214, ICH-215, ICH-216), branch `bug/ICH-214-215-216-opus`.
+- Issue nuove dal lotto 1, aggiunte alla fase dall'utente il 2026-11-15: ICH-485, ICH-482 e ICH-487 nel lotto 2
+  (`merge_down` e resize di `plane.rb`); ICH-486 e ICH-488 nel lotto 6 (blit di celle, come ICH-223); ICH-484 nel
+  lotto 8 (`Reader`); ICH-483 da sola nel lotto 14 nuovo (Fase 1: serve l'approvazione dell'utente, regola 1). Il
+  lotto di RuboCop diventa il 15.
+- Prossimo step: lotto 2 (ICH-214, ICH-485, ICH-215, ICH-216, ICH-482, ICH-487), branch
+  `bug/ICH-214-485-215-216-482-487-opus`.
 - Note dal lotto 1: con il raise sulle letture di cella un fix ha creato due difetti (le letture di
   `ncplane_at_yx_cell` devono restare tolleranti: egcpool pieno, piani con bitmap); i reviewer provano i casi con
   l'egcpool pieno (EGC da 6 MB) e i piani con bitmap su un pty finto con sixel.
@@ -129,7 +131,7 @@ Criteri:
 2. le issue che toccano lo stesso codice stanno nello stesso lotto;
 3. un lotto contiene solo issue dello stesso tipo: `/trinity:workflow:1_create-worktree` ricava un solo prefisso di
    branch, `bug` dalla label `Bug` e `improvments` dalla label `Improvement`;
-4. il lotto di RuboCop (ICH-469, ICH-470) chiude la lista: cambia le virgolette in quasi tutti i file e andrebbe in
+4. il lotto di RuboCop (ICH-469, ICH-470, lotto 15) chiude la lista: cambia le virgolette in quasi tutti i file e andrebbe in
    conflitto con ogni altro lotto.
 
 | Lotto | Prefisso | Issue | Priorità | Titolo |
@@ -139,8 +141,11 @@ Criteri:
 | 1 | `bug` | ICH-448 | Medium | Keep the cut-glyph check state per C plane, not per Plane wrapper |
 | 1 | `bug` | ICH-225 | Medium | Audit cross-plane cell copies for the wide-glyph width mismatch (spike) |
 | 2 | `bug` | ICH-214 | Medium | Work around row reordering after scroll (notcurses logrow bug) |
+| 2 | `bug` | ICH-485 | Medium | Restore wide-glyph right halves after Plane#merge_down when the egcpool is full (nata dal lotto 1) |
 | 2 | `bug` | ICH-215 | Low | Prevent long-EGC corruption in Plane#resize_region with keep_x > 0 |
 | 2 | `bug` | ICH-216 | Low | Restore the fixed flag and vertical alignment in Plane#duplicate |
+| 2 | `bug` | ICH-482 | Low | Release the destination egcpool in Plane#merge_down (nata dal lotto 1) |
+| 2 | `bug` | ICH-487 | Low | Clear the orphan half of a cut wide glyph that notcurses cannot read on resize (egcpool full) (nata dal lotto 1) |
 | 3 | `bug` | ICH-454 | Medium | Keep notcurses' internal line-signal flag in sync with ISIG in EventLoop#run |
 | 3 | `bug` | ICH-456 | Medium | Raise one line signal per kitty Ctrl+C press, not on its repeat and release |
 | 3 | `bug` | ICH-455 | Low | Do not deliver the queued Ctrl+C of an interrupted run to a following run(no_linesigs: true) |
@@ -148,14 +153,17 @@ Criteri:
 | 5 | `bug` | ICH-475 | Medium | Closing the context or the visual while another thread is inside Visual#decode is a use-after-free |
 | 5 | `bug` | ICH-464 | Low | Close the window between to_ptr and the C call for a close from a trap handler |
 | 6 | `bug` | ICH-458 | Medium | Make Direct#stream redraw :pixel frames in place when they end on the last screen row |
+| 6 | `bug` | ICH-486 | Medium | Keep Visual blits from leaving an orphan half of a wide glyph (nata dal lotto 1) |
 | 6 | `bug` | ICH-222 | Low | Free Direct::Frame memory on close and keep the Direct#stop reset off stdout |
 | 6 | `bug` | ICH-223 | Low | Fix Visual.from_palidx palette colors and Visual#rotate pixel loss |
+| 6 | `bug` | ICH-488 | Low | Check Plane#qrcode over one half of a wide glyph (nata dal lotto 1) |
 | 7 | `bug` | ICH-441 | Medium | Handle Process.daemon with an open Context or Direct without leaving the terminal altered |
 | 7 | `bug` | ICH-226 | Low | Harden Context and Direct init against a second Ctrl-C and Thread#kill |
 | 7 | `bug` | ICH-474 | Low | Keep the C resource when an async exception arrives during Visual.from_file, Direct#load_image or Direct#render_frame |
 | 8 | `bug` | ICH-218 | Medium | Make Reader delete the character in column 0 |
 | 8 | `bug` | ICH-217 | Low | Handle graphemes that notcurses segments differently from Ruby |
 | 8 | `bug` | ICH-232 | Low | Reject graphemes that notcurses splits differently in UI widget text checks |
+| 8 | `bug` | ICH-484 | Low | Keep the width of wide-glyph right halves in the Reader view after Backspace, Ctrl+U and Ctrl+W (nata dal lotto 1) |
 | 9 | `bug` | ICH-230 | Medium | Bound the unfinished line in LogView#append by bytes |
 | 10 | `bug` | ICH-220 | Medium | Make the Tabbed header follow plane resizes |
 | 10 | `bug` | ICH-221 | Medium | Fix Tree focus drift with items of different heights |
@@ -167,8 +175,9 @@ Criteri:
 | 12 | `improvments` | ICH-227 | Low | Keep FdPlane close interruptions out of wrapper text methods on Ruby 3.1 |
 | 13 | `improvments` | ICH-231 | Low | Add an optional queue limit and a non-blocking post to EventLoop (funzionalità nuova: scelta dell'utente) |
 | 13 | `improvments` | ICH-457 | Low | Deliver mouse drag motion to the component where the drag started (funzionalità nuova: scelta dell'utente) |
-| 14 | `improvments` | ICH-469 | Low | Apply the safe RuboCop autocorrections and switch to double quotes |
-| 14 | `improvments` | ICH-470 | Low | Remove the redundant rubocop:disable comment in ui/component.rb |
+| 14 | `bug` | ICH-483 | Low | Free ncplane_putwegc strings with the allocator notcurses used (FFI layer) (nata dal lotto 1; Fase 1: approvazione dell'utente prima del fix, regola 1) |
+| 15 | `improvments` | ICH-469 | Low | Apply the safe RuboCop autocorrections and switch to double quotes |
+| 15 | `improvments` | ICH-470 | Low | Remove the redundant rubocop:disable comment in ui/component.rb |
 
 Ogni lotto parte da `master` aggiornato, dopo il merge del lotto precedente: i lotti non vanno lavorati in parallelo.
 ICH-224, ICH-228 e ICH-229 sono già a Done.

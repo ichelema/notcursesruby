@@ -150,3 +150,10 @@ Cambi proposti all'utente (criterio 2: le issue che toccano lo stesso codice sta
 - Issue ICH-449, ICH-450, ICH-448, ICH-225 e ICH-481 a Done dopo il merge.
 - `master` su `74deb80`: 1084 esempi, 0 fallimenti con i semi 1234, 4242 e 7; RuboCop 0 offense; `gem build`
   riuscito; worktree, branch locale e branch remoto rimossi.
+
+## Dopo il lotto 1: issue nuove nei lotti (2026-11-15)
+
+- L'utente ha scelto di mettere nella fase le 7 issue nate dal lotto 1. Assegnazione (criterio 2, stesso codice):
+  ICH-485, ICH-482 e ICH-487 nel lotto 2 (`merge_down` e resize di `plane.rb`); ICH-486 e ICH-488 nel lotto 6 (blit di
+  celle, come ICH-223); ICH-484 nel lotto 8 (`Reader`); ICH-483 da sola nel lotto 14 nuovo, perché tocca la Fase 1 e
+  serve l'approvazione dell'utente (regola 1). Il lotto di RuboCop diventa il 15.
