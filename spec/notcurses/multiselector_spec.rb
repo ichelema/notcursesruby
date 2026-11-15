@@ -207,7 +207,7 @@ RSpec.describe Notcurses::MultiSelector do
         end
       RUBY
       lib = File.expand_path('../../lib', __dir__)
-      out, status = Open3.capture2e({ 'TERM' => 'xterm-256color' }, 'timeout', '-k', '5', '-s', 'KILL', '30',
+      out, status = Open3.capture2e({ 'TERM' => 'xterm-256color' }, NcHelpers::TIMEOUT, '-k', '5', '-s', 'KILL', '30',
                                     RbConfig.ruby, '-I', lib, '-e', script, stdin_data: '')
       expect([status.exitstatus, out]).to eq([0, "WidgetError\nok\n"])
     end

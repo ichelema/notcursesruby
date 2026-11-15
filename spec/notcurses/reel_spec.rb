@@ -499,7 +499,7 @@ RSpec.describe Notcurses::Reel do
       lib = File.expand_path('../../lib', __dir__)
       widgets = %w[Tree Tabbed Reel]
       results = widgets.map do |widget|
-        out, status = Open3.capture2e({ 'TERM' => 'xterm-256color' }, 'timeout', '-k', '5', '-s', 'KILL', '30',
+        out, status = Open3.capture2e({ 'TERM' => 'xterm-256color' }, NcHelpers::TIMEOUT, '-k', '5', '-s', 'KILL', '30',
                                       RbConfig.ruby, '-I', lib, '-e', script, widget, stdin_data: '')
         [widget, status.exitstatus, out.lines.first(2).join]
       end

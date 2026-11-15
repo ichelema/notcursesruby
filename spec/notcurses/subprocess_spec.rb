@@ -94,9 +94,13 @@ RSpec.describe Notcurses::Subprocess do
       expect(out).to eq('')
       expect(status.exitstatus).to eq(0)
       sub.close
-      out, _status, sub = run_command(plane, 'sh', '-c', "ls #{NcHelpers::FD_DIR}")
+      # ls apre 1 fd per leggere la cartella (GNU) o 2 (BSD, macOS): il riferimento è lo stesso ls con i soli 0, 1 e 2
+      list = ['sh', '-c', "ls #{NcHelpers::FD_DIR}"]
+      baseline = IO.popen(list, in: File::NULL, err: File::NULL, close_others: true, &:read).split.size
+      expect(baseline).to be_between(4, 5)
+      out, _status, sub = run_command(plane, *list)
       expect(out.split.map(&:to_i).sort.first(3)).to eq([0, 1, 2])
-      expect(out.split.size).to be <= 4 # 0, 1, 2 e il fd con cui ls legge la directory
+      expect(out.split.size).to be <= baseline
       sub.close
     end
 

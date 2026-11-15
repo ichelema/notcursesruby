@@ -192,7 +192,7 @@ RSpec.describe Notcurses::Reader do
       RUBY
       env = { 'TERM' => 'xterm-256color', 'LD_PRELOAD' => '/usr/lib/libc_malloc_debug.so.0', 'MALLOC_CHECK_' => '3' }
       lib = File.expand_path('../../lib', __dir__)
-      out, status = Open3.capture2e(env, 'timeout', '-k', '5', '-s', 'KILL', '30', RbConfig.ruby, '-I', lib, '-e', script,
+      out, status = Open3.capture2e(env, NcHelpers::TIMEOUT, '-k', '5', '-s', 'KILL', '30', RbConfig.ruby, '-I', lib, '-e', script,
                                     stdin_data: '')
       expect([status.exitstatus, out]).to eq([0, "ok\n"])
     end
@@ -238,7 +238,7 @@ RSpec.describe Notcurses::Reader do
       RUBY
       lib = File.expand_path('../../lib', __dir__)
       %w[left ctrl_b ctrl_w move_left].each do |final|
-        out, status = Open3.capture2e({ 'TERM' => 'xterm-256color' }, 'timeout', '-k', '5', '-s', 'KILL', '30',
+        out, status = Open3.capture2e({ 'TERM' => 'xterm-256color' }, NcHelpers::TIMEOUT, '-k', '5', '-s', 'KILL', '30',
                                       RbConfig.ruby, '-I', lib, '-e', script, final, stdin_data: '')
         expect([status.exitstatus, out]).to eq([0, "ok\n"]), final
       end
