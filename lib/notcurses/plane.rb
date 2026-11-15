@@ -44,9 +44,12 @@ module Notcurses
   # {#putegc}, {#putc}, {#puttext}, {#hline}, {#scrollup}, {#scrollup_child}).
   # Per farlo scrive nei campi privati del piano C, quindi solo con la libreria
   # 3.0.17 e se quei campi coincidono con i valori dell'API pubblica:
-  # altrimenti non fa nulla e il bug resta. Ogni scroll riscrive così tutto
-  # il buffer del piano: su un piano grande come un terminale costa qualche
-  # microsecondo, su un piano 200x400 circa 0,2 ms per riga. Limiti: uno
+  # altrimenti non fa nulla e il bug resta. Ogni scroll copia così tutto il
+  # buffer del piano in un buffer nuovo: costa circa 25 µs per riga su un
+  # piano 24x80, 45 µs su 50x200 e 0,25 ms su 200x400. Un altro thread che
+  # legge il piano vede le righe sempre in ordine (lo scambio dei buffer è
+  # una sola scrittura), salvo per gli scroll fatti dentro un callback di
+  # resize, dove il buffer si riscrive sul posto. Limiti: uno
   # scroll fatto con le funzioni di +Notcurses::FFI+ non viene corretto; su
   # uno stdplane che scorre notcurses esegue lo scroll e il render nella
   # stessa chiamata C, quindi un resize del terminale visto da quel render
@@ -439,7 +442,9 @@ module Notcurses
     # per gli EGC di più di 4 byte). Quelle celle il wrapper le legge con
     # +ncplane_at_yx+, che non usa il pool, e ne misura la larghezza: anche un
     # glifo largo che notcurses non riesce a rileggere, se viene tagliato,
-    # diventa una cella vuota.
+    # diventa una cella vuota. Questa lettura richiede i campi privati del
+    # piano, con le condizioni di "Scroll" nella classe (per riconoscere un
+    # piano con un bitmap): senza, quelle celle non contano come glifi.
     #
     # @param rows [Integer] nuove righe, >= 1
     # @param cols [Integer] nuove colonne, >= 1
@@ -1434,19 +1439,21 @@ module Notcurses
       raise PlaneError, 'merge_down: dst è il piano stesso' if target.address == ptr.address
       raise PlaneError, "merge_down: dst è in un'altra pila" unless FFI.ncpile_top(ptr).address == FFI.ncpile_top(target).address
 
-      old = (st = internals(target)) && fb_bytes(st)
-      Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
-      # il C ha copiato ogni EGC nel framebuffer nuovo e ha liberato quello vecchio senza rilasciarli (ICH-482)
-      if old
-        st = internals(target)
-        fresh = fb_bytes(st)
-        if lost_egc?(fresh)
-          release_gclusters!(target, pooled(fresh))
-          st[:fb].write_bytes(old)
-          raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (dst non è cambiato)"
+      # un'eccezione asincrona fra il rilascio e il ripristino lascerebbe celle con EGC già rilasciati
+      lost = Thread.handle_interrupt(Object => :never) do
+        old = (st = internals(target)) && fb_bytes(st)
+        Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
+        # il C ha copiato ogni EGC nel framebuffer nuovo e ha liberato quello vecchio senza rilasciarli (ICH-482)
+        if old
+          st = internals(target)
+          fresh = fb_bytes(st)
+          lost = lost_egc?(fresh)
+          release_gclusters!(target, pooled(lost ? fresh : old))
+          st[:fb].write_bytes(old) if lost
         end
-        release_gclusters!(target, pooled(old))
+        lost
       end
+      raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (dst non è cambiato)" if lost
       restore_wide_glyphs!(target)
       # glifi larghi nuovi senza le scritture: un resize del C li può tagliare a dimensioni già controllate
       @context.tracked_plane(target.address)&.cut_glyphs_cols = nil
@@ -2511,9 +2518,40 @@ module Notcurses
 
       row = st[:lenx] * FFI::NcCell.size
       head = (st[:logrow] % st[:leny]) * row
-      rows = st[:fb].read_bytes(st[:leny] * row)
-      st[:fb].write_bytes(rows.byteslice(head..) + rows.byteslice(0, head))
-      st[:logrow] = 0
+      bytes = st[:fb].read_bytes(st[:leny] * row)
+      rows = bytes.byteslice(head..) + bytes.byteslice(0, head)
+      Thread.handle_interrupt(Object => :never) do
+        # dentro un callback del C non si distruggono piani: lì il buffer si riscrive sul posto
+        next if !@context.in_callback? && swap_fb!(st, rows)
+
+        st[:fb].write_bytes(rows)
+        st[:logrow] = 0
+      end
+    end
+
+    # Mette rows (il buffer con le righe in ordine) in un framebuffer nuovo, allocato da notcurses in un piano
+    # temporaneo di un'altra pila, e lo scambia con quello di st insieme a logrow = 0 con una sola scrittura:
+    # fb e logrow sono adiacenti (offset 0 e 8), quindi un altro thread vede o il buffer vecchio con il suo
+    # logrow o quello nuovo con 0, mai il buffer ruotato con il logrow vecchio. Il piano temporaneo libera poi
+    # il buffer vecchio (free_plane, notcurses.c:467-498, non rilascia le celle). false se il piano non si crea.
+    def swap_fb!(st, rows)
+      opts = FFI::NcPlaneOptions.new
+      opts[:rows] = st[:leny]
+      opts[:cols] = st[:lenx]
+      tmp = FFI.ncpile_create(@context.to_ptr, opts)
+      return false if tmp.null?
+
+      old = st[:fb]
+      fresh = Internals.new(tmp)[:fb]
+      begin
+        fresh.write_bytes(rows)
+        st.pointer.write_bytes([fresh.address, 0].pack('Jl'))
+      ensure
+        # il piano temporaneo libera il buffer che st non usa
+        Internals.new(tmp)[:fb] = old if st[:fb].address == fresh.address
+        FFI.ncplane_destroy(tmp)
+      end
+      true
     end
 
     # Byte del framebuffer di st (Internals), in ordine fisico.

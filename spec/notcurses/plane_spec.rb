@@ -928,6 +928,68 @@ RSpec.describe Notcurses::Plane do
         end
       end
 
+      # Un'eccezione dentro unscroll! stesso, dopo la scrittura n-esima nella memoria del piano: il piano non resta
+      # mai con il buffer già ruotato e logrow non ancora azzerato (ICH-214, review del round 2).
+      [1, 2].each do |nth|
+        it "un'eccezione dopo la scrittura #{nth} di unscroll! non permuta le righe visibili (prima: ruotate due volte)" do
+          with_parent(rows: 3, cols: 4, vscroll: true) do |p|
+            p.putstr("a\nb\nc", y: 0, x: 0)
+            writes = 0
+            allow_any_instance_of(FFI::Pointer).to receive(:write_bytes).and_wrap_original do |m, *args|
+              m.call(*args)
+              raise Interrupt if (writes += 1) == nth
+            end
+            expect { p.putstr("\nd") }.to raise_error(Interrupt)
+            RSpec::Mocks.space.reset_all
+            expect(rows_of(p)).to eq(%w[b c d])
+            p.putstr("\ne")
+            expect(rows_of(p)).to eq(%w[c d e])
+            expect(p.duplicate { |d| rows_of(d) }).to eq(%w[c d e])
+          end
+        end
+      end
+
+      it 'dentro un callback di resize rimette in ordine le righe sul posto, senza creare piani' do
+        with_parent(rows: 3, cols: 4, vscroll: true) do |q|
+          q.putstr("a\nb\nc", y: 0, x: 0)
+          allow(Notcurses::FFI).to receive(:ncpile_create).and_call_original
+          host = std.create_child(rows: 2, cols: 2)
+          host.create_child(rows: 1, cols: 1, resize: ->(_) { q.putstr("\nd") })
+          host.resize(3, 3)
+          host.family_destroy
+          expect(Notcurses::FFI).not_to have_received(:ncpile_create)
+          expect(rows_of(q)).to eq(%w[b c d])
+          expect(q.duplicate { |d| rows_of(d) }).to eq(%w[b c d])
+        end
+      end
+
+      # Un altro thread che legge il piano con una sola chiamata C non vede mai le righe fuori ordine: unscroll! scambia
+      # buffer e logrow con una sola scrittura (ICH-214, review del round 2; prima: circa il 7 % delle letture).
+      it 'un thread che legge il piano mentre un altro scrive righe che scorrono le vede sempre in ordine' do
+        skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
+        script = <<~'RUBY'
+          require 'notcurses'
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true, drain_input: true) do |nc|
+            pl = nc.stdplane.create_child(rows: 24, cols: 80, vscroll: true)
+            done = false
+            writer = Thread.new { i = 0; pl.putstr(format("\n%07d", i += 1)) until done }
+            bad = reads = 0
+            stop = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+            while Process.clock_gettime(Process::CLOCK_MONOTONIC) < stop
+              nums = Notcurses::Util.take_string(Notcurses::FFI.ncplane_contents(pl.to_ptr, 0, 0, 0, 0)).scan(/\d{7}/).map(&:to_i)
+              reads += 1
+              bad += 1 unless nums.each_cons(2).all? { |a, b| a < b }
+            end
+            done = true
+            writer.join
+            puts "letture #{reads} fuori ordine #{bad}"
+          end
+        RUBY
+        status, out = NcHelpers.heap_check(script, timeout: 60)
+        expect(status).to eq(0), out
+        expect(out).to match(/letture [1-9]\d* fuori ordine 0$/)
+      end
+
       it 'senza un layout di ncplane verificato non tocca i campi privati: resta il bug di notcurses' do
         with_parent(rows: 3, cols: 4, vscroll: true) do |p|
           allow(Notcurses).to receive(:lib_version_components).and_return([3, 0, 16, 0])
