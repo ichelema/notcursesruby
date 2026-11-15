@@ -1,180 +1,122 @@
 # RIPRESA — prompt per la prossima sessione
 
 > Avvio: incolla questo file nella nuova sessione di Claude Code, oppure scrivi «Leggi RIPRESA.md ed esegui il
-> prompt». Scritto il 2026-11-06, con il repository su `ab75226`, dopo la revisione completa del codice. La
-> sessione corregge i difetti trovati dalla revisione, un lotto di issue Linear alla volta.
-
-## Stato e prossimo step (aggiornato il 2026-11-15, dopo il lotto 17)
-
-Questa sezione prevale sul resto del file quando i dati sono in conflitto.
-
-**Stato.** I lotti 1–17 sono chiusi: le 45 issue della revisione del 2026-11-06 sono a Done. Lotto 17 (Fase 1,
-regola 1, approvato dall'utente): PR #19, merge `e3e8737`, ICH-312 e ICH-313 a Done. ICH-312: `blocking: true` su
-`ncvisual_from_file`, `ncvisual_decode`, `ncvisual_decode_loop`, `ncdirect_render_frame` e `ncdirectf_from_file`
-(I/O di ffmpeg senza limite di tempo). ICH-313: `typedefs.rb` definisce `:wchar_t` e `:uintmax_t` solo dove il
-`types.conf` di ffi non li ha; le cinque `MemoryPointer.new(:wchar_t, n)` usano `:int32`. Review Fable e GPT, 3
-round: i limiti nuovi del GVL rilasciato sono scritti nello YARD e le protezioni sono in ICH-474 e ICH-475. `git diff
-ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb` contiene solo le righe di ICH-312 e ICH-313. `master` è sul
-commit docs del lotto 17; suite: 1046 esempi, 0 fallimenti; `bundle exec rubocop`: 0 offense. Leggi in
-`RICONSEGNA.md` la sezione "Correzioni della revisione del 2026-11-06" e il log `memory/correzioni-review.md` (lotti
-1–17 e ICH-465). Restano aperte in Backlog, fuori dai lotti: ICH-441 (`Process.daemon`), ICH-448 (stato del
-controllo dei bordi per wrapper `Plane`), ICH-449 (double free dopo `merge_down` + `Plane#at`), ICH-450 (`polyfill`,
-`gradient` ed `erase_region` su metà di un glifo largo), ICH-454 (ISIG del terminale e `ictx->linesigs` divergono),
-ICH-455 (Ctrl+C in coda consegnato a un `run(no_linesigs: true)` successivo), ICH-456 (segnale anche per ripetizione
-e rilascio del Ctrl+C di kitty), ICH-457 (drag consegnato al componente dove è partito, `Improvement`), ICH-458
-(`Direct#stream` con `:pixel` in fondo allo schermo), ICH-459 (`Container#close_parts` si ferma al primo figlio che
-solleva), ICH-460 (pulsanti del `Dialog` su 4-6 colonne), ICH-461 (focus a un componente che diventa visibile fuori
-dal resize), ICH-463 (carattere UTF-8 a cavallo della lettura da 8192 byte: notcurses si blocca con stdin
-rediretto), ICH-464 (`to_ptr` e chiamata C non atomici per un `close` da `trap`; contiene una scelta della regola
-14), ICH-469 (autocorrezioni sicure di RuboCop e virgolette doppie, `Improvement`), ICH-470 (commento `#
-rubocop:disable` inutile in `ui/component.rb`, `Improvement`), ICH-473 (esempio YARD di `Notcurses::UI::App` che
-stampa dentro il blocco di `Context.open`), ICH-474 (risorsa C persa con un'eccezione asincrona al ritorno di
-`Visual.from_file`, `Direct#load_image`, `Direct#render_frame`), ICH-475 (use-after-free chiudendo il contesto
-durante `Visual#decode` in un altro thread; contiene una scelta della regola 14).
-
-**Decisioni già prese, da non richiedere:**
-
-- modello `opus` per i comandi del workflow;
-- issue correlate ICH-214…ICH-232 fuori dai lotti;
-- lotto 17 (Fase 1, regola 1) approvato dall'utente il 2026-11-14, dopo la chiusura del lotto 16;
-- correzioni della CI nella PR del lotto, quando servono; status di Codecov informativi (`codecov.yml`);
-- `git worktree remove --force` approvato per tutti i lotti, quando l'unica differenza è il submodule `notcurses` e
-  `git status` è vuoto;
-- nelle PR nessuna magic word (neanche `Refs`) verso issue fuori dal lotto;
-- dopo il merge, il branch remoto del lotto si elimina.
-
-**Da fare per primo:**
-
-1. Se il worktree `.claude/worktrees/bug+ICH-312-313-opus` esiste ancora, di' all'utente il comando
-   `/trinity:workflow:5_remove-worktree bug+ICH-312-313-opus` (rimuove anche il branch remoto, vedi le decisioni). La
-   chiusura del lotto 17 (passo 7 della procedura) è già fatta: commit `28d77ab` e questo commit; retain in
-   Hindsight, bank `notcursesruby`, operazione `07a843b1`.
-2. Fai le verifiche di "Prima di iniziare", passi 1–4 (suite attesa: 1046 esempi, 0 fallimenti; `bundle exec
-   rubocop`: 0 offense).
-3. Segui le "Consegne", punto 6: proponi il passo successivo (la Fase 5 di `git show 49732a3:RIPRESA.md`) e chiedi
-   all'utente se riscrivere `RIPRESA.md` con quel prompt. Le issue aperte in Backlog qui sopra restano fuori, salvo
-   una scelta diversa dell'utente.
-
-**Note:**
-
-- RuboCop (da ICH-465): `bundle exec rubocop` deve uscire con 0 prima della PR; nella CI gira solo nel job Ruby
-  4.0.9. Un file nuovo passa da ogni cop di Standard (stringhe con le virgolette doppie); i file esistenti sono
-  esclusi cop per cop in `.rubocop_todo.yml`, che non va rigenerato per far passare codice nuovo. La conversione
-  alle virgolette doppie dei file esistenti è in ICH-469 (Backlog): due regex leggono i sorgenti come testo e
-  vanno corrette nello stesso commit (`notcursesruby.gemspec:7`, `spec/gemspec_spec.rb:24`). Il commento
-  `# rubocop:disable` inutile di `lib/notcurses/ui/component.rb:223` è in ICH-470 (Backlog).
-- Il lockfile si genera con Ruby 4.0.7, ma il job Ruby 3.2.11 lo installa con `BUNDLE_FROZEN`: in ICH-465
-  `parallel 2.3.0` (Ruby >= 3.3) ha rotto quel job, da qui `parallel < 2` nel `Gemfile`. `2_work-issue` apre la PR
-  prima dell'esito della CI: controlla `gh pr checks <n> --watch` prima della review.
-- Un hook (Blast Radius) mette in coda per la conferma dell'utente i comandi con `rm -rf`, anche quelli dei
-  reviewer: nel lotto 15 il reviewer Fable ha lasciato `.review-tmp/` e la rimozione del suo worktree ha richiesto
-  la conferma dell'utente. Nel prompt dei reviewer chiedi di cancellare i file di appoggio uno per uno, senza `rm -rf`.
-- Nel lotto 15 la sessione ha implementato da sola (Fable): in quel caso la review Fable è meno indipendente di
-  quella GPT, e va detto all'utente.
-- In ICH-465 la chiusura del passo 7 è stata saltata dopo il merge e dopo `5_remove-worktree`, e fatta solo su
-  richiesta dell'utente. `5_remove-worktree` ora la ricorda alla fine.
-- Regola 14: la tabella delle opzioni va nel piano di `2_work-issue`, prima del fix. Nel lotto 14 il piano di
-  ICH-301 mostrava solo la soluzione della issue, e la scelta è arrivata dopo la review.
-- Nel lotto 14 il submodule `notcurses` non è stato inizializzato nel worktree (per non dover usare `--force` alla
-  rimozione): 10 esempi delle immagini sono falliti in locale e sono passati in CI. Con il submodule inizializzato
-  la suite locale è completa; la rimozione con `--force` è approvata (vedi le decisioni).
-- `spec/integration/pty_spec.rb:173` (`:170` prima del lotto 16) è instabile per una gara di tempi (`getvec` si sveglia dopo il primo di 4
-  tasti): nel lotto 13 è fallito una volta con il seme 4242 e mai in 25 esecuzioni isolate. Se fallisce, ripeti la
-  suite prima di cercare una regressione. Non ha una issue.
-- Un reviewer può non riuscire a cancellare `.review-tmp/` (permesso negato, lotto 13, round 2): in quel caso
-  `git status` del worktree di review non è vuoto e `git worktree remove --force` chiede la conferma dell'utente.
-  Nel prompt dei reviewer chiedi file di appoggio pochi e piccoli.
-- `gem build` sulla VPS stampa warning di rdoc (7.2.0 e 8.1.0 installati insieme), non del gemspec: conta che la
-  gem si costruisca e che la CI sia verde.
-- Dopo l'apertura della PR la CI può partire con qualche minuto di ritardo (lotto 13): aspetta con un ciclo
-  `until gh run list --branch <branch> --limit 1 | grep -q .; do sleep 15; done`, poi `gh pr checks <n> --watch`.
-
-- Macchine: dal lotto 12 il lavoro gira su una VPS Arch, checkout in
-  `/mnt/data/Sviluppo/Progetti/Personali/20261027_notcursesruby` (stesso disco di `/Dati/...`, che funziona ancora),
-  notcurses 3.0.17-3 generico come la CI. In locale (CachyOS) notcurses è la build `x86_64_v4`.
-- In zsh un comando in una variabile (`E="env ..."`) non si divide in parole: usa un array (`E=(env ...)`,
-  `"${E[@]}"`), come nel lotto 12.
-- I comandi `/trinity:workflow:*` li lancia l'utente.
-- Ogni fix ha una voce nella sezione "Corretto" di `[Non rilasciato]` in `CHANGELOG.md`, nel commit del fix o in un
-  commit `docs(changelog)` del lotto. Nel lotto 5 mancava ed è stato il finding del round 1.
-- Podman e Ruby 3.1.7 (mise) sono installati. Su Ruby 3.1.7 usa `bundle _2.3.27_` con il `Gemfile` copiato fuori
-  dal progetto (`BUNDLE_GEMFILE`), perché è installato anche Bundler 4.0.22.
-- Nei worktree serve `git submodule update --init --depth 1 notcurses` prima della suite.
-- Non lanciare `rspec` con cwd nel worktree principale per provare il codice di un altro worktree: `rspec` mette il
-  `lib/` del cwd nel load path prima di `-I` e carica il codice di `master` (lotto 6).
-- La funzione "Follow work" della mod filetree è spenta (`/config`), ma nel lotto 4 la sessione è finita lo stesso
-  due volte nei worktree di review: se la sessione si trova dentro un worktree, dillo all'utente prima di rimuoverlo.
-- Nei comandi non mettere `rm` né `rm -rf` (`doc`, `.yardoc` e `coverage` sono già in `.gitignore`): un comando con
-  `rm` va in coda per la conferma dell'utente. Per `gem build` usa `--output` con un file nello scratchpad.
-- Nei prompt dei reviewer di `4_review-fix-loop` vieta il codice che manda segnali al process group
-  (`Process.kill(sig, 0)`, pid negativi), anche nei mutation test: nel lotto 7 un reviewer ne aveva messo in coda uno.
-- In alternativa a `bundle _2.3.27_`, su Ruby 3.1.7 basta `mise exec ruby@3.1.7 -- rspec` dalla radice del
-  worktree, senza `bundle` (lotto 7: 982 esempi, 0 fallimenti).
-- Nei worktree di review serve anche `git submodule update --init --depth 1 notcurses`; per rimuoverli
-  `git worktree remove` vuole `--force` per il submodule (approvato, vedi le decisioni).
-- Se un reviewer GPT finisce senza report (lotto 8, round 2), chiedigli il report con `SendMessage`.
-- La skill `linear` dal tool Skill parte in background senza compito (`context: fork`): per creare o leggere issue
-  usa direttamente `lq` (sezione "Comandi").
-- Le review Fable girano su `claude-fable-5-2` (alias `fable`), le review GPT su `claude-gpt-6-1-sol-high` (`gpt-model` in
-  `agents/reviewer.md` della skill trinity, dal lotto 9).
+> prompt». Scritto il 2026-11-15, con il repository dopo `b2fed69` (fine delle correzioni della revisione del
+> 2026-11-06), per una sessione sulla macchina dell'utente (Linux e macOS, terminali Kitty e Ghostty). Il prompt
+> riprende quello della Fase 5 scritto il 2026-10-27 (`git show 49732a3:RIPRESA.md`), aggiornato allo stato attuale.
 
 ## Contesto
 
 - **Progetto:** binding Ruby completo per notcurses 3.0.17. Repository **privato**
   https://github.com/ichelema/notcursesruby, branch `master`. Gem `notcursesruby` 0.1.0 (Apache-2.0),
   `require 'notcurses'`; non pubblicata su rubygems.org.
-- **Macchina:** checkout in `/Dati/Sviluppo/Progetti/Personali/20261027_notcursesruby` (CachyOS, Linux x86_64).
-  notcurses 3.0.17-3.1 di sistema, con `libnotcurses-ffi.so.3`; Ruby 4.0.7 da mise. Ruby 3.1.7 **non** è
-  installato: il controllo su 3.1 lo fa la CI.
-- **Fasi 1–4:** complete (layer FFI, wrapper idiomatico, `Notcurses::UI`, pacchetto e CI). Dettagli in
-  `RICONSEGNA.md`. Stato al `ab75226`: 922 esempi, 0 fallimenti, anche con i semi 1234, 4242 e 7; `ruby -w`
-  senza warning; `yard doc --fail-on-warning` 0 warning e 100 % documentato; `gem build` senza warning.
-- **Revisione completa del 2026-11-06:** 6 finder in sola lettura, uno per area (FFI e pacchetto, nucleo e
-  contesto, piani e processi, Direct e Visual, widget, UI), poi 4 verificatori avversari con riproduzioni proprie.
-  Risultato: 46 finding, 45 difetti distinti (`nucleo-04` e `ui-04` hanno la stessa causa): 7 di severità alta,
-  11 media e 27 bassa. Log completo, con le prove e le parti non coperte: `memory/review-2026-11-06.md`.
-- **Linear:** una issue per difetto, da ICH-268 a ICH-313 (ICH-297 non appartiene alla revisione), nel progetto `notcursesruby` del team Ichelema (`ICH`), stato
-  Backlog. Priorità = severità della revisione: alta → High, media → Medium, bassa → Low. Label `Bug` o
-  `Improvement`; estimate sulla scala t-shirt del team. Le issue sono in inglese (label di progetto `lang:en`).
-  Ognuna ha `Problem` con una riproduzione minima in Ruby, `Acceptance criteria` e `Required tests`. Le issue
-  dello stesso lotto sono collegate con relazioni `related`; nessuna relazione `blocks`, perché
-  `/trinity:workflow:2_work-issue` si ferma su una issue bloccata.
-- **Fase 5** (prove grafiche su Kitty e Ghostty, macOS): rimandata a dopo le correzioni. Il suo prompt completo è in
-  `git show 49732a3:RIPRESA.md`. Alcune correzioni riguardano proprio i terminali della Fase 5 (SIGSEGV con i
-  quadranti di Kitty e Ghostty, protocollo di tastiera kitty): per questo vengono prima.
+- **Fase 1** (layer FFI raw, `lib/notcurses/ffi.rb` e `lib/notcurses/ffi/`): completa, `465418f`; cambiata per
+  ICH-229 (`afb91c8`) e per il lotto 17 (ICH-312 `blocking: true` sulle funzioni di I/O di ffmpeg, ICH-313 typedef
+  `:wchar_t` e `:uintmax_t`; PR #19, merge `e3e8737`).
+- **Fase 2** (wrapper Ruby idiomatico), **Fase 3** (`Notcurses::UI`), **Fase 4** (pacchetto, YARD, coverage, CI):
+  complete. Dettagli nelle sezioni omonime di `RICONSEGNA.md`.
+- **Correzioni della revisione del 2026-11-06:** chiuse. 17 lotti, PR #2…#19 (PR #16 = ICH-465, RuboCop), 45 issue a
+  Done. Dettagli in `RICONSEGNA.md` ("Correzioni della revisione del 2026-11-06") e in `memory/correzioni-review.md`.
+- **Stato al `b2fed69`:** 1046 esempi, 0 fallimenti; `bundle exec rubocop` 0 offense (97 file). Soglie di coverage:
+  98 % totale, 90 % per file, layer FFI escluso.
+- **CI:** container `archlinux:base` fissato per digest, pacchetti dello snapshot `2026/10/26` dell'Arch Linux Archive
+  (`notcurses 3.0.17-3`, `ffmpeg 2:9.0.2-2`), Ruby da mise, matrice 3.1.7, 3.2.11, 3.3.13, 3.4.12, 4.0.9. Lo step
+  RuboCop gira solo nel job 4.0.9. `spec/ffi_layout_spec.rb` compila un programma C contro gli header (serve `gcc`).
+  Status di Codecov informativi (`codecov.yml`). I commit di sola documentazione usano `[skip ci]`.
+- **Submodule `notcurses/`:** su `v3.0.17-22-gb26048eeb`; usa `notcurses/src/` per la semantica del C, non
+  `libnotcurses-sys/`. `notcurses/data` serve alle spec delle immagini.
+- **Bug di notcurses 3.0.17:** nelle tabelle di `RICONSEGNA.md` (Fase 2 e Fase 3). Per uno nuovo vale la regola 11.
+
+### Punti aperti
+
+1. **`Util.timespec`** (`lib/notcurses/util.rb:365`): ancora codice morto, senza chiamanti. Chiedi all'utente se
+   rimuoverlo; la rimozione è un cambio di `lib/` approvato dall'utente, non della regola 11.
+2. **Issue in Backlog:** ICH-441, ICH-448, ICH-449, ICH-450, ICH-454, ICH-455, ICH-456, ICH-457, ICH-458, ICH-459,
+   ICH-460, ICH-461, ICH-463, ICH-464, ICH-469, ICH-470, ICH-473, ICH-474, ICH-475 (elenco in `RICONSEGNA.md`,
+   "Issue aperte nate dai lotti"), più ICH-214…ICH-232. **Restano fuori dalla Fase 5** (scelta dell'utente del
+   2026-11-15). ICH-454, ICH-455, ICH-456 (Ctrl+C e linesigs con il protocollo kitty) e ICH-458 (`Direct#stream`
+   con `:pixel`) riguardano proprio Kitty e Ghostty: se una prova le incontra, cita la issue nel log e non correggerla.
+3. **Podman:** installato sulla VPS (6.1.4, rootless). Serve a provare i job della CI in locale (comandi in
+   "Comandi"); sulla macchina dell'utente può mancare.
+
+## Dove gira questa fase
+
+Le fasi 1–4 e i lotti 12–17 sono stati fatti su una **VPS** Arch Linux, senza terminale grafico. La Fase 5 gira sulla
+**macchina dell'utente**, in una sessione di Claude Code avviata dentro Kitty o Ghostty:
+
+| Sistema | Terminali | Protocollo grafico |
+| --- | --- | --- |
+| Linux (CachyOS) | Kitty, Ghostty | kitty graphics (Kitty e Ghostty); niente sixel |
+| macOS | Kitty, Ghostty | kitty graphics; niente sixel |
+
+- Linux: checkout in `/Dati/Sviluppo/Progetti/Personali/20261027_notcursesruby` (CachyOS, x86_64), notcurses
+  3.0.17-3.1 nella build `x86_64_v4` di CachyOS (la CI usa la build generica 3.0.17-3), Ruby 4.0.7 da mise. Controlla
+  questi dati all'inizio. Se la sessione parte sulla VPS (`TERM=xterm-256color`, `TERM_PROGRAM` vuoto, nessun
+  `KITTY_WINDOW_ID`), le prove grafiche non si possono fare: dillo all'utente e fermati dopo "Prima di iniziare".
+- macOS: versione, architettura (Apple Silicon o Intel) e percorso del checkout non sono noti: controllali e
+  scrivili nel log.
+- Sixel resta non provato (nessuno dei due terminali lo supporta): scrivilo nei risultati.
+- **Prova preliminare del 2026-10-27** sulla VPS, dentro herdr (multiplexer con Ghostty come backend,
+  `TERM=xterm-256color`), con uno script che disegna `notcurses/data/worldmap.png` con ogni blitter e
+  `no_degrade: true`: `detected_terminal` = `XTerm` (herdr risponde come XTerm), `can_pixel?` true e blit `:pixel`
+  riuscito (celle 16×35 pixel); `:half`, `:braille`, `:ascii` riusciti; `:quad`, `:sextant`, `:octant` non
+  disponibili, perché le euristiche di XTerm (`termdesc.c:844-857`) non li attivano. Con Ghostty riconosciuto
+  direttamente (`apply_ghostty_heuristics`, `termdesc.c:930-933`) ci si aspettano quadranti e sestanti, non ottanti.
+  Senza `no_degrade: true` un blitter non supportato ripiega in silenzio e il blit sembra riuscito.
+- Il server Hindsight (`127.0.0.1:8888`) può non esistere sulla macchina dell'utente: se il recall non risponde,
+  prosegui con `RICONSEGNA.md` e i file `memory/`, e dillo in una riga.
+- La CI non cambia (scelta dell'utente): niente job grafico headless.
 
 ## Obiettivo
 
-Correggi le 45 issue della revisione nell'ordine dei lotti della sezione "Ordine di lavoro". Ogni lotto è un
-worktree, un branch e una PR, con i comandi del workflow di Trinity. La fase cambia il comportamento della
-libreria solo per correggere i difetti descritti nelle issue.
+La Fase 5 prova i blitter grafici su un terminale vero e porta il binding su macOS. Oggi le spec girano su `/dev/null`
+o su un pty finto, i blitter a pixel non sono provati e macOS non è mai stato provato. La fase non aggiunge funzionalità
+al binding.
 
-Fuori scope, salvo una richiesta esplicita dell'utente: nuove funzionalità o widget, le altre issue aperte del
-progetto (ICH-214…ICH-232, vedi "Issue correlate"), la Fase 5, la pubblicazione della gem, Windows.
+1. **Parte 1 (Linux):** ambiente, prove grafiche in Kitty e Ghostty, design, approvazione dell'utente.
+2. **Parte 2 (Linux):** script e spec grafiche.
+3. **Parte 3 (macOS):** caricamento della gem e prove grafiche, poi la suite completa.
+4. **Parte 4:** controlli finali e documentazione.
+
+Fuori scope, salvo una richiesta esplicita dell'utente: nuove funzionalità o widget, cambi all'API pubblica, le issue
+aperte in Backlog, pubblicazione della gem, job grafici in CI, Windows.
+
+## Flusso di lavoro (scelta dell'utente del 2026-11-15)
+
+- **Branch e PR** per i cambi a spec, script e `lib/`: un branch da `master` aggiornato e una PR per la Parte 2
+  (Linux) e una per la Parte 3 (macOS). Nomi: `test/fase5-linux` e `test/fase5-macos`. La Fase 5 non ha issue
+  Linear: crea branch e PR con `git` e `gh`, senza i comandi `/trinity:workflow:*`.
+- Prima del merge: CI verde su tutta la matrice, soglie di coverage invariate, `bundle exec rubocop` 0 offense. Il
+  merge richiede la conferma dell'utente (regola 13). Dopo il merge il branch remoto si elimina.
+- Diretti su `master`, con `[skip ci]`: i commit di sola documentazione (`memory/`, `RICONSEGNA.md`, `RIPRESA.md`).
+- Lingua: Conventional Commits con scope in italiano, come nelle fasi 1–4 (la Fase 5 non ha issue Linear con
+  `lang:en`). Titolo e corpo delle PR in italiano.
 
 ## Prima di iniziare
 
-1. Fai il recall in Hindsight, bank `notcursesruby`, se il server risponde. Se non risponde, prosegui e dillo in una
-   riga.
-2. Leggi `memory/review-2026-11-06.md` (metodo, finding, prove dei verificatori, parti non coperte) e in
-   `RICONSEGNA.md` le sezioni "Bug di notcurses 3.0.17 aggirati", "Finding aperti" e "Bug e limiti di notcurses
-   3.0.17 trovati nella Fase 3".
-3. Controlla `git status` (working tree pulito) e `git log --oneline -3` (su `ab75226` o dopo). Se manca
-   `notcurses/data`: `git submodule update --init --depth 1 notcurses`.
-4. Esegui `bundle install`, poi la suite completa (comando in "Comandi"): 922 esempi, 0 fallimenti.
-5. Leggi da Linear le issue del primo lotto con la skill `linear` (query in "Comandi"): descrizione, acceptance
-   criteria, relazioni e stato.
-6. Chiedi all'utente, con AskUserQuestion:
-   - il modello di implementazione da passare ai comandi del workflow (ICH-229 ha usato `opus`);
-   - se aggiungere ai lotti le issue già aperte che toccano lo stesso codice (tabella "Issue correlate");
-   - l'approvazione per il lotto 17, che cambia la Fase 1 (regola 1). Senza approvazione il lotto resta fuori.
+1. Fai il recall in Hindsight, bank `notcursesruby` (comando in "Comandi"), se il server risponde.
+2. Leggi in `RICONSEGNA.md`: "Dipendenze di sistema" e "Come eseguire i test" (Fase 1), "Test" della Fase 2, "Cosa
+   serve alla fase successiva" della Fase 4, "Correzioni della revisione del 2026-11-06" (soprattutto "CI", "RuboCop"
+   e "Issue aperte nate dai lotti"). Leggi anche `memory/fase4-design.md` (sezione 6).
+3. Leggi `spec/integration/pty_spec.rb` (blitter `:pixel` con `Direct` su un pty finto, da `:186`) e
+   `spec/integration/ui_pty_spec.rb` (pty come terminale di controllo).
+4. Controlla `git status` e `git log --oneline -3`: working tree pulito, su `b2fed69` o dopo. Il repository è privato:
+   serve l'accesso a GitHub per `git pull`.
+5. Controlla l'ambiente e scrivilo nel log: `uname -a`, `echo $TERM $TERM_PROGRAM $COLORTERM $KITTY_WINDOW_ID`,
+   versione di notcurses (`pkg-config --modversion notcurses` o il pacchetto), Ruby (`ruby -v`), dove sono le
+   librerie (`ldconfig -p | grep notcurses` su Linux, `ls "$(brew --prefix)/lib" | grep notcurses` su macOS).
+6. Il submodule `notcurses/` serve alle spec delle immagini: `git submodule update --init --depth 1 notcurses`.
+7. Esegui `bundle install`, la suite completa e `bundle exec rubocop` (comandi in "Comandi"): 1046 esempi, 0
+   fallimenti; 0 offense.
+8. Chiedi all'utente il punto aperto 1 (`Util.timespec`).
 
 ## Regole vincolanti
 
-Le regole 1–10 vengono dalle fasi precedenti, la 11 è cambiata, le regole 15–17 sono nuove.
+Le regole 1–14 vengono dalle fasi precedenti, le regole 15–18 dal prompt della Fase 5 del 2026-10-27, le regole 19–20
+dai lotti delle correzioni.
 
-1. Non cambiare la Fase 1 (`lib/notcurses/ffi/`, `lib/notcurses/ffi.rb`) senza l'approvazione dell'utente. Riguarda
-   il lotto 17 (ICH-312, ICH-313). Le spec nuove sul layer FFI (lotto 16) non cambiano la Fase 1.
+1. Non cambiare la Fase 1 (`lib/notcurses/ffi/`, `lib/notcurses/ffi.rb`). Se un cambio serve, fermati e chiedi
+   all'utente. Vale anche per macOS: per esempio aggiungere percorsi di Homebrew alla ricerca di `ffi_lib`.
 2. Ogni puntatore opaco ha un distruttore (`close` o `destroy`). Il pattern `owned:` copre i puntatori non posseduti.
 3. notcurses non è thread-safe. Il wrapper lo documenta e non aggiunge lock interni.
 4. I metodi restituiscono `self` dove il chaining ha senso.
@@ -184,226 +126,206 @@ Le regole 1–10 vengono dalle fasi precedenti, la 11 è cambiata, le regole 15�
 8. `define_method` e `method_missing` sono vietati.
 9. Ogni metodo pubblico ha un commento YARD con `@param`, `@return` e `@raise`.
 10. Dipendenze runtime: solo la gem `ffi`. Ruby >= 3.1.
-11. Ogni fix parte da una spec che fallisce sul codice attuale: prima la spec, poi il fix, poi la suite completa.
-    Una spec di un crash (SIGSEGV, abort) o di un blocco esegue il caso in un processo figlio con un timeout e
-    controlla lo stato di uscita, così la suite sopravvive anche prima del fix. Un bug di notcurses nuovo va nelle
-    tabelle di `RICONSEGNA.md`.
-12. Una dipendenza di sviluppo nuova richiede l'approvazione dell'utente e va in un gruppo del `Gemfile`. Elenca ogni
-    cambio a `Gemfile` e `Gemfile.lock` in `RICONSEGNA.md`.
-13. Le azioni esterne o difficili da annullare richiedono la conferma esplicita dell'utente: merge di una PR, tag,
-    release, impostazioni del repository, secret, GitHub Pages. Il push dei branch dei lotti e l'apertura delle PR
-    fanno parte del workflow e sono autorizzati; il push su `origin/master` resta autorizzato per i commit di sola
-    documentazione.
+11. La fase non cambia il comportamento della libreria. Un cambio in `lib/` serve solo per un bug trovato dalle prove:
+    prima una spec che fallisce, poi il fix, poi la suite completa. Una spec di un crash o di un blocco esegue il caso
+    in un processo figlio con un timeout. Ogni fix ha una voce in "Corretto" di `[Non rilasciato]` in `CHANGELOG.md`.
+    Un bug che corrisponde a una issue aperta in Backlog resta fuori (punto aperto 2).
+12. Una dipendenza di sviluppo nuova entra nel design e richiede l'approvazione dell'utente. Va in un gruppo del
+    `Gemfile`. Elenca ogni cambio a `Gemfile` e `Gemfile.lock` in `RICONSEGNA.md`. Dopo un cambio del lockfile
+    controlla il job Ruby 3.2.11 della CI (`parallel < 2`, vedi "Cambi a `Gemfile` e `Gemfile.lock`").
+13. Le azioni esterne o difficili da annullare richiedono la conferma esplicita dell'utente: merge di una PR,
+    pubblicazione, tag, release, impostazioni del repository, secret, GitHub Pages. Il push dei branch della fase,
+    l'apertura delle PR e il push su `origin/master` dei commit di sola documentazione sono autorizzati.
 14. Una scelta con due letture valide spetta all'utente: chiedi con AskUserQuestion. Se hai dubbi, fermati e
     chiarisci con l'utente.
-15. Lingua: commit, titolo e corpo delle PR e commenti su Linear in inglese (progetto Linear con `lang:en`, come
-    ICH-229: `fix(ui): ...`). `RICONSEGNA.md`, `RIPRESA.md` e `memory/` restano in italiano.
-16. Un lotto tocca solo il codice delle sue issue. Se un fix richiede un cambio che appartiene a un altro lotto o a
-    un'altra issue, fermati e chiedi all'utente.
-17. Prima del merge di ogni PR: CI verde su tutta la matrice (Ruby 3.1.7–4.0.9) e soglie di coverage invariate (98 %
-    totale, 90 % per file, layer FFI escluso).
+15. Le spec grafiche non rompono la suite normale né la CI: richiedono un terminale grafico vero, quindi stanno dietro
+    un tag RSpec o una variabile d'ambiente e vanno in skip con un messaggio chiaro fuori da un terminale adatto.
+16. Le prove grafiche scrivono sul terminale dell'utente: dopo ogni prova il terminale torna pulito (schermo
+    alternativo chiuso, immagini cancellate, cursore visibile). Chiedi all'utente di confermare a vista quando l'esito
+    del C non basta.
+17. Su macOS una spec legata a Linux (per esempio `/proc/self/fd`, `TIOCSCTTY`, `osversion` che inizia con `Linux`)
+    va in skip con il motivo, oppure diventa portabile se il cambio è piccolo; non indebolire i controlli su Linux.
+18. La CI resta verde su tutta la matrice, con le soglie di coverage invariate.
+19. RuboCop: `bundle exec rubocop` esce con 0 prima di ogni PR. Un file nuovo passa da ogni cop di Standard (stringhe
+    con le virgolette doppie); `.rubocop_todo.yml` non va rigenerato per far passare codice nuovo.
+20. Ogni file nuovo ha l'intestazione di due righe (`# Generated from notcurses 3.0.17` e `# Source: ...`).
 
-## Ordine di lavoro
+## Parte 1 — ambiente, prove grafiche su Linux e design
 
-Criteri dell'ordine:
+1. Su Linux, in Kitty e poi in Ghostty, esegui uno script di prova (prima nello scratchpad, poi nel repository se
+   approvato) che apre un `Context` sul terminale vero e scrive in un file JSON:
+   - `can_pixel?`, l'implementazione dei pixel in `Capabilities`, `can_quadrant?`, `can_sextant?`, `can_octant?`,
+     `Plane#pixel_geom`, `detected_terminal`;
+   - l'esito di un blit di `spec/fixtures/visual/rgbw.png` con `blitter: :pixel`, `:quadrant`, `:sextant`, `:octant`,
+     `:braille`, `:half`, `:ascii`, con `no_degrade: true`;
+   - `Direct#render_image(..., blitter: :pixel)`.
+   Lo script avvia con `timeout` e chiude sempre il contesto.
+2. Controlla sul terminale vero le correzioni dei lotti provate solo su terminali finti. Sono controlli, non nuove
+   correzioni: un difetto nuovo segue la regola 11.
+   - Lotto 3 (ICH-272): con i quadranti attivi, `Visual.from_plane(..., blitter: :four_by_one)` e
+     `Plane#as_rgba(:eight_by_one)` sollevano un'eccezione e non vanno in SIGSEGV.
+   - Lotto 7 (ICH-279, ICH-280, ICH-281): con il protocollo di tastiera kitty, Shift+1 in un `TextInput` inserisce
+     `!`; Ctrl+C con CapsLock o NumLock attivi è un segnale di linea in `run`; il glifo largo sotto il cursore
+     resta visibile nell'ultima colonna.
+   - Lotto 9 (ICH-284): `Direct#stream` disegna ogni frame sopra il precedente (il caso di ICH-458 resta fuori).
+3. Controlla nel C come notcurses 3.0.17 rileva il terminale e il protocollo grafico (`termdesc.c`, risposta DA1,
+   `XTGETTCAP`, `TERM`, `TERM_PROGRAM`, `KITTY_WINDOW_ID`) e confronta con quello che vedi in Kitty e Ghostty.
+4. Scrivi `memory/fase5-design.md`: risultati delle prove, come si controlla l'esito (solo il C, oppure anche un
+   controllo a vista dell'utente o una lettura del terminale), dove stanno script e spec grafiche, tag RSpec, piano
+   per macOS.
+5. Chiedi all'utente, con AskUserQuestion, le scelte con due letture valide (per esempio: script in `examples/` o
+   spec con un tag; quali blitter controllare; come trattare un rilevamento sbagliato di notcurses).
 
-1. prima la severità: i crash e i blocchi (alta), poi i risultati sbagliati (media), poi il resto (bassa);
-2. le issue che toccano lo stesso codice stanno nello stesso lotto, anche con severità diverse;
-3. un lotto contiene solo issue dello stesso tipo: `/trinity:workflow:1_create-worktree` ricava un solo prefisso di
-   branch, `bug` dalla label `Bug` e `improvments` dalla label `Improvement`;
-4. il lotto 17 cambia la Fase 1 e chiude la lista, perché serve l'approvazione dell'utente.
+Non scrivere codice della Parte 2 nel repository prima dell'approvazione.
 
-| Lotto | Prefisso | Issue | Finding | Severità | Titolo |
-| --- | --- | --- | --- | --- | --- |
-| 1 | `bug` | ICH-268 | `nucleo-01` | alta | Harden Context#close, Direct#close and drop_planes against a Ctrl-C during the C call |
-| 1 | `bug` | ICH-269 | `nucleo-02` | alta | Make Context#close and Direct#close skip the C stop in a forked child |
-| 1 | `bug` | ICH-270 | `nucleo-03` | media | Make Context#close and Direct#close work inside a trap handler |
-| 2 | `bug` | ICH-271 | `piani-01` | alta | Prevent heap corruption from writes over a wide glyph cut by a plane resize |
-| 3 | `bug` | ICH-272 | `direct-visual-01` | alta | Reject the plot-only blitters :four_by_one and :eight_by_one in Visual and Plane#as_rgba |
-| 4 | `bug` | ICH-273 | `widget-01` | alta | Keep zero-width characters out of the last Reader column |
-| 4 | `bug` | ICH-274 | `widget-04` | media | Make Reader#write keep graphemes that notcurses splits into several EGCs |
-| 4 | `bug` | ICH-275 | `widget-05` | media | Make Reader#contents read the view through Plane#contents to stop the egcpool leak |
-| 5 | `bug` | ICH-276 | `widget-02` | alta | Reject Tree, Tabbed and Reel creation inside notcurses callbacks |
-| 5 | `bug` | ICH-277 | `widget-03` | alta | Raise WidgetError in MultiSelector#offer_input when the plane is one row tall |
-| 6 | `bug` | ICH-278 | `nucleo-04+ui-04` | media | Redraw the screen after SIGCONT in EventLoop and document the lost SIGCONT handler |
-| 7 | `bug` | ICH-279 | `ui-01` | media | Use Input#eff_text in TextInput and on_key so Shift works under the kitty protocol |
-| 7 | `bug` | ICH-280 | `ui-05` | media | Handle kitty Ctrl+C, Ctrl+Z and Ctrl+\ with CapsLock or NumLock as line signals in run |
-| 7 | `bug` | ICH-281 | `ui-11` | bassa | Keep the wide glyph under the TextInput cursor visible in the last column |
-| 8 | `bug` | ICH-282 | `ui-02` | media | Make LogView#append accept an empty string without breaking the view |
-| 8 | `bug` | ICH-283 | `ui-03` | media | Treat repeated BUTTON1-3 presses during a mouse drag as motion, not as new clicks |
-| 9 | `bug` | ICH-284 | `direct-visual-02` | media | Make Direct#stream draw each frame over the previous one |
-| 10 | `bug` | ICH-285 | `direct-visual-03` | media | Apply the ZWJ workaround to Direct#putegc and Direct#print_aligned |
-| 10 | `bug` | ICH-286 | `piani-02` | bassa | Measure ZWJ sequences in Plane#puttext like putstr so long words wrap |
-| 11 | `bug` | ICH-287 | `widget-06` | media | Resize Tree item planes to the current tree width on every redraw |
-| 11 | `bug` | ICH-288 | `widget-07` | bassa | Document the ProgBar color rule for one-column bars and non-UTF-8 terminals |
-| 11 | `bug` | ICH-289 | `widget-08` | bassa | Keep the header order in Tab#move when a tab moves before its own successor |
-| 11 | `bug` | ICH-290 | `widget-09` | bassa | Document that Plot label_ticks labels saturate at 184.47P above about 1.8e17 |
-| 12 | `bug` | ICH-291 | `ui-06` | bassa | Roll back a UI component or Dialog when drawing raises during its creation |
-| 12 | `bug` | ICH-292 | `ui-08` | bassa | Restore the focus when a resize shows components again, and let Esc reach the Dialog |
-| 12 | `bug` | ICH-293 | `ui-10` | bassa | Give each Dialog button room for its whole label |
-| 13 | `bug` | ICH-294 | `nucleo-06` | bassa | Bound the timeout of Context#get, #getvec and Direct#get to a documented maximum |
-| 13 | `bug` | ICH-295 | `nucleo-08` | bassa | Cap the getvec buffer at the notcurses input queue size (8192 events) |
-| 13 | `bug` | ICH-296 | `ui-07` | bassa | Keep an every timer scheduled after its block raises, as Timer#active? promises |
-| 13 | `bug` | ICH-298 | `ui-09` | bassa | Deliver the keys already queued in notcurses at the start of EventLoop#run |
-| 13 | `bug` | ICH-299 | `ui-12` | bassa | Cap the IO.select timeout of EventLoop#run for huge after/every delays |
-| 14 | `bug` | ICH-300 | `nucleo-05` | bassa | Freeze the strings returned by Input#utf8 and Input#eff_text |
-| 14 | `bug` | ICH-301 | `nucleo-07` | bassa | Scrub invalid UTF-8 in Util.take_string (accountname, detected_terminal) |
-| 14 | `bug` | ICH-302 | `nucleo-09` | bassa | Reject value/decimal pairs that overflow ncnmetric in metric and the prefix helpers |
-| 14 | `bug` | ICH-303 | `nucleo-10` | bassa | Fix the YARD of Context#refresh and #create_pile: rendering area, not terminal size |
-| 15 | `bug` | ICH-304 | `ffi-04` | bassa | Print the result after Context.open in the README Notcurses::UI example |
-| 15 | `bug` | ICH-305 | `ffi-06` | bassa | Raise the ffi lower bound to ~> 1.16 in the gemspec and Gemfile |
-| 16 | `improvments` | ICH-306 | `nucleo-11` | bassa | Add specs for the Alt workaround in Input#initialize (deprecated alt field) |
-| 16 | `improvments` | ICH-307 | `nucleo-12` | bassa | Make the Palette#use spec check that the context palette changes |
-| 16 | `improvments` | ICH-308 | `direct-visual-04` | bassa | Test negative count: as a keyword in the Direct cursor-move spec |
-| 16 | `improvments` | ICH-309 | `ffi-05` | bassa | Add a spec that compares FFI struct layouts and constants with the C headers |
-| 16 | `improvments` | ICH-310 | `ui-13` | bassa | Add kitty keyboard protocol and Key::RESIZE examples to ui_pty_spec |
-| 16 | `improvments` | ICH-311 | `ffi-02` | bassa | Pin codecov/codecov-action to a full commit SHA in the CI workflow |
-| 17 | `bug` | ICH-312 | `ffi-01` | bassa | Release the GVL in the FFI functions that open or decode media files |
-| 17 | `bug` | ICH-313 | `ffi-03` | bassa | Define wchar_t and uintmax_t when ffi lacks them so require works on BSD and ppc64 |
+## Parte 2 — script e spec grafiche (Linux)
 
-Ogni lotto parte da `master` aggiornato, dopo il merge del lotto precedente. I lotti 13 e 14 toccano di nuovo
-`context.rb`, i lotti 8 e 12 di nuovo `app.rb`: per questo non vanno lavorati in parallelo.
+- Lavora sul branch `test/fase5-linux` (sezione "Flusso di lavoro").
+- Se una prova trova un bug del wrapper, vale la regola 11; un bug di notcurses va nelle tabelle di `RICONSEGNA.md`.
+- Suite completa dopo ogni cambio, in ordine normale e con i semi; `bundle exec rubocop` prima della PR.
+- Apri la PR, aspetta la CI (`gh pr checks <n> --watch`), poi chiedi il merge all'utente.
 
-### Issue correlate
+## Parte 3 — macOS
 
-Le issue aperte qui sotto toccano lo stesso codice o la stessa causa di una issue della revisione. Sono collegate
-con una relazione `related`. Unirle a un lotto è una scelta dell'utente (passo 6 di "Prima di iniziare").
+Lavora sul branch `test/fase5-macos`, da `master` aggiornato dopo il merge della Parte 2.
 
-| Issue della revisione | Issue già aperte |
-| --- | --- |
-| ICH-268 (`nucleo-01`) | ICH-226, ICH-222 |
-| ICH-269 (`nucleo-02`) | ICH-222 |
-| ICH-271 (`piani-01`) | ICH-215 |
-| ICH-273 (`widget-01`) | ICH-218 |
-| ICH-274 (`widget-04`) | ICH-217, ICH-232 |
-| ICH-282 (`ui-02`) | ICH-230 |
-| ICH-287 (`widget-06`) | ICH-221 |
+1. **notcurses:** `brew install notcurses` (Homebrew ha 3.0.17). Controlla se Homebrew installa anche
+   `libnotcurses-ffi` (serve solo alla spec differenziale `spec/inline_reimpl_spec.rb`) e con quale nome: l'oracolo
+   `spec/support/nc_oracle.rb:29` cerca `libnotcurses-ffi.so.3` e `notcurses-ffi`.
+2. **Caricamento:** `ruby -Ilib -e 'require "notcurses"'`. Su Apple Silicon Homebrew sta in `/opt/homebrew/lib`, che
+   `dlopen` potrebbe non cercare: prova prima `DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib"`. Un cambio di
+   `ffi_lib` tocca la Fase 1: chiedi all'utente (regola 1). Controlla anche ICH-313: su macOS il `types.conf` di ffi
+   deve avere `wchar_t` e `uintmax_t`, oppure `lib/notcurses/ffi/typedefs.rb` li definisce.
+3. **termios:** su macOS `tcflag_t` è `unsigned long` e `IXON`/`ISIG` hanno i valori BSD: finora controllati solo
+   sugli header. Prova `EventLoop#run(no_flow_control: true, no_linesigs: true)` nel terminale vero.
+4. **Prove grafiche:** le stesse della Parte 1 in Kitty e Ghostty su macOS.
+5. **Suite completa:** punti già noti che dipendono da Linux:
 
-### Scelte aperte (regola 14)
+   | Punto | Dove |
+   | --- | --- |
+   | `Dir.children('/proc/self/fd')` per contare i descrittori | `spec/notcurses/context_spec.rb:41`, `spec/notcurses/fd_plane_spec.rb:13`, `spec/notcurses/subprocess_spec.rb:12` e `:97`, `spec/notcurses/ui/event_loop_spec.rb:26` |
+   | `osversion` che inizia con `Linux` | `spec/notcurses/stats_spec.rb:47` |
+   | comando `timeout` di coreutils (`gtimeout` con `brew install coreutils`) | `spec/notcurses/{reel,multiselector,progbar,visual,reader,plane}_spec.rb` e i comandi di test |
+   | `TIOCSCTTY` (`0x540E`), già in skip fuori da Linux | `spec/integration/ui_pty_spec.rb` |
+   | nome della libreria dell'oracolo | `spec/support/nc_oracle.rb:29` |
+   | compilazione contro gli header con `gcc` | `spec/ffi_layout_spec.rb` (va in skip senza compilatore o header) |
 
-Queste issue propongono una soluzione, ma la descrizione segnala un'alternativa valida: chiedi all'utente prima del fix. ICH-294 (`nucleo-06`), ICH-301 (`nucleo-07`), ICH-277 (`widget-03`), ICH-288 (`widget-07`), ICH-283 (`ui-03`), ICH-291 (`ui-06`), ICH-296 (`ui-07`), ICH-299 (`ui-12`), ICH-286 (`piani-02`).
-
-### Da controllare, senza issue
-
-Niente. Il rilascio di Ctrl+C con il flag 2 del protocollo kitty, emerso durante le bozze, è stato confermato nel
-lotto 7 ed è ora ICH-456.
-
-## Procedura per ogni lotto
-
-`<model>` è il modello scelto dall'utente; `<ID...>` sono gli ID delle issue del lotto, nell'ordine della tabella.
-
-```text
-/trinity:workflow:1_create-worktree master <ID...> <model>
-/trinity:workflow:2_work-issue <ID...> <model>
-/trinity:workflow:3_independent-review <ID...> <model>
-/trinity:workflow:4_review-fix-loop <ID...> <model>
-/trinity:workflow:5_remove-worktree <prefisso>+<ID-numeri>-<model>
-```
-
-1. `1_create-worktree` crea il branch `<prefisso>/<ID-numeri>-<model>` (per esempio `bug/ICH-233-234-235-opus`) e il
-   worktree in `.claude/worktrees/` del repository.
-2. `2_work-issue` porta le issue a In Progress, scrive il piano e implementa. Per ogni issue: la spec che fallisce,
-   il fix, la suite completa (regola 11). Commit separati per issue, Conventional Commits in inglese con scope
-   (`fix(context): ...`, `fix(reader): ...`). Apre la PR con le magic words, senza merge.
-3. `3_independent-review` fa una review indipendente in sola lettura del changeset rispetto agli acceptance
-   criteria.
-4. `4_review-fix-loop` serve solo se la review trova problemi.
-5. Controlla la CI della PR (`gh pr checks <n> --watch`). Con la CI verde chiedi all'utente il merge (regola 13).
-   Dopo il merge Linear porta le issue a Done.
-6. `5_remove-worktree` rimuove worktree e branch (anche il branch remoto, vedi le decisioni).
-7. **Dopo ogni merge chiudi il lotto subito**, senza aspettare che l'utente lo chieda: appena l'utente dice che ha
-   fatto il merge, o dopo `5_remove-worktree`, esegui questi passi in ordine.
-   1. `git pull` su `master`, poi la suite completa e la "Verifica finale" del log: semi 1234, 4242 e 7,
-      `gem build`, `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb` e la CI della PR e di `master`.
-   2. Riga del lotto nella tabella "Lotti" di `RICONSEGNA.md` (lotto, PR, merge, issue, bug di notcurses nuovi), più
-      le altre parti della sezione "Correzioni della revisione del 2026-11-06" che il lotto cambia: review, cambi
-      dell'API, issue aperte nate dai lotti.
-   3. Log del lotto in `memory/correzioni-review.md` (Fix, Decisioni, Review, Problemi e soluzioni, Verifica
-      finale), con lo stesso formato dei lotti precedenti.
-   4. Commit `docs(riconsegna): lotto <n> ... [skip ci]` dei due file.
-   5. Retain in Hindsight, bank `notcursesruby`, con cause radice e decisioni; scrivi l'id dell'operazione nella
-      sezione "Stato e prossimo step".
-   6. Aggiorna la sezione "Stato e prossimo step" (stato, passi per il lotto successivo) e committala con
-      `docs(ripresa): stato dopo il lotto <n>, prossimo step lotto <n+1> (...) [skip ci]`; poi `git push`.
-
-Se un acceptance criterion si rivela sbagliato o impossibile, non cambiarlo da solo: proponi il testo nuovo
-all'utente e, dopo la conferma, aggiorna la issue su Linear.
+   Cerca gli altri con la suite. Su macOS lo stdin di `/dev/null`, `fopen("/dev/null")` e i pty si comportano in modo
+   simile, ma non è provato.
+6. Apri la PR, aspetta la CI, poi chiedi il merge all'utente. La CI gira solo su Linux: la suite su macOS la controlli
+   in locale e scrivi l'esito nella PR.
 
 ## Consegne
 
-1. Una PR per lotto, con la CI verde e il merge confermato dall'utente.
-2. Le 45 issue a Done, oppure chiuse con un motivo scritto nella issue (per esempio: lotto 17 non approvato).
-3. `RICONSEGNA.md`: sezione "Correzioni della revisione del 2026-11-06" con data, tabella dei lotti (PR, commit,
-   issue), cambi dell'API pubblica, bug di notcurses nuovi nelle tabelle esistenti, cambi a `Gemfile` e
-   `Gemfile.lock` (se ci sono), "Cosa serve alla fase successiva".
-4. Il log `memory/correzioni-review.md`: decisioni, problemi e soluzioni, lotto per lotto.
-5. Hindsight, bank `notcursesruby`, se il server risponde: decisioni e cause radice.
-6. Alla fine proponi il passo successivo (la Fase 5 di `git show 49732a3:RIPRESA.md`) e chiedi all'utente se
-   riscrivere `RIPRESA.md` con quel prompt.
+1. Script e spec grafiche, cambi alle spec per macOS: due PR con la CI verde e il merge confermato dall'utente.
+2. `memory/fase5-design.md` (design approvato) e il log `memory/fase5-<argomento>.md`: ambiente delle due macchine,
+   risultati per terminale e blitter, controlli dei lotti 3, 7 e 9, problemi e soluzioni.
+3. `RICONSEGNA.md`: sezione "Fase 5" con data, file, come avviare le prove grafiche, risultati per sistema, terminale e
+   blitter, stato di macOS (cosa passa, cosa è in skip e perché), problemi trovati, cambi a `Gemfile`/`Gemfile.lock`
+   (se ci sono), "Cosa serve alla fase successiva". Aggiorna "Dipendenze di sistema" (macOS provato) e il README
+   (tabella di installazione, limiti).
+4. Hindsight, bank `notcursesruby`, se il server risponde: decisioni e cause radice.
+5. Alla fine proponi il passo successivo e chiedi all'utente se scrivere in `RIPRESA.md` il prompt della fase dopo.
 
 ## Controlli finali
 
-- Suite completa: 0 fallimenti, in ordine normale e con i semi 1234, 4242 e 7.
-- `ruby -w -Ilib -e 'require "notcurses"'` senza warning.
-- `bundle exec rubocop` senza offense.
-- `yard doc --fail-on-warning` 0 warning, `yard stats --list-undoc` 100 %; `gem build` senza warning.
-- Coverage >= 98 % totale e >= 90 % per file; `spec/coverage_spec.rb` e `spec/notcurses/api_spec.rb` passano.
-- CI verde su tutta la matrice sull'ultimo commit di `master`.
-- `git diff ab75226 -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto, salvo il lotto 17 approvato.
-- Ogni issue della revisione è a Done o ha un motivo scritto.
+- Suite completa su Linux (macchina dell'utente): 0 fallimenti, anche con `rand:1234`, `rand:4242` e `rand:7`.
+- Suite completa su macOS: 0 fallimenti; gli skip hanno un motivo scritto.
+- Prove grafiche in Kitty e Ghostty, su Linux e su macOS, con i risultati nel log.
+- CI verde su tutta la matrice sull'ultimo commit di `master`; coverage >= 98 % e >= 90 % per file.
+- `ruby -w -Ilib -e 'require "notcurses"'` senza warning; `bundle exec rubocop` 0 offense; `yard doc
+  --fail-on-warning` e `yard stats --list-undoc` al 100 %; `gem build` senza warning.
+- `git diff b2fed69 -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto, salvo cambi approvati dall'utente.
+
+## Note pratiche (dai lotti)
+
+- `spec/integration/pty_spec.rb:173` è instabile per una gara di tempi (`getvec` si sveglia dopo il primo di 4
+  tasti). Se fallisce, ripeti la suite prima di cercare una regressione. Non ha una issue.
+- In zsh un comando in una variabile non si divide in parole: usa un array (`E=(env ...)`, `"${E[@]}"`) e scrivi
+  `--order "rand:$seed"`.
+- Nei comandi non mettere `rm` né `rm -rf`: un hook li mette in coda per la conferma dell'utente. `doc`, `.yardoc` e
+  `coverage` sono già in `.gitignore`. Per `gem build` usa `--output` con un file nello scratchpad.
+- Non lanciare `rspec` con cwd in un checkout per provare il codice di un altro: `rspec` mette il `lib/` del cwd nel
+  load path prima di `-I`.
+- Dopo l'apertura della PR la CI può partire con qualche minuto di ritardo: aspetta con
+  `until gh run list --branch <branch> --limit 1 | grep -q .; do sleep 15; done`, poi `gh pr checks <n> --watch`.
+- `gem build` può stampare warning di rdoc dell'installazione locale (più versioni installate), non del gemspec: conta
+  che la gem si costruisca e che la CI sia verde.
+- Su Ruby 3.1.7 basta `mise exec ruby@3.1.7 -- rspec` dalla radice del progetto, senza `bundle`.
 
 ## Comandi
 
 `S` è il percorso assoluto dello scratchpad della sessione, scritto nel prompt di sistema: assegnalo a mano. Non
-esiste una variabile `$SCRATCHPAD`. In zsh una variabile non si divide in parole: usa una funzione o un array per i
-comandi con più parole.
+esiste una variabile `$SCRATCHPAD`.
 
 ```sh
+S=/percorso/dello/scratchpad   # dal prompt di sistema della sessione
 cd /Dati/Sviluppo/Progetti/Personali/20261027_notcursesruby
 
-# suite completa; COLORTERM serve alle 10 spec dei colori RGB, TERM fisso anche dentro Kitty o Ghostty
+# suite completa (dalla radice del progetto); COLORTERM serve alle 10 spec dei colori RGB
 TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 bundle exec rspec < /dev/null
 TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 \
   bundle exec rspec --order rand:1234 < /dev/null
-# coverage (report in coverage/)
+# La suite non grafica forza TERM=xterm-256color anche dentro Kitty o Ghostty (TERM=xterm-kitty, xterm-ghostty):
+# i valori attesi delle spec sono calcolati per xterm-256color. Le prove grafiche usano invece il TERM del terminale.
+# macOS: timeout viene da coreutils di Homebrew (brew install coreutils) come gtimeout, oppure aggiungi
+# "$(brew --prefix)/opt/coreutils/libexec/gnubin" al PATH; libreria: DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib".
+# coverage (report in coverage/; con una sola spec fallisce per la soglia)
 TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 \
   bundle exec rspec --require ./spec/support/coverage.rb < /dev/null
-# script di prova contro notcurses: un solo contesto per processo, output su /dev/null
-TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 60 ruby -Ilib "$S/prova.rb" < /dev/null
+# script di prova contro notcurses: un solo contesto per processo
+timeout -k 5 -s KILL 60 ruby -Ilib "$S/prova.rb"
 
-# YARD e gem
+# RuboCop, YARD e gem
+bundle exec rubocop
 bundle exec yard doc --fail-on-warning
 bundle exec yard stats --list-undoc
-RUBYOPT=-W0 gem build notcursesruby.gemspec
+RUBYOPT=-W0 gem build notcursesruby.gemspec --output "$S/notcursesruby.gem"
 
 # workflow: controllo prima del push
 mise x aqua:rhysd/actionlint@1.7.12 -- actionlint -ignore SC2016 .github/workflows/ci.yml
 
 # GitHub
+gh pr create --base master --head <branch> --title '<titolo>' --body-file "$S/pr.md"
 gh pr checks <n> --watch
 gh run list --limit 5
 gh run view <id> --log-failed
-```
 
-Linear, con la skill `linear` di Trinity (`LINEAR_API_KEY` è nell'ambiente):
+# CI in locale con Podman (VPS): passi del job 4.0.9 nel container della CI.
+# P = cartella delle cache, fuori dal progetto; ci-local.sh = lo script sotto, salvato nello scratchpad.
+P="$S/podman-cache"; mkdir -p "$P/pacman" "$P/mise" "$P/bundle"
+podman run --rm -v "$PWD":/w:ro -w /w -v "$S/ci-local.sh":/ci-local.sh:ro \
+  -v "$P/pacman":/var/cache/pacman/pkg -v "$P/mise":/opt/mise -v "$P/bundle":/opt/bundle \
+  -e ARCH_SNAPSHOT=2026/10/26 -e RUBY=4.0.9 -e MISE_DATA_DIR=/opt/mise -e BUNDLE_PATH=/opt/bundle \
+  -e TERM=xterm-256color -e COLORTERM=truecolor -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 -e MISE_GITHUB_TOKEN="$(gh auth token)" \
+  docker.io/library/archlinux:base@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0 /ci-local.sh
+# ci-local.sh (chmod +x):
+#   #!/usr/bin/env bash
+#   set -euo pipefail
+#   echo "Server = https://archive.archlinux.org/repos/${ARCH_SNAPSHOT}/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
+#   pacman-key --init > /dev/null; pacman-key --populate archlinux > /dev/null
+#   pacman -Syuu --noconfirm --needed notcurses git mise base-devel libyaml openssl zlib libffi > /tmp/pacman.log 2>&1 \
+#     || { tail -20 /tmp/pacman.log; exit 1; }
+#   mise install "ruby@${RUBY}" > /tmp/mise.log 2>&1 || { tail -20 /tmp/mise.log; exit 1; }
+#   export PATH="$(mise where "ruby@${RUBY}")/bin:$PATH"
+#   gem install --no-document bundler -v "$(tail -n 1 Gemfile.lock | tr -d ' ')" > /dev/null
+#   BUNDLE_FROZEN=true bundle install --jobs 4 --quiet
+#   BUNDLE_FROZEN=true timeout -k 5 -s KILL 600 bundle exec rspec --order rand < /dev/null
+# Per Ruby 3.1.7 servono CFLAGS/RUBY_CFLAGS=-std=gnu17 e una copia del Gemfile senza lockfile, come nel workflow.
 
-```sh
-lq() { (cd /Dati/AI/Claude/Trinity/skills/linear && mise x python -- python scripts/linear.py "$@"); }
-
-# una issue, con stato e relazioni
-lq query 'query($id: String!) { issue(id: $id) { identifier title state { name } priority estimate
-  labels { nodes { name } } relations { nodes { type relatedIssue { identifier state { name } } } } description } }' \
-  --variables '{"id": "ICH-268"}'
-
-# issue della revisione ancora aperte
-lq query 'query { issues(first: 100, filter: { project: { name: { eq: "notcursesruby" } },
-  description: { contains: "full code review of 2026-11-06" }, state: { type: { nin: ["completed", "canceled"] } } })
-  { nodes { identifier title priority state { name } } } }'
-```
-
-```sh
 # recall dal bank notcursesruby
 curl -s -m 30 -X POST http://127.0.0.1:8888/v1/default/banks/notcursesruby/memories/recall \
   -H 'Content-Type: application/json' \
-  -d '{"query":"revisione completa 2026-11-06, correzioni per lotti, Context#close, Reader, kitty, SIGCONT","budget":"high","max_tokens":6000}'
+  -d '{"query":"Fase 5 blitter pixel kitty Ghostty, pty e terminale, macOS e termios, correzioni lotti 3 7 9","budget":"high","max_tokens":6000}'
+
+# retain nel bank notcursesruby: il JSON sta in un file dello scratchpad
+curl -s -m 30 -X POST http://127.0.0.1:8888/v1/default/banks/notcursesruby/memories \
+  -H 'Content-Type: application/json' --data @"$S/retain.json"
+```
+
+Formato di `retain.json`:
+
+```json
+{"async": true, "items": [{"content": "fatto autosufficiente, con comandi e percorsi alla lettera",
+  "context": "una riga che descrive il dominio", "tags": ["claude-code", "repo:notcursesruby"]}]}
 ```
