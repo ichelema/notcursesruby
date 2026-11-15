@@ -264,6 +264,64 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(status.exitstatus).to eq(0), out
   end
 
+  # Su macOS notcurses_stop rilascia il GVL: un'eccezione asincrona per il
+  # thread che chiude sbloccherebbe tcsetattr con EINTR, e notcurses non
+  # riprova. Il terminale finto è un altro processo, fermo per 0,5 s dopo il
+  # byte di controllo: Thread#raise arriva mentre la chiusura aspetta. Su Linux
+  # tcsetattr non aspetta, e l'eccezione arriva dopo la chiusura.
+  def stop_raise_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    ctl_r, ctl_w = IO.pipe
+    reader = fork do
+      slave.close
+      ctl_w.close
+      STDIN.reopen(File::NULL)
+      loop do
+        ready, = IO.select([master, ctl_r])
+        if ready.include?(ctl_r)
+          break if ctl_r.read_nonblock(16, exception: false).nil?
+          sleep 0.5
+        end
+        next unless ready.include?(master)
+        data = master.readpartial(65_536)
+        data.scan(/\e\[6n|\e\[c/) { |q| master.write(q == "\e[6n" ? "\e[1;1R" : "\e[?62;22c") }
+      end
+    rescue IOError, Errno::EIO
+    end
+    ctl_r.close
+    termios = -> { IO.popen(%w[stty -g], in: slave, &:read) }
+    before = termios.call
+    raised = nil
+    begin
+      Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do
+        Thread.new { sleep 0.35; Thread.main.raise(Interrupt, 'asincrona') }
+        ctl_w.write('P')
+        sleep 0.1
+      end
+      sleep 0.6
+    rescue Interrupt => e
+      raised = e.message
+    end
+    puts "eccezione #{raised}"
+    puts "termios ripristinato #{termios.call == before}"
+    Process.kill(:KILL, reader)
+    Process.wait(reader)
+    puts 'fine'
+  RUBY
+
+  it "un'eccezione asincrona durante Context#close non lascia il termios di notcurses" do
+    out, status, timed_out = run_child(stop_raise_script, timeout: 20)
+    expect(timed_out).to be(false), out
+    expect(out).to include('eccezione asincrona', 'termios ripristinato true', 'fine')
+    expect(status.exitstatus).to eq(0), out
+  end
+
   # Ogni caso legge l'immagine da una FIFO che un thread di questo processo
   # riempie dopo 0,3 s: con il GVL tenuto durante l'apertura il thread non gira.
   def fifo_script = <<~'RUBY'

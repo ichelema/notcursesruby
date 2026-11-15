@@ -24,7 +24,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 - macOS: `Context#close` rilascia il GVL durante `notcurses_stop`, che con `tcsetattr(TCSAFLUSH)` aspetta che il
   terminale legga l'output in coda. Prima un terminale servito da un thread dello stesso processo (per esempio un
-  pty nei test) bloccava la chiusura per sempre. Su Linux la chiamata non cambia.
+  pty nei test) bloccava la chiusura per sempre. Un'eccezione asincrona (`Thread#raise`, `Timeout`) per il thread
+  che chiude arriva dopo lo stop, e non lascia il terminale nel modo di notcurses. Su Linux la chiamata non cambia.
 - `Visual.from_file`, `Visual#decode`, `Visual#decode_loop`, `Direct#render_frame`, `Direct#load_image`,
   `Direct::Image.new` e `Direct#stream` aprono e leggono il file con ffmpeg senza il GVL: con una FIFO, un URL o un
   file system lento gli altri thread Ruby girano. Prima una FIFO riempita da un thread dello stesso processo
