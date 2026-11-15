@@ -1317,7 +1317,9 @@ module Notcurses
     # Bug di 3.0.17: +ncplane_mergedown+ ignora la regione che riceve, quindi
     # il wrapper offre solo la fusione completa; lascia anche la metà destra
     # dei glifi larghi di dst con larghezza 0, e il wrapper riscrive quei glifi
-    # (il cursore di dst non cambia).
+    # (il cursore di dst non cambia). Per trovarli legge ogni cella di dst: su
+    # un piano grande (per esempio 50x200) la fusione costa qualche
+    # millisecondo invece di una frazione.
     #
     # @param dst [Plane] piano di destinazione, della stessa pila
     # @return [self]
@@ -2457,8 +2459,9 @@ module Notcurses
     # true se (y, x) è una metà di glifo largo senza l'altra metà: una metà
     # sinistra nell'ultima colonna, una metà destra in colonna 0 o senza la
     # metà sinistra prima. Una metà sinistra seguita da una cella vuota non
-    # conta: dopo merge_down le metà destre hanno width 0 (ICH-481) e sono
-    # uguali a una cella vuota.
+    # conta: una metà destra con width 0 è uguale a una cella vuota, e dopo
+    # merge_down ne restano dove la riscrittura non riesce a leggere il glifo
+    # (egcpool pieno, vedi restore_wide_glyphs!).
     def orphan_half?(ptr, y, x, cols)
       case half_at(ptr, y, x)
       when :left then x == cols - 1
