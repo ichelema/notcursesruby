@@ -27,8 +27,9 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   il wrapper usava la `free` di glibc anche quando `LD_PRELOAD` mette un altro allocatore (jemalloc, tcmalloc,
   `libc_malloc_debug`), e il processo terminava con `double free or corruption` (ICH-449).
 - `Plane#erase_region`, `#gradient`, `#gradient2x1` e `#polyfill` su una sola metà di un glifo largo svuotano anche
-  l'altra metà. Prima la metà orfana restava, e una scrittura larga vicina cancellava la prima cella della riga dopo,
-  o sull'ultima riga scriveva fuori dal piano e corrompeva l'heap (ICH-450).
+  l'altra metà, anche quando la chiamata C fallisce a metà (`PlaneError`). Prima la metà orfana restava, e una
+  scrittura larga vicina cancellava la prima cella della riga dopo, o sull'ultima riga scriveva fuori dal piano e
+  corrompeva l'heap (ICH-450).
 - Il controllo delle metà orfane dopo i resize fatti da notcurses vale per il piano C, non per il singolo `Plane`: un
   `Plane` preso in prestito (`tracked: false`) usa lo stato del `Plane` tracciato dello stesso piano, e senza un
   `Plane` tracciato controlla i bordi a ogni scrittura. Prima un glifo largo scritto da un secondo wrapper e tagliato

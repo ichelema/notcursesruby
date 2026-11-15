@@ -1237,6 +1237,44 @@ RSpec.describe Notcurses::Plane do
         end
       end
 
+      # Dopo merge_down notcurses lascia le metà destre con width 0 (ICH-481):
+      # il glifo è intero e nessun controllo deve cancellarlo.
+      {
+        'una scrittura' => ['日本語テキ', ->(p) { p.putstr('*', y: 0, x: 9) }, '日本語テキ*'],
+        'un resize alle stesse dimensioni' => ['漢字ab', ->(p) { p.resize(1, 10) }, '漢字ab'],
+        'erase_region prima del glifo' => ['ab漢cd', ->(p) { p.erase_region(0, 0, 1, 2) }, '漢cd'],
+        'erase_region accanto al glifo' => ['ab漢cd', ->(p) { p.erase_region(0, 1, 1, 1) }, 'a漢cd'],
+        'gradient prima del glifo' => ['ab漢cd', ->(p) { p.gradient('g', 0, 0, 0, 0, rows: 1, cols: 2) }, 'gg漢cd'],
+        'polyfill accanto al glifo' => ['a漢b', ->(p) { p.polyfill('x', y: 0, x: 0) }, 'x漢b']
+      }.each do |name, (text, op, row)|
+        it "dopo merge_down #{name} lascia intero il glifo largo (prima del fix di review: glifo cancellato)" do
+          with_parent(rows: 1, cols: 10) do |p|
+            dst = p.create_child(rows: 1, cols: 10)
+            src = p.create_child(rows: 1, cols: 10)
+            src.putstr(text, y: 0, x: 0)
+            src.merge_down(dst)
+            src.close
+            op.call(dst)
+            expect(dst.contents).to eq(row)
+          end
+        end
+      end
+
+      it "un riempimento che fallisce a metà svuota lo stesso l'altra metà (prima: \"XYZ\" dopo il PlaneError)" do
+        big = 'e' + ("́" * 3_000_000) # le copie superano i 16 MiB dell'egcpool: il C si ferma a metà
+        # [righe con "ab漢", riempimento, riga della scrittura larga]
+        {gradient: [1, ->(p) { p.gradient(big, 0, 0, 0, 0, rows: 1, cols: 3) }, 0],
+         polyfill: [2, ->(p) { p.polyfill(big, y: 1, x: 2) }, 1]}.each do |name, (glyph_rows, fill, y)|
+          with_parent(rows: glyph_rows + 1, cols: 4) do |p|
+            glyph_rows.times { |r| p.putstr('ab漢', y: r, x: 0) }
+            p.putstr('WXYZ', y: glyph_rows, x: 0)
+            expect { fill.call(p) }.to raise_error(Notcurses::PlaneError), name.to_s
+            p.putstr('中', y: y, x: 2)
+            expect(p.contents(y: glyph_rows, rows: 1)).to eq('WXYZ'), name.to_s
+          end
+        end
+      end
+
       it 'senza glifi larghi i riempimenti non cambiano' do
         with_parent(rows: 1, cols: 4) do |p|
           p.putstr('abcd', y: 0, x: 0)
@@ -1261,6 +1299,15 @@ RSpec.describe Notcurses::Plane do
               planes.each { |q| q.putstr('中', y: 0, x: 2) }
               planes.each(&:close)
             end
+            big = 'e' + ("\u0301" * 3_000_000) # gradient che fallisce a metà (egcpool pieno)
+            planes = Array.new(3) { nc.stdplane.create_child(rows: 1, cols: 4).tap { |q| q.putstr('ab漢', y: 0, x: 0) } }
+            planes.each do |q|
+              q.gradient(big, 0, 0, 0, 0, rows: 1, cols: 3)
+            rescue Notcurses::PlaneError
+              nil
+            end
+            planes.each { |q| q.putstr('中', y: 0, x: 2) }
+            planes.each(&:close)
           end
           puts 'ok'
         RUBY

@@ -1304,8 +1304,9 @@ module Notcurses
       Util.integer!(x, 'x', 0...pcols)
       Util.integer!(rows, 'rows', 1..Util::INT32.max)
       Util.integer!(cols, 'cols', 1..Util::INT32.max)
-      Util.check!(FFI.ncplane_erase_region(ptr, y, x, rows, cols), PlaneError, 'ncplane_erase_region')
-      clear_region_orphans!(ptr, y, x, [rows, prows - y].min, [cols, pcols - x].min)
+      keep_glyphs_whole(ptr, y, x, [rows, prows - y].min, [cols, pcols - x].min) do
+        Util.check!(FFI.ncplane_erase_region(ptr, y, x, rows, cols), PlaneError, 'ncplane_erase_region')
+      end
       self
     end
 
@@ -2053,10 +2054,10 @@ module Notcurses
       ptr = to_ptr
       fill = line_cell!(cell)
       top, left = line_start!(y, x)
-      rc = with_nccells(ptr, [fill]) { |nc| FFI.ncplane_polyfill_yx(ptr, top, left, nc) }
-      Util.check!(rc, PlaneError, 'ncplane_polyfill_yx')
-      clear_orphan_halves!(ptr, 0...dim_y, 0...dim_x) if rc.positive? # la regione riempita non è nota
-      rc
+      keep_glyphs_whole(ptr, 0, 0, dim_y, dim_x, all: true) do # la regione riempita non è nota
+        rc = with_nccells(ptr, [fill]) { |nc| FFI.ncplane_polyfill_yx(ptr, top, left, nc) }
+        Util.check!(rc, PlaneError, 'ncplane_polyfill_yx')
+      end
     end
 
     # Riempie un rettangolo con egc e colori sfumati tra i quattro angoli
@@ -2095,10 +2096,10 @@ module Notcurses
       corners = corner_values([ul, ur, ll, lr], 64)
       top, left, height, width = region!(y, x, rows, cols)
       corners_shape!(corners, height, width, rows_rule: true)
-      rc = Util.check!(FFI.ncplane_gradient(ptr, top, left, height, width, text, Util.styles_value(styles), *corners),
-                       PlaneError, 'ncplane_gradient')
-      clear_region_orphans!(ptr, top, left, height, width)
-      rc
+      keep_glyphs_whole(ptr, top, left, height, width) do
+        Util.check!(FFI.ncplane_gradient(ptr, top, left, height, width, text, Util.styles_value(styles), *corners),
+                    PlaneError, 'ncplane_gradient')
+      end
     end
 
     # Riempie un rettangolo con mezzi blocchi "▀" a doppia risoluzione
@@ -2128,10 +2129,10 @@ module Notcurses
       corners_shape!(corners, height, width, rows_rule: false)
       raise PlaneError, 'gradient2x1 richiede un terminale UTF-8' unless @context.can_utf8?
 
-      rc = Util.check!(FFI.ncplane_gradient2x1(ptr, top, left, height, width, *corners), PlaneError,
-                       'ncplane_gradient2x1')
-      clear_region_orphans!(ptr, top, left, height, width)
-      rc
+      keep_glyphs_whole(ptr, top, left, height, width) do
+        Util.check!(FFI.ncplane_gradient2x1(ptr, top, left, height, width, *corners), PlaneError,
+                    'ncplane_gradient2x1')
+      end
     end
 
     # Sfuma i colori di un rettangolo tra i quattro angoli lasciando EGC e
@@ -2401,14 +2402,16 @@ module Notcurses
     end
 
     # true se (y, x) è una metà di glifo largo senza l'altra metà: una metà
-    # sinistra nell'ultima colonna o senza la metà destra dopo, una metà destra
-    # in colonna 0 o senza la metà sinistra prima.
+    # sinistra nell'ultima colonna, una metà destra in colonna 0 o senza la
+    # metà sinistra prima. Una metà sinistra seguita da una cella vuota non
+    # conta: dopo merge_down le metà destre hanno width 0 (ICH-481) e sono
+    # uguali a una cella vuota.
     def orphan_half?(ptr, y, x, cols)
       cell = FFI::NcCell.new
       return false if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
 
       if FFI.nccell_wide_left_p(cell)
-        x == cols - 1 || !wide_right?(ptr, y, x + 1)
+        x == cols - 1
       elsif FFI.nccell_wide_right_p(cell)
         x.zero? || !wide_left?(ptr, y, x - 1)
       else
@@ -2418,9 +2421,34 @@ module Notcurses
       FFI.nccell_release(ptr, cell)
     end
 
-    # Svuota le metà orfane ai lati del rettangolo appena riempito.
-    def clear_region_orphans!(ptr, top, left, height, width)
-      clear_orphan_halves!(ptr, top...(top + height), [left - 1, left, left + width - 1, left + width])
+    # Esegue il blocco (un riempimento C che cambia le celle una per una nel
+    # rettangolo dato) e poi svuota l'altra metà dei glifi larghi che ha
+    # coperto solo a metà. I glifi da controllare si leggono prima della
+    # chiamata: quelli a cavallo dei lati del rettangolo, o con all: true tutti
+    # quelli del piano. La pulizia gira anche se il blocco solleva: il C può
+    # fallire dopo aver già cambiato celle (egcpool pieno), e in quel caso
+    # cerca anche le metà destre orfane nel rettangolo.
+    def keep_glyphs_whole(ptr, top, left, height, width, all: false)
+      ys = top...(top + height)
+      xs = all ? (left...(left + width - 1)) : [left - 1, left + width - 1]
+      glyphs = ys.flat_map { |y| xs.select { |x| whole_glyph?(ptr, y, x) }.map { |x| [y, x] } }
+      done = false
+      rc = yield
+      done = true
+      rc
+    ensure
+      glyphs&.each do |y, x|
+        left_half = wide_left?(ptr, y, x)
+        next if left_half == wide_right?(ptr, y, x + 1)
+
+        Util.check!(FFI.ncplane_erase_region(ptr, y, left_half ? x : x + 1, 1, 1), PlaneError, 'ncplane_erase_region')
+      end
+      clear_orphan_halves!(ptr, ys, left..(left + width)) if glyphs && !done
+    end
+
+    # true se (y, x) e (y, x + 1) sono le due metà di un glifo largo.
+    def whole_glyph?(ptr, y, x)
+      x >= 0 && x + 1 < dim_x && wide_left?(ptr, y, x) && wide_right?(ptr, y, x + 1)
     end
 
     # Su uno stdplane che scorre ogni a capo ("\n" o a capo automatico) fa un
