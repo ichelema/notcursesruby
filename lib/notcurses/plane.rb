@@ -1399,6 +1399,13 @@ module Notcurses
     # i colori della cella. Se nemmeno questa riscrittura riesce, le due metà
     # del glifo diventano celle vuote.
     #
+    # +ncplane_mergedown+ copia anche ogni EGC di più di 4 byte nell'egcpool di
+    # dst senza rilasciare le copie vecchie: il pool cresceva a ogni fusione e,
+    # al limite di 16 MiB, le celle di dst restavano vuote senza errore. Il
+    # wrapper rilascia le copie vecchie, che legge dai campi privati di dst con
+    # le stesse condizioni di "Scroll" nella classe (altrimenti il pool cresce
+    # come prima).
+    #
     # @param dst [Plane] piano di destinazione, della stessa pila
     # @return [self]
     # @raise [PlaneError] se dst è il piano stesso o sta in un'altra pila, o se
@@ -1411,7 +1418,14 @@ module Notcurses
       raise PlaneError, 'merge_down: dst è il piano stesso' if target.address == ptr.address
       raise PlaneError, "merge_down: dst è in un'altra pila" unless FFI.ncpile_top(ptr).address == FFI.ncpile_top(target).address
 
+      old = pooled_gclusters(target)
       Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
+      # il C ha copiato ogni EGC nel framebuffer nuovo e ha liberato quello vecchio senza rilasciarli (ICH-482)
+      cell = FFI::NcCell.new
+      old.each do |gcluster|
+        cell[:gcluster] = gcluster
+        FFI.nccell_release(target, cell)
+      end
       restore_wide_glyphs!(target)
       # glifi larghi nuovi senza le scritture: un resize del C li può tagliare a dimensioni già controllate
       @context.tracked_plane(target.address)&.cut_glyphs_cols = nil
@@ -2466,6 +2480,16 @@ module Notcurses
       rows = st[:fb].read_bytes(st[:leny] * row)
       st[:fb].write_bytes(rows.byteslice(head..) + rows.byteslice(0, head))
       st[:logrow] = 0
+    end
+
+    # gcluster delle celle di ptr che tengono l'EGC nell'egcpool (byte alto 0x01, cell_extended_p di
+    # egcpool.h:195); [] se internals non è disponibile.
+    def pooled_gclusters(ptr)
+      st = internals(ptr)
+      return [] unless st
+
+      cells = st[:leny] * st[:lenx]
+      st[:fb].read_bytes(cells * FFI::NcCell.size).unpack("Lx#{FFI::NcCell.size - 4}" * cells).select { |g| g >> 24 == 1 }
     end
 
     # true se la cella (y, x) è la metà destra di un glifo largo.

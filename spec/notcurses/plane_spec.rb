@@ -1438,6 +1438,21 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    # ncplane_mergedown di 3.0.17 copia ogni EGC di più di 4 byte nell'egcpool di dst e libera il framebuffer
+    # vecchio senza rilasciarli (render.c:602-603): il pool cresceva a ogni merge fino al limite di 16 MiB,
+    # poi le celle restavano vuote senza errore (ICH-482).
+    it 'merge_down ripetuto lascia invariato dst con EGC lunghi (prima: vuoto dopo una quindicina di merge da 1 MB)' do
+      with_parent(rows: 1, cols: 4) do |dst|
+        src = dst.create_child(rows: 1, cols: 4)
+        dst.putstr("a#{"́" * 500_000}b", y: 0, x: 0) # un EGC di 1 MB e una "b"
+        want = dst.contents
+        40.times { src.merge_down(dst) }
+        got = dst.contents
+        expect(got.bytesize).to eq(want.bytesize) # prima: 1 ("b")
+        expect(got).to eq(want)
+      end
+    end
+
     context 'con glifi larghi' do
       def merged(text, rows: 1, cols: 6)
         dst = std.create_child(rows: rows, cols: cols)
