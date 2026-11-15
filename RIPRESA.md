@@ -6,14 +6,20 @@
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
 > `git show ad0315b:RIPRESA.md`; quello dei lotti della revisione in `git show 8a4b5f7:RIPRESA.md`.
 
-## Stato e prossimo step (aggiornato il 2026-11-15, prima del lotto 1)
+## Stato e prossimo step (aggiornato il 2026-11-15, dopo il lotto 1)
 
-- "Prima di iniziare" fatto il 2026-11-15: suite 1048 esempi, 0 fallimenti; RuboCop 0 offense; log e decisioni in
-  `memory/backlog-issue.md`.
-- Scelte dell'utente: lotti approvati con 4 cambi (già nella tabella di "Ordine di lavoro"); modello `opus`;
-  ICH-231 e ICH-457 nella fase (lotto 13); ICH-225 con audit e fix.
-- Prossimo step: lotto 1 (ICH-449, ICH-450, ICH-448, ICH-225), branch `bug/ICH-449-450-448-225-opus`.
-- Nessun lotto fatto.
+- "Prima di iniziare" fatto il 2026-11-15; scelte dell'utente: lotti approvati con 4 cambi (già nella tabella di
+  "Ordine di lavoro"); modello `opus`; ICH-231 e ICH-457 nella fase (lotto 13); ICH-225 con audit e fix.
+- Lotto 1 fatto: PR #22, merge `74deb80`; ICH-449, ICH-450, ICH-448, ICH-225 e ICH-481 (aggiunta dall'utente) a Done.
+  Log in `memory/backlog-issue.md`, esito in `RICONSEGNA.md`, sezione "Issue in Backlog".
+- `master` su `74deb80`: 1084 esempi, 0 fallimenti con i semi 1234, 4242 e 7; RuboCop 0 offense.
+- Issue nuove dal lotto 1, fuori dalla tabella dei lotti: ICH-482, ICH-483 (Fase 1, regola 1), ICH-484, ICH-485
+  (MEDIUM), ICH-486 (MEDIUM), ICH-487, ICH-488. Prima del lotto 2 chiedi all'utente se e in quale lotto metterle:
+  ICH-485 e ICH-487 toccano `plane.rb` come il lotto 2, ICH-484 il `Reader` del lotto 8.
+- Prossimo step: lotto 2 (ICH-214, ICH-215, ICH-216), branch `bug/ICH-214-215-216-opus`.
+- Note dal lotto 1: con il raise sulle letture di cella un fix ha creato due difetti (le letture di
+  `ncplane_at_yx_cell` devono restare tolleranti: egcpool pieno, piani con bitmap); i reviewer provano i casi con
+  l'egcpool pieno (EGC da 6 MB) e i piani con bitmap su un pty finto con sixel.
 
 ## Contesto
 
