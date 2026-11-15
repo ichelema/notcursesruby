@@ -2054,7 +2054,7 @@ module Notcurses
       ptr = to_ptr
       fill = line_cell!(cell)
       top, left = line_start!(y, x)
-      keep_glyphs_whole(ptr, 0, 0, dim_y, dim_x, all: true) do # la regione riempita non è nota
+      keep_glyphs_whole(ptr, 0, 0, dim_y, dim_x, all: true, long_fill: fill.egc.bytesize > 4) do # regione non nota
         rc = with_nccells(ptr, [fill]) { |nc| FFI.ncplane_polyfill_yx(ptr, top, left, nc) }
         Util.check!(rc, PlaneError, 'ncplane_polyfill_yx')
       end
@@ -2096,7 +2096,7 @@ module Notcurses
       corners = corner_values([ul, ur, ll, lr], 64)
       top, left, height, width = region!(y, x, rows, cols)
       corners_shape!(corners, height, width, rows_rule: true)
-      keep_glyphs_whole(ptr, top, left, height, width) do
+      keep_glyphs_whole(ptr, top, left, height, width, long_fill: text.bytesize > 4) do
         Util.check!(FFI.ncplane_gradient(ptr, top, left, height, width, text, Util.styles_value(styles), *corners),
                     PlaneError, 'ncplane_gradient')
       end
@@ -2351,20 +2351,21 @@ module Notcurses
       [y, x]
     end
 
-    # Copia in cell la cella (y, x) (+ncplane_at_yx_cell+). Il C duplica l'EGC
-    # nell'egcpool del piano, quindi con il pool pieno fallisce anche su
-    # coordinate valide: un PlaneError, non una cella letta come vuota (un
-    # glifo largo non visto lascerebbe una metà orfana).
-    def load_cell!(ptr, y, x, cell)
-      Util.check!(FFI.ncplane_at_yx_cell(ptr, y, x, cell), PlaneError, "ncplane_at_yx_cell(#{y}, #{x})")
-    end
-
     # true se la cella (y, x) è la metà destra di un glifo largo.
-    def wide_right?(ptr, y, x)
-      cell = FFI::NcCell.new
-      load_cell!(ptr, y, x, cell)
+    def wide_right?(ptr, y, x) = half_at(ptr, y, x) == :right
 
-      FFI.nccell_wide_right_p(cell)
+    # :left o :right se (y, x) è una metà di un glifo largo, :none se no, nil se
+    # notcurses non riesce a leggere la cella: ncplane_at_yx_cell duplica l'EGC
+    # nell'egcpool, quindi fallisce con il pool pieno (solo per gli EGC di più
+    # di 4 byte, che stanno nel pool) e sempre su un piano con un bitmap.
+    def half_at(ptr, y, x)
+      cell = FFI::NcCell.new
+      return nil if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
+
+      if FFI.nccell_wide_left_p(cell) then :left
+      elsif FFI.nccell_wide_right_p(cell) then :right
+      else :none
+      end
     ensure
       FFI.nccell_release(ptr, cell)
     end
@@ -2415,48 +2416,50 @@ module Notcurses
     # conta: dopo merge_down le metà destre hanno width 0 (ICH-481) e sono
     # uguali a una cella vuota.
     def orphan_half?(ptr, y, x, cols)
-      cell = FFI::NcCell.new
-      load_cell!(ptr, y, x, cell)
-
-      if FFI.nccell_wide_left_p(cell)
-        x == cols - 1
-      elsif FFI.nccell_wide_right_p(cell)
-        x.zero? || !wide_left?(ptr, y, x - 1)
-      else
-        false
+      case half_at(ptr, y, x)
+      when :left then x == cols - 1
+      when :right then x.zero? || !wide_left?(ptr, y, x - 1)
+      else false
       end
-    ensure
-      FFI.nccell_release(ptr, cell)
     end
 
     # Esegue il blocco (un riempimento C che cambia le celle una per una nel
     # rettangolo dato) e poi svuota l'altra metà dei glifi larghi che ha
     # coperto solo a metà. I glifi da controllare si leggono prima della
     # chiamata: quelli a cavallo dei lati del rettangolo, o con all: true tutti
-    # quelli del piano. La pulizia gira anche se il blocco solleva: il C può
-    # fallire dopo aver già cambiato celle (egcpool pieno), e in quel caso
-    # cerca anche le metà destre orfane nel rettangolo.
-    def keep_glyphs_whole(ptr, top, left, height, width, all: false)
+    # quelli del piano. Una metà sinistra che notcurses non riesce a leggere
+    # (egcpool pieno, vedi half_at) conta come glifo se la metà destra c'è.
+    # Dopo la chiamata la stessa cella illeggibile è ancora quella di prima,
+    # salvo con long_fill (il riempimento scrive un EGC di più di 4 byte, che
+    # sta nel pool): allora nel dubbio si svuotano le due metà. La pulizia gira
+    # anche se il blocco solleva: il C può fallire dopo aver già cambiato celle
+    # (egcpool pieno), e in quel caso cerca anche le metà destre orfane nel
+    # rettangolo.
+    def keep_glyphs_whole(ptr, top, left, height, width, all: false, long_fill: false)
       ys = top...(top + height)
       xs = all ? (left...(left + width - 1)) : [left - 1, left + width - 1]
-      glyphs = ys.flat_map { |y| xs.select { |x| whole_glyph?(ptr, y, x) }.map { |x| [y, x] } }
+      glyphs = ys.flat_map { |y| xs.select { |x| glyph_at?(ptr, y, x) }.map { |x| [y, x] } }
       done = false
       rc = yield
       done = true
       rc
     ensure
       glyphs&.each do |y, x|
-        left_half = wide_left?(ptr, y, x)
-        next if left_half == wide_right?(ptr, y, x + 1)
+        left_half = half_at(ptr, y, x) || (long_fill ? nil : :left)
+        right_half = half_at(ptr, y, x + 1)
+        next if left_half == :left && right_half == :right
 
-        Util.check!(FFI.ncplane_erase_region(ptr, y, left_half ? x : x + 1, 1, 1), PlaneError, 'ncplane_erase_region')
+        [(x if left_half != :none), (x + 1 if right_half == :right)].compact.each do |cx|
+          Util.check!(FFI.ncplane_erase_region(ptr, y, cx, 1, 1), PlaneError, 'ncplane_erase_region')
+        end
       end
       clear_orphan_halves!(ptr, ys, left..(left + width)) if glyphs && !done
     end
 
-    # true se (y, x) e (y, x + 1) sono le due metà di un glifo largo.
-    def whole_glyph?(ptr, y, x)
-      x >= 0 && x + 1 < dim_x && wide_left?(ptr, y, x) && wide_right?(ptr, y, x + 1)
+    # true se (y, x + 1) è una metà destra e (y, x) la sua metà sinistra, o una
+    # cella che notcurses non riesce a leggere.
+    def glyph_at?(ptr, y, x)
+      x >= 0 && x + 1 < dim_x && wide_right?(ptr, y, x + 1) && half_at(ptr, y, x) != :none
     end
 
     # Su uno stdplane che scorre ogni a capo ("\n" o a capo automatico) fa un
@@ -2474,14 +2477,7 @@ module Notcurses
     end
 
     # true se la cella (y, x) è la metà sinistra di un glifo largo.
-    def wide_left?(ptr, y, x)
-      cell = FFI::NcCell.new
-      load_cell!(ptr, y, x, cell)
-
-      FFI.nccell_wide_left_p(cell)
-    ensure
-      FFI.nccell_release(ptr, cell)
-    end
+    def wide_left?(ptr, y, x) = half_at(ptr, y, x) == :left
 
     # Cell con il contenuto di una nccell legata all'egcpool del piano ptr.
     def cell_content(ptr, cell)

@@ -591,6 +591,49 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     puts 'fine'
   RUBY
 
+  # Su un piano con un bitmap ncplane_at_yx_cell fallisce sempre (notcurses.c:274-277): i controlli dei glifi larghi
+  # leggono la cella come "non è un glifo" e i metodi funzionano come prima (fix di review di ICH-450).
+  def bitmap_plane_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [24, 80, 640, 384]
+    STDIN.reopen(slave)
+    replies = {
+      "\e[6n" => "\e[5;1R", "\e[c" => "\e[?62;4;22c", "\e[14t" => "\e[4;384;640t", "\e[18t" => "\e[8;24;80t",
+      "\e[?2;1;0S" => "\e[?2;0;640;384S", "\e[?1;1;0S" => "\e[?1;0;256S"
+    }
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        data.scan(Regexp.union(replies.keys)) { |q| master.write(replies[q]) }
+      end
+    rescue IOError, Errno::EIO
+    end
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      host = nc.stdplane.create_child(rows: 5, cols: 8)
+      rgba = "\xff".b * (64 * 64 * 4)
+      bm = Notcurses::Visual.from_rgba(rgba, rows: 64, cols: 64) { |v| v.blit(plane: host, blitter: :pixel, child: true) }
+      {at: -> { bm.at(y: 0, x: 0) }, erase_region: -> { bm.erase_region(0, 1, 1, 1) },
+       gradient: -> { bm.gradient('g', 0, 0, 0, 0, x: 1, rows: 1, cols: 1) }, polyfill: -> { bm.polyfill('x', y: 0, x: 0) }}.each do |name, op|
+        op.call
+        puts "#{name} ok"
+      rescue Notcurses::Error => e
+        puts "#{name} #{e.class}: #{e.message}"
+      end
+    end
+    puts 'fine'
+  RUBY
+
+  it 'su un piano con un bitmap at, erase_region, gradient e polyfill funzionano come prima (fix di review: PlaneError)' do
+    out, status, timed_out = run_child(bitmap_plane_script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('at ok', 'erase_region ok', 'gradient ok', 'polyfill ok', 'fine')
+    expect(status.exitstatus).to eq(0), out
+  end
+
   it 'il controllo dei bordi vale per il piano C: un glifo scritto da un secondo wrapper e tagliato non rompe la riga sotto' do
     out, status, timed_out = run_child(two_wrappers_script(1), timeout: 30)
     expect(timed_out).to be(false), out

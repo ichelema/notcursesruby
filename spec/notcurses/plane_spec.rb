@@ -1275,18 +1275,45 @@ RSpec.describe Notcurses::Plane do
         end
       end
 
-      it 'se la lettura dei glifi da tenere interi fallisce il riempimento solleva prima di cambiare il piano' do
-        # ncplane_at_yx_cell duplica l'EGC nell'egcpool: il terzo da 6 MB non ci sta e la lettura fallisce
-        egc = '漢' + ("́" * 3_000_000)
-        with_parent(rows: 2, cols: 4) do |p|
-          p.putstr(egc, y: 0, x: 0)
-          p.putstr(egc, y: 0, x: 2)
-          p.putstr('WXYZ', y: 1, x: 0)
-          [->(q) { q.erase_region(0, 2, 1, 1) }, ->(q) { q.gradient('x', 0, 0, 0, 0, x: 2, rows: 1, cols: 1) },
-            ->(q) { q.gradient2x1(0, 0, 0, 0, x: 2, rows: 1, cols: 1) }, ->(q) { q.polyfill('x', y: 0, x: 2) }].each do |fill|
-            expect { fill.call(p) }.to raise_error(Notcurses::PlaneError, /ncplane_at_yx_cell/) # prima: riusciva e lasciava la metà destra
+      # ncplane_at_yx_cell duplica l'EGC nell'egcpool: con due EGC da 6 MB nel piano la copia del terzo non ci
+      # sta, e la lettura delle celle fallisce. Prima del fix di review il glifo illeggibile non veniva tenuto intero.
+      {
+        erase_region: ->(q) { q.erase_region(0, 2, 1, 1) },
+        gradient: ->(q) { q.gradient('x', 0, 0, 0, 0, x: 2, rows: 1, cols: 1) },
+        gradient2x1: ->(q) { q.gradient2x1(0, 0, 0, 0, x: 2, rows: 1, cols: 1) },
+        polyfill: ->(q) { q.polyfill('x', y: 0, x: 2) }
+      }.each do |name, fill|
+        it "#{name} su un glifo largo che notcurses non riesce a leggere (egcpool pieno) lascia intatta la riga sotto" do
+          egc = '漢' + ("\u0301" * 3_000_000)
+          with_parent(rows: 2, cols: 4) do |p|
+            p.putstr(egc, y: 0, x: 0)
+            p.putstr(egc, y: 0, x: 2)
+            p.putstr('WXYZ', y: 1, x: 0)
+            fill.call(p)
+            p.putstr('中', y: 0, x: 2)
+            expect(p.contents(y: 1, rows: 1)).to eq('WXYZ') # prima: "XYZ"
           end
-          p.close # libera l'egcpool, prima che altre letture lo trovino pieno
+        end
+      end
+
+      it "con l'egcpool pieno dopo il riempimento la pulizia svuota lo stesso la metà orfana (prima: \"XYZ\")" do
+        # [riempimento, solleva?]: 5,2 MB ci stanno tre volte e il C riesce; con 6 MB il C si ferma a metà,
+        # con il glifo dentro il rettangolo
+        [
+          [->(p) { p.gradient('e' + ("\u0301" * 2_600_000), 0, 0, 0, 0, rows: 1, cols: 3) }, false],
+          [->(p) { p.gradient('e' + ("\u0301" * 3_000_000), 0, 0, 0, 0, rows: 1, cols: 4) }, true]
+        ].each do |fill, raises|
+          with_parent(rows: 2, cols: 4) do |p|
+            p.putstr('ab漢', y: 0, x: 0)
+            p.putstr('WXYZ', y: 1, x: 0)
+            if raises
+              expect { fill.call(p) }.to raise_error(Notcurses::PlaneError, /ncplane_gradient/)
+            else
+              expect(fill.call(p)).to eq(3)
+            end
+            p.putstr('中', y: 0, x: 2)
+            expect(p.contents(y: 1, rows: 1)).to eq('WXYZ')
+          end
         end
       end
 
