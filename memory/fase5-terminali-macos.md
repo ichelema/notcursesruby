@@ -91,3 +91,38 @@ Sixel: non provato, nessuno dei due terminali lo supporta.
 | La prima sessione manuale in Kitty esce subito con `LoadError: cannot load such file -- ffi` | una finestra aperta con `kitty @ launch` non ha l'ambiente di mise: `command -v ruby` trova il Ruby 3.4 di sistema | percorso assoluto del Ruby di mise nello script |
 | `kitty @ send-key shift+1` dà `"1"` e non `"!"` | `send-key` codifica il tasto senza il testo associato (id 49, testo `"1"`); il `TextInput` usa `eff_text`, che con il protocollo kitty viene dal testo associato | Shift+1 solo con la tastiera vera; `send-key` va bene per i modificatori |
 | Il rilascio di Ctrl+X del processo precedente arriva al processo successivo | il rilascio arriva dopo la chiusura del primo contesto e resta nel tty | atteso: `on_input` lo vede come `:release`, nessun effetto |
+
+## Parte 2 — spec grafiche (Linux), PR #20
+
+- Branch `test/fase5-linux`, PR [#20](https://github.com/ichelema/notcursesruby/pull/20), merge `4d3430a`
+  (confermato dall'utente); branch remoto cancellato.
+- Commit: `4a3a053` `refactor(util): rimuovi Util.timespec, senza chiamanti` (punto aperto 1, scelta dell'utente),
+  `523353d` `test(grafica): spec su un terminale vero in Kitty e Ghostty, solo con NC_GRAPHICS=1`.
+- File: `spec/graphics/terminal_spec.rb` (5 esempi), `spec/graphics/probe.rb` (processo figlio, modi `context`,
+  `direct`, `stream`, `signals`, `wide`), `CHANGELOG.md` («Aggiunto», «Rimosso»).
+- `kitty @` usa sempre `--to "$KITTY_LISTEN_ON"` con stdin da `/dev/null`: senza socket parlerebbe con Kitty sul tty,
+  dove legge anche il figlio di notcurses. Kitty dell'utente: `allow_remote_control yes`,
+  `listen_on unix:/tmp/kitty-{kitty_pid}` in `~/.config/kitty/userprefs.conf`.
+- L'output di RSpec va in un file con `--out`, così stdout resta il tty (con `> file` gli esempi vanno in skip).
+
+| Controllo | Esito |
+| --- | --- |
+| `NC_GRAPHICS=1 bundle exec rspec spec/graphics` in Kitty 0.50.0 | 5 esempi, 0 fallimenti, 2,9 s |
+| stessa spec in Ghostty 1.4.0 | 3 esempi verdi, 2 in skip («solo in Kitty») |
+| stessa spec senza tty (tool Bash) | 5 in skip («serve un terminale») |
+| figlio oltre il timeout (`NC_GRAPHICS_HOLD=30`, 60 s) | esempio fallito con «probe.rb context bloccato dopo 60 s»; schermo normale, cursore visibile (`kitty @ get-text --add-cursor`) |
+| suite completa, ordine normale, `rand:1234`, `rand:7` | 1046 esempi, 0 fallimenti |
+| suite completa, `rand:4242` | 1 fallimento intermittente in `spec/notcurses/context_spec.rb:358`, anche su `master` (vedi sotto) |
+| coverage | righe 98,47 %, rami 91,5 %, soglie invariate |
+| `bundle exec rubocop` | 0 offense, 99 file |
+| `yard doc --fail-on-warning`, `yard stats --list-undoc` | exit 0, 100 % |
+| `git diff b2fed69 -- lib/notcurses/ffi lib/notcurses/ffi.rb` | vuoto |
+| CI della PR | verde su 3.1.7, 3.2.11, 3.3.13, 3.4.12, 4.0.9 e Codecov; 1046 esempi e nessun pending per job |
+
+### Esempio instabile con il seme 4242
+
+`spec/notcurses/context_spec.rb:358` («getvec passa al C al massimo 8192 slot») fallisce a volte con
+`--order rand:4242`: `notcurses_getvec` riceve 2 chiamate con 8192 slot invece di 1. Succede anche su `master`
+(`0f347b5`, worktree separato, 2 volte su 2) e sul branch 1 volta su 2: non dipende dalla Fase 5. Causa non cercata:
+con stdin chiuso e l'ordine del seme 4242, il primo `getvec` del gruppo probabilmente non trova ancora l'EOF in coda
+e il wrapper ripete la chiamata. Se fallisce, ripeti la suite; nessuna issue (la Fase 5 non ha issue Linear).
