@@ -131,8 +131,9 @@ Causa confermata e spec corretta nella Parte 3 (macOS): vedi "Parte 3 — macOS"
 
 ## Parte 3 — macOS (in corso)
 
-- Data: 2026-11-15. Branch `test/fase5-macos` da `master` dopo i commit del log; 3 commit, non ancora
-  inviati né in una PR.
+- Data: 2026-11-15. Branch `test/fase5-macos` da `master` dopo i commit del log; 4 commit, PR
+  [#21](https://github.com/ichelema/notcursesruby/pull/21), CI verde su tutta la matrice e su Codecov (1047 esempi,
+  0 fallimenti, nessun pending per job). Merge non ancora fatto.
 - Hindsight: il server `127.0.0.1:8888` non risponde su questa macchina (`curl` esce con 7). Fonti: `RICONSEGNA.md`
   e i file `memory/`.
 
@@ -146,9 +147,10 @@ Causa confermata e spec corretta nella Parte 3 (macOS): vedi "Parte 3 — macOS"
 | ffmpeg | Homebrew `9.0.2_1` |
 | Ruby | 4.0.9 da frum (`/opt/homebrew/bin/frum`), Bundler 4.0.22, gem ffi 1.17.4 |
 | Compilatore | `/usr/bin/gcc` = Apple clang 21.0.0 |
-| coreutils | 9.12 da Homebrew, installato in questa sessione (`brew install coreutils`): `timeout` solo come `gtimeout`, o con `/opt/homebrew/opt/coreutils/libexec/gnubin` nel `PATH` |
-| Terminale | Ghostty 1.4.0 (`TERM=xterm-ghostty`, `TERM_PROGRAM=ghostty`, `COLORTERM=truecolor`) |
-| Kitty | non installato |
+| coreutils | 9.12_1 da Homebrew, installato in questa sessione (`brew install coreutils`): `/opt/homebrew/bin/timeout` (macOS non ha un `timeout`) e `/opt/homebrew/bin/gtimeout`; `gnubin` non serve |
+| Ghostty | 1.4.0 (`TERM=xterm-ghostty`, `TERM_PROGRAM=ghostty`, `COLORTERM=truecolor`): la sessione di Claude Code gira qui |
+| Kitty | 0.50.0, installato in questa sessione (`brew install --cask kitty`), senza file di configurazione: remote control con le opzioni `-o allow_remote_control=yes -o listen_on=unix:/tmp/kitty-nctest` |
+| Tastiera | layout con Shift+1 = `!` e Shift+2 = `@` |
 
 ### Caricamento
 
@@ -169,7 +171,10 @@ Causa confermata e spec corretta nella Parte 3 (macOS): vedi "Parte 3 — macOS"
 | branch, ordine normale, `rand:1234`, `rand:4242`, `rand:7` | 0 fallimenti, 3 esecuzioni per ordine (12 in tutto) |
 | branch, `rand:1`, `rand:31337`, `rand:99` | 0 fallimenti |
 | branch, `rand:2026` | 0 fallimenti in 61 esecuzioni; 1 blocco in un'altra esecuzione (punto aperto 1) |
+| branch, dopo il 4º commit, senza `gnubin` nel `PATH`: ordine normale, `rand:1234`, `rand:4242`, `rand:7` | 0 fallimenti |
+| coverage | righe 98,47 %, rami 91,44 %, soglie invariate |
 | `bundle exec rubocop` | 0 offense, 99 file |
+| `yard doc --fail-on-warning`, `yard stats --list-undoc`, `gem build` | exit 0, 100 %, gem costruita |
 
 Gli 11 pending hanno tutti un motivo scritto: `va_list` (1), `libc_malloc_debug` di glibc (3), `TIOCSCTTY` e `/proc`
 in `ui_pty_spec.rb` (6), quadranti di `rxvt-256color` (1, nuovo).
@@ -181,6 +186,7 @@ in `ui_pty_spec.rb` (6), quadranti di `rxvt-256color` (1, nuovo).
 | `fix(ffi): su macOS notcurses_stop rilascia il GVL` | `lib/notcurses/ffi/functions.rb`: `notcurses_stop` con `blocking: ::FFI::Platform.mac?` (cambio della Fase 1 approvato dall'utente il 2026-11-15, solo su macOS: su Linux la chiamata non cambia); spec nuova in `spec/integration/pty_spec.rb`; voce in «Corretto» di `CHANGELOG.md` |
 | `test(macos): spec portabili su macOS` | `NcHelpers::FD_DIR` e `NcHelpers.open_fd_count` (`/proc/self/fd` su Linux, `/dev/fd` su macOS) in 5 file; `osversion` con il prefisso `macOS`; U+2028 in `Reader#write` con attese per glibc e per macOS; `visual_spec.rb:673` in skip su macOS |
 | `test(contesto): aspetta l'EOF prima di contare le chiamate a notcurses_getvec` | `spec/notcurses/context_spec.rb:358` |
+| `test(macos): timeout o gtimeout nei processi figli, ls di BSD in subprocess_spec` | `NcHelpers::TIMEOUT` (`timeout`, altrimenti `gtimeout`) in 7 processi figli; `subprocess_spec.rb:88` confronta i descrittori con un `ls` di riferimento |
 
 Le attese delle spec su Linux non cambiano (regola 17). `git diff b2fed69 -- lib/notcurses/ffi lib/notcurses/ffi.rb`
 non è più vuoto: contiene solo il cambio del commit `fix(ffi)`.
@@ -192,18 +198,77 @@ non è più vuoto: contiene solo il cambio del commit `fix(ffi)`.
 | 4 esempi di `pty_spec.rb` (`:386`, `:426`, `:433`, `:442`) bloccati fino al timeout, a volte | `Context#close` → `notcurses_stop` → `tcsetattr(TCSAFLUSH)` (`notcurses.c:147`). Su macOS `TCSAFLUSH` aspetta che il master del pty legga l'output in coda; il master è letto da un thread Ruby dello stesso processo, e `notcurses_stop` teneva il GVL. Su Linux il pty non aspetta. Stack con `sample`: thread principale in `tcsetattr` → `ioctl`, thread del pty in attesa del GVL | `blocking: ::FFI::Platform.mac?` su `notcurses_stop`. Spec deterministica: il thread del pty resta fuori da `read(2)` per 0,3 s dopo l'inizio della chiusura; prima del fix 15 blocchi su 15, dopo 0 su 15 |
 | 12 esempi con `Errno::ENOENT` su `/proc/self/fd` | macOS non ha `/proc` | `/dev/fd` su macOS (`NcHelpers.open_fd_count`) |
 | `stats_spec.rb:41` | su macOS `notcurses_osversion` restituisce `macOS <versione>` (`util.c:100-108`) | attesa `macOS` su macOS, `Linux` altrove |
-| `reader_spec.rb:247`: `write("a b")` non solleva `WidgetError` | `wcwidth(U+2028)` vale 0 su macOS e -1 su glibc (`egcpool.h:130-137`): su macOS `nccell_load` legge il carattere intero e il C lo scrive | attese diverse per macOS e glibc; nessun cambio in `lib/` |
+| `reader_spec.rb:247`: `write("a\u2028b")` non solleva `WidgetError` | `wcwidth(U+2028)` vale 0 su macOS e -1 su glibc (`egcpool.h:130-137`): su macOS `nccell_load` legge il carattere intero e il C lo scrive | attese diverse per macOS e glibc; nessun cambio in `lib/` |
 | `visual_spec.rb:673`: il figlio esce con «niente quadranti» | `unix_early_matches`, che riconosce `rxvt` da `TERM`, sta dentro `#ifndef __APPLE__` (`termdesc.c:1137-1155`): su macOS `rxvt-256color` non attiva i quadranti | skip su macOS con il motivo; le guardie di ICH-272 sollevano `ArgumentError` prima del C e le provano anche le spec normali |
 | `context_spec.rb:358` con `rand:4242`: 2 chiamate a `notcurses_getvec` con 8192 slot (anche su `master`, su macOS 4 volte su 4) | con quel seme l'esempio è il primo del gruppo: l'EOF di `/dev/null` non è ancora in coda, il primo `notcurses_getvec` restituisce 0 e il wrapper ripete la chiamata (comportamento corretto) | la spec aspetta l'EOF con `get` prima di contare le chiamate; il controllo sul limite di 8192 slot resta |
-| 5 esempi con `Errno::ENOENT` su `timeout` | macOS non ha `timeout`; Homebrew lo installa come `gtimeout` | `/opt/homebrew/opt/coreutils/libexec/gnubin` nel `PATH` prima della suite |
+| 5 esempi con `Errno::ENOENT` su `timeout` | macOS non ha `timeout` | `brew install coreutils` (la 9.12 installa `timeout` e `gtimeout`); le spec usano `NcHelpers::TIMEOUT`, che prende `gtimeout` se `timeout` manca |
+| `subprocess_spec.rb:88`: `ls /dev/fd` elenca 5 descrittori, il limite era 4 | l'`ls` di macOS (BSD, con `fts`) apre 2 descrittori, l'`ls` di GNU 1. Con `gnubin` nel `PATH` la spec usava l'`ls` di GNU e passava | il limite viene da un `ls` di riferimento lanciato con `IO.popen` e `close_others: true`, che deve dare 4 o 5 voci |
 | `bundle exec rspec` fallisce con `Bundler::GemNotFound` a metà sessione | la shell è passata dal Ruby 4.0.9 di frum al Ruby 4.0.7 di mise, che non ha le gem del progetto | la cartella `bin` del Ruby di frum all'inizio del `PATH` |
+| una finestra di Kitty o Ghostty aperta dal tool Bash non ha l'ambiente della shell | Ghostty con `open -na` parte da launchd; Kitty eredita l'ambiente ma `TERM_PROGRAM=ghostty` resta quello della shell di partenza | negli script `PATH` esplicito (Ruby di frum e `/opt/homebrew/bin`); il terminale atteso della spec viene da `TERM`, che i due terminali impostano |
+| Ghostty su macOS non si avvia con `ghostty -e` dal binario | su macOS la CLI di Ghostty non apre finestre | `open -na /Applications/Ghostty.app --args --wait-after-command=true -e <script>` |
+| la finestra di Kitty si è chiusa al passo 2 delle prove interattive, senza esito | probabilmente un Ctrl+C al prompt «Premi Invio», scritto sotto le istruzioni della fase A: lo script zsh si ferma e Kitty chiude la finestra | lo script registra INT, QUIT, TSTP e HUP con un `trap` (un gestore, non un ignore, che i figli erediterebbero); finestra con `--hold`; istruzioni più chiare |
+| nella prima prova termios con `send-key` `putstr` solleva `PlaneError` (testo di 298 colonne) | difetto dello script di prova: `on_input` scriveva ogni evento in una sola riga; gli eventi erano tasti scritti nella finestra nuova, che prende il focus | lo script registra gli eventi in più nel JSON e a schermo ne mostra il numero |
+| l'attesa in background della fine delle prove non finisce mai | `pgrep -f 'interactive.sh kitty'` trova anche la riga di comando del ciclo di attesa | attesa su un file `.done` scritto dallo script |
 
-Comando della suite usato su macOS:
+Comando della suite usato su macOS (dopo `brew install coreutils`):
 
 ```sh
-export PATH="/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"
 TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 bundle exec rspec < /dev/null
 ```
+
+### Prove sul terminale vero (macOS)
+
+Le spec grafiche girano in una finestra nuova, perché il tool Bash non ha un tty. Ogni finestra esegue uno script
+dello scratchpad che scrive l'esito in un file:
+
+```sh
+# Kitty: remote control solo con le opzioni, senza file di configurazione
+kitty -o allow_remote_control=yes -o listen_on=unix:/tmp/kitty-nctest -- "$S/graphics.sh" kitty
+# Ghostty: su macOS solo con open
+open -na /Applications/Ghostty.app --args -e "$S/graphics.sh" ghostty
+# graphics.sh: NC_GRAPHICS=1 bundle exec rspec spec/graphics --format documentation --out "$S/graphics.$1.log"
+```
+
+| Voce | Kitty 0.50.0 | Ghostty 1.4.0 |
+| --- | --- | --- |
+| `NC_GRAPHICS=1 bundle exec rspec spec/graphics` | 5 esempi, 0 fallimenti, 3,6 s | 3 esempi verdi, 2 in skip («solo in Kitty»), 1,0 s |
+| stessa spec con `NC_GRAPHICS_HOLD=3` | 5 esempi, 0 fallimenti | 3 verdi, 2 in skip |
+| `detected_terminal` (`probe.rb context`) | `Kitty 0.50.0` | `ghostty 1.4.0` |
+| `pixel_support` | `kitty_animated` | `kitty_static` |
+| quadranti, sestanti, braille, semiblocchi | sì | sì |
+| ottanti | no | no |
+| `pixel_geom` (finestra di default) | 637×390 px, cella 13×7, bitmap max 637×390 | 2008×1045 px, cella 19×8, bitmap max 2008×1026 |
+| blit `:pixel`, `:quad`, `:sextant`, `:braille`, `:half`, `:ascii` | riusciti | riusciti |
+| blit `:octant` | `VisualError` (atteso con `no_degrade: true`) | `VisualError` (atteso) |
+| `Direct#render_image :pixel` (`probe.rb direct`) | riuscito, `can_pixel?` true | riuscito, `can_pixel?` true |
+| controllo a vista (utente) | 4 bande per ogni blitter, terminale pulito | 4 bande per ogni blitter, terminale pulito |
+
+- Il rischio scritto nel design (sezione 4) non si è verificato: la libc di macOS conosce U+1FB38 e notcurses lascia
+  attivi i sestanti. La tabella delle attese non serve una riga per macOS.
+- Come su Linux, in Ghostty `max_bitmap_y` vale una riga meno di `pixel_y`.
+- Kitty scrive nel suo log `Unknown terminfo property: RGB` e `CSI code 0x0 has unsupported start modifier`: sono le
+  query di notcurses all'avvio, senza effetti sulle prove.
+- Sixel: non provato, nessuno dei due terminali lo supporta.
+
+Prove interattive con la tastiera dell'utente (script `interactive.sh`, `termios.rb`, `shift.rb` dello scratchpad):
+
+| Controllo | Kitty 0.50.0 | Ghostty 1.4.0 |
+| --- | --- | --- |
+| termios, `EventLoop#run` senza opzioni | flag `isig`, `ixon` durante `run`; Ctrl+C → `:interrupt`, `on_key` non riceve niente | uguale a Kitty |
+| termios, `run(no_flow_control: true, no_linesigs: true)` | flag `-isig`, `-ixon`; `on_key` riceve Ctrl+C (ICH-455), Ctrl+Q, Ctrl+S, Ctrl+C; `x` → `:stop` | flag `-isig`, `-ixon`; `on_key` riceve Ctrl+Q, Ctrl+S, Ctrl+C; `x` → `:stop` |
+| termios, dopo `run` e dopo `Context#close` | flag `isig`, `ixon`; `stty -g` uguale a quello di prima | uguale a Kitty |
+| ICH-279, Shift+1 e Shift+2 in un `TextInput` | testo `"!@"` | testo `"!@"` |
+| ICH-280, Ctrl+C con CapsLock, NumLock e da solo | spec grafica con `send-key`: `:interrupt` | non provato (solo in Kitty) |
+| ICH-281, glifo largo nell'ultima colonna | spec grafica con `get-text`: riga che finisce con `漢` | non provato (solo in Kitty) |
+
+- termios: su macOS `tcflag_t` è `unsigned long` e IXON e ISIG hanno i valori BSD. Il terminale vero mostra i flag
+  attesi durante `run` e li ripristina alla fine: i valori di `lib/notcurses/ffi/` sono corretti su macOS.
+- ICH-455 (issue aperta in Backlog, non corretta): in Kitty il Ctrl+C della fase A arriva al `run(no_linesigs: true)`
+  della fase B, sia con `send-key` sia con la tastiera vera. In Ghostty, nella prova con la tastiera vera, no: il
+  caso dipende dai tempi.
+- Gli altri eventi che `on_input` riceve con il protocollo kitty sono il tasto Ctrl da solo (id 1115172, pressione e
+  rilascio) e i rilasci delle lettere: attesi, senza effetti.
+- Nessuna prova ha incontrato ICH-454, ICH-456 o ICH-458.
 
 ### Punti aperti
 
