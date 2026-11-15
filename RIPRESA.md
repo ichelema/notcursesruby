@@ -1,9 +1,10 @@
 # RIPRESA — prompt per la prossima sessione
 
 > Avvio: incolla questo file nella nuova sessione di Claude Code, oppure scrivi «Leggi RIPRESA.md ed esegui il
-> prompt». Scritto il 2026-11-15, dopo il merge della PR #21 (`6cc619b`, ICH-478: Parte 3 della Fase 5 su macOS).
-> Il prossimo passo è la fine della Parte 4 (sezione "Parte 4 — cosa resta"): resta la suite con i semi su
-> Linux. Il prompt
+> prompt». Scritto il 2026-11-15 su macOS, dopo il merge della PR #21 (`6cc619b`, ICH-478: Parte 3 della Fase 5),
+> per una sessione **su Linux** (macchina CachyOS dell'utente). Il lavoro da fare è la sezione "Parte 4 — cosa
+> resta": la suite con i semi su Linux e la chiusura della Fase 5. Le Parti 1, 2 e 3 sono fatte: le loro sezioni
+> restano come riferimento, non vanno rieseguite. Il prompt
 > riprende quello della Fase 5 scritto il 2026-10-27 (`git show 49732a3:RIPRESA.md`), aggiornato allo stato attuale.
 
 ## Contesto
@@ -55,8 +56,9 @@ Le fasi 1–4 e i lotti 12–17 sono stati fatti su una **VPS** Arch Linux, senz
 | Linux (CachyOS) | Kitty, Ghostty | kitty graphics (Kitty e Ghostty); niente sixel |
 | macOS | Kitty, Ghostty | kitty graphics; niente sixel |
 
-- Linux: **fatto** (Parti 1 e 2). Ambiente e risultati in `memory/fase5-terminali-macos.md`. Se la sessione parte su
-  Linux o sulla VPS e non su macOS, la Parte 3 non si può fare: dillo all'utente e fermati dopo "Prima di iniziare".
+- Linux: **fatto** (Parti 1 e 2). Ambiente e risultati in `memory/fase5-terminali-macos.md`. La Parte 4 gira su
+  Linux: checkout in `/Dati/Sviluppo/Progetti/Personali/20261027_notcursesruby`, Ruby da mise. Sulla VPS la suite
+  con i semi si può eseguire lo stesso (non serve un terminale grafico): scrivi nel log su quale macchina gira.
 - macOS: **fatto** (Parte 3). Checkout in `/Users/sphynx/Sviluppo/Progetti/Personali/20261027_notcursesruby`;
   Ruby 4.0.9 di frum in `~/.frum/versions/4.0.9/bin` (mettilo all'inizio del `PATH`: il Ruby 4.0.7 di mise non ha
   le gem); `brew install coreutils` per `timeout`; Kitty 0.50.0 e Ghostty 1.4.0 installati.
@@ -106,16 +108,18 @@ aperte in Backlog, pubblicazione della gem, job grafici in CI, Windows.
    e "Issue aperte nate dai lotti"). Leggi anche `memory/fase4-design.md` (sezione 6).
 3. Leggi `spec/integration/pty_spec.rb` (blitter `:pixel` con `Direct` su un pty finto, da `:186`) e
    `spec/integration/ui_pty_spec.rb` (pty come terminale di controllo).
-4. Controlla `git status` e `git log --oneline -3`: working tree pulito, su `4d3430a` o dopo. Il repository è privato:
-   serve l'accesso a GitHub per `git pull`.
+4. Esegui `git pull --ff-only` su `master`, poi controlla `git status` e `git log --oneline -3`: working tree pulito,
+   con il merge `6cc619b` nella storia. Il repository è privato: serve l'accesso a GitHub. Se esiste ancora il branch
+   locale `test/fase5-linux` o `test/fase5-macos`, è già unito: chiedi all'utente prima di eliminarlo.
 5. Controlla l'ambiente e scrivilo nel log: `uname -a`, `echo $TERM $TERM_PROGRAM $COLORTERM $KITTY_WINDOW_ID`,
    versione di notcurses (`pkg-config --modversion notcurses` o il pacchetto), Ruby (`ruby -v`), dove sono le
    librerie (`ldconfig -p | grep notcurses` su Linux, `ls "$(brew --prefix)/lib" | grep notcurses` su macOS).
 6. Il submodule `notcurses/` serve alle spec delle immagini: `git submodule update --init --depth 1 notcurses`.
 7. Esegui `bundle install`, la suite completa e `bundle exec rubocop` (comandi in "Comandi"): 1048 esempi, 0
-   fallimenti; 0 offense.
-8. Leggi `memory/fase5-design.md` (sezioni 2 e 4) e `memory/fase5-terminali-macos.md` (soprattutto "Problemi e
-   soluzioni"), poi `spec/graphics/terminal_spec.rb` e `spec/graphics/probe.rb`.
+   fallimenti; 0 offense. Su Linux i pending attesi sono 0 (in CI nessun job ne ha).
+8. Leggi la sezione "Fase 5" di `RICONSEGNA.md` e, in `memory/fase5-terminali-macos.md`, la sezione "Parte 3 —
+   macOS" ("Cambi sul branch", "Problemi e soluzioni", "Punti aperti"). Per la Parte 4 i passi 2, 3 e 5 servono
+   solo come riferimento: del passo 5 scrivi nel log `uname -a`, `ruby -v` e la versione di notcurses.
 
 ## Regole vincolanti
 
@@ -194,17 +198,32 @@ Non scrivere codice della Parte 2 nel repository prima dell'approvazione.
 - Suite completa dopo ogni cambio, in ordine normale e con i semi; `bundle exec rubocop` prima della PR.
 - Apri la PR, aspetta la CI (`gh pr checks <n> --watch`), poi chiedi il merge all'utente.
 
-## Parte 4 — cosa resta
+## Parte 4 — cosa resta (su Linux)
 
-Fatto il 2026-11-15: merge della PR #21 (branch eliminato), sezione "Fase 5" di `RICONSEGNA.md`, README, log,
-retain in Hindsight (10 fatti); su macOS coverage 98,47 %, YARD al 100 %, `gem build` riuscito.
+Fatto il 2026-11-15 su macOS: merge della PR #21 (branch eliminato), sezione "Fase 5" di `RICONSEGNA.md`, README,
+log, retain in Hindsight (10 fatti). Controllato su `master` (`05593d1`) su macOS: coverage righe 98,47 % (file più
+basso 93,42 %), YARD al 100 %, `gem build` senza warning con il README nuovo. CI verde sul merge `6cc619b`.
 
-1. **Linux (CachyOS):** suite completa in ordine normale e con `rand:1234`, `rand:4242`, `rand:7`. La PR #21 cambia
-   anche le spec di Linux, e la CI copre solo l'ordine casuale. Scrivi l'esito nel log.
-2. **ICH-478:** controlla in Linear che la issue sia a Done dopo il merge e che mostri la PR #21.
-3. **Punto aperto:** blocco raro in `Context#close` su macOS (`pthread_join`, 1 volta su 62 con `rand:2026`), causa
-   non trovata: log, "Punti aperti". Chiedi all'utente se aprire una issue.
-4. **Chiusura:** proponi il passo successivo e chiedi all'utente se scrivere qui il prompt della fase dopo.
+1. **Suite con i semi su Linux.** La PR #21 cambia anche le spec di Linux (`NcHelpers::FD_DIR`,
+   `NcHelpers::TIMEOUT`, `subprocess_spec.rb:88`, `context_spec.rb:358`, 2 esempi nuovi in `pty_spec.rb`), e la CI
+   copre solo l'ordine casuale. Esegui la suite in ordine normale e con `rand:1234`, `rand:4242`, `rand:7`
+   (comandi in "Comandi"): attesi 1048 esempi, 0 fallimenti per ogni ordine.
+   - `context_spec.rb:358` con `rand:4242` ora deve passare sempre (prima falliva a volte): eseguilo 3 volte.
+   - Su Linux `notcurses_stop` tiene il GVL come prima (`blocking: ::FFI::Platform.mac?` vale `false`) e
+     `Context#stop_notcurses` chiama il C direttamente: i 2 esempi nuovi di `pty_spec.rb` passano anche senza il fix.
+   - Un fallimento nuovo segue la regola 11. `pty_spec.rb:173` resta instabile ("Note pratiche").
+2. **Altri controlli su Linux** (sezione "Controlli finali"): coverage, `bundle exec rubocop`, `yard doc
+   --fail-on-warning`, `yard stats --list-undoc`, `gem build`. Facoltativo: `NC_GRAPHICS=1 bundle exec rspec
+   spec/graphics` in Kitty, perché le spec grafiche non sono cambiate dopo la PR #20.
+3. **Log e `RICONSEGNA.md`:** scrivi l'esito in `memory/fase5-terminali-macos.md` (sezione nuova "Parte 4") e togli
+   il punto 1 da "Cosa serve alla fase successiva" della sezione "Fase 5" di `RICONSEGNA.md`. Commit di sola
+   documentazione su `master`, con `[skip ci]`.
+4. **ICH-478:** controlla in Linear che la issue sia a Done dopo il merge e che mostri la PR #21.
+5. **Punto aperto:** blocco raro in `Context#close` su macOS (`pthread_join`, 1 volta su 62 con `rand:2026`), causa
+   non trovata: log, "Punti aperti". Su Linux non si può riprodurre. Chiedi all'utente se aprire una issue.
+6. **Hindsight:** recall all'inizio; alla fine retain dell'esito della Parte 4, se il server risponde.
+7. **Chiusura:** proponi il passo successivo e chiedi all'utente se scrivere qui il prompt della fase dopo.
+   Candidate: la causa del blocco raro su macOS, le issue in Backlog (punto aperto 2), la pubblicazione della gem.
 
 ## Parte 3 — macOS (fatta: PR #21, merge `6cc619b`)
 
