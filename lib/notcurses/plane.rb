@@ -381,7 +381,11 @@ module Notcurses
     # scrittura successiva su quella cella andrebbe oltre la riga (oltre il
     # framebuffer, sull'ultima riga). Lo stesso vale per i resize che fa il C:
     # lo stdplane quando il terminale si restringe e i figli con
-    # resize: :maximize; lì la cella si svuota alla prima scrittura sul piano.
+    # resize: :maximize; lì la cella si svuota alla prima scrittura sul piano,
+    # se le colonne sono cambiate dall'ultimo controllo. Lo stato del controllo
+    # vale per il piano C: lo tiene il Plane tracciato del piano, e i Plane presi
+    # in prestito (tracked: false) usano il suo; senza un Plane tracciato aperto
+    # ogni scrittura controlla i bordi.
     #
     # @param rows [Integer] nuove righe, >= 1
     # @param cols [Integer] nuove colonne, >= 1
@@ -1326,7 +1330,7 @@ module Notcurses
 
       Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
       # glifi larghi nuovi senza le scritture: un resize del C li può tagliare a dimensioni già controllate
-      [dst, @context.tracked_plane(target.address)].compact.each { |plane| plane.forget_cut_glyphs! }
+      @context.tracked_plane(target.address)&.cut_glyphs_cols = nil
       self
     end
 
@@ -2369,11 +2373,17 @@ module Notcurses
     # gradient2x1 e polyfill su una sola metà) le svuotano quei metodi.
     def clear_cut_glyphs!(ptr, force: false)
       rows, cols = dims
-      return if !force && @cut_glyphs_cols == cols
+      owner = cut_glyphs_owner
+      return if !force && owner&.cut_glyphs_cols == cols
 
       clear_orphan_halves!(ptr, 0...rows, [0, cols - 1])
-      @cut_glyphs_cols = cols
+      owner&.cut_glyphs_cols = cols
     end
+
+    # Plane che tiene lo stato di clear_cut_glyphs! per il piano C (ICH-448):
+    # quello tracciato, l'unico per piano nel registro del contesto. nil se il
+    # piano C non ha un Plane tracciato aperto: allora non c'è una cache.
+    def cut_glyphs_owner = @generation.nil? ? self : @context.tracked_plane(address)
 
     # Svuota le metà orfane dei glifi larghi nelle colonne xs delle righe ys
     # (colonne fuori dal piano ignorate). ncplane_put di 3.0.17 scrive fuori
@@ -2749,9 +2759,10 @@ module Notcurses
     # @return [Integer] generazione del contesto alla creazione del wrapper
     attr_reader :born
 
-    # La prossima scrittura controlla di nuovo i bordi (vedi clear_cut_glyphs!).
-    # @return [nil]
-    def forget_cut_glyphs! = (@cut_glyphs_cols = nil)
+    # Colonne dell'ultimo controllo dei bordi (vedi clear_cut_glyphs!); nil =
+    # la prossima scrittura controlla di nuovo.
+    # @return [Integer, nil]
+    attr_accessor :cut_glyphs_cols
   end
 
   # Fotografia dei colori di un piano per una dissolvenza passo per passo

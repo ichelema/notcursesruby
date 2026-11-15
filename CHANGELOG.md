@@ -29,6 +29,11 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 - `Plane#erase_region`, `#gradient`, `#gradient2x1` e `#polyfill` su una sola metà di un glifo largo svuotano anche
   l'altra metà. Prima la metà orfana restava, e una scrittura larga vicina cancellava la prima cella della riga dopo,
   o sull'ultima riga scriveva fuori dal piano e corrompeva l'heap (ICH-450).
+- Il controllo delle metà orfane dopo i resize fatti da notcurses vale per il piano C, non per il singolo `Plane`: un
+  `Plane` preso in prestito (`tracked: false`) usa lo stato del `Plane` tracciato dello stesso piano, e senza un
+  `Plane` tracciato controlla i bordi a ogni scrittura. Prima un glifo largo scritto da un secondo wrapper e tagliato
+  da un resize del terminale sfuggiva al controllo del primo, e la sua scrittura successiva cancellava la prima cella
+  della riga sotto o, sull'ultima riga, corrompeva l'heap (ICH-448).
 - macOS: `Context#close` rilascia il GVL durante `notcurses_stop`, che con `tcsetattr(TCSAFLUSH)` aspetta che il
   terminale legga l'output in coda. Prima un terminale servito da un thread dello stesso processo (per esempio un
   pty nei test) bloccava la chiusura per sempre. Un'eccezione asincrona (`Thread#raise`, `Timeout`) per il thread

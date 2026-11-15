@@ -554,4 +554,56 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(out).to include('stdplane 4x11', 'fine')
     expect(status.exitstatus).to eq(0), out
   end
+
+  # Due wrapper dello stesso stdplane (ICH-448): A (lo stdplane tracciato)
+  # controlla i bordi a 3x12, B (preso in prestito) scrive il glifo largo a
+  # 3x13, poi il terminale torna a 12 colonne e taglia il glifo. Prima del fix
+  # lo stato del controllo era solo di A, che a 12 colonne non rileggeva i bordi:
+  # la scrittura di A sulla metà orfana cancellava la prima cella della riga sotto
+  # (sull'ultima riga scriveva fuori dal framebuffer).
+  def two_wrappers_script(row) = "ROW = #{row}\n" + <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [3, 12]
+    STDIN.reopen(slave)
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        data.scan(/\e\[6n|\e\[c/) { |q| master.write(q == "\e[6n" ? "\e[1;1R" : "\e[?62;22c") }
+      end
+    rescue IOError, Errno::EIO
+    end
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      std = nc.stdplane
+      b = Notcurses::Plane.new(std.to_ptr, owned: false, context: nc, tracked: false)
+      std.putstr('WXYZ', y: 2, x: 0)
+      slave.winsize = [3, 13]
+      nc.refresh
+      b.putstr('漢', y: ROW, x: 11)
+      slave.winsize = [3, 12]
+      nc.refresh
+      std.putstr('x', y: ROW, x: 11)
+      puts "riga 2 #{std.contents(y: 2, rows: 1).inspect}"
+    end
+    puts 'fine'
+  RUBY
+
+  it 'il controllo dei bordi vale per il piano C: un glifo scritto da un secondo wrapper e tagliato non rompe la riga sotto' do
+    out, status, timed_out = run_child(two_wrappers_script(1), timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('riga 2 "WXYZ"', 'fine')
+    expect(status.exitstatus).to eq(0), out
+  end
+
+  it "il glifo tagliato sull'ultima riga, scritto da un secondo wrapper, non corrompe l'heap (prima: abort di glibc)" do
+    skip 'serve libc_malloc_debug di glibc' unless File.exist?('/usr/lib/libc_malloc_debug.so.0')
+    env = {'LD_PRELOAD' => '/usr/lib/libc_malloc_debug.so.0', 'MALLOC_CHECK_' => '3'}
+    out, status, timed_out = run_child(two_wrappers_script(2), timeout: 30, env: env)
+    expect(timed_out).to be(false), out
+    expect(out).to include('fine')
+    expect(status.exitstatus).to eq(0), out
+  end
 end
