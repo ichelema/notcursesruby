@@ -647,6 +647,129 @@ RSpec.describe Notcurses::Plane do
         expect { odd.rotate_cw }.to raise_error(Notcurses::PlaneError)
       end
     end
+
+    # Dopo uno scroll notcurses 3.0.17 tiene la prima riga del piano nella riga
+    # logrow del framebuffer, e poi usa le righe del framebuffer in ncplane_dup,
+    # nei resize, in rotate e in mergedown: prima del fix le righe risultavano
+    # permutate o perse (ICH-214).
+    context 'dopo uno scroll (logrow di notcurses 3.0.17)' do
+      def rows_of(plane) = Array.new(plane.dim_y) { |y| plane.contents(y: y, rows: 1) }
+
+      # Piano 4x6 che ha fatto scroll due volte: restano le righe r2, r3, r4 e r5.
+      def with_scrolled(**opts)
+        with_parent(rows: 4, cols: 6, vscroll: true, **opts) do |p|
+          p.putstr((0..5).map { |i| "r#{i}" }.join("\n"))
+          yield p
+        end
+      end
+
+      it 'resize con la stessa larghezza tiene le righe in ordine (prima: righe vuote in mezzo, o una riga persa)' do
+        with_scrolled do |p|
+          p.resize(6, 6)
+          expect(rows_of(p)).to eq(['r2', 'r3', 'r4', 'r5', '', ''])
+        end
+        with_scrolled do |p|
+          p.resize(3, 6)
+          expect(rows_of(p)).to eq(%w[r2 r3 r4])
+        end
+      end
+
+      it 'resize con un\'altra larghezza, resize_region e resize_maximize tengono le righe in ordine (prima: ruotate)' do
+        with_scrolled do |p|
+          p.resize(4, 8)
+          expect(rows_of(p)).to eq(%w[r2 r3 r4 r5])
+          p.resize(3, 4)
+          expect(rows_of(p)).to eq(%w[r2 r3 r4])
+        end
+        with_scrolled do |p|
+          p.resize_region(rows: 2, cols: 6, keep_y: 1, keep_rows: 2, keep_cols: 6)
+          expect(rows_of(p)).to eq(%w[r3 r4])
+        end
+        with_scrolled do |p|
+          p.resize_maximize
+          expect(rows_of(p).first(5)).to eq(['r2', 'r3', 'r4', 'r5', ''])
+        end
+      end
+
+      it 'i resize fatti da notcurses tengono le righe in ordine: autogrow e un figlio resize: :maximize' do
+        with_scrolled do |p|
+          p.autogrow = true
+          p.putstr("\nNEW")
+          expect(rows_of(p)).to eq(%w[r2 r3 r4 r5 NEW]) # prima: r2, r3, "", r4, NEW
+        end
+        with_parent do |parent|
+          child = parent.create_child(rows: 4, cols: 6, vscroll: true, resize: :maximize)
+          child.putstr((0..5).map { |i| "r#{i}" }.join("\n"))
+          parent.resize(11, 21) # il C chiama ncplane_resize_maximize sul figlio
+          expect(child.dims).to eq(nc.dims)
+          expect(rows_of(child).first(5)).to eq(['r2', 'r3', 'r4', 'r5', '']) # prima: r4, r5, "", ...
+        end
+      end
+
+      it 'merge_down su un dst che ha fatto scroll scrive sulle righe giuste (prima: "S" sulla terza riga)' do
+        with_scrolled do |dst|
+          src = std.create_child(rows: 4, cols: 6, y: dst.y, x: dst.x)
+          src.putstr('S', y: 0, x: 5)
+          src.merge_down(dst)
+          src.close
+          expect(rows_of(dst)).to eq(%w[r2S r3 r4 r5])
+        end
+      end
+
+      # Celle di un piano 2x4 con le righe "█   " e " ▀  " dopo la rotazione.
+      def rotated_cells(rotate, scroll:)
+        with_parent(rows: 2, cols: 4, vscroll: true) do |p|
+          p.set_fg_rgb24(0xff0000).set_bg_rgb24(0x0000ff)
+          if scroll
+            p.putstr("xxxx\n█   \n ▀  ")
+          else
+            p.putstr('█   ', y: 0, x: 0)
+            p.putstr(' ▀  ', y: 1, x: 0)
+          end
+          p.public_send(rotate)
+          Array.new(p.dim_y) { |y| Array.new(p.dim_x) { |x| p.at(y: y, x: x) } }
+        end
+      end
+
+      it 'rotate_cw e rotate_ccw danno lo stesso risultato di un piano con le stesse righe e senza scroll' do
+        expect(rotated_cells(:rotate_cw, scroll: true)).to eq(rotated_cells(:rotate_cw, scroll: false))
+        expect(rotated_cells(:rotate_ccw, scroll: true)).to eq(rotated_cells(:rotate_ccw, scroll: false))
+      end
+
+      {
+        'putstr' => ->(p) { p.putstr("\nzz") },
+        'putegc' => ->(p) { p.putegc('z') },
+        'putc' => ->(p) { p.putc(Notcurses::Cell.new(egc: 'z')) },
+        'hline' => ->(p) { p.hline('-', 5, y: 2, x: 0) },
+        'scrollup' => ->(p) { p.scrollup(lines: 1) },
+        'scrollup_child' => ->(p) { p.scrollup_child(p.create_child(rows: 2, cols: 2, y: 2)) }
+      }.each do |name, scroll|
+        it "duplicate copia le righe in ordine dopo uno scroll fatto da #{name} (prima: ruotate)" do
+          with_parent(rows: 3, cols: 4, vscroll: true) do |p|
+            p.putstr('aaaa', y: 0, x: 0)
+            p.putstr('bbbb', y: 1, x: 0)
+            p.putstr('cccc', y: 2, x: 0) # cursore a fine piano
+            scroll.call(p)
+            expect(rows_of(p).first).to eq('bbbb')
+            expect(rows_of(p.duplicate)).to eq(rows_of(p))
+          end
+        end
+      end
+
+      it 'senza un layout di ncplane verificato non tocca i campi privati: resta il bug di notcurses' do
+        with_parent(rows: 3, cols: 4, vscroll: true) do |p|
+          allow(Notcurses).to receive(:lib_version_components).and_return([3, 0, 16, 0])
+          p.putstr("a\nb\nc\nd")
+          expect(rows_of(p.duplicate)).to eq(%w[d b c])
+        end
+        with_parent(rows: 3, cols: 4, vscroll: true) do |p|
+          allow(Notcurses).to receive(:lib_version_components).and_call_original
+          allow(Notcurses::FFI).to receive(:ncplane_autogrow_p).and_return(true) # diverso dal campo privato
+          p.putstr("a\nb\nc\nd")
+          expect(rows_of(p.duplicate)).to eq(%w[d b c])
+        end
+      end
+    end
   end
 
   describe 'cursore' do

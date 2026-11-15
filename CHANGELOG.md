@@ -22,6 +22,14 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- Un piano che ha fatto scroll tiene le righe nell'ordine in cui si vedono in `Plane#duplicate`, in `#resize`,
+  `#resize_region` e `#resize_maximize`, in `#rotate_cw` e `#rotate_ccw`, come destinazione di `#merge_down` e nelle
+  dissolvenze (`FadeContext`, `#fadeout`, `#fadein`, `#pulse`); anche nei resize che fa notcurses: lo stdplane quando
+  cambia il terminale, i figli con `resize: :maximize`, la crescita per autogrow. Prima notcurses 3.0.17 permutava o
+  perdeva righe (`logrow`). Il wrapper rimette in ordine le righe subito dopo ogni sua chiamata che fa scorrere il
+  piano, scrivendo nei campi privati del piano C: lo fa solo con la libreria 3.0.17, altrimenti il bug resta. Non
+  corregge gli scroll fatti con le funzioni di `Notcurses::FFI`, né il resize del terminale visto dal render che
+  notcurses esegue dentro lo scroll di uno stdplane che scorre (ICH-214).
 - Le stringhe e i buffer allocati da notcurses (`Plane#at`, `Plane#name`, `Plane#as_rgba`, `Context#stats`,
   `Context#at`, `detected_terminal`, `Notcurses.hostname` e gli altri) si liberano con la `free` di notcurses. Prima
   il wrapper usava la `free` di glibc anche quando `LD_PRELOAD` mette un altro allocatore (jemalloc, tcmalloc,

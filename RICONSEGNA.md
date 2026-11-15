@@ -270,12 +270,16 @@ corto e sicuro, altrimenti si documenta nel YARD. I più importanti:
   `notcurses_get` con il GVL: `FdPlane`, `Subprocess` e le attese dell'input sono in Ruby;
 - **segnali**: `NCOPTION_NO_QUIT_SIGHANDLERS` e `NCOPTION_NO_WINCH_SIGHANDLER` per default (con i gestori di notcurses
   Ctrl-C termina Ruby senza `ensure` e SIGWINCH resta bloccato per sempre; dopo la review solo nel thread interno
-  dell'init, vedi il punto 2 di "Cosa serve alla Fase 3").
+  dell'init, vedi il punto 2 di "Cosa serve alla Fase 3");
+- **righe permutate o perse dopo uno scroll** (`logrow`) in `duplicate`, nei resize (anche quelli del C: stdplane,
+  figli con `:maximize`, autogrow), in `rotate_*`, nel merge sulla destinazione e in `FadeContext`: dopo ogni
+  chiamata che può far scorrere il piano il wrapper rimette in ordine le righe del framebuffer e azzera `logrow`,
+  nei campi privati di `struct ncplane` (solo con la libreria 3.0.17, altrimenti il bug resta) (aggirato con
+  ICH-214, nel lotto 2 delle issue in Backlog).
 
-Bug noti **non** aggirati (documentati nel YARD): dopo il primo scroll di un piano `duplicate`, i resize (anche
-l'autogrow), `rotate_*`, il merge sulla destinazione e `FadeContext` permutano o perdono righe (`logrow`);
-`ncvisual_from_palidx` non usa i colori della palette; `ncvisual_rotate` perde la prima riga e la prima colonna;
-Backspace del reader non cancella la colonna 0; l'intestazione di `Tabbed` non segue il resize.
+Bug noti **non** aggirati (documentati nel YARD): `ncvisual_from_palidx` non usa i colori della palette;
+`ncvisual_rotate` perde la prima riga e la prima colonna; Backspace del reader non cancella la colonna 0;
+l'intestazione di `Tabbed` non segue il resize.
 
 ### API volutamente non wrappate
 
@@ -316,8 +320,9 @@ Reimplementate in Ruby (stessa funzionalità, senza i bug): `ncreel`/`nctablet` 
    `Subprocess` che passano i dati con una `Queue`). Su Ruby 3.1 un `kill` o un `Thread#raise` rimandato nel blocco
    di un `FdPlane` o di un `Subprocess` arriva anche a `String#grapheme_clusters`, quindi anche dentro i metodi di
    testo del wrapper (vedi "Ruby 3.1" nella sezione della review).
-5. **Bug `logrow` dopo lo scroll** (non aggirato): evitare `duplicate`, resize e `rotate` sui piani che hanno fatto
-   scroll, oppure ricrearli.
+5. **Bug `logrow` dopo lo scroll (aggirato con ICH-214).** `duplicate`, i resize e `rotate` tengono le righe in
+   ordine anche sui piani che hanno fatto scroll. Restano fuori gli scroll fatti con `Notcurses::FFI` e il resize
+   del terminale visto dal render dentro lo scroll di uno stdplane che scorre.
 6. **GVL nella Fase 1 (risolto il 2026-10-26).** `notcurses_init`, `notcurses_core_init`, `ncdirect_init`,
    `ncdirect_core_init`, `ncdirect_cursor_yx`, `ncdirect_cursor_move_yx`, `ncdirect_readline`, `ncvisual_stream` e,
    dalla review, `ncdirect_render_image` e `ncdirect_raster_frame` (con il blitter `:pixel`, o un allineamento su un
