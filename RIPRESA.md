@@ -218,7 +218,7 @@ basso 93,42 %), YARD al 100 %, `gem build` senza warning con il README nuovo. CI
 3. **Log e `RICONSEGNA.md`:** scrivi l'esito in `memory/fase5-terminali-macos.md` (sezione nuova "Parte 4") e togli
    il punto 1 da "Cosa serve alla fase successiva" della sezione "Fase 5" di `RICONSEGNA.md`. Commit di sola
    documentazione su `master`, con `[skip ci]`.
-4. **ICH-478:** controlla in Linear che la issue sia a Done dopo il merge e che mostri la PR #21.
+4. **ICH-478:** fatto il 2026-11-15: la issue è a Done (chiusa dal merge) e mostra la PR #21.
 5. **Punto aperto:** blocco raro in `Context#close` su macOS (`pthread_join`, 1 volta su 62 con `rand:2026`), causa
    non trovata: log, "Punti aperti". Su Linux non si può riprodurre. Chiedi all'utente se aprire una issue.
 6. **Hindsight:** recall all'inizio; alla fine retain dell'esito della Parte 4, se il server risponde.
