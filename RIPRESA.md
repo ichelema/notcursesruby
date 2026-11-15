@@ -1,8 +1,8 @@
 # RIPRESA — prompt per la prossima sessione
 
 > Avvio: incolla questo file nella nuova sessione di Claude Code, oppure scrivi «Leggi RIPRESA.md ed esegui il
-> prompt». Scritto il 2026-11-15, con il repository dopo `b2fed69` (fine delle correzioni della revisione del
-> 2026-11-06), per una sessione sulla macchina dell'utente (Linux e macOS, terminali Kitty e Ghostty). Il prompt
+> prompt». Scritto il 2026-11-15, con il repository dopo `4d3430a` (merge della PR #20: Parti 1 e 2 della Fase 5 fatte
+> su Linux), per una sessione **su macOS** (terminali Kitty e Ghostty): il prossimo passo è la Parte 3. Il prompt
 > riprende quello della Fase 5 scritto il 2026-10-27 (`git show 49732a3:RIPRESA.md`), aggiornato allo stato attuale.
 
 ## Contesto
@@ -17,7 +17,10 @@
   complete. Dettagli nelle sezioni omonime di `RICONSEGNA.md`.
 - **Correzioni della revisione del 2026-11-06:** chiuse. 17 lotti, PR #2…#19 (PR #16 = ICH-465, RuboCop), 45 issue a
   Done. Dettagli in `RICONSEGNA.md` ("Correzioni della revisione del 2026-11-06") e in `memory/correzioni-review.md`.
-- **Stato al `b2fed69`:** 1046 esempi, 0 fallimenti; `bundle exec rubocop` 0 offense (97 file). Soglie di coverage:
+- **Fase 5, Parti 1 e 2 (Linux):** fatte il 2026-11-15. Design approvato in `memory/fase5-design.md`, log in
+  `memory/fase5-terminali-macos.md`. PR #20 (merge `4d3430a`): spec grafiche in `spec/graphics/` (solo con
+  `NC_GRAPHICS=1` in Kitty o Ghostty) e rimozione di `Util.timespec`.
+- **Stato al `4d3430a`:** 1046 esempi, 0 fallimenti; `bundle exec rubocop` 0 offense (99 file). Soglie di coverage:
   98 % totale, 90 % per file, layer FFI escluso.
 - **CI:** container `archlinux:base` fissato per digest, pacchetti dello snapshot `2026/10/26` dell'Arch Linux Archive
   (`notcurses 3.0.17-3`, `ffmpeg 2:9.0.2-2`), Ruby da mise, matrice 3.1.7, 3.2.11, 3.3.13, 3.4.12, 4.0.9. Lo step
@@ -29,8 +32,7 @@
 
 ### Punti aperti
 
-1. **`Util.timespec`** (`lib/notcurses/util.rb:365`): ancora codice morto, senza chiamanti. Chiedi all'utente se
-   rimuoverlo; la rimozione è un cambio di `lib/` approvato dall'utente, non della regola 11.
+1. **`Util.timespec`:** rimosso nella PR #20 (scelta dell'utente del 2026-11-15). Punto chiuso.
 2. **Issue in Backlog:** ICH-441, ICH-448, ICH-449, ICH-450, ICH-454, ICH-455, ICH-456, ICH-457, ICH-458, ICH-459,
    ICH-460, ICH-461, ICH-463, ICH-464, ICH-469, ICH-470, ICH-473, ICH-474, ICH-475 (elenco in `RICONSEGNA.md`,
    "Issue aperte nate dai lotti"), più ICH-214…ICH-232. **Restano fuori dalla Fase 5** (scelta dell'utente del
@@ -49,10 +51,8 @@ Le fasi 1–4 e i lotti 12–17 sono stati fatti su una **VPS** Arch Linux, senz
 | Linux (CachyOS) | Kitty, Ghostty | kitty graphics (Kitty e Ghostty); niente sixel |
 | macOS | Kitty, Ghostty | kitty graphics; niente sixel |
 
-- Linux: checkout in `/Dati/Sviluppo/Progetti/Personali/20261027_notcursesruby` (CachyOS, x86_64), notcurses
-  3.0.17-3.1 nella build `x86_64_v4` di CachyOS (la CI usa la build generica 3.0.17-3), Ruby 4.0.7 da mise. Controlla
-  questi dati all'inizio. Se la sessione parte sulla VPS (`TERM=xterm-256color`, `TERM_PROGRAM` vuoto, nessun
-  `KITTY_WINDOW_ID`), le prove grafiche non si possono fare: dillo all'utente e fermati dopo "Prima di iniziare".
+- Linux: **fatto** (Parti 1 e 2). Ambiente e risultati in `memory/fase5-terminali-macos.md`. Se la sessione parte su
+  Linux o sulla VPS e non su macOS, la Parte 3 non si può fare: dillo all'utente e fermati dopo "Prima di iniziare".
 - macOS: versione, architettura (Apple Silicon o Intel) e percorso del checkout non sono noti: controllali e
   scrivili nel log.
 - Sixel resta non provato (nessuno dei due terminali lo supporta): scrivilo nei risultati.
@@ -100,7 +100,7 @@ aperte in Backlog, pubblicazione della gem, job grafici in CI, Windows.
    e "Issue aperte nate dai lotti"). Leggi anche `memory/fase4-design.md` (sezione 6).
 3. Leggi `spec/integration/pty_spec.rb` (blitter `:pixel` con `Direct` su un pty finto, da `:186`) e
    `spec/integration/ui_pty_spec.rb` (pty come terminale di controllo).
-4. Controlla `git status` e `git log --oneline -3`: working tree pulito, su `b2fed69` o dopo. Il repository è privato:
+4. Controlla `git status` e `git log --oneline -3`: working tree pulito, su `4d3430a` o dopo. Il repository è privato:
    serve l'accesso a GitHub per `git pull`.
 5. Controlla l'ambiente e scrivilo nel log: `uname -a`, `echo $TERM $TERM_PROGRAM $COLORTERM $KITTY_WINDOW_ID`,
    versione di notcurses (`pkg-config --modversion notcurses` o il pacchetto), Ruby (`ruby -v`), dove sono le
@@ -108,7 +108,8 @@ aperte in Backlog, pubblicazione della gem, job grafici in CI, Windows.
 6. Il submodule `notcurses/` serve alle spec delle immagini: `git submodule update --init --depth 1 notcurses`.
 7. Esegui `bundle install`, la suite completa e `bundle exec rubocop` (comandi in "Comandi"): 1046 esempi, 0
    fallimenti; 0 offense.
-8. Chiedi all'utente il punto aperto 1 (`Util.timespec`).
+8. Leggi `memory/fase5-design.md` (sezioni 2 e 4) e `memory/fase5-terminali-macos.md` (soprattutto "Problemi e
+   soluzioni"), poi `spec/graphics/terminal_spec.rb` e `spec/graphics/probe.rb`.
 
 ## Regole vincolanti
 
@@ -150,7 +151,9 @@ dai lotti delle correzioni.
     con le virgolette doppie); `.rubocop_todo.yml` non va rigenerato per far passare codice nuovo.
 20. Ogni file nuovo ha l'intestazione di due righe (`# Generated from notcurses 3.0.17` e `# Source: ...`).
 
-## Parte 1 — ambiente, prove grafiche su Linux e design
+## Parte 1 — ambiente, prove grafiche su Linux e design (fatta il 2026-11-15)
+
+Risultati, controlli dei lotti 3, 7 e 9 e problemi: `memory/fase5-terminali-macos.md`. Testo originale della parte:
 
 1. Su Linux, in Kitty e poi in Ghostty, esegui uno script di prova (prima nello scratchpad, poi nel repository se
    approvato) che apre un `Context` sul terminale vero e scrive in un file JSON:
@@ -178,7 +181,7 @@ dai lotti delle correzioni.
 
 Non scrivere codice della Parte 2 nel repository prima dell'approvazione.
 
-## Parte 2 — script e spec grafiche (Linux)
+## Parte 2 — script e spec grafiche (Linux) (fatta: PR #20, merge `4d3430a`)
 
 - Lavora sul branch `test/fase5-linux` (sezione "Flusso di lavoro").
 - Se una prova trova un bug del wrapper, vale la regola 11; un bug di notcurses va nelle tabelle di `RICONSEGNA.md`.
@@ -198,7 +201,10 @@ Lavora sul branch `test/fase5-macos`, da `master` aggiornato dopo il merge della
    deve avere `wchar_t` e `uintmax_t`, oppure `lib/notcurses/ffi/typedefs.rb` li definisce.
 3. **termios:** su macOS `tcflag_t` è `unsigned long` e `IXON`/`ISIG` hanno i valori BSD: finora controllati solo
    sugli header. Prova `EventLoop#run(no_flow_control: true, no_linesigs: true)` nel terminale vero.
-4. **Prove grafiche:** le stesse della Parte 1 in Kitty e Ghostty su macOS.
+4. **Prove grafiche:** `NC_GRAPHICS=1 bundle exec rspec spec/graphics` in Kitty e in Ghostty, con il `TERM` del
+   terminale; una volta con `NC_GRAPHICS_HOLD=3` e il controllo a vista dell'utente. Shift+1 in un `TextInput`
+   (ICH-279) solo con la tastiera vera: `kitty @ send-key` non manda il testo associato. Rischio noto (design,
+   sezione 4): se la libc di macOS non conosce i sestanti, la tabella esatta fallisce; serve una riga per macOS.
 5. **Suite completa:** punti già noti che dipendono da Linux:
 
    | Punto | Dove |
@@ -239,6 +245,8 @@ Lavora sul branch `test/fase5-macos`, da `master` aggiornato dopo il merge della
 
 ## Note pratiche (dai lotti)
 
+- `spec/notcurses/context_spec.rb:358` fallisce a volte con `--order rand:4242` (due chiamate a `notcurses_getvec`),
+  anche su `master` prima della Fase 5: ripeti la suite (log della Fase 5, "Esempio instabile con il seme 4242").
 - `spec/integration/pty_spec.rb:173` è instabile per una gara di tempi (`getvec` si sveglia dopo il primo di 4
   tasti). Se fallisce, ripeti la suite prima di cercare una regressione. Non ha una issue.
 - In zsh un comando in una variabile non si divide in parole: usa un array (`E=(env ...)`, `"${E[@]}"`) e scrivi
@@ -273,8 +281,14 @@ TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5
 # coverage (report in coverage/; con una sola spec fallisce per la soglia)
 TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 \
   bundle exec rspec --require ./spec/support/coverage.rb < /dev/null
-# script di prova contro notcurses: un solo contesto per processo
-timeout -k 5 -s KILL 60 ruby -Ilib "$S/prova.rb"
+# script di prova contro notcurses: un solo contesto per processo. Su un terminale vero serve --foreground:
+# senza, timeout mette il comando in background e il kernel lo ferma con SIGTTOU alla prima scrittura del termios
+timeout --foreground -k 5 -s KILL 60 ruby -Ilib "$S/prova.rb"
+# spec grafiche: da Kitty o Ghostty; --out tiene stdout sul tty (con > file gli esempi vanno in skip)
+NC_GRAPHICS=1 bundle exec rspec spec/graphics --format documentation --out "$S/graphics.log"
+# da una sessione senza tty (il tool Bash di Claude Code): finestra nuova, con il PATH del Ruby di mise
+kitty @ launch --type=os-window --cwd="$PWD" --env PATH="$(dirname "$(command -v ruby)"):$PATH" -- \
+  bash -c "NC_GRAPHICS=1 bundle exec rspec spec/graphics --out $S/graphics.log; echo \$? > $S/graphics.exit"
 
 # RuboCop, YARD e gem
 bundle exec rubocop
