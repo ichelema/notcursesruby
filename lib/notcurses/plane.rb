@@ -381,7 +381,11 @@ module Notcurses
     # scrittura successiva su quella cella andrebbe oltre la riga (oltre il
     # framebuffer, sull'ultima riga). Lo stesso vale per i resize che fa il C:
     # lo stdplane quando il terminale si restringe e i figli con
-    # resize: :maximize; lì la cella si svuota alla prima scrittura sul piano.
+    # resize: :maximize; lì la cella si svuota alla prima scrittura sul piano,
+    # se le colonne sono cambiate dall'ultimo controllo. Lo stato del controllo
+    # vale per il piano C: lo tiene il Plane tracciato del piano, e i Plane presi
+    # in prestito (tracked: false) usano il suo; senza un Plane tracciato aperto
+    # ogni scrittura controlla i bordi.
     #
     # @param rows [Integer] nuove righe, >= 1
     # @param cols [Integer] nuove colonne, >= 1
@@ -1282,8 +1286,8 @@ module Notcurses
 
     # Cancella un rettangolo di celle (+ncplane_erase_region+), dalla cella
     # (y, x) compresa verso destra e verso il basso, tagliato al bordo. Le
-    # celle tornano vuote con stile e colori di default. Cancellare metà di un
-    # glifo largo lascia l'altra metà orfana.
+    # celle tornano vuote con stile e colori di default. Se la regione copre
+    # solo metà di un glifo largo, anche l'altra metà diventa una cella vuota.
     #
     # @param y [Integer] riga di partenza, 0...righe
     # @param x [Integer] colonna di partenza, 0...colonne
@@ -1300,7 +1304,9 @@ module Notcurses
       Util.integer!(x, 'x', 0...pcols)
       Util.integer!(rows, 'rows', 1..Util::INT32.max)
       Util.integer!(cols, 'cols', 1..Util::INT32.max)
-      Util.check!(FFI.ncplane_erase_region(ptr, y, x, rows, cols), PlaneError, 'ncplane_erase_region')
+      keep_glyphs_whole(ptr, y, x, [rows, prows - y].min, [cols, pcols - x].min) do
+        Util.check!(FFI.ncplane_erase_region(ptr, y, x, rows, cols), PlaneError, 'ncplane_erase_region')
+      end
       self
     end
 
@@ -1309,7 +1315,11 @@ module Notcurses
     # base, ...); questo piano non cambia.
     #
     # Bug di 3.0.17: +ncplane_mergedown+ ignora la regione che riceve, quindi
-    # il wrapper offre solo la fusione completa.
+    # il wrapper offre solo la fusione completa; lascia anche la metà destra
+    # dei glifi larghi di dst con larghezza 0, e il wrapper riscrive quei glifi
+    # (il cursore di dst non cambia). Per trovarli legge ogni cella di dst: su
+    # un piano grande (per esempio 50x200) la fusione costa qualche
+    # millisecondo invece di una frazione.
     #
     # @param dst [Plane] piano di destinazione, della stessa pila
     # @return [self]
@@ -1324,8 +1334,9 @@ module Notcurses
       raise PlaneError, "merge_down: dst è in un'altra pila" unless FFI.ncpile_top(ptr).address == FFI.ncpile_top(target).address
 
       Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
+      restore_wide_glyphs!(target)
       # glifi larghi nuovi senza le scritture: un resize del C li può tagliare a dimensioni già controllate
-      [dst, @context.tracked_plane(target.address)].compact.each { |plane| plane.forget_cut_glyphs! }
+      @context.tracked_plane(target.address)&.cut_glyphs_cols = nil
       self
     end
 
@@ -1377,7 +1388,7 @@ module Notcurses
         width = pxx.read_uint
         [buf.read_bytes(height * width * 4), height, width]
       ensure
-        FFI.free(buf)
+        Util.free(buf)
       end
     end
 
@@ -2031,8 +2042,9 @@ module Notcurses
     # Riempimento a macchia d'olio dalla cella (y, x) (+ncplane_polyfill_yx+):
     # sostituisce con cell la regione 4-connessa di celle con lo stesso EGC
     # della cella di partenza (stile e colori non contano). Riempire celle
-    # vuote sovrascrive anche le metà destre dei glifi larghi. Il cursore non
-    # si sposta.
+    # vuote sovrascrive anche le metà destre dei glifi larghi. Se il
+    # riempimento copre solo metà di un glifo largo, l'altra metà diventa una
+    # cella vuota. Il cursore non si sposta.
     #
     # @param cell [Cell, String] carattere largo 1 colonna; una String usa
     #   stile e colori del piano
@@ -2047,13 +2059,16 @@ module Notcurses
       ptr = to_ptr
       fill = line_cell!(cell)
       top, left = line_start!(y, x)
-      rc = with_nccells(ptr, [fill]) { |nc| FFI.ncplane_polyfill_yx(ptr, top, left, nc) }
-      Util.check!(rc, PlaneError, 'ncplane_polyfill_yx')
+      keep_glyphs_whole(ptr, 0, 0, dim_y, dim_x, all: true, long_fill: fill.egc.bytesize > 4) do # regione non nota
+        rc = with_nccells(ptr, [fill]) { |nc| FFI.ncplane_polyfill_yx(ptr, top, left, nc) }
+        Util.check!(rc, PlaneError, 'ncplane_polyfill_yx')
+      end
     end
 
     # Riempie un rettangolo con egc e colori sfumati tra i quattro angoli
-    # (+ncplane_gradient+). Il contenuto precedente si perde; il cursore non
-    # si sposta. Il wrapper controlla i vincoli del C prima della chiamata (il
+    # (+ncplane_gradient+). Il contenuto precedente si perde; un glifo largo
+    # coperto solo a metà diventa una cella vuota anche nell'altra metà. Il
+    # cursore non si sposta. Il wrapper controlla i vincoli del C prima della chiamata (il
     # C fallirebbe dopo aver già cambiato celle): per primo piano e sfondo, o
     # tutti gli angoli hanno il colore di default o nessuno, gli alpha sono
     # uguali, niente colori di palette; con una riga servono ul == ll e
@@ -2086,8 +2101,10 @@ module Notcurses
       corners = corner_values([ul, ur, ll, lr], 64)
       top, left, height, width = region!(y, x, rows, cols)
       corners_shape!(corners, height, width, rows_rule: true)
-      Util.check!(FFI.ncplane_gradient(ptr, top, left, height, width, text, Util.styles_value(styles), *corners),
-                  PlaneError, 'ncplane_gradient')
+      keep_glyphs_whole(ptr, top, left, height, width, long_fill: text.bytesize > 4) do
+        Util.check!(FFI.ncplane_gradient(ptr, top, left, height, width, text, Util.styles_value(styles), *corners),
+                    PlaneError, 'ncplane_gradient')
+      end
     end
 
     # Riempie un rettangolo con mezzi blocchi "▀" a doppia risoluzione
@@ -2095,7 +2112,8 @@ module Notcurses
     # sfumate tra i quattro angoli; lo stile delle celle resta. Con un angolo
     # di default primo piano e sfondo diventano di default. Vincoli come in
     # {#gradient}, su canali singoli; con una colonna servono ul == ur e
-    # ll == lr. Serve un terminale UTF-8.
+    # ll == lr. Un glifo largo coperto solo a metà diventa una cella vuota
+    # anche nell'altra metà. Serve un terminale UTF-8.
     #
     # @param ul [Channel, Integer] colore dell'angolo superiore sinistro
     # @param ur [Channel, Integer] superiore destro
@@ -2116,12 +2134,16 @@ module Notcurses
       corners_shape!(corners, height, width, rows_rule: false)
       raise PlaneError, 'gradient2x1 richiede un terminale UTF-8' unless @context.can_utf8?
 
-      Util.check!(FFI.ncplane_gradient2x1(ptr, top, left, height, width, *corners), PlaneError, 'ncplane_gradient2x1')
+      keep_glyphs_whole(ptr, top, left, height, width) do
+        Util.check!(FFI.ncplane_gradient2x1(ptr, top, left, height, width, *corners), PlaneError,
+                    'ncplane_gradient2x1')
+      end
     end
 
     # Sfuma i colori di un rettangolo tra i quattro angoli lasciando EGC e
     # stili (+ncplane_stain+). Le celle vuote e le metà destre dei glifi larghi
-    # non cambiano. Vincoli sui colori come in {#gradient}, senza quelli sulla
+    # non cambiano. Non tocca gli EGC: su metà di un glifo largo non lascia
+    # metà orfane. Vincoli sui colori come in {#gradient}, senza quelli sulla
     # forma.
     #
     # @param ul [Channels, Integer] colori dell'angolo superiore sinistro
@@ -2144,7 +2166,8 @@ module Notcurses
     end
 
     # Imposta gli stili di un rettangolo lasciando EGC e colori
-    # (+ncplane_format+; il nome evita di nascondere Kernel#format).
+    # (+ncplane_format+; il nome evita di nascondere Kernel#format). Non tocca
+    # gli EGC: su metà di un glifo largo non lascia metà orfane.
     #
     # @param styles [Integer, Symbol, Array<Symbol>]
     # @param y [Integer] prima riga
@@ -2334,11 +2357,84 @@ module Notcurses
     end
 
     # true se la cella (y, x) è la metà destra di un glifo largo.
-    def wide_right?(ptr, y, x)
+    def wide_right?(ptr, y, x) = half_at(ptr, y, x) == :right
+
+    # Dopo ncplane_mergedown la metà destra di ogni glifo largo di dst ha width
+    # 0 (render.c:393-395, 471-485): per notcurses non è più una metà destra, e
+    # una scrittura sulla metà sinistra non la cancella; da lì si arriva a una
+    # metà destra orfana e a scritture fuori dalla riga (ICH-481). Il wrapper
+    # riscrive quei glifi con ncplane_putc_yx, che rimette la metà destra; il
+    # cursore di dst torna dov'era. Le celle illeggibili (egcpool pieno, vedi
+    # half_at) restano come sono.
+    def restore_wide_glyphs!(dst)
+      rows = ::FFI::MemoryPointer.new(:uint)
+      cols = ::FFI::MemoryPointer.new(:uint)
+      FFI.ncplane_dim_yx(dst, rows, cols)
+      cy = ::FFI::MemoryPointer.new(:uint)
+      cx = ::FFI::MemoryPointer.new(:uint)
+      FFI.ncplane_cursor_yx(dst, cy, cx)
+      cell = FFI::NcCell.new
+      moved = false
+      rows.read_uint.times do |y|
+        (cols.read_uint - 1).times do |x|
+          next if FFI.ncplane_at_yx_cell(dst, y, x, cell).negative?
+
+          begin
+            if FFI.nccell_wide_left_p(cell) && stale_right_half?(dst, y, x + 1)
+              Util.check!(FFI.ncplane_putc_yx(dst, y, x, cell), PlaneError, 'ncplane_putc_yx')
+              moved = true
+            end
+          ensure
+            FFI.nccell_release(dst, cell)
+          end
+        end
+      end
+      restore_cursor!(dst, cy.read_uint, cx.read_uint, cols.read_uint) if moved
+    end
+
+    # Rimette il cursore di ptr in (y, x). ncplane_cursor_move_yx rifiuta
+    # x == colonne (notcurses.c:729-731), dove resta il cursore dopo una
+    # scrittura che riempie la riga: lì il wrapper riscrive con il suo stesso
+    # contenuto l'ultima cella della riga (la metà sinistra, se è una metà
+    # destra), e ncplane_putc_yx lascia il cursore subito dopo. Se notcurses
+    # non riesce a leggere quella cella (egcpool pieno) il cursore resta dove
+    # l'ha lasciato la riscrittura dei glifi (ICH-485).
+    def restore_cursor!(ptr, y, x, cols)
+      return Util.check!(FFI.ncplane_cursor_move_yx(ptr, y, x), PlaneError, 'ncplane_cursor_move_yx') if x < cols
+
+      last = cols > 1 && wide_right?(ptr, y, cols - 1) ? cols - 2 : cols - 1
+      cell = FFI::NcCell.new
+      return if FFI.ncplane_at_yx_cell(ptr, y, last, cell).negative?
+
+      begin
+        Util.check!(FFI.ncplane_putc_yx(ptr, y, last, cell), PlaneError, 'ncplane_putc_yx')
+      ensure
+        FFI.nccell_release(ptr, cell)
+      end
+    end
+
+    # true se (y, x) è vuota e larga 0: la metà destra lasciata da ncplane_mergedown.
+    def stale_right_half?(ptr, y, x)
       cell = FFI::NcCell.new
       return false if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
 
-      FFI.nccell_wide_right_p(cell)
+      cell[:gcluster].zero? && cell[:width].zero?
+    ensure
+      FFI.nccell_release(ptr, cell)
+    end
+
+    # :left o :right se (y, x) è una metà di un glifo largo, :none se no, nil se
+    # notcurses non riesce a leggere la cella: ncplane_at_yx_cell duplica l'EGC
+    # nell'egcpool, quindi fallisce con il pool pieno (solo per gli EGC di più
+    # di 4 byte, che stanno nel pool) e sempre su un piano con un bitmap.
+    def half_at(ptr, y, x)
+      cell = FFI::NcCell.new
+      return nil if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
+
+      if FFI.nccell_wide_left_p(cell) then :left
+      elsif FFI.nccell_wide_right_p(cell) then :right
+      else :none
+      end
     ensure
       FFI.nccell_release(ptr, cell)
     end
@@ -2352,25 +2448,88 @@ module Notcurses
     # resize fatti dal C (stdplane nel render, callback :maximize). Un cambio di
     # sole righe non sposta le celle di bordo (le righe nuove sono vuote), e
     # un piano che scorre con autogrow cresce di una riga a ogni a capo.
-    # Non le vede quando nascono senza resize: erase_region, gradient e
-    # polyfill su una sola metà di un glifo largo (ICH-450).
+    # Le metà orfane che nascono senza resize (erase_region, gradient,
+    # gradient2x1 e polyfill su una sola metà) le svuotano quei metodi.
     def clear_cut_glyphs!(ptr, force: false)
       rows, cols = dims
-      return if !force && @cut_glyphs_cols == cols
+      owner = cut_glyphs_owner
+      return if !force && owner&.cut_glyphs_cols == cols
 
-      cell = FFI::NcCell.new
-      rows.times do |y|
-        [0, cols - 1].uniq.each do |x|
-          next if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
+      clear_orphan_halves!(ptr, 0...rows, [0, cols - 1])
+      owner&.cut_glyphs_cols = cols
+    end
 
-          right = FFI.nccell_wide_right_p(cell)
-          orphan = (x.zero? && right) ||
-                   (x == cols - 1 && (FFI.nccell_wide_left_p(cell) || (right && !wide_left?(ptr, y, x - 1))))
-          FFI.nccell_release(ptr, cell)
-          Util.check!(FFI.ncplane_erase_region(ptr, y, x, 1, 1), PlaneError, 'ncplane_erase_region') if orphan
+    # Plane che tiene lo stato di clear_cut_glyphs! per il piano C (ICH-448):
+    # quello tracciato, l'unico per piano nel registro del contesto. nil se il
+    # piano C non ha un Plane tracciato aperto: allora non c'è una cache.
+    def cut_glyphs_owner = @generation.nil? ? self : @context.tracked_plane(address)
+
+    # Svuota le metà orfane dei glifi larghi nelle colonne xs delle righe ys
+    # (colonne fuori dal piano ignorate). ncplane_put di 3.0.17 scrive fuori
+    # dalla riga partendo da una metà destra orfana (notcurses.c:1956-1962).
+    def clear_orphan_halves!(ptr, ys, xs)
+      cols = dim_x
+      xs = xs.select { |x| x >= 0 && x < cols }.uniq
+      ys.each do |y|
+        xs.each do |x|
+          next unless orphan_half?(ptr, y, x, cols)
+
+          Util.check!(FFI.ncplane_erase_region(ptr, y, x, 1, 1), PlaneError, 'ncplane_erase_region')
         end
       end
-      @cut_glyphs_cols = cols
+    end
+
+    # true se (y, x) è una metà di glifo largo senza l'altra metà: una metà
+    # sinistra nell'ultima colonna, una metà destra in colonna 0 o senza la
+    # metà sinistra prima. Una metà sinistra seguita da una cella vuota non
+    # conta: una metà destra con width 0 è uguale a una cella vuota, e dopo
+    # merge_down ne restano dove la riscrittura non riesce a leggere il glifo
+    # (egcpool pieno, vedi restore_wide_glyphs!).
+    def orphan_half?(ptr, y, x, cols)
+      case half_at(ptr, y, x)
+      when :left then x == cols - 1
+      when :right then x.zero? || !wide_left?(ptr, y, x - 1)
+      else false
+      end
+    end
+
+    # Esegue il blocco (un riempimento C che cambia le celle una per una nel
+    # rettangolo dato) e poi svuota l'altra metà dei glifi larghi che ha
+    # coperto solo a metà. I glifi da controllare si leggono prima della
+    # chiamata: quelli a cavallo dei lati del rettangolo, o con all: true tutti
+    # quelli del piano. Una metà sinistra che notcurses non riesce a leggere
+    # (egcpool pieno, vedi half_at) conta come glifo se la metà destra c'è.
+    # Dopo la chiamata la stessa cella illeggibile è ancora quella di prima,
+    # salvo con long_fill (il riempimento scrive un EGC di più di 4 byte, che
+    # sta nel pool): allora nel dubbio si svuotano le due metà. La pulizia gira
+    # anche se il blocco solleva: il C può fallire dopo aver già cambiato celle
+    # (egcpool pieno), e in quel caso cerca anche le metà destre orfane nel
+    # rettangolo.
+    def keep_glyphs_whole(ptr, top, left, height, width, all: false, long_fill: false)
+      ys = top...(top + height)
+      xs = all ? (left...(left + width - 1)) : [left - 1, left + width - 1]
+      glyphs = ys.flat_map { |y| xs.select { |x| glyph_at?(ptr, y, x) }.map { |x| [y, x] } }
+      done = false
+      rc = yield
+      done = true
+      rc
+    ensure
+      glyphs&.each do |y, x|
+        left_half = half_at(ptr, y, x) || (long_fill ? nil : :left)
+        right_half = half_at(ptr, y, x + 1)
+        next if left_half == :left && right_half == :right
+
+        [(x if left_half != :none), (x + 1 if right_half == :right)].compact.each do |cx|
+          Util.check!(FFI.ncplane_erase_region(ptr, y, cx, 1, 1), PlaneError, 'ncplane_erase_region')
+        end
+      end
+      clear_orphan_halves!(ptr, ys, left..(left + width)) if glyphs && !done
+    end
+
+    # true se (y, x + 1) è una metà destra e (y, x) la sua metà sinistra, o una
+    # cella che notcurses non riesce a leggere.
+    def glyph_at?(ptr, y, x)
+      x >= 0 && x + 1 < dim_x && wide_right?(ptr, y, x + 1) && half_at(ptr, y, x) != :none
     end
 
     # Su uno stdplane che scorre ogni a capo ("\n" o a capo automatico) fa un
@@ -2388,14 +2547,7 @@ module Notcurses
     end
 
     # true se la cella (y, x) è la metà sinistra di un glifo largo.
-    def wide_left?(ptr, y, x)
-      cell = FFI::NcCell.new
-      return false if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
-
-      FFI.nccell_wide_left_p(cell)
-    ensure
-      FFI.nccell_release(ptr, cell)
-    end
+    def wide_left?(ptr, y, x) = half_at(ptr, y, x) == :left
 
     # Cell con il contenuto di una nccell legata all'egcpool del piano ptr.
     def cell_content(ptr, cell)
@@ -2709,9 +2861,10 @@ module Notcurses
     # @return [Integer] generazione del contesto alla creazione del wrapper
     attr_reader :born
 
-    # La prossima scrittura controlla di nuovo i bordi (vedi clear_cut_glyphs!).
-    # @return [nil]
-    def forget_cut_glyphs! = (@cut_glyphs_cols = nil)
+    # Colonne dell'ultimo controllo dei bordi (vedi clear_cut_glyphs!); nil =
+    # la prossima scrittura controlla di nuovo.
+    # @return [Integer, nil]
+    attr_accessor :cut_glyphs_cols
   end
 
   # Fotografia dei colori di un piano per una dissolvenza passo per passo

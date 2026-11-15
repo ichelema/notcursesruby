@@ -1173,6 +1173,120 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    context 'con glifi larghi' do
+      def merged(text, rows: 1, cols: 6)
+        dst = std.create_child(rows: rows, cols: cols)
+        src = std.create_child(rows: 1, cols: cols)
+        src.putstr(text, y: 0, x: 0)
+        src.merge_down(dst)
+        src.close
+        dst
+      end
+
+      it 'le metà destre restano metà destre: at restituisce il glifo come sul piano sorgente (prima: "")' do
+        dst = merged('漢漢漢')
+        expect([dst.at(y: 0, x: 1).egc, dst.at(y: 0, x: 5).egc]).to eq(%w[漢 漢])
+        expect(dst.contents).to eq('漢漢漢')
+      ensure
+        dst&.close
+      end
+
+      it 'il cursore di dst non cambia, anche dopo una scrittura che riempie la riga (prima del fix di review: spostato)' do
+        dst = merged('', rows: 2, cols: 4)
+        dst.putstr('漢xy', y: 0, x: 0)
+        dst.putstr('ab', y: 1, x: 0)
+        src = std.create_child(rows: 1, cols: 4)
+        src.putstr('中', y: 0, x: 0) # porta un glifo largo, che il wrapper riscrive
+        src.merge_down(dst)
+        expect(dst.cursor).to eq([1, 2])
+        dst.putstr('cd', y: 1, x: 2)
+        src.merge_down(dst)
+        src.close
+        expect(dst.cursor).to eq([1, 4])
+        expect { dst.putstr('Z') }.to raise_error(Notcurses::PlaneError, /non entra/) # prima: "Z" in (0, 2)
+        expect(dst.contents(y: 0, rows: 1)).to eq('中xy')
+      ensure
+        dst&.close
+      end
+
+      it 'su un dst che scorre la scrittura dopo merge_down va a capo dalla fine della riga, come prima' do
+        dst = merged('', rows: 3, cols: 4)
+        dst.scrolling = true
+        dst.putstr('漢xy', y: 0, x: 0)
+        dst.putstr('abcd', y: 1, x: 0)
+        src = std.create_child(rows: 1, cols: 4)
+        src.merge_down(dst)
+        src.close
+        dst.putstr('Z')
+        expect([dst.contents(y: 0, rows: 1), dst.contents(y: 2, rows: 1)]).to eq(%w[漢xy Z])
+      ensure
+        dst&.close
+      end
+
+      it 'una scrittura stretta e poi una larga sulla stessa colonna lasciano intatta la riga sotto (prima: "XYZ")' do
+        dst = merged('a漢', rows: 2, cols: 4)
+        dst.putstr('WXYZ', y: 1, x: 0)
+        dst.putstr('中', y: 0, x: 2)
+        dst.putstr('x', y: 0, x: 1)
+        dst.putstr('中', y: 0, x: 2)
+        expect([dst.contents(y: 0, rows: 1), dst.contents(y: 1, rows: 1)]).to eq(%w[ax中 WXYZ])
+      ensure
+        dst&.close
+      end
+
+      it "le scritture dopo merge_down sull'ultima riga non corrompono l'heap (prima: abort di glibc)" do
+        skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
+        script = <<~'RUBY'
+          require 'notcurses'
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            40.times do
+              dst = nc.stdplane.create_child(rows: 1, cols: 4)
+              src = nc.stdplane.create_child(rows: 1, cols: 4)
+              src.putstr('a漢', y: 0, x: 0)
+              src.merge_down(dst)
+              src.close
+              dst.putstr('中', y: 0, x: 2)
+              dst.putstr('x', y: 0, x: 1)
+              dst.putstr('中', y: 0, x: 2)
+              dst.close
+            end
+          end
+          puts 'ok'
+        RUBY
+        expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+      end
+    end
+
+    it "le stringhe e i buffer del C si liberano con l'allocatore di notcurses (prima: abort sotto LD_PRELOAD)" do
+      skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
+      script = <<~'RUBY'
+        require 'notcurses'
+        Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                drain_input: true) do |nc|
+          std = nc.stdplane
+          200.times do # lo script di ICH-449
+            dst = std.create_child(rows: 1, cols: 4, y: 0, x: 2)
+            src = std.create_child(rows: 1, cols: 8, y: 0, x: 1)
+            src.putstr('漢漢漢漢')
+            src.merge_down(dst)
+            dst.at(y: 0, x: 0)
+            dst.at(y: 0, x: 3)
+            dst.putstr('x', y: 0, x: 0)
+            dst.putstr('y', y: 0, x: 3)
+            src.close
+            dst.close
+          end
+          named = std.create_child(rows: 1, cols: 2, name: 'n')
+          named.putstr('  ', y: 0, x: 0)
+          200.times { [named.name, nc.stats, named.as_rgba(:half, y: 0, x: 0)] }
+          named.close
+        end
+        puts 'ok'
+      RUBY
+      expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+    end
+
     it 'erase_region cancella la regione, la taglia al bordo e non muove il cursore' do
       with_parent(rows: 2, cols: 4) do |c|
         c.putstr('ab', y: 0, x: 0)
@@ -1183,6 +1297,148 @@ RSpec.describe Notcurses::Plane do
         expect(c.erase_region(1, 1, 5, 5).contents).to eq('bc')
         expect { c.erase_region(2, 0, 1, 1) }.to raise_error(ArgumentError)
         expect { c.erase_region(0, 0, 0, 1) }.to raise_error(ArgumentError)
+      end
+    end
+
+    context 'su metà di un glifo largo' do
+      red = Notcurses::Channel.rgb(255, 0, 0)
+      {
+        'polyfill dalla metà sinistra' => ['ab漢', ->(p) { p.polyfill('x', y: 0, x: 2) }, 'abx'],
+        'polyfill da una cella vuota fino a una metà destra' => ['漢', ->(p) { p.polyfill('x', y: 0, x: 3) }, 'xxx'],
+        'erase_region sulla metà sinistra' => ['ab漢', ->(p) { p.erase_region(0, 2, 1, 1) }, 'ab'],
+        'erase_region sulla metà destra' => ['ab漢', ->(p) { p.erase_region(0, 3, 1, 1) }, 'ab'],
+        'gradient fino alla metà sinistra' => ['ab漢', ->(p) { p.gradient('g', 0, 0, 0, 0, rows: 1, cols: 3) }, 'ggg'],
+        'gradient2x1 sulla metà destra' => ['ab漢', ->(p) { p.gradient2x1(red, red, red, red, x: 3, rows: 1, cols: 1) }, 'ab▀']
+      }.each do |name, (text, fill, row0)|
+        it "#{name}: l'altra metà diventa una cella vuota e una scrittura larga lascia intatta la riga sotto" do
+          with_parent(rows: 2, cols: 4) do |p|
+            p.putstr(text, y: 0, x: 0)
+            p.putstr('WXYZ', y: 1, x: 0)
+            fill.call(p)
+            expect(p.contents(y: 0, rows: 1)).to eq(row0)
+            p.putstr('中', y: 0, x: 2)
+            expect(p.contents(y: 1, rows: 1)).to eq('WXYZ') # prima: "XYZ" quando restava la metà destra
+          end
+        end
+      end
+
+      # Il glifo largo arrivato da merge_down è intero e nessun controllo deve
+      # cancellarlo (prima del fix di ICH-481 la sua metà destra aveva width 0).
+      {
+        'una scrittura' => ['日本語テ', ->(p) { p.putstr('*', y: 0, x: 9) }, '日本語テ*'],
+        'un resize alle stesse dimensioni' => ['漢字ab', ->(p) { p.resize(1, 10) }, '漢字ab'],
+        'erase_region prima del glifo' => ['ab漢cd', ->(p) { p.erase_region(0, 0, 1, 2) }, '漢cd'],
+        'erase_region accanto al glifo' => ['ab漢cd', ->(p) { p.erase_region(0, 1, 1, 1) }, 'a漢cd'],
+        'gradient prima del glifo' => ['ab漢cd', ->(p) { p.gradient('g', 0, 0, 0, 0, rows: 1, cols: 2) }, 'gg漢cd'],
+        'polyfill accanto al glifo' => ['a漢b', ->(p) { p.polyfill('x', y: 0, x: 0) }, 'x漢b']
+      }.each do |name, (text, op, row)|
+        it "dopo merge_down #{name} lascia intero il glifo largo (prima del fix di review: glifo cancellato)" do
+          with_parent(rows: 1, cols: 10) do |p|
+            dst = p.create_child(rows: 1, cols: 10)
+            src = p.create_child(rows: 1, cols: 10)
+            src.putstr(text, y: 0, x: 0)
+            src.merge_down(dst)
+            src.close
+            op.call(dst)
+            expect(dst.contents).to eq(row)
+          end
+        end
+      end
+
+      it "un riempimento che fallisce a metà svuota lo stesso l'altra metà (prima: \"XYZ\" dopo il PlaneError)" do
+        big = 'e' + ("́" * 3_000_000) # le copie superano i 16 MiB dell'egcpool: il C si ferma a metà
+        # [righe con "ab漢", riempimento, riga della scrittura larga]
+        {gradient: [1, ->(p) { p.gradient(big, 0, 0, 0, 0, rows: 1, cols: 3) }, 0],
+         polyfill: [2, ->(p) { p.polyfill(big, y: 1, x: 2) }, 1]}.each do |name, (glyph_rows, fill, y)|
+          with_parent(rows: glyph_rows + 1, cols: 4) do |p|
+            glyph_rows.times { |r| p.putstr('ab漢', y: r, x: 0) }
+            p.putstr('WXYZ', y: glyph_rows, x: 0)
+            expect { fill.call(p) }.to raise_error(Notcurses::PlaneError), name.to_s
+            p.putstr('中', y: y, x: 2)
+            expect(p.contents(y: glyph_rows, rows: 1)).to eq('WXYZ'), name.to_s
+          end
+        end
+      end
+
+      # ncplane_at_yx_cell duplica l'EGC nell'egcpool: con due EGC da 6 MB nel piano la copia del terzo non ci
+      # sta, e la lettura delle celle fallisce. Prima del fix di review il glifo illeggibile non veniva tenuto intero.
+      {
+        erase_region: ->(q) { q.erase_region(0, 2, 1, 1) },
+        gradient: ->(q) { q.gradient('x', 0, 0, 0, 0, x: 2, rows: 1, cols: 1) },
+        gradient2x1: ->(q) { q.gradient2x1(0, 0, 0, 0, x: 2, rows: 1, cols: 1) },
+        polyfill: ->(q) { q.polyfill('x', y: 0, x: 2) }
+      }.each do |name, fill|
+        it "#{name} su un glifo largo che notcurses non riesce a leggere (egcpool pieno) lascia intatta la riga sotto" do
+          egc = '漢' + ("\u0301" * 3_000_000)
+          with_parent(rows: 2, cols: 4) do |p|
+            p.putstr(egc, y: 0, x: 0)
+            p.putstr(egc, y: 0, x: 2)
+            p.putstr('WXYZ', y: 1, x: 0)
+            fill.call(p)
+            p.putstr('中', y: 0, x: 2)
+            expect(p.contents(y: 1, rows: 1)).to eq('WXYZ') # prima: "XYZ"
+          end
+        end
+      end
+
+      it "con l'egcpool pieno dopo il riempimento la pulizia svuota lo stesso la metà orfana (prima: \"XYZ\")" do
+        # [riempimento, solleva?]: 5,2 MB ci stanno tre volte e il C riesce; con 6 MB il C si ferma a metà,
+        # con il glifo dentro il rettangolo
+        [
+          [->(p) { p.gradient('e' + ("\u0301" * 2_600_000), 0, 0, 0, 0, rows: 1, cols: 3) }, false],
+          [->(p) { p.gradient('e' + ("\u0301" * 3_000_000), 0, 0, 0, 0, rows: 1, cols: 4) }, true]
+        ].each do |fill, raises|
+          with_parent(rows: 2, cols: 4) do |p|
+            p.putstr('ab漢', y: 0, x: 0)
+            p.putstr('WXYZ', y: 1, x: 0)
+            if raises
+              expect { fill.call(p) }.to raise_error(Notcurses::PlaneError, /ncplane_gradient/)
+            else
+              expect(fill.call(p)).to eq(3)
+            end
+            p.putstr('中', y: 0, x: 2)
+            expect(p.contents(y: 1, rows: 1)).to eq('WXYZ')
+          end
+        end
+      end
+
+      it 'senza glifi larghi i riempimenti non cambiano' do
+        with_parent(rows: 1, cols: 4) do |p|
+          p.putstr('abcd', y: 0, x: 0)
+          p.erase_region(0, 1, 1, 2)
+          expect(p.contents).to eq('ad')
+          expect(p.polyfill('x', y: 0, x: 1)).to eq(2)
+          expect(p.contents).to eq('axxd')
+        end
+      end
+
+      it "la scrittura larga sull'ultima riga non corrompe l'heap (prima: abort di glibc)" do
+        skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
+        script = <<~'RUBY'
+          require 'notcurses'
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            fills = [->(q) { q.erase_region(0, 2, 1, 1) }, ->(q) { q.polyfill('x', y: 0, x: 2) },
+                     ->(q) { q.gradient('g', 0, 0, 0, 0, rows: 1, cols: 3) }]
+            fills.each do |fill|
+              planes = Array.new(20) { nc.stdplane.create_child(rows: 1, cols: 4).tap { |q| q.putstr('ab漢', y: 0, x: 0) } }
+              planes.each { |q| fill.call(q) }
+              planes.each { |q| q.putstr('中', y: 0, x: 2) }
+              planes.each(&:close)
+            end
+            big = 'e' + ("\u0301" * 3_000_000) # gradient che fallisce a metà (egcpool pieno)
+            planes = Array.new(3) { nc.stdplane.create_child(rows: 1, cols: 4).tap { |q| q.putstr('ab漢', y: 0, x: 0) } }
+            planes.each do |q|
+              q.gradient(big, 0, 0, 0, 0, rows: 1, cols: 3)
+            rescue Notcurses::PlaneError
+              nil
+            end
+            planes.each { |q| q.putstr('中', y: 0, x: 2) }
+            planes.each(&:close)
+          end
+          puts 'ok'
+        RUBY
+        expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
       end
     end
 

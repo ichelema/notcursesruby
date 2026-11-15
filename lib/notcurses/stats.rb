@@ -117,7 +117,7 @@ module Notcurses
         reset ? FFI.notcurses_stats_reset(ptr, st) : FFI.notcurses_stats(ptr, st)
         new(st)
       ensure
-        FFI.free(st.to_ptr)
+        Util.free(st.to_ptr)
       end
     end
 

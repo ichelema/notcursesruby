@@ -22,6 +22,26 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- Le stringhe e i buffer allocati da notcurses (`Plane#at`, `Plane#name`, `Plane#as_rgba`, `Context#stats`,
+  `Context#at`, `detected_terminal`, `Notcurses.hostname` e gli altri) si liberano con la `free` di notcurses. Prima
+  il wrapper usava la `free` di glibc anche quando `LD_PRELOAD` mette un altro allocatore (jemalloc, tcmalloc,
+  `libc_malloc_debug`), e il processo terminava con `double free or corruption` (ICH-449).
+- `Plane#erase_region`, `#gradient`, `#gradient2x1` e `#polyfill` su una sola metà di un glifo largo svuotano anche
+  l'altra metà, anche quando la chiamata C fallisce a metà (`PlaneError`). Prima la metà orfana restava, e una
+  scrittura larga vicina cancellava la prima cella della riga dopo, o sull'ultima riga scriveva fuori dal piano e
+  corrompeva l'heap (ICH-450). Se notcurses non riesce a leggere una cella (egcpool pieno), il wrapper la tratta come
+  una possibile metà sinistra e, nel dubbio, svuota le due metà del glifo.
+- Il controllo delle metà orfane dopo i resize fatti da notcurses vale per il piano C, non per il singolo `Plane`: un
+  `Plane` preso in prestito (`tracked: false`) usa lo stato del `Plane` tracciato dello stesso piano, e senza un
+  `Plane` tracciato controlla i bordi a ogni scrittura. Prima un glifo largo scritto da un secondo wrapper e tagliato
+  da un resize del terminale sfuggiva al controllo del primo, e la sua scrittura successiva cancellava la prima cella
+  della riga sotto o, sull'ultima riga, corrompeva l'heap (ICH-448).
+- `Plane#merge_down` lascia in `dst` glifi larghi con la metà destra normale: `dst.at` sulla metà destra restituisce
+  il glifo, e una scrittura su una delle due metà cancella il glifo intero, come su ogni altro piano; il cursore di
+  `dst` non cambia, anche quando è a fine riga. Prima la metà
+  destra restava con larghezza 0 (bug di notcurses 3.0.17): `at` restituiva la cella base, e alcune sequenze di
+  scritture lasciavano una metà destra orfana, cancellavano la prima cella della riga sotto o corrompevano l'heap
+  (ICH-481).
 - macOS: `Context#close` rilascia il GVL durante `notcurses_stop`, che con `tcsetattr(TCSAFLUSH)` aspetta che il
   terminale legga l'output in coda. Prima un terminale servito da un thread dello stesso processo (per esempio un
   pty nei test) bloccava la chiusura per sempre. Un'eccezione asincrona (`Thread#raise`, `Timeout`) per il thread
