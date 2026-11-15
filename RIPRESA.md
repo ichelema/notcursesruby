@@ -1,8 +1,9 @@
 # RIPRESA — prompt per la prossima sessione
 
 > Avvio: incolla questo file nella nuova sessione di Claude Code, oppure scrivi «Leggi RIPRESA.md ed esegui il
-> prompt». Scritto il 2026-11-15, con il repository dopo `4d3430a` (merge della PR #20: Parti 1 e 2 della Fase 5 fatte
-> su Linux), per una sessione **su macOS** (terminali Kitty e Ghostty): il prossimo passo è la Parte 3. Il prompt
+> prompt». Scritto il 2026-11-15, dopo la Parte 3 della Fase 5 su macOS: la PR #21 (ICH-478, branch
+> `test/fase5-macos`, ultimo commit `db15e62`) è aperta, con la CI verde, e aspetta la conferma del merge. Il
+> prossimo passo è il merge della PR #21, poi la Parte 4 (sezione "Parte 4 — cosa resta"). Il prompt
 > riprende quello della Fase 5 scritto il 2026-10-27 (`git show 49732a3:RIPRESA.md`), aggiornato allo stato attuale.
 
 ## Contesto
@@ -20,7 +21,11 @@
 - **Fase 5, Parti 1 e 2 (Linux):** fatte il 2026-11-15. Design approvato in `memory/fase5-design.md`, log in
   `memory/fase5-terminali-macos.md`. PR #20 (merge `4d3430a`): spec grafiche in `spec/graphics/` (solo con
   `NC_GRAPHICS=1` in Kitty o Ghostty) e rimozione di `Util.timespec`.
-- **Stato al `4d3430a`:** 1046 esempi, 0 fallimenti; `bundle exec rubocop` 0 offense (99 file). Soglie di coverage:
+- **Fase 5, Parte 3 (macOS):** fatta il 2026-11-15 su un MacBook Pro M1 (macOS 26.5.2), PR #21 aperta (ICH-478).
+  Ambiente, esiti, problemi e punto aperto in `memory/fase5-terminali-macos.md`, sezione "Parte 3 — macOS".
+  Review del 2026-11-15 (stesso agente, non indipendente): F1 corretto in `db15e62`; F2 e F3 in "Parte 4".
+- **Stato al `db15e62` (branch della PR #21):** 1048 esempi, 0 fallimenti (su macOS 11 pending con il motivo);
+  su `master` prima del merge 1046 esempi. Valori di `master`: `bundle exec rubocop` 0 offense (99 file). Soglie di coverage:
   98 % totale, 90 % per file, layer FFI escluso.
 - **CI:** container `archlinux:base` fissato per digest, pacchetti dello snapshot `2026/10/26` dell'Arch Linux Archive
   (`notcurses 3.0.17-3`, `ffmpeg 2:9.0.2-2`), Ruby da mise, matrice 3.1.7, 3.2.11, 3.3.13, 3.4.12, 4.0.9. Lo step
@@ -53,8 +58,9 @@ Le fasi 1–4 e i lotti 12–17 sono stati fatti su una **VPS** Arch Linux, senz
 
 - Linux: **fatto** (Parti 1 e 2). Ambiente e risultati in `memory/fase5-terminali-macos.md`. Se la sessione parte su
   Linux o sulla VPS e non su macOS, la Parte 3 non si può fare: dillo all'utente e fermati dopo "Prima di iniziare".
-- macOS: versione, architettura (Apple Silicon o Intel) e percorso del checkout non sono noti: controllali e
-  scrivili nel log.
+- macOS: **fatto** (Parte 3). Checkout in `/Users/sphynx/Sviluppo/Progetti/Personali/20261027_notcursesruby`;
+  Ruby 4.0.9 di frum in `~/.frum/versions/4.0.9/bin` (mettilo all'inizio del `PATH`: il Ruby 4.0.7 di mise non ha
+  le gem); `brew install coreutils` per `timeout`; Kitty 0.50.0 e Ghostty 1.4.0 installati.
 - Sixel resta non provato (nessuno dei due terminali lo supporta): scrivilo nei risultati.
 - **Prova preliminare del 2026-10-27** sulla VPS, dentro herdr (multiplexer con Ghostty come backend,
   `TERM=xterm-256color`), con uno script che disegna `notcurses/data/worldmap.png` con ogni blitter e
@@ -84,8 +90,9 @@ aperte in Backlog, pubblicazione della gem, job grafici in CI, Windows.
 ## Flusso di lavoro (scelta dell'utente del 2026-11-15)
 
 - **Branch e PR** per i cambi a spec, script e `lib/`: un branch da `master` aggiornato e una PR per la Parte 2
-  (Linux) e una per la Parte 3 (macOS). Nomi: `test/fase5-linux` e `test/fase5-macos`. La Fase 5 non ha issue
-  Linear: crea branch e PR con `git` e `gh`, senza i comandi `/trinity:workflow:*`.
+  (Linux) e una per la Parte 3 (macOS). Nomi: `test/fase5-linux` e `test/fase5-macos`. Le Parti 1 e 2 non
+  hanno issue Linear. Dalla Parte 3 ogni PR ha una issue Linear associata (scelta dell'utente del 2026-11-15):
+  la PR #21 ha ICH-478, con `Fixes ICH-478` nella descrizione. Crea branch e PR con `git` e `gh`.
 - Prima del merge: CI verde su tutta la matrice, soglie di coverage invariate, `bundle exec rubocop` 0 offense. Il
   merge richiede la conferma dell'utente (regola 13). Dopo il merge il branch remoto si elimina.
 - Diretti su `master`, con `[skip ci]`: i commit di sola documentazione (`memory/`, `RICONSEGNA.md`, `RIPRESA.md`).
@@ -106,8 +113,8 @@ aperte in Backlog, pubblicazione della gem, job grafici in CI, Windows.
    versione di notcurses (`pkg-config --modversion notcurses` o il pacchetto), Ruby (`ruby -v`), dove sono le
    librerie (`ldconfig -p | grep notcurses` su Linux, `ls "$(brew --prefix)/lib" | grep notcurses` su macOS).
 6. Il submodule `notcurses/` serve alle spec delle immagini: `git submodule update --init --depth 1 notcurses`.
-7. Esegui `bundle install`, la suite completa e `bundle exec rubocop` (comandi in "Comandi"): 1046 esempi, 0
-   fallimenti; 0 offense.
+7. Esegui `bundle install`, la suite completa e `bundle exec rubocop` (comandi in "Comandi"): 1048 esempi dopo il
+   merge della PR #21 (1046 prima), 0 fallimenti; 0 offense.
 8. Leggi `memory/fase5-design.md` (sezioni 2 e 4) e `memory/fase5-terminali-macos.md` (soprattutto "Problemi e
    soluzioni"), poi `spec/graphics/terminal_spec.rb` e `spec/graphics/probe.rb`.
 
@@ -188,7 +195,24 @@ Non scrivere codice della Parte 2 nel repository prima dell'approvazione.
 - Suite completa dopo ogni cambio, in ordine normale e con i semi; `bundle exec rubocop` prima della PR.
 - Apri la PR, aspetta la CI (`gh pr checks <n> --watch`), poi chiedi il merge all'utente.
 
-## Parte 3 — macOS
+## Parte 4 — cosa resta
+
+1. **Merge della PR #21:** serve la conferma dell'utente (regola 13). Dopo il merge elimina il branch remoto e
+   controlla che ICH-478 passi a Done.
+2. **Linux (CachyOS):** suite completa in ordine normale e con `rand:1234`, `rand:4242`, `rand:7`. La PR #21 cambia
+   anche le spec di Linux, e la CI copre solo l'ordine casuale.
+3. **`RICONSEGNA.md`:** sezione "Fase 5" (consegna 3). Scrivi anche: il cambio della Fase 1 (`notcurses_stop` con
+   `blocking: ::FFI::Platform.mac?`); il limite F2 (la spec del fix non protegge in CI, che gira solo su Linux: la
+   suite su macOS va eseguita a mano); il bug di notcurses «`tcsetattr` interrotta da un segnale (`EINTR`) non viene
+   ripetuta in `notcurses_stop`» nella tabella dei bug; "Dipendenze di sistema" con macOS provato e coreutils.
+4. **README:** tabella di installazione con macOS, e i limiti.
+5. **Punto aperto:** blocco raro in `Context#close` su macOS (`pthread_join`, 1 volta su 62 con `rand:2026`), causa
+   non trovata: log, "Punti aperti". Chiedi all'utente se aprire una issue.
+6. **Controlli finali** (sezione omonima) e chiusura (consegne 4 e 5). Hindsight: retain della Parte 3 fatto il
+   2026-11-15 (10 fatti); sul Mac il server risponde solo a volte.
+
+## Parte 3 — macOS (fatta: PR #21, in attesa del merge)
+
 
 Lavora sul branch `test/fase5-macos`, da `master` aggiornato dopo il merge della Parte 2.
 
@@ -268,7 +292,7 @@ esiste una variabile `$SCRATCHPAD`.
 
 ```sh
 S=/percorso/dello/scratchpad   # dal prompt di sistema della sessione
-cd /Dati/Sviluppo/Progetti/Personali/20261027_notcursesruby
+cd /Dati/Sviluppo/Progetti/Personali/20261027_notcursesruby   # macOS: /Users/sphynx/Sviluppo/Progetti/Personali/20261027_notcursesruby
 
 # suite completa (dalla radice del progetto); COLORTERM serve alle 10 spec dei colori RGB
 TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 bundle exec rspec < /dev/null
