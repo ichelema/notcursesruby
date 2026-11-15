@@ -153,6 +153,28 @@ RSpec.describe Notcurses::Plane do
         expect(copy).to be_closed
       end
     end
+
+    # ncplane_dup di 3.0.17 crea la copia con flags = 0 e copia solo halign (notcurses.c:776, 788-793) (ICH-216).
+    it 'duplicate copia il flag fixed e l\'allineamento verticale (prima: la copia scorreva e non si riallineava)' do
+      with_parent(rows: 4, cols: 4, vscroll: true) do |p|
+        fixed = p.create_child(rows: 1, cols: 1, y: 3, fixed: true)
+        loose = p.create_child(rows: 1, cols: 1, y: 3)
+        fixed.duplicate do |d|
+          p.putstr("\n\n", y: 3, x: 0) # due scroll di p: i figli non fissi salgono di una riga per scroll
+          expect(loose.y).to eq(1)
+          expect(d.yx).to eq(fixed.yx) # prima: [1, 0]
+        end
+      end
+      with_parent do |parent|
+        c = parent.create_child(rows: 2, cols: 4, y: :bottom, x: :center)
+        c.duplicate do |d|
+          parent.resize(12, 30)
+          c.resize_realign
+          d.resize_realign
+          expect(d.yx).to eq([10, 13]) # prima: [8, 13]
+        end
+      end
+    end
   end
 
   describe 'resize' do

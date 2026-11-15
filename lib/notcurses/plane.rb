@@ -380,10 +380,12 @@ module Notcurses
     # assolute come relative, la mette in cima alla pila e azzera scrolling e
     # autogrow; il wrapper sposta la copia e ripristina i due flag. Di un piano
     # che ha fatto scroll il C copierebbe le righe ruotate: la copia le ha
-    # nell'ordine in cui si vedono (vedi "Scroll" nella classe). Non si
-    # possono ripristinare il flag fixed e l'allineamento verticale (per
-    # {#resize_realign}). Un callback di resize interno di un widget non viene
-    # copiato (con il C la copia andrebbe in crash al primo resize).
+    # nell'ordine in cui si vedono (vedi "Scroll" nella classe). Il C non copia
+    # nemmeno il flag fixed e l'allineamento verticale (per {#resize_realign}):
+    # il wrapper li scrive nei campi privati della copia, con le stesse
+    # condizioni di "Scroll" nella classe. Un callback di resize interno di un
+    # widget non viene copiato (con il C la copia andrebbe in crash al primo
+    # resize).
     #
     # @return [Plane] il duplicato; con un blocco, il valore del blocco (il
     #   duplicato viene distrutto alla fine)
@@ -402,6 +404,11 @@ module Notcurses
       copy.move_above(self)
       copy.scrolling = true if scrolling?
       copy.autogrow = true if autogrow?
+      # ncplane_dup crea la copia con flags = 0 e copia solo halign (notcurses.c:776, 793) (ICH-216)
+      if (from = internals(src)) && (to = internals(ptr))
+        to[:fixedbound] = from[:fixedbound]
+        to[:valign] = from[:valign]
+      end
       Util.with_resource(copy, &block)
     end
 

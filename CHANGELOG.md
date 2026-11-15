@@ -49,6 +49,9 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   mostrare l'EGC di un'altra. Il wrapper fa il resize in due passi (prima con qualche riga vuota in più in alto,
   poi le toglie): quando serve, cioè con `keep_x + x_off > -y_off * cols`, i callback di resize dei figli vengono
   chiamati due volte (ICH-215).
+- `Plane#duplicate` copia anche il flag `fixed` e l'allineamento verticale del piano: la copia di un piano creato
+  con `fixed: true` non scorre più con il genitore, e `resize_realign` la riallinea come l'originale. Prima
+  `ncplane_dup` di notcurses 3.0.17 li azzerava (ICH-216).
 - Le stringhe e i buffer allocati da notcurses (`Plane#at`, `Plane#name`, `Plane#as_rgba`, `Context#stats`,
   `Context#at`, `detected_terminal`, `Notcurses.hostname` e gli altri) si liberano con la `free` di notcurses. Prima
   il wrapper usava la `free` di glibc anche quando `LD_PRELOAD` mette un altro allocatore (jemalloc, tcmalloc,

@@ -186,7 +186,7 @@ copertura.
 | --- | --- |
 | `ncplane_resize_marginalized`/`placewithin` spostano il piano fuori dal genitore | scritte in Ruby |
 | `NCPLANE_OPTION_MARGINALIZED` ignora i margini alto e sinistro | `create_child(margins:)` calcola posizione e dimensioni in Ruby |
-| `ncplane_dup` posiziona la copia con le coordinate assolute come relative, la mette in cima e azzera scrolling e autogrow | `Plane#duplicate` sposta la copia e ripristina i flag; non copia il callback di resize interno di un widget (crash al primo resize) |
+| `ncplane_dup` posiziona la copia con le coordinate assolute come relative, la mette in cima e azzera scrolling e autogrow; crea la copia con `flags = 0` e copia solo `halign`, quindi perde il flag fixed e `valign` (`notcurses.c:776`, `793`) | `Plane#duplicate` sposta la copia e ripristina i flag; scrive `fixedbound` e `valign` nei campi privati della copia (`Plane::Internals`, con le condizioni di ICH-214) (ICH-216); non copia il callback di resize interno di un widget (crash al primo resize) |
 | `ncplane_resize`: offset positivi, regione che non entra (con `x_off < 0` scrive oltre il buffer), resize ignorato, `y_off` con larghezza intera | casi rifiutati con `ArgumentError` |
 | `ncplane_resize` con `keep_x > 0`: il ciclo che rilascia gli EGC delle celle perse (`notcurses.c:995-997`) parte dall'indice nel framebuffer nuovo (`itery * xlen - xoff + keeplenx`) e lo usa come colonna di quello vecchio. Nelle righe di destinazione in cui quell'indice è minore di `keepx + keeplenx` (di solito la sola riga 0) rilascia dall'egcpool EGC di più di 4 byte che restano nella regione conservata: quelle celle risultano vuote (`ncplane_at_yx_cell` fallisce) o, dopo un'altra scrittura, mostrano l'EGC di un'altra cella. Solo il contenuto, non la memoria del processo (ICH-215) | `Plane#resize_region` fa il resize in due passi quando `keep_x + x_off > -y_off * cols`: il primo con `extra = ceil((keep_x + x_off) / cols) + y_off` righe vuote in più in alto (`y_off - extra`, `rows + extra`), che portano la prima riga copiata oltre quell'indice; il secondo (`keep_y: extra`, `keep_x: 0`, dove il ciclo non tocca la regione) le toglie. I callback di resize dei figli girano due volte, la prima con il piano più alto. Il secondo passo si fa se il primo ha spostato l'origine, anche quando ha restituito il -1 di un callback |
 | `ncplane_cursor_move_yx` cambia x anche quando poi rifiuta y | posizione controllata prima |
@@ -334,7 +334,6 @@ fino al ridisegno successivo. Bordi arrotondati, ASCII senza UTF-8; niente PgUp/
 
 ## Bug noti non aggirati (documentati nel YARD)
 
-- `Plane#duplicate` non ripristina il flag fixed e l'allineamento verticale.
 - `Cell`: notcurses segmenta alcuni grapheme in modo diverso da Ruby (bandiere, sillabe hangul composte, coniugati
   devanagari); scrivere quelle celle solleva `CellError`.
 - Reader: Backspace, Ctrl+U e Ctrl+W non cancellano la colonna 0 (`notcurses.c:1883`); `tchannels` e `tattrword` non
