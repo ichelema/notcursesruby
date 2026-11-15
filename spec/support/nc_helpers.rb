@@ -3,6 +3,7 @@
 # frozen_string_literal: true
 
 require 'notcurses'
+require 'open3'
 
 # Helper delle spec del wrapper: contesti su /dev/null, mai su un TTY. Le spec
 # vanno eseguite con stdin su /dev/null (il thread di input di notcurses legge
@@ -29,7 +30,24 @@ module NcHelpers
     ENV.fetch('PATH', '').split(File::PATH_SEPARATOR).any? { |dir| File.executable?(File.join(dir, cmd)) }
   end || 'timeout'
 
+  # Allocatore di debug di glibc: con MALLOC_CHECK_=3 termina il processo alla
+  # prima free sbagliata o su un heap corrotto.
+  MALLOC_DEBUG = '/usr/lib/libc_malloc_debug.so.0'
+
   module_function
+
+  # Esegue script in un processo Ruby figlio sotto {MALLOC_DEBUG}, con lib/ nel
+  # load path e stdin vuoto. Chi lo chiama salta l'esempio se {MALLOC_DEBUG}
+  # manca.
+  #
+  # @return [Array(Integer, String)] stato di uscita e output (stdout e stderr)
+  def heap_check(script, timeout: 30)
+    env = {'TERM' => 'xterm-256color', 'LD_PRELOAD' => MALLOC_DEBUG, 'MALLOC_CHECK_' => '3'}
+    lib = File.expand_path('../../lib', __dir__)
+    out, status = Open3.capture2e(env, TIMEOUT, '-k', '5', '-s', 'KILL', timeout.to_s, RbConfig.ruby, '-I', lib, '-e',
+      script, stdin_data: '')
+    [status.exitstatus, out]
+  end
 
   # Numero dei descrittori aperti del processo, compreso quello con cui Dir
   # legge {FD_DIR}.

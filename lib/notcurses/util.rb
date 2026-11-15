@@ -320,7 +320,7 @@ module Notcurses
       str&.force_encoding(Encoding::UTF_8)
     end
 
-    # Legge un char* allocato dal C (memoria ALLOC), lo libera con free() e
+    # Legge un char* allocato dal C (memoria ALLOC), lo libera con {free} e
     # restituisce la String UTF-8. NULL diventa nil.
     # @param ptr [::FFI::Pointer, nil] puntatore a un char* allocato dal C
     # @return [String, nil] UTF-8 valido: i byte che non sono UTF-8 valido
@@ -331,9 +331,20 @@ module Notcurses
       begin
         ptr.read_string.force_encoding(Encoding::UTF_8).scrub
       ensure
-        FFI.free(ptr)
+        free(ptr)
       end
     end
+
+    # Libera memoria ALLOC del C di notcurses. Non usa FFI.free: ffi la cerca con
+    # dlsym() nella libreria e trova sempre la free di glibc, anche quando
+    # LD_PRELOAD mette un altro allocatore (jemalloc, tcmalloc,
+    # libc_malloc_debug), con cui notcurses ha allocato: la free sbagliata
+    # termina il processo (ICH-449). +ncpalette_free+ è solo free(p) dentro
+    # libnotcurses-core (notcurses.c:2591-2593), quindi usa lo stesso allocatore
+    # delle malloc di notcurses.
+    # @param ptr [::FFI::Pointer] puntatore non NULL allocato dal C
+    # @return [void]
+    def free(ptr) = FFI.ncpalette_free(FFI::NcPalette.new(ptr))
 
     # @param rc [Integer] codice restituito dal C
     # @param error [Class] eccezione da sollevare

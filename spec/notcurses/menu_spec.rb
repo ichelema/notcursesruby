@@ -29,7 +29,7 @@ RSpec.describe Notcurses::Menu do
   # Colore di primo piano (0xRRGGBB) della cella.
   def fg_at(plane, y, x)
     channels = ::FFI::MemoryPointer.new(:uint64)
-    Notcurses::FFI.free(Notcurses::FFI.ncplane_at_yx(plane.to_ptr, y, x, nil, channels))
+    Notcurses::Util.free(Notcurses::FFI.ncplane_at_yx(plane.to_ptr, y, x, nil, channels))
     Notcurses::Channels.new(value: channels.read_uint64).fg_rgb24
   end
 

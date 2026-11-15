@@ -1173,6 +1173,35 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    it "le stringhe e i buffer del C si liberano con l'allocatore di notcurses (prima: abort sotto LD_PRELOAD)" do
+      skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
+      script = <<~'RUBY'
+        require 'notcurses'
+        Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                drain_input: true) do |nc|
+          std = nc.stdplane
+          200.times do # lo script di ICH-449
+            dst = std.create_child(rows: 1, cols: 4, y: 0, x: 2)
+            src = std.create_child(rows: 1, cols: 8, y: 0, x: 1)
+            src.putstr('漢漢漢漢')
+            src.merge_down(dst)
+            dst.at(y: 0, x: 0)
+            dst.at(y: 0, x: 3)
+            dst.putstr('x', y: 0, x: 0)
+            dst.putstr('y', y: 0, x: 3)
+            src.close
+            dst.close
+          end
+          named = std.create_child(rows: 1, cols: 2, name: 'n')
+          named.putstr('  ', y: 0, x: 0)
+          200.times { [named.name, nc.stats, named.as_rgba(:half, y: 0, x: 0)] }
+          named.close
+        end
+        puts 'ok'
+      RUBY
+      expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+    end
+
     it 'erase_region cancella la regione, la taglia al bordo e non muove il cursore' do
       with_parent(rows: 2, cols: 4) do |c|
         c.putstr('ab', y: 0, x: 0)

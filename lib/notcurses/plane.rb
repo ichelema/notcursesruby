@@ -1377,7 +1377,7 @@ module Notcurses
         width = pxx.read_uint
         [buf.read_bytes(height * width * 4), height, width]
       ensure
-        FFI.free(buf)
+        Util.free(buf)
       end
     end
 
