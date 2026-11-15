@@ -2374,6 +2374,7 @@ module Notcurses
       cx = ::FFI::MemoryPointer.new(:uint)
       FFI.ncplane_cursor_yx(dst, cy, cx)
       cell = FFI::NcCell.new
+      moved = false
       rows.read_uint.times do |y|
         (cols.read_uint - 1).times do |x|
           next if FFI.ncplane_at_yx_cell(dst, y, x, cell).negative?
@@ -2381,13 +2382,35 @@ module Notcurses
           begin
             if FFI.nccell_wide_left_p(cell) && stale_right_half?(dst, y, x + 1)
               Util.check!(FFI.ncplane_putc_yx(dst, y, x, cell), PlaneError, 'ncplane_putc_yx')
+              moved = true
             end
           ensure
             FFI.nccell_release(dst, cell)
           end
         end
       end
-      FFI.ncplane_cursor_move_yx(dst, cy.read_uint, cx.read_uint)
+      restore_cursor!(dst, cy.read_uint, cx.read_uint, cols.read_uint) if moved
+    end
+
+    # Rimette il cursore di ptr in (y, x). ncplane_cursor_move_yx rifiuta
+    # x == colonne (notcurses.c:729-731), dove resta il cursore dopo una
+    # scrittura che riempie la riga: lì il wrapper riscrive con il suo stesso
+    # contenuto l'ultima cella della riga (la metà sinistra, se è una metà
+    # destra), e ncplane_putc_yx lascia il cursore subito dopo. Se notcurses
+    # non riesce a leggere quella cella (egcpool pieno) il cursore resta dove
+    # l'ha lasciato la riscrittura dei glifi (ICH-485).
+    def restore_cursor!(ptr, y, x, cols)
+      return Util.check!(FFI.ncplane_cursor_move_yx(ptr, y, x), PlaneError, 'ncplane_cursor_move_yx') if x < cols
+
+      last = cols > 1 && wide_right?(ptr, y, cols - 1) ? cols - 2 : cols - 1
+      cell = FFI::NcCell.new
+      return if FFI.ncplane_at_yx_cell(ptr, y, last, cell).negative?
+
+      begin
+        Util.check!(FFI.ncplane_putc_yx(ptr, y, last, cell), PlaneError, 'ncplane_putc_yx')
+      ensure
+        FFI.nccell_release(ptr, cell)
+      end
     end
 
     # true se (y, x) è vuota e larga 0: la metà destra lasciata da ncplane_mergedown.

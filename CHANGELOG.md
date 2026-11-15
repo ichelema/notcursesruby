@@ -37,7 +37,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   da un resize del terminale sfuggiva al controllo del primo, e la sua scrittura successiva cancellava la prima cella
   della riga sotto o, sull'ultima riga, corrompeva l'heap (ICH-448).
 - `Plane#merge_down` lascia in `dst` glifi larghi con la metà destra normale: `dst.at` sulla metà destra restituisce
-  il glifo, e una scrittura su una delle due metà cancella il glifo intero, come su ogni altro piano. Prima la metà
+  il glifo, e una scrittura su una delle due metà cancella il glifo intero, come su ogni altro piano; il cursore di
+  `dst` non cambia, anche quando è a fine riga. Prima la metà
   destra restava con larghezza 0 (bug di notcurses 3.0.17): `at` restituiva la cella base, e alcune sequenze di
   scritture lasciavano una metà destra orfana, cancellavano la prima cella della riga sotto o corrompevano l'heap
   (ICH-481).

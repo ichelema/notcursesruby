@@ -1191,6 +1191,38 @@ RSpec.describe Notcurses::Plane do
         dst&.close
       end
 
+      it 'il cursore di dst non cambia, anche dopo una scrittura che riempie la riga (prima del fix di review: spostato)' do
+        dst = merged('', rows: 2, cols: 4)
+        dst.putstr('漢xy', y: 0, x: 0)
+        dst.putstr('ab', y: 1, x: 0)
+        src = std.create_child(rows: 1, cols: 4)
+        src.putstr('中', y: 0, x: 0) # porta un glifo largo, che il wrapper riscrive
+        src.merge_down(dst)
+        expect(dst.cursor).to eq([1, 2])
+        dst.putstr('cd', y: 1, x: 2)
+        src.merge_down(dst)
+        src.close
+        expect(dst.cursor).to eq([1, 4])
+        expect { dst.putstr('Z') }.to raise_error(Notcurses::PlaneError, /non entra/) # prima: "Z" in (0, 2)
+        expect(dst.contents(y: 0, rows: 1)).to eq('中xy')
+      ensure
+        dst&.close
+      end
+
+      it 'su un dst che scorre la scrittura dopo merge_down va a capo dalla fine della riga, come prima' do
+        dst = merged('', rows: 3, cols: 4)
+        dst.scrolling = true
+        dst.putstr('漢xy', y: 0, x: 0)
+        dst.putstr('abcd', y: 1, x: 0)
+        src = std.create_child(rows: 1, cols: 4)
+        src.merge_down(dst)
+        src.close
+        dst.putstr('Z')
+        expect([dst.contents(y: 0, rows: 1), dst.contents(y: 2, rows: 1)]).to eq(%w[漢xy Z])
+      ensure
+        dst&.close
+      end
+
       it 'una scrittura stretta e poi una larga sulla stessa colonna lasciano intatta la riga sotto (prima: "XYZ")' do
         dst = merged('a漢', rows: 2, cols: 4)
         dst.putstr('WXYZ', y: 1, x: 0)
