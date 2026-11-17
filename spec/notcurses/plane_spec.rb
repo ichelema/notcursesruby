@@ -249,6 +249,28 @@ RSpec.describe Notcurses::Plane do
         end
       end
 
+      # con la malloc fallita (notcurses.c:918) il primo passo non tocca il piano
+      it 'lascia com\'era un piano che ha già fatto scroll quando il primo passo fallisce (prima: righe permutate)' do
+        skip "manca #{NcHelpers::MALLOC_DEBUG}" unless File.exist?(NcHelpers::MALLOC_DEBUG)
+        script = <<~RUBY
+          require 'notcurses'
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            pl = nc.stdplane.create_child(rows: 3, cols: 4, vscroll: true)
+            %w[aaaa bbbb cccc].each_with_index { |s, y| pl.putstr(s, y: y, x: 0) }
+            pl.putstr("\\ndddd")
+            Process.setrlimit(:AS, 1_500_000_000)
+            begin
+              pl.resize_region(rows: 50_000_000, cols: 4, keep_x: 1, keep_rows: 3, keep_cols: 3)
+            rescue Notcurses::PlaneError
+              nil
+            end
+            p [pl.dims, Array.new(3) { |y| pl.contents(y: y, rows: 1) }]
+          end
+        RUBY
+        expect(NcHelpers.heap_check(script)).to eq([0, %([[3, 4], ["bbbb", "cccc", "dddd"]]\n)])
+      end
+
       it 'chiama due volte i callback di resize dei figli (il resize è in due passi), una sola senza keep_x' do
         with_parent(rows: 2, cols: 8) do |p|
           seen = []

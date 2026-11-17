@@ -528,17 +528,21 @@ module Notcurses
       # extra righe vuote in più in alto portano la prima riga copiata oltre quel punto; il secondo resize
       # le toglie (con keep_x == 0 il ciclo non tocca la regione).
       extra = keep_rows.zero? ? 0 : [((keep_x + x_off + cols - 1) / cols) + y_off, 0].max
-      # il C rifiuta senza toccare il piano solo lo stdplane e una regione fuori dal piano (notcurses.c:842-849,
-      # 1013): negli altri casi il primo resize è applicato e va completato, anche quando ha restituito il -1 del
-      # callback di un figlio (che può anche aver spostato il piano)
+      # il C rifiuta senza toccare il piano lo stdplane e una regione fuori dal piano (notcurses.c:842-849,
+      # 1013), controllati qui, e una malloc fallita (notcurses.c:918), controllata dopo il primo passo: negli
+      # altri casi il primo resize è applicato e va completato, anche quando ha restituito il -1 del callback di
+      # un figlio (che può anche aver spostato il piano)
       two_steps = extra.positive? && address != @context.stdplane.address &&
                   keep_y + keep_rows <= cur_rows && keep_x + keep_cols <= cur_cols
-      old = two_steps && (st = internals(ptr)) && fb_bytes(st)
+      st = two_steps && internals(ptr)
+      old = st && fb_bytes(st)
+      fb = st && st[:fb].address
       rc = FFI.ncplane_resize(ptr, keep_y, keep_x, keep_rows, keep_cols, y_off - extra, x_off, rows + extra, cols)
-      if two_steps
+      st = two_steps && internals(ptr)
+      # con la malloc fallita (notcurses.c:918) il primo passo non ha toccato il piano (fb uguale): niente secondo
+      if two_steps && !(fb && st && st[:fb].address == fb)
         # il C scrive il framebuffer nuovo in ordine logico ma lascia logrow (bug di ICH-214): su un piano che
         # ha già fatto scroll il secondo passo leggerebbe le righe sbagliate e ne perderebbe una
-        st = internals(ptr)
         st[:logrow] = 0 if st
         rc |= FFI.ncplane_resize(ptr, extra, 0, rows, cols, 0, 0, rows, cols)
       end
