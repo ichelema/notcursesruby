@@ -472,7 +472,9 @@ module Notcurses
     # piano più alto e spostato in su rispetto al risultato. Su un piano che ha
     # già fatto scroll il resize in due passi conserva anche l'ordine delle
     # righe, che negli altri resize cambia (bug noto, nella descrizione della
-    # classe).
+    # classe). Un callback che nel primo passo ridimensiona il piano lavora
+    # sul piano intermedio: ne può togliere le righe conservate invece di
+    # quelle vuote in più, e il secondo passo allora fallisce (PlaneError).
     #
     # Un glifo largo tagliato che resta sul bordo del piano diventa una cella
     # vuota, come in {#resize}: con keep_x dentro un glifo largo ne resterebbe
