@@ -22,6 +22,11 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Plane#merge_down` non copre più il glifo che in `src` segue una metà sinistra orfana di un glifo largo (ICH-532).
+  Il wrapper riscriveva la metà sinistra come un glifo intero, e il glifo dopo spariva da `dst`. Ora `dst` mostra
+  quello che mostra `src`: uno spazio al posto della metà orfana, con i suoi stili e colori, e il glifo di `src` nella
+  sua cella, con i suoi. Vale anche per un glifo di più di 4 byte e con l'egcpool di `dst` pieno. Se il glifo dopo la
+  metà orfana è largo, `dst` mostra ancora il glifo orfano intero.
 - `Plane#rotate_cw`, `#rotate_ccw` e `#resize_region` (che non conserva niente) non perdono più la cella base con
   l'egcpool pieno (ICH-531). Durante la chiamata C il wrapper rilasciava l'EGC della base dal pool, e il C poteva
   usare quello spazio: dopo la chiamata la base non trovava posto, diventava vuota e l'errore di `ncplane_set_base`
@@ -42,8 +47,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   wrapper rimette la stessa cella base (EGC, stili e canali) dopo il resize.
 - `Plane#merge_down` non lascia più in `dst` una cella rotta dopo una metà sinistra orfana di un glifo largo in
   `src` (ICH-530). notcurses lascia la cella a destra con `gcluster` 0 e la larghezza della cella di `src`; il
-  wrapper cercava solo le metà destre con larghezza 0. Ora riscrive anche questo caso: la metà sinistra torna un
-  glifo intero e il glifo che la seguiva in `src` è coperto. Prima la sequenza di scritture successiva su quella
+  wrapper cercava solo le metà destre con larghezza 0. Ora riscrive anche questa cella (il contenuto è quello di
+  ICH-532). Prima la sequenza di scritture successiva su quella
   riga corrompeva l'heap (`free(): invalid pointer` in `Plane#close`).
 - `Plane#merge_down`: il ripristino di `dst` (egcpool pieno) controlla dimensione, puntatore del pool e dimensione del
   pool in una sola espressione, subito prima di scrivere il framebuffer vecchio (ICH-529). Prima il controllo era un

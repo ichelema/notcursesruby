@@ -1441,9 +1441,11 @@ module Notcurses
     # i colori della cella. Se nemmeno questa riscrittura riesce, le due metà
     # del glifo diventano celle vuote. Anche la cella dopo una metà sinistra
     # orfana di src (un glifo largo tagliato da un resize, seguito da un altro
-    # glifo) resta in dst con larghezza 1 e senza EGC: il wrapper riscrive
-    # anche quella metà sinistra, che torna un glifo intero e copre il glifo
-    # che la seguiva.
+    # glifo) resta in dst con larghezza 1 e senza EGC: il wrapper scrive in
+    # dst, come in src, uno spazio al posto della metà orfana, con i suoi stili
+    # e colori, e il glifo che la segue in src, con i suoi. Se quel glifo è
+    # largo, notcurses lascia una cella uguale a una metà destra: dst mostra
+    # il glifo orfano intero e non il glifo largo che lo segue.
     #
     # +ncplane_mergedown+ copia anche ogni EGC di più di 4 byte nell'egcpool di
     # dst senza rilasciare le copie vecchie: il pool cresceva a ogni fusione e,
@@ -1494,7 +1496,7 @@ module Notcurses
       end
       raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (dst non è cambiato)" if lost == :undone
 
-      restore_wide_glyphs!(target)
+      restore_wide_glyphs!(target, ptr)
       # glifi larghi nuovi senza le scritture: un resize del C li può tagliare a dimensioni già controllate
       @context.tracked_plane(target.address)&.cut_glyphs_cols = nil
       raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (celle di dst vuote)" if lost
@@ -2658,8 +2660,10 @@ module Notcurses
     # metà destra orfana e a scritture fuori dalla riga (ICH-481). Il wrapper
     # riscrive quei glifi con ncplane_putc_yx, che rimette la metà destra; il
     # cursore di dst torna dov'era. Un glifo che ncplane_at_yx_cell non riesce
-    # a leggere (egcpool pieno) lo riscrive rewrite_unreadable! (ICH-485).
-    def restore_wide_glyphs!(dst)
+    # a leggere (egcpool pieno) lo riscrive rewrite_unreadable! (ICH-485). Una
+    # metà sinistra orfana di src seguita da un glifo diventa uno spazio e quel
+    # glifo (split_orphan!, ICH-532).
+    def restore_wide_glyphs!(dst, src)
       rows = ::FFI::MemoryPointer.new(:uint)
       cols = ::FFI::MemoryPointer.new(:uint)
       FFI.ncplane_dim_yx(dst, rows, cols)
@@ -2671,13 +2675,15 @@ module Notcurses
       rows.read_uint.times do |y|
         (cols.read_uint - 1).times do |x|
           if FFI.ncplane_at_yx_cell(dst, y, x, cell).negative?
-            moved = true if stale_right_half?(dst, y, x + 1) && rewrite_unreadable!(dst, y, x, 2)
+            next unless stale_right_half?(dst, y, x + 1)
+
+            moved = true if split_orphan!(dst, src, y, x) || rewrite_unreadable!(dst, y, x, 2)
             next
           end
 
           begin
             if FFI.nccell_wide_left_p(cell) && stale_right_half?(dst, y, x + 1)
-              Util.check!(FFI.ncplane_putc_yx(dst, y, x, cell), PlaneError, 'ncplane_putc_yx')
+              split_orphan!(dst, src, y, x) || Util.check!(FFI.ncplane_putc_yx(dst, y, x, cell), PlaneError, 'ncplane_putc_yx')
               moved = true
             end
           ensure
@@ -2722,15 +2728,51 @@ module Notcurses
       egc = Util.take_string(FFI.ncplane_at_yx(ptr, y, x, styles, channels))
       return false if egc.nil? || FFI.ncstrwidth(egc, nil, nil) < min_width
 
+      rc = put_styled(ptr, y, x, egc, styles.read_uint16, channels.read_uint64)
+      FFI.ncplane_erase_region(ptr, y, x, 1, 2) if rc.negative?
+      true
+    end
+
+    # Dopo una metà sinistra orfana di src (un glifo largo tagliato da un resize, seguito da un glifo B)
+    # ncplane_mergedown lascia in dst la cella di B senza EGC (render.c:471-485). Come src, dst mostra uno spazio
+    # al posto della metà orfana, con i suoi stili e canali, e B nella sua cella, con i suoi (ICH-532). Legge B
+    # da src e la metà sinistra da dst con ncplane_at_yx, che non usa l'egcpool; lo spazio rilascia l'EGC della
+    # metà sinistra prima della scrittura di B. Se B non si scrive (egcpool pieno) la sua cella resta vuota.
+    # @return [Boolean] false, senza scrivere, se la cella di src dopo la metà sinistra è vuota, fuori da src o
+    #   la metà destra del glifo, o se in dst (y, x) non è un glifo largo: lì il glifo largo resta intero
+    def split_orphan!(dst, src, y, x)
+      sy = y + FFI.ncplane_abs_y(dst) - FFI.ncplane_abs_y(src)
+      sx = x + 1 + FFI.ncplane_abs_x(dst) - FFI.ncplane_abs_x(src)
+      return false unless sy >= 0 && sy < FFI.ncplane_dim_y(src) && sx >= 0 && sx < FFI.ncplane_dim_x(src)
+      return false unless half_at(src, sy, sx) == :none # ncplane_at_yx su una metà destra orfana può non tornare
+
+      styles = ::FFI::MemoryPointer.new(:uint16)
+      channels = ::FFI::MemoryPointer.new(:uint64)
+      glyph = Util.take_string(FFI.ncplane_at_yx(src, sy, sx, styles, channels))
+      return false if glyph.nil? || glyph.empty?
+
+      left_styles = ::FFI::MemoryPointer.new(:uint16)
+      left_channels = ::FFI::MemoryPointer.new(:uint64)
+      left = Util.take_string(FFI.ncplane_at_yx(dst, y, x, left_styles, left_channels))
+      return false if left.nil? || FFI.ncstrwidth(left, nil, nil) < 2
+
+      put_styled(dst, y, x, ' ', left_styles.read_uint16, left_channels.read_uint64)
+      FFI.ncplane_erase_region(dst, y, x + 1, 1, 1) if put_styled(dst, y, x + 1, glyph, styles.read_uint16,
+                                                                  channels.read_uint64).negative?
+      true
+    end
+
+    # Scrive egc in (y, x) di ptr (+ncplane_putegc_yx+) con gli stili e i canali dati al posto di quelli del
+    # piano, che tornano subito dopo. Restituisce il valore di ncplane_putegc_yx (negativo se fallisce).
+    def put_styled(ptr, y, x, egc, styles, channels)
       plane_styles = FFI.ncplane_styles(ptr)
       plane_channels = FFI.ncplane_channels(ptr)
-      FFI.ncplane_set_styles(ptr, styles.read_uint16)
-      FFI.ncplane_set_channels(ptr, channels.read_uint64)
+      FFI.ncplane_set_styles(ptr, styles)
+      FFI.ncplane_set_channels(ptr, channels)
       rc = FFI.ncplane_putegc_yx(ptr, y, x, egc, nil)
       FFI.ncplane_set_styles(ptr, plane_styles)
       FFI.ncplane_set_channels(ptr, plane_channels)
-      FFI.ncplane_erase_region(ptr, y, x, 1, 2) if rc.negative?
-      true
+      rc
     end
 
     # true se (y, x) è vuota e larga meno di 2: la metà destra lasciata da ncplane_mergedown, con larghezza 0
