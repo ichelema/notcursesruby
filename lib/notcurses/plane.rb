@@ -344,14 +344,19 @@ module Notcurses
     end
 
     # Trampolino C → Ruby per un callback di resize: le eccezioni restano nel
-    # contesto e il C riceve -1.
+    # contesto e il C riceve -1. Prima del callback rimette la cella base dei
+    # piani che il C ha appena ridimensionato senza conservare niente
+    # (keeping_base_cell): il callback può riempire l'egcpool (ICH-531).
     # @api private
     # @return [::FFI::Function]
     def self.ruby_resize_function(context, callable)
       box = context.callback_errors
       ::FFI::Function.new(:int, [:pointer]) do |plane_ptr|
         Util.guard(box, -1) do
-          context.callback_scope { callable.call(context.plane_for(plane_ptr)) }
+          context.callback_scope do
+            context.base_restores.each { |restore| restore.call(false) }
+            callable.call(context.plane_for(plane_ptr))
+          end
           0
         end
       end
@@ -481,9 +486,11 @@ module Notcurses
     # Bug di 3.0.17 aggirato: un resize che non conserva niente (keep_rows 0)
     # svuota l'egcpool, e la cella base con un EGC di più di 4 byte finiva su
     # un pool liberato (SIGSEGV in {#base}). Il wrapper rimette la cella base
-    # dopo il resize; durante il resize la base è uno spazio, e un callback di
-    # resize di un figlio che la legge la vede così. Se il callback cambia la
-    # base, il wrapper lascia la sua.
+    # dopo il resize, o prima del primo callback Ruby di resize di un figlio:
+    # il callback vede la base com'era, e se riempie l'egcpool (16 MiB) sono le
+    # sue scritture a fallire, non la base. Se il callback cambia la base, il
+    # wrapper lascia la sua. Se il resize fallisce senza cambiare il piano, la
+    # base resta com'era.
     #
     # Un glifo largo tagliato che resta sul bordo del piano diventa una cella
     # vuota, come in {#resize}: con keep_x dentro un glifo largo ne resterebbe
@@ -1432,11 +1439,14 @@ module Notcurses
     # solo per gli EGC di più di 4 byte): quei glifi il wrapper li riscrive
     # leggendo l'EGC con +ncplane_at_yx+, che non usa il pool, con gli stili e
     # i colori della cella. Se nemmeno questa riscrittura riesce, le due metà
-    # del glifo diventano celle vuote. Anche la cella dopo una metà sinistra
-    # orfana di src (un glifo largo tagliato da un resize, seguito da un altro
-    # glifo) resta in dst con larghezza 1 e senza EGC: il wrapper riscrive
-    # anche quella metà sinistra, che torna un glifo intero e copre il glifo
-    # che la seguiva.
+    # del glifo diventano celle vuote.
+    #
+    # Una metà sinistra orfana di src (un glifo largo tagliato da un resize)
+    # seguita da un glifo: notcurses disegnerebbe il glifo largo intero, sopra
+    # il glifo dopo. Durante la fusione il wrapper la cambia in uno spazio con
+    # gli stessi stili e colori (src torna com'era dopo): dst mostra lo spazio
+    # e il glifo, con i colori composti come nelle altre celle. Senza i campi
+    # privati il glifo largo resta intero.
     #
     # +ncplane_mergedown+ copia anche ogni EGC di più di 4 byte nell'egcpool di
     # dst senza rilasciare le copie vecchie: il pool cresceva a ogni fusione e,
@@ -1447,9 +1457,10 @@ module Notcurses
     # insieme nel pool: se le nuove non entrano (EGC di dst per più di circa
     # 8 MiB), il wrapper annulla la fusione e solleva PlaneError. Questi
     # controlli raddoppiano circa il costo: su un piano 50x200 la fusione
-    # passa da circa 5 a circa 11 ms.
+    # passa da circa 5 a circa 11 ms, e la ricerca delle metà sinistre orfane
+    # di src la porta a circa 15 ms.
     #
-    # Un gestore +trap+ non deve cambiare dst durante merge_down (notcurses
+    # Un gestore +trap+ non deve cambiare dst né src durante merge_down (notcurses
     # non è rientrante). Il wrapper rilegge dst prima di rilasciare o
     # ripristinare, ma questo restringe le finestre, non le chiude: un trap
     # gira anche al ritorno dei metodi C. La fusione può restare a metà
@@ -1474,7 +1485,12 @@ module Notcurses
       # trap girano comunque: i controlli di release_unused! e undo_merge! rileggono dst prima di toccarlo
       lost = Thread.handle_interrupt(Object => :never) do
         old = (st = internals(target)) && fb_bytes(st)
-        Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
+        blanked = blank_orphan_lefts!(ptr)
+        begin
+          Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
+        ensure
+          blanked.each { |cell, bytes| cell.write_bytes(bytes) }
+        end
         # il C ha copiato ogni EGC nel framebuffer nuovo e ha liberato quello vecchio senza rilasciarli (ICH-482)
         st = old && internals(target)
         fresh = st && fb_bytes(st)
@@ -2521,29 +2537,72 @@ module Notcurses
 
     # Esegue il blocco, che fa un resize del C senza conservare niente (anche la rotazione, che ridimensiona il
     # piano a vuoto): notcurses.c:953-957 svuota l'egcpool, ma la cella base tiene il suo offset e Plane#base va
-    # in SIGSEGV (ICH-489). Con un EGC di più di 4 byte, che sta nel pool, la cella base diventa uno spazio durante
-    # la chiamata (set_base rilascia l'EGC prima che il pool sia svuotato) e torna com'era dopo, a meno che un
-    # callback di resize o un trap l'abbia cambiata nel frattempo: quella base vince. Con active falso (un resize
-    # che conserva celle, e quindi il pool) il blocco gira senza altro.
+    # in SIGSEGV (ICH-489). Con un EGC di più di 4 byte, che sta nel pool, la cella base diventa uno spazio
+    # durante la chiamata. Il wrapper scrive lo spazio nel campo privato senza rilasciare l'EGC: il C non può
+    # usarne lo spazio nel pool, e senza spazio la base non tornerebbe più (ICH-531). Se il C non ha fatto il
+    # resize (framebuffer uguale: rotazione rifiutata, malloc fallita) la base torna con i suoi byte; se l'ha
+    # fatto, con ncplane_set_base nel pool svuotato, prima del primo callback Ruby di resize
+    # (ruby_resize_function), che può riempire il pool, o dopo la chiamata. Una base cambiata nel frattempo da
+    # un callback o da un trap vince. Con active falso (un resize che conserva celle, e quindi il pool) o senza
+    # internals il blocco gira senza altro.
     def keeping_base_cell(active = true)
       ptr = to_ptr
-      saved = read_base(ptr) if active
-      return yield unless saved && saved.egc.bytesize > 4
+      st = internals(ptr) if active
+      return yield unless st && st[:basecell][:gcluster] >> 24 == 1 # EGC nel pool (cell_extended_p)
 
-      temporary = Cell.new(egc: ' ', styles: saved.styles, channels: saved.channels)
+      cell = st[:basecell]
+      saved = cell.to_ptr.read_bytes(CELL_BYTES)
+      egc = FFI.nccell_extended_gcluster(ptr, cell)
+      fb = st[:fb].address
+      # gcluster " " (htole), width 1, stessi stili e canali; preparato prima: una sola scrittura
+      temporary = space_bytes(saved)
+      # una volta sola: dopo il ripristino un callback può impostare una base uguale allo spazio provvisorio
+      restored = false
+      restore = lambda do |done|
+        next if restored || cell.to_ptr.read_bytes(CELL_BYTES) != temporary
+
+        if st[:fb].address != fb
+          Util.check!(FFI.ncplane_set_base(ptr, egc, cell[:stylemask], cell[:channels]), PlaneError, 'ncplane_set_base')
+          restored = true
+        elsif done
+          cell.to_ptr.write_bytes(saved)
+        end
+      end
       begin
-        set_base(egc: ' ', styles: saved.styles, channels: saved.channels)
+        @context.base_restores << restore
+        cell.to_ptr.write_bytes(temporary)
         yield
       ensure
-        set_base(egc: saved.egc, styles: saved.styles, channels: saved.channels) if !closed? && read_base(ptr) == temporary
+        @context.base_restores.delete(restore)
+        restore.call(true) unless closed?
       end
     end
 
-    # Cella base letta dal campo privato di ptr, senza la copia nel pool che fa ncplane_base: con il pool senza
-    # spazio per la copia ncplane_base fallisce (ICH-489, review). Senza internals ripiega su {#base}.
-    def read_base(ptr)
+    # Byte di una nccell con uno spazio (htole) largo 1 al posto dell'EGC di bytes, con gli stessi stili e canali.
+    def space_bytes(bytes) = " \0\0\0".b + bytes.byteslice(4, 1) + "\x01".b + bytes.byteslice(6..)
+
+    # Metà sinistre orfane di ptr (glifi larghi tagliati da un resize) seguite da un glifo: ncplane_mergedown
+    # disegnerebbe il glifo largo intero e lascerebbe la cella dopo senza EGC e con i colori della metà sinistra
+    # (render.c:471-485). Per la fusione il wrapper le cambia in uno spazio con gli stessi stili e canali, senza
+    # rilasciare l'EGC dal pool (ICH-532): il C compone lo spazio e il glifo dopo come le altre celle. Senza
+    # internals non cambia niente.
+    # @return [Array<Array(::FFI::Pointer, String)>] celle cambiate con i loro byte di prima, da riscrivere dopo
+    def blank_orphan_lefts!(ptr)
       st = internals(ptr)
-      st ? cell_content(ptr, st[:basecell]) : base
+      return [] if st.nil?
+
+      cols = st[:lenx]
+      cells = fb_bytes(st).unpack("LxCx#{CELL_BYTES - 6}" * (st[:leny] * cols)).each_slice(2).to_a
+      fb = st[:fb]
+      cells.each_index.filter_map do |i|
+        gcluster, width = cells[i]
+        next if i % cols == cols - 1 || gcluster == 0 || width < 2 || cells[i + 1][0] == 0
+
+        cell = fb + (i * CELL_BYTES)
+        bytes = cell.read_bytes(CELL_BYTES)
+        cell.write_bytes(space_bytes(bytes))
+        [cell, bytes]
+      end
     end
 
     # EGC della cella (y, x) letto con ncplane_at_yx (strdup, senza passare dall'egcpool) quando

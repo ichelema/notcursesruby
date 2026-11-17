@@ -743,6 +743,30 @@ RSpec.describe Notcurses::Plane do
           RUBY
           expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
         end
+
+        # review di ICH-531: il wrapper riconosceva la base provvisoria solo dai byte, e rimetteva la base vecchia
+        # sopra quella di un callback uguale allo spazio provvisorio (stessi stili e canali)
+        it "#{name}: la base uguale allo spazio provvisorio impostata da un callback resta (prima: la base vecchia)" do
+          script = <<~RUBY
+            require 'notcurses'
+            Process.setrlimit(:CORE, 0)
+            Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                    drain_input: true) do |nc|
+              pl = nc.stdplane.create_child(rows: 3, cols: 8)
+              pl.set_base(egc: '👍🏽', styles: :bold)
+              child = pl.create_child(rows: 1, cols: 1)
+              child.set_resize_callback do
+                pl.set_base(egc: ' ', styles: :bold)
+                0
+              end
+              #{call}
+              abort "base: \#{pl.base.inspect}" unless pl.base == Notcurses::Cell.new(egc: ' ', styles: :bold)
+              pl.close
+            end
+            puts 'ok'
+          RUBY
+          expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+        end
       end
 
       # review: ncplane_base copia l'EGC nel pool, e con il pool senza spazio per la copia falliva prima del resize
@@ -776,8 +800,13 @@ RSpec.describe Notcurses::Plane do
             pl = nc.stdplane.create_child(rows: 3, cols: 8)
             pl.set_base(egc: '👍🏽', styles: :bold)
             want = pl.base
+            # la base provvisoria è una scrittura grezza della cella (ICH-531): il primo write_bytes
+            fired = false
             trace = TracePoint.new(:c_return) do |tp|
-              Process.kill('INT', Process.pid) if tp.method_id == :ncplane_set_base
+              next if fired || tp.method_id != :write_bytes
+
+              fired = true
+              Process.kill('INT', Process.pid)
             end
             begin
               trace.enable { pl.resize_region(rows: 3, cols: 5) }
@@ -790,6 +819,72 @@ RSpec.describe Notcurses::Plane do
           puts 'ok'
         RUBY
         expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+      end
+
+      # ICH-531: la base provvisoria rilasciava l'EGC della base dal pool prima della chiamata C, che poteva usare
+      # quello spazio; dopo la chiamata set_base non trovava posto (limite di 16 MiB) e la base andava persa.
+      %w[rotate_cw rotate_ccw].each do |name|
+        it "#{name} rifiutato con il pool pieno lascia la base e solleva l'errore del C (prima: ncplane_set_base)" do
+          script = <<~RUBY
+            require 'notcurses'
+            Process.setrlimit(:CORE, 0)
+            Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                    drain_input: true) do |nc|
+              big = "漢\#{"\\u0301" * 3_000_000}"
+              pl = nc.stdplane.create_child(rows: 3, cols: 8)
+              pl.set_base(egc: big, styles: :bold, channels: Notcurses::Channels.rgb(255, 0, 0, 0, 0, 0))
+              want = pl.base
+              pl.putstr(big, y: 0, x: 0)
+              begin
+                pl.#{name}
+                abort 'nessun errore'
+              rescue Notcurses::PlaneError => e
+                abort "errore: \#{e.message}" unless e.message.include?('ncplane_#{name}')
+              end
+              abort "dims: \#{pl.dims.inspect}" unless pl.dims == [3, 8]
+              abort 'base vuota' unless pl.at(y: 2, x: 7).egc == big
+              pl.erase_region(0, 0, 1, 2) # ncplane_base copia la base nel pool: serve spazio per la copia
+              abort 'base' unless pl.base == want
+              pl.close
+            end
+            puts 'ok'
+          RUBY
+          expect(NcHelpers.heap_check(script, timeout: 60)).to eq([0, "ok\n"])
+        end
+      end
+
+      it 'resize_region con un callback di un figlio che riempie il pool conserva la base (prima: la perdeva)' do
+        script = <<~RUBY
+          require 'notcurses'
+          Process.setrlimit(:CORE, 0)
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            big = "漢\#{"\\u0301" * 3_000_000}"
+            pl = nc.stdplane.create_child(rows: 3, cols: 8)
+            pl.set_base(egc: big, styles: :bold, channels: Notcurses::Channels.rgb(255, 0, 0, 0, 0, 0))
+            want = pl.base
+            errors = []
+            child = pl.create_child(rows: 1, cols: 1)
+            child.set_resize_callback do
+              %w[a b].each_with_index do |c, y|
+                pl.putstr("\#{c}\#{"\\u0301" * 3_000_000}", y: y, x: 0)
+              rescue Notcurses::PlaneError, ArgumentError => e # il controllo di zero_width_egc! carica l'EGC nel pool
+                errors << e.message
+              end
+              0
+            end
+            pl.resize_region(rows: 3, cols: 5)
+            abort "dims: \#{pl.dims.inspect}" unless pl.dims == [3, 5]
+            # il pool (16 MiB) ha posto per la base e per uno solo dei due EGC del callback
+            abort "errori del callback: \#{errors.inspect}" unless errors.size == 1
+            abort 'base vuota' unless pl.at(y: 2, x: 4).egc == big
+            pl.erase
+            abort 'base' unless pl.base == want
+            pl.close
+          end
+          puts 'ok'
+        RUBY
+        expect(NcHelpers.heap_check(script, timeout: 60)).to eq([0, "ok\n"])
       end
     end
   end
@@ -1600,21 +1695,90 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
-    it 'la cella dopo una metà sinistra orfana è valida in dst, su ogni riga (prima: gcluster 0 e larghezza 1)' do
-      [0, 1].each do |row|
+    # ICH-532 (scelta dell'utente su ICH-530): dst mostra quello che mostra src, cioè uno spazio al posto della
+    # metà orfana e, nella cella dopo, il glifo di src con il suo stile e i suoi colori. Prima il wrapper
+    # riscriveva il glifo largo intero, che copriva quel glifo.
+    it 'dopo una metà sinistra orfana dst ha uno spazio e il glifo di src, su ogni riga (prima: il glifo largo)' do
+      # "X\u0301\u0301": 5 byte, nell'egcpool; 好: largo, copre Z (prima: spariva anche lui)
+      [[0, 'X', 'a XZ'], [1, 'X', 'a XZ'], [1, "X\u0301\u0301", "a X\u0301\u0301Z"], [1, '好', 'a 好']].each do |row, glyph, line|
         dst = std.create_child(rows: 2, cols: 4)
         src = std.create_child(rows: 2, cols: 4)
         dst.putstr('WXYZ', y: row, x: 0)
         src.set_fg_rgb24(0xff0000)
+        src.styles = :bold
         src.putstr('a中c', y: row, x: 0)
         src.resize_region(rows: 2, cols: 3, keep_rows: 2, keep_cols: 2)
         src.resize(2, 4)
-        src.putstr('X', y: row, x: 2)
+        src.set_fg_rgb24(0x00ff00)
+        src.styles = :italic
+        src.putstr(glyph, y: row, x: 2)
         src.merge_down(dst)
-        expect(dst.at(y: row, x: 2).egc).to eq('中') # prima: ''
-        expect(dst.contents(y: row, rows: 1)).to eq('a中Z')
+        cells = (1..2).map { |x| dst.at(y: row, x: x) }.map { |c| [c.egc, c.styles, c.channels.fg_rgb24] }
+        expect(cells).to eq([[' ', [:bold], 0xff0000], [glyph, [:italic], 0x00ff00]]) # prima: 中 nelle due celle
+        expect([dst.contents(y: row, rows: 1), dst.cursor, src.at(y: row, x: 1).egc]).to eq([line, [row, 4], '中'])
       ensure
         [src, dst].each { |pl| pl&.close }
+      end
+    end
+
+    # review di ICH-532: il glifo dopo la metà orfana prendeva i colori di src, non quelli composti con dst
+    it 'il glifo dopo una metà sinistra orfana ha i colori composti come le altre celle (prima: quelli di src)' do
+      [%i[blend blend], %i[transparent transparent], %i[highcontrast opaque]].each do |fg, bg|
+        dst = std.create_child(rows: 2, cols: 4)
+        dst.set_fg_rgb24(0x0000ff)
+        dst.set_bg_rgb24(0x0000ff)
+        2.times { |y| dst.putstr('WXYZ', y: y, x: 0) }
+        src = std.create_child(rows: 2, cols: 4)
+        src.putstr('a中c', y: 0, x: 0)
+        src.resize_region(rows: 2, cols: 3, keep_rows: 2, keep_cols: 2)
+        src.resize(2, 4)
+        src.set_fg_rgb24(0x00ff00)
+        src.set_bg_rgb24(0x00ff00)
+        src.set_fg_alpha(fg)
+        src.set_bg_alpha(bg)
+        2.times { |y| src.putstr('B', y: y, x: 2) } # riga 1: controllo, senza metà orfana prima
+        src.merge_down(dst)
+        orphan, control = Array.new(2) { |y| dst.at(y: y, x: 2) }
+        expect([orphan.egc, orphan.channels]).to eq(['B', control.channels])
+      ensure
+        [src, dst].each { |pl| pl&.close }
+      end
+    end
+
+    # review di ICH-532: il wrapper riscriveva il glifo dopo la metà orfana tenendo nel pool di dst una copia
+    # della metà sinistra, e senza spazio per la scrittura svuotava la cella senza errore
+    context "con l'egcpool di dst quasi pieno (base da 12 MB)" do
+      # dst 1x4 con "WXYZ"; src 1x4 con "a", la metà sinistra orfana di left e glyph in colonna 2
+      def merge_orphan(left, glyph)
+        dst = std.create_child(rows: 1, cols: 4)
+        dst.set_base(egc: "d#{"\u0301" * 6_000_000}")
+        dst.putstr('WXYZ', y: 0, x: 0)
+        src = std.create_child(rows: 1, cols: 4)
+        src.putstr("a#{left}c", y: 0, x: 0)
+        src.resize_region(rows: 1, cols: 3, keep_rows: 1, keep_cols: 2)
+        src.resize(1, 4)
+        src.putstr(glyph, y: 0, x: 2)
+        yield src, dst
+      ensure
+        [src, dst].each { |pl| pl&.close }
+      end
+
+      it 'dst ha lo spazio e il glifo di src quando il risultato entra nel pool (prima: il glifo spariva)' do
+        left = "中#{"\u0301" * 1_000_000}" # 2 MB
+        glyph = "B#{"\u0301" * 1_500_000}" # 3 MB: con la base fanno 15 MB
+        merge_orphan(left, glyph) do |src, dst|
+          src.merge_down(dst)
+          expect([dst.at(y: 0, x: 1).egc, dst.at(y: 0, x: 2).egc == glyph, dst.cursor]).to eq([' ', true, [0, 4]])
+          expect(src.at(y: 0, x: 1).egc == left).to be(true)
+        end
+      end
+
+      it 'se il glifo di src non entra nel pool la fusione fallisce e dst non cambia (prima: il glifo spariva)' do
+        glyph = "B#{"\u0301" * 2_500_000}" # 5 MB: con la base fanno più di 16 MiB
+        merge_orphan('中', glyph) do |src, dst|
+          expect { src.merge_down(dst) }.to raise_error(Notcurses::PlaneError, /dst non è cambiato/)
+          expect([dst.contents, src.at(y: 0, x: 1).egc, src.at(y: 0, x: 2).egc == glyph]).to eq(['WXYZ', '中', true])
+        end
       end
     end
 

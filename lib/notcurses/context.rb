@@ -200,6 +200,12 @@ module Notcurses
     # @api private
     attr_reader :callback_errors
 
+    # Ripristini della cella base in corso (Plane#keeping_base_cell), da eseguire
+    # prima di ogni callback Ruby di resize.
+    # @return [Array<Proc>]
+    # @api private
+    attr_reader :base_restores
+
     # Avvia notcurses (+notcurses_init+, o +notcurses_core_init+ con core: true).
     #
     # @param termtype [String, nil] voce terminfo del terminale; nil = variabile
@@ -306,6 +312,7 @@ module Notcurses
         @planes = {}
         @children = {}.compare_by_identity
         @callback_errors = []
+        @base_restores = []
         @callback_depth = 0
         @callback_errors_seen = 0
         @cursor_enabled = false

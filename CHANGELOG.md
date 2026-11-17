@@ -22,6 +22,17 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Plane#merge_down` non copre più il glifo che in `src` segue una metà sinistra orfana di un glifo largo (ICH-532).
+  Il wrapper riscriveva la metà sinistra come un glifo intero, e il glifo dopo spariva da `dst`. Ora, durante la
+  fusione, il wrapper cambia la metà orfana in uno spazio con gli stessi stili e colori (`src` torna com'era dopo):
+  `dst` mostra lo spazio e il glifo di `src`, anche largo o di più di 4 byte, con i colori composti come nelle altre
+  celle. Se il glifo non entra nell'egcpool di `dst`, la fusione fallisce con `PlaneError` e `dst` non cambia.
+- `Plane#rotate_cw`, `#rotate_ccw` e `#resize_region` (che non conserva niente) non perdono più la cella base con
+  l'egcpool pieno (ICH-531). Durante la chiamata C il wrapper rilasciava l'EGC della base dal pool, e il C poteva
+  usare quello spazio: dopo la chiamata la base non trovava posto, diventava vuota e l'errore di `ncplane_set_base`
+  nascondeva quello del C. Ora l'EGC resta nel pool durante la chiamata. Se il C rifiuta la rotazione, la base resta
+  com'era e il metodo solleva l'errore del C. Se il C fa il resize, la base torna prima del primo callback Ruby di
+  resize di un figlio: un callback che riempie il pool vede fallire le sue scritture, non la base.
 - `Plane#contents` legge gli EGC di più di 4 byte anche con l'egcpool del piano pieno (ICH-490). `ncplane_at_yx_cell`
   copia l'EGC nel pool (16 MiB) e fallisce quando non c'è spazio: `contents` sollevava `PlaneError` con il contenuto
   intatto. Ora legge quelle celle con `ncplane_at_yx`, che non usa il pool, come `Plane#at`. Un piano con un bitmap
@@ -36,8 +47,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   wrapper rimette la stessa cella base (EGC, stili e canali) dopo il resize.
 - `Plane#merge_down` non lascia più in `dst` una cella rotta dopo una metà sinistra orfana di un glifo largo in
   `src` (ICH-530). notcurses lascia la cella a destra con `gcluster` 0 e la larghezza della cella di `src`; il
-  wrapper cercava solo le metà destre con larghezza 0. Ora riscrive anche questo caso: la metà sinistra torna un
-  glifo intero e il glifo che la seguiva in `src` è coperto. Prima la sequenza di scritture successiva su quella
+  wrapper cercava solo le metà destre con larghezza 0. Ora riscrive anche questa cella (il contenuto è quello di
+  ICH-532). Prima la sequenza di scritture successiva su quella
   riga corrompeva l'heap (`free(): invalid pointer` in `Plane#close`).
 - `Plane#merge_down`: il ripristino di `dst` (egcpool pieno) controlla dimensione, puntatore del pool e dimensione del
   pool in una sola espressione, subito prima di scrivere il framebuffer vecchio (ICH-529). Prima il controllo era un
