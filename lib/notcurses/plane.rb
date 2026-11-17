@@ -1407,7 +1407,11 @@ module Notcurses
     # solo per gli EGC di più di 4 byte): quei glifi il wrapper li riscrive
     # leggendo l'EGC con +ncplane_at_yx+, che non usa il pool, con gli stili e
     # i colori della cella. Se nemmeno questa riscrittura riesce, le due metà
-    # del glifo diventano celle vuote.
+    # del glifo diventano celle vuote. Anche la cella dopo una metà sinistra
+    # orfana di src (un glifo largo tagliato da un resize, seguito da un altro
+    # glifo) resta in dst con larghezza 1 e senza EGC: il wrapper riscrive
+    # anche quella metà sinistra, che torna un glifo intero e copre il glifo
+    # che la seguiva.
     #
     # +ncplane_mergedown+ copia anche ogni EGC di più di 4 byte nell'egcpool di
     # dst senza rilasciare le copie vecchie: il pool cresceva a ogni fusione e,
@@ -2645,12 +2649,14 @@ module Notcurses
       true
     end
 
-    # true se (y, x) è vuota e larga 0: la metà destra lasciata da ncplane_mergedown.
+    # true se (y, x) è vuota e larga meno di 2: la metà destra lasciata da ncplane_mergedown, con larghezza 0
+    # (render.c:393-395) o con quella della cella di src sotto una metà sinistra orfana (render.c:471-485,
+    # ICH-530). Una metà destra vera ha larghezza 2 e non conta.
     def stale_right_half?(ptr, y, x)
       cell = FFI::NcCell.new
       return false if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
 
-      cell[:gcluster].zero? && cell[:width].zero?
+      cell[:gcluster].zero? && cell[:width] < 2
     ensure
       FFI.nccell_release(ptr, cell)
     end

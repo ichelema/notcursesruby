@@ -22,6 +22,11 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Plane#merge_down` non lascia più in `dst` una cella rotta dopo una metà sinistra orfana di un glifo largo in
+  `src` (ICH-530). notcurses lascia la cella a destra con `gcluster` 0 e la larghezza della cella di `src`; il
+  wrapper cercava solo le metà destre con larghezza 0. Ora riscrive anche questo caso: la metà sinistra torna un
+  glifo intero e il glifo che la seguiva in `src` è coperto. Prima la sequenza di scritture successiva su quella
+  riga corrompeva l'heap (`free(): invalid pointer` in `Plane#close`).
 - `Plane#merge_down`: il ripristino di `dst` (egcpool pieno) controlla dimensione, puntatore del pool e dimensione del
   pool in una sola espressione, subito prima di scrivere il framebuffer vecchio (ICH-529). Prima il controllo era un
   lambda con un ciclo: un gestore `trap` che ridimensionava `dst` fra il controllo e la scrittura faceva scrivere 288

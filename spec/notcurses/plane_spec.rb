@@ -1447,6 +1447,59 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    # ICH-530: la cella dopo la metà sinistra orfana restava in dst con gcluster 0 e la larghezza di quella di
+    # src (1): la riscrittura delle metà destre cercava solo quelle di larghezza 0, e la sequenza di scritture su
+    # quella riga di dst corrompeva l'heap (free(): invalid pointer in Plane#close).
+    context 'con una metà sinistra orfana sull\'ultima riga di src' do
+      before { skip "manca #{NcHelpers::MALLOC_DEBUG}" unless File.exist?(NcHelpers::MALLOC_DEBUG) }
+
+      it 'dst resta valido dopo una sequenza di scritture (prima: free(): invalid pointer)' do
+        script = <<~RUBY
+          require 'notcurses'
+          Process.setrlimit(:CORE, 0)
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            30.times do
+              dst = nc.stdplane.create_child(rows: 2, cols: 4)
+              dst.putstr('WXYZ', y: 1, x: 0)
+              src = nc.stdplane.create_child(rows: 2, cols: 4)
+              src.set_fg_rgb24(0xff0000)
+              src.putstr('a中c', y: 1, x: 0)
+              src.resize_region(rows: 2, cols: 3, keep_rows: 2, keep_cols: 2)
+              src.resize(2, 4)
+              src.putstr('X', y: 1, x: 2)
+              src.merge_down(dst)
+              src.close
+              dst.putstr('中', y: 1, x: 2)
+              dst.putstr('x', y: 1, x: 1)
+              dst.putstr('中', y: 1, x: 2)
+              dst.close
+            end
+          end
+          puts 'ok'
+        RUBY
+        expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+      end
+    end
+
+    it 'la cella dopo una metà sinistra orfana è valida in dst, su ogni riga (prima: gcluster 0 e larghezza 1)' do
+      [0, 1].each do |row|
+        dst = std.create_child(rows: 2, cols: 4)
+        src = std.create_child(rows: 2, cols: 4)
+        dst.putstr('WXYZ', y: row, x: 0)
+        src.set_fg_rgb24(0xff0000)
+        src.putstr('a中c', y: row, x: 0)
+        src.resize_region(rows: 2, cols: 3, keep_rows: 2, keep_cols: 2)
+        src.resize(2, 4)
+        src.putstr('X', y: row, x: 2)
+        src.merge_down(dst)
+        expect(dst.at(y: row, x: 2).egc).to eq('中') # prima: ''
+        expect(dst.contents(y: row, rows: 1)).to eq('a中Z')
+      ensure
+        [src, dst].each { |pl| pl&.close }
+      end
+    end
+
     # Il rilascio delle copie vecchie e il ripristino leggono il framebuffer e il pool di dst dopo chiamate Ruby,
     # dove gira un gestore trap. Prima un trap che cambiava dst in quella finestra portava a SIGSEGV
     # (nccell_release su un pool svuotato) o a un heap corrotto (ripristino con le dimensioni vecchie).
