@@ -2505,14 +2505,13 @@ module Notcurses
     # oltre il pool di adesso e la cella base, che non sta nel framebuffer.
     def release_unused!(ptr, gclusters)
       st = internals(ptr)
-      return if st.nil? || st[:pool].null?
+      return if st.nil?
 
-      pool = st[:pool]
-      size = st[:poolsize]
       unused = gclusters - pooled(fb_bytes(st)) - [st[:basecell][:gcluster]]
       release_gclusters!(ptr, st, unused.select do |g|
         idx = g & 0xffffff
-        idx < size && pool.get_uint8(idx).nonzero? && (idx.zero? || pool.get_uint8(idx - 1).zero?)
+        pool = st[:pool] # riletto per ogni cella: un trap lo può liberare fra due chiamate Ruby
+        !pool.null? && idx < st[:poolsize] && pool.get_uint8(idx).nonzero? && (idx.zero? || pool.get_uint8(idx - 1).zero?)
       end)
     end
 

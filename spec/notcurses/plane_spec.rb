@@ -1408,9 +1408,10 @@ RSpec.describe Notcurses::Plane do
     # (nccell_release su un pool svuotato) o a un heap corrotto (ripristino con le dimensioni vecchie).
     context 'con un gestore trap che cambia dst durante la fusione' do
       # Script per un processo figlio: quando src chiama per la volta at il metodo privato hook, un trap esegue
-      # action su dst; big riempie il pool di dst (la fusione va annullata).
-      def trap_merge_script(action, hook:, at: 1, big: false)
-        fill = big ? "2.times { |y| dst.putstr(\"a\#{\"\\u0301\" * 3_000_000}\", y: y, x: 0) }" : "dst.putstr('👍🏽x👍🏽', y: 0, x: 0)"
+      # action su dst; big righe di dst hanno un EGC da 6 MB (con 2 il pool è pieno e la fusione va annullata;
+      # con 1 il pool è abbastanza grande da stare in una mappatura sua, e una lettura dopo la free va in SIGSEGV).
+      def trap_merge_script(action, hook:, at: 1, big: 0)
+        fill = big.zero? ? "dst.putstr('👍🏽x👍🏽', y: 0, x: 0)" : "#{big}.times { |y| dst.putstr(\"a\#{\"\\u0301\" * 3_000_000}\", y: y, x: 0) }"
         <<~RUBY
           require 'notcurses'
           Process.setrlimit(:CORE, 0)
@@ -1450,7 +1451,13 @@ RSpec.describe Notcurses::Plane do
       end
 
       it 'un resize prima del ripristino con il pool pieno (prima: heap corrotto)' do
-        script = trap_merge_script('resize(1, 4)', hook: :lost_egc?, big: true)
+        script = trap_merge_script('resize(1, 4)', hook: :lost_egc?, big: 2)
+        expect(NcHelpers.heap_check(script, timeout: 60)).to eq([0, "ok\n"])
+      end
+
+      # la seconda chiamata di pooled è quella dentro release_unused!, prima del filtro che legge il pool
+      it 'un erase mentre il wrapper sceglie le copie vecchie da rilasciare (prima: SIGSEGV)' do
+        script = trap_merge_script('erase', hook: :pooled, at: 2, big: 1)
         expect(NcHelpers.heap_check(script, timeout: 60)).to eq([0, "ok\n"])
       end
     end
