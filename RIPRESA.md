@@ -6,39 +6,35 @@
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
 > `git show ad0315b:RIPRESA.md`; quello dei lotti della revisione in `git show 8a4b5f7:RIPRESA.md`.
 
-## Stato e prossimo step (aggiornato il 2026-11-15, lotto 2 in review)
+## Stato e prossimo step (aggiornato il 2026-11-17, dopo il lotto 2)
 
-- Lotto 1 fatto: PR #22, merge `74deb80`. Log in `memory/backlog-issue.md`, esito in `RICONSEGNA.md`.
-- **Lotto 2 in corso: PR #23 in draft**, branch `bug/ICH-214-485-215-216-482-487-opus`, worktree
-  `.claude/worktrees/bug+ICH-214-485-215-216-482-487-opus`, HEAD `be426b1`. Issue nella PR: ICH-485, ICH-215, ICH-216,
-  ICH-482, ICH-487 (tutte In Progress). Suite 1103 esempi, 0 fallimenti (ordine normale, semi 1234, 4242, 7); coverage
-  98,31 %; RuboCop 0; YARD 100 %; layer FFI invariato. CI di `be426b1` verde su tutta la matrice e su Codecov.
-- **Prossimo step:** una review dei commit dopo il round 3, in una sessione nuova (il contesto della sessione del
-  lotto 2 era pieno): `5bb2a4e` (controlli di `release_dropped!`) e `be426b1` (rimozione di ICH-214). Poi CI verde, via
-  il draft (`gh pr ready 23`), merge con la conferma dell'utente e chiusura del lotto (procedura, passo 7). Comando:
-  `/trinity:workflow:4_review-fix-loop ICH-485 ICH-215 ICH-216 ICH-482 ICH-487 opus` oppure una review mirata ai due
-  commit.
-- Decisioni dell'utente nel lotto 2: struct privata `Plane::Internals` (layout di `struct ncplane` 3.0.17, in
-  `plane.rb`, non nel layer FFI) in lettura e scrittura, usata solo con la libreria 3.0.17 e campi uguali ai getter
-  pubblici; ICH-215 con il resize in due passi (i callback dei figli girano due volte); ICH-485 con la riscrittura del
-  glifo illeggibile.
-- **ICH-214 tolta dal lotto** (scelta dell'utente dopo il round 3, commit `be426b1`), di nuovo in Backlog con le note
-  nella issue: ruotare il framebuffer da Ruby non si può rendere sicuro, perché un gestore `trap` o un altro thread può
-  fare un resize del piano fra la copia e la scrittura (heap overflow, double free). Serve un lock o codice C. Va
-  riprogettata in un lotto suo (forse con un helper approvato nel layer FFI, regola 1).
-- Issue nuove dal lotto 2, in Backlog: ICH-489 (cella base dopo un resize che non conserva niente, segfault), ICH-490
-  (`Plane#contents` con l'egcpool pieno), ICH-493 (`Plane#at` su un piano con bitmap Kitty, segfault anche su
-  `master`). ICH-495 (`Stats#fbbytes`) è `Canceled`: nasceva dal fix di ICH-214 tolto. Da inserire nei lotti con
-  l'utente.
-- Rischio noto non riprodotto (nel commento della PR): l'annullamento del merge di ICH-482 riscrive il buffer dopo
-  qualche chiamata Ruby; un `trap` che fa resize di `dst` in quella finestra, con il pool pieno, potrebbe dare lo
-  stesso tipo di problema di ICH-214.
-- Note dai lotti 1 e 2: con il raise sulle letture di cella un fix ha creato due difetti (le letture di
-  `ncplane_at_yx_cell` devono restare tolleranti: egcpool pieno, piani con bitmap); i reviewer provano i casi con
-  l'egcpool pieno (EGC da 6 MB), i piani con bitmap su un pty finto (sixel e Kitty: `bitmap_plane_script` in
-  `spec/integration/pty_spec.rb`), i callback di resize che cambiano il piano e i gestori `trap`. I reviewer non
-  devono usare `rm`: lasciano i file in `.review-tmp/`, e i worktree di review si rimuovono con `--force` (con la
-  conferma dell'utente).
+- Lotto 1 fatto: PR #22, merge `74deb80`. Lotto 2 fatto: PR #23, merge `cb90c4f` (ICH-485, ICH-215, ICH-216, ICH-482,
+  ICH-487 a Done). Log in `memory/backlog-issue.md`, esito in `RICONSEGNA.md`. `master` su `cb90c4f`: 1111 esempi, 0
+  fallimenti (ordine normale, semi 1234, 4242, 7); coverage 98,41 %; RuboCop 0; YARD 100 %; layer FFI invariato; CI
+  verde.
+- **Prossimo step: lotto 3** (ICH-454, ICH-456, ICH-455: linesigs di `EventLoop#run` e Ctrl+C con il protocollo di
+  tastiera kitty). Prima, con l'utente: dove mettere le issue nuove dal lotto 2 (sotto). Poi la procedura da
+  `/trinity:workflow:1_create-worktree master ICH-454 ICH-456 ICH-455 opus`.
+- Issue nuove dal lotto 2, in Backlog, da inserire nei lotti con l'utente: ICH-489 (cella base dopo un resize che non
+  conserva niente, segfault), ICH-490 (`Plane#contents` con l'egcpool pieno), ICH-493 (`Plane#at` su un piano con
+  bitmap Kitty, segfault anche su `master`), ICH-529 (`undo_merge!` controlla `dst` e poi scrive: un `trap` che lo
+  ridimensiona in mezzo corrompe l'heap), ICH-530 (metà sinistra orfana sull'ultima riga di `src`, dopo `merge_down`
+  `free(): invalid pointer`, anche su `master`). ICH-495 è `Canceled`.
+- **ICH-214 in Backlog**, tolta dal lotto 2: ruotare il framebuffer da Ruby non si rende sicuro (un gestore `trap` o
+  un altro thread può fare un resize fra la copia e la scrittura). Serve un lock o codice C: va riprogettata in un
+  lotto suo, forse con un helper approvato nel layer FFI (regola 1). Il lotto 2 azzera già `logrow` nel resize in due
+  passi di `resize_region`.
+- Gestori `trap` (decisione dell'utente nel lotto 2): un trap gira anche al ritorno dei metodi C e dentro i blocchi, e
+  `Thread.handle_interrupt` non lo rinvia. I workaround che leggono i campi privati restringono le finestre e lo YARD
+  lo dice; non rincorrere ogni finestra in review. Nei filtri non usare `nonzero?` (guardia di ricorsione: `NameError`
+  con un trap che lo chiama), ma `!= 0`.
+- Note dai lotti 1 e 2: le letture di `ncplane_at_yx_cell` restano tolleranti (egcpool pieno, piani con bitmap); i
+  reviewer provano l'egcpool pieno (EGC da 6 MB), i piani con bitmap su un pty finto (sixel e Kitty:
+  `bitmap_plane_script` in `spec/integration/pty_spec.rb`), i piani che hanno fatto scroll, le metà sinistre orfane, i
+  callback di resize che cambiano il piano e i gestori `trap`. I reviewer non usano `rm`; i worktree di review si
+  rimuovono con `--force` quando `git status` è vuoto (solo il submodule), altrimenti con la conferma dell'utente.
+- Il merge di una PR lo blocca il classificatore dei permessi ("Merge Without Review") anche con il sì dell'utente:
+  chiedi all'utente di eseguire `gh pr merge <n> --merge`, poi chiudi il lotto (passo 7).
 
 ## Contesto
 
