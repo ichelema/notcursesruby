@@ -6,22 +6,19 @@
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
 > `git show ad0315b:RIPRESA.md`; quello dei lotti della revisione in `git show 8a4b5f7:RIPRESA.md`.
 
-## Stato e prossimo step (aggiornato il 2026-11-17, dopo il lotto 2)
+## Stato e prossimo step (aggiornato il 2026-11-17, dopo il lotto 2b)
 
-- Lotto 1 fatto: PR #22, merge `74deb80`. Lotto 2 fatto: PR #23, merge `cb90c4f` (ICH-485, ICH-215, ICH-216, ICH-482,
-  ICH-487 a Done). Log in `memory/backlog-issue.md`, esito in `RICONSEGNA.md`. `master` su `cb90c4f`: 1111 esempi, 0
-  fallimenti (ordine normale, semi 1234, 4242, 7); coverage 98,41 %; RuboCop 0; YARD 100 %; layer FFI invariato; CI
-  verde.
-- **Prossimo step: lotto 2b** (ICH-529, ICH-530, ICH-489, ICH-493, ICH-490: le issue nate dal lotto 2, tutte in
-  `lib/notcurses/plane.rb`), poi il lotto 3. Procedura da
-  `/trinity:workflow:1_create-worktree master ICH-529 ICH-530 ICH-489 ICH-493 ICH-490 opus` (branch
-  `bug/ICH-529-530-489-493-490-opus`).
-- Issue nuove dal lotto 2 nel lotto 2b (scelta lasciata a Claude dall'utente il 2026-11-17, motivi in
-  `memory/backlog-issue.md`): ICH-529 (`undo_merge!` controlla `dst` e poi scrive: un `trap` che lo ridimensiona in
-  mezzo corrompe l'heap), ICH-530 (metà sinistra orfana sull'ultima riga di `src`, dopo `merge_down`
-  `free(): invalid pointer`, anche su `master`), ICH-489 (cella base dopo un resize che non conserva niente,
-  segfault), ICH-493 (`Plane#at` su un piano con bitmap Kitty, segfault anche su `master`), ICH-490
-  (`Plane#contents` con l'egcpool pieno). ICH-495 è `Canceled`.
+- Lotto 1 fatto: PR #22, merge `74deb80`. Lotto 2 fatto: PR #23, merge `cb90c4f`. Lotto 2b fatto: PR #24, merge
+  `6374e41` (ICH-529, ICH-530, ICH-489, ICH-493, ICH-490 a Done). Log in `memory/backlog-issue.md`, esito in
+  `RICONSEGNA.md`. `master` su `6374e41`: 1124 esempi, 0 fallimenti (ordine normale, semi 1234, 4242, 7); coverage
+  98,25 %; RuboCop 0; YARD 100 %; layer FFI invariato; CI verde.
+- **Prossimo step: lotto 3** (ICH-454, ICH-456, ICH-455). Procedura da
+  `/trinity:workflow:1_create-worktree master ICH-454 ICH-456 ICH-455 opus` (branch `bug/ICH-454-456-455-opus`).
+  Prima: `/trinity:workflow:5_remove-worktree bug+ICH-529-530-489-493-490-opus` (worktree, branch locale e remoto).
+- Aperto dal lotto 2b: la scelta dell'utente su ICH-530 (la cella dopo una metà sinistra orfana diventa la metà
+  destra del glifo largo, invece di una cella vuota o del glifo di `src`); ICH-531 (il ripristino della base dopo un
+  resize o una rotazione richiede spazio nel pool) è in Backlog e va assegnata a un lotto. Nel round 2 Fable non ha
+  fatto la review (limite d'uso, si azzera il 2026-11-20): se serve, rilancia la review di Fable su `f209900`.
 - **ICH-214 in Backlog**, tolta dal lotto 2: ruotare il framebuffer da Ruby non si rende sicuro (un gestore `trap` o
   un altro thread può fare un resize fra la copia e la scrittura). Serve un lock o codice C: va riprogettata in un
   lotto suo, forse con un helper approvato nel layer FFI (regola 1). Il lotto 2 azzera già `logrow` nel resize in due
