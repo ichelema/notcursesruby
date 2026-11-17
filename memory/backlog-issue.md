@@ -312,3 +312,70 @@ Lavoro in una sessione il 2026-11-17 (implementazione, review-fix loop di 2 roun
   offense; YARD 100 %; `gem build` riuscito; `git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto; CI di
   `master` verde.
 - ICH-529, ICH-530, ICH-489, ICH-493 e ICH-490 a Done. Issue nuova: ICH-531 (Backlog).
+
+## Lotto 2c — ICH-531, ICH-532 (PR #25, merge `d2c5f7c`)
+
+Lavoro in una sessione il 2026-11-17. Branch `bug/ICH-531-532-opus`; codice in `lib/notcurses/plane.rb` e
+`lib/notcurses/context.rb`. Commit: `b2e22ff` (ICH-531), `8c95913` (primo fix di ICH-532), `9d07656` (ICH-531, secondo
+parere di design), `13294e1` (nuovo fix di ICH-532 dopo la review), `c73e251` (note della review del round 2).
+
+### Fix
+
+- **ICH-531 (`keeping_base_cell`).** Causa: il wrapper sostituiva la base con `set_base(' ')`, che rilascia l'EGC dal
+  pool; il C usava quello spazio (rotazione rifiutata: `rotate_2x1_cw` copia la cella nel pool e non la rilascia, poi
+  rifiuta il carattere) e dopo la chiamata `set_base` non trovava posto. Ora lo spazio è una scrittura grezza nel campo
+  privato della base, senza rilascio. Dopo la chiamata: framebuffer invariato (il C non ha fatto il resize) → i byte
+  originali tornano; framebuffer nuovo (pool svuotato, `notcurses.c:957`) → `ncplane_set_base` con stili e canali
+  grezzi. Il trampolino `Plane.ruby_resize_function` esegue i ripristini in corso (`Context#base_restores`) prima del
+  callback dell'utente: i callback girano dentro la chiamata C dopo lo svuotamento (`notcurses.c:1006`). Il ripristino
+  gira una volta sola (`9d07656`): un callback può impostare una base uguale allo spazio provvisorio. Senza
+  `internals` niente workaround; `read_base` rimosso.
+- **ICH-532 (`merge_down`).** Primo approccio (`8c95913`): dopo la fusione riscrivere il glifo B letto da `src`
+  (`split_orphan!`). La review lo ha bocciato (sotto). Approccio finale (`13294e1`): prima di
+  `ncplane_mergedown_simple`, `blank_orphan_lefts!` cambia in `src` ogni metà sinistra orfana seguita da un glifo
+  (`gcluster` diverso da 0 e width >= 2, cella dopo con `gcluster` diverso da 0) in uno spazio con gli stessi stili e
+  canali, con una scrittura grezza; un `ensure` rimette i byte, dentro il blocco `Thread.handle_interrupt` che c'era
+  già. Il C compone lo spazio e B come le altre celle e copia B nel pool di `dst`; se B non entra, `lost_egc?` e
+  `undo_merge!` annullano la fusione con `PlaneError`. Anche un B largo ora funziona. `split_orphan!` e `put_styled`
+  rimossi; `restore_wide_glyphs!` e `rewrite_unreadable!` tornano come prima.
+
+### Decisioni
+
+- Dell'utente: review solo con GPT, perché Fable ha finito i crediti; ICH-533 aperta e messa nel lotto 8 (stesso
+  codice di ICH-217 e ICH-232: `zero_width_egc!`); dopo il round 1 fix diretto con il nuovo approccio e nuova review.
+- Mie: criterio 2 di ICH-531 letto come "la base non si perde" (base 6 MB + 2 × 6 MB > 16 MiB: una scrittura del
+  callback deve fallire), confermato dal secondo parere di GPT; workaround senza fallback quando mancano i campi
+  privati, come gli altri del file; il B che non entra nel pool fa fallire la fusione (comportamento che `merge_down`
+  aveva già) invece di sparire.
+
+### Review
+
+- Secondo parere di design su ICH-531 (`gpt-bridge:deep-reasoner`, prima del commit): stesso disegno; ha trovato il
+  ripristino che sovrascriveva una base del callback uguale allo spazio provvisorio (corretto in `9d07656`).
+- Round 1 (`gpt-bridge:reviewer`, `9d07656`): NON APPROVABILE. HIGH: B perso in silenzio sotto pressione del pool (una
+  copia della metà sinistra restava nel pool durante la scrittura di B). MEDIUM: B con i canali grezzi di `src`, non
+  composti (`:blend`, `:transparent`, `:highcontrast`). Riprodotti tutti e due; corretti in `13294e1`.
+- Round 2 (`13294e1`): APPROVABILE, nessun finding. Note applicate in `c73e251`: la spec dell'`Interrupt` di ICH-489
+  colpisce il primo `write_bytes` (la base provvisoria non passa più da `ncplane_set_base`); lo YARD di `merge_down` dà
+  il costo della scansione (circa 15 ms invece di 11 su 50x200).
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| `/trinity:workflow:1_create-worktree` non si invoca con il tool Skill | `disable-model-invocation` | comandi del workflow lanciati dall'utente |
+| Spec del callback di ICH-531: `ArgumentError` invece di `PlaneError` | `zero_width_egc!` carica l'EGC nel pool pieno | la spec accetta tutte e due; difetto aperto come ICH-533 |
+| Suite in background e modifiche a `lib/` | le spec `heap_check` caricano `lib/` dal disco | `lib/` cambiato solo a suite finita |
+| Commit separati per issue con un solo file di spec | blocchi di ICH-531 e ICH-532 nello stesso file | `git apply --cached` del solo blocco di ICH-531 |
+| `.review-tmp` non è in `.gitignore` | il worktree di review con file non tracciati non si rimuove con la regola del `--force` | il revisore esegue gli script da stdin, senza file |
+| Merge bloccato dal classificatore dei permessi | regola "Merge Without Review" | merge fatto dall'utente con `gh pr merge 25 --merge` |
+
+### Verifica finale
+
+- Branch (`c73e251`): 1133 esempi, 0 fallimenti in ordine normale e con i semi 4242 e 7; RuboCop 0 offense (100
+  file); YARD 100 %; nessun warning con `ruby -w`; CI verde su tutta la matrice. Ogni spec nuova falliva sul codice
+  prima del suo fix.
+- `master` su `d2c5f7c`: 1133 esempi, 0 fallimenti (ordine normale e semi 1234, 4242, 7); line coverage 98,11 %, branch
+  90,33 %; RuboCop 0 offense; YARD 100 %; `gem build` riuscito; `git diff ad0315b -- lib/notcurses/ffi
+  lib/notcurses/ffi.rb` vuoto; CI di `master` verde.
+- ICH-531 e ICH-532 a Done. Issue nuova: ICH-533 (Backlog, lotto 8).

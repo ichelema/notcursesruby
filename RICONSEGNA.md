@@ -1236,7 +1236,9 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
   tre MEDIUM e quattro LOW corretti; i finding del round 3 corretti dopo il loop senza review, salvo ICH-529.
   Lotto 2b: 2 round; nel round 2 solo GPT, perché Fable ha finito il limite d'uso (429, si azzera il 2026-11-20); i
   finding del round 1 (ICH-489 e ICH-529) sono corretti in `f209900`; il ripristino della base che richiede spazio
-  nel pool è ICH-531.
+  Lotto 2c: `/trinity:workflow:3_independent-review` in due round, solo GPT (Fable senza crediti, scelta dell'utente);
+  round 1 non approvabile per due finding su ICH-532 (nuovo approccio in `13294e1`), round 2 approvabile. Prima del
+  primo commit, un secondo parere di design di GPT su ICH-531 ha trovato il ripristino doppio della base (`9d07656`).
 
 ### Lotti
 
@@ -1245,6 +1247,7 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
 | 1 | [#22](https://github.com/ichelema/notcursesruby/pull/22) | `74deb80` | ICH-449, ICH-450, ICH-448, ICH-225; ICH-481 (nata dall'audit, nel lotto per scelta dell'utente) | `ncplane_erase_region`, `ncplane_gradient`, `ncplane_gradient2x1` e `ncplane_polyfill_yx` cambiano le celle una per una e lasciano metà orfane (ICH-450); `ncplane_mergedown` lascia le metà destre dei glifi larghi con width 0 (`render.c:393-395`, `471-485`, ICH-481); tabella "Piani" di `memory/fase2-wrapper-idiomatico.md` |
 | 2 | [#23](https://github.com/ichelema/notcursesruby/pull/23) | `cb90c4f` | ICH-485, ICH-215, ICH-216, ICH-482, ICH-487 (ICH-485, ICH-482 e ICH-487 nate dal lotto 1); ICH-214 tolta dal lotto, di nuovo in Backlog | `ncplane_resize` con `keep_x > 0` rilascia EGC della regione conservata (`notcurses.c:995-997`, ICH-215) e lascia `logrow` (già noto); `ncplane_dup` crea la copia con `flags = 0` e copia solo `halign` (ICH-216); `ncplane_mergedown` copia gli EGC di più di 4 byte senza rilasciare i vecchi (`render.c:602-603`, ICH-482) e lascia `gcluster` 0 con la larghezza nella cella dopo una metà sinistra (`render.c:471-485`); `ncplane_at_yx` su un piano con bitmap copia la sequenza dello sprixel, già liberata con Kitty (`notcurses.c:236-243`, ICH-487); tabella "Piani" di `memory/fase2-wrapper-idiomatico.md` |
 | 2b | [#24](https://github.com/ichelema/notcursesruby/pull/24) | `6374e41` | ICH-529, ICH-530, ICH-489, ICH-493, ICH-490 (tutte nate dal lotto 2) | `ncplane_resize` che non conserva niente scarica il pool con `egcpool_dump` (`notcurses.c:953-957`) e `ncplane_rotate_cw`/`ncplane_rotate_ccw` fanno lo stesso (`fill.c:446`): la cella base con un EGC di più di 4 byte punta al pool vuoto (ICH-489); `ncplane_at_yx` su un piano con bitmap, anche sixel, legge il framebuffer come celle e va in segfault (ICH-493); `ncplane_mergedown` lascia una metà destra a width 0 e `gcluster` 0 dopo una metà sinistra orfana sull'ultima riga di `src` (`render.c:471-485`, ICH-530) |
+| 2c | [#25](https://github.com/ichelema/notcursesruby/pull/25) | `d2c5f7c` | ICH-531, ICH-532 (nate dal lotto 2b) | `rotate_2x1_cw` e `rotate_2x1_ccw` non rilasciano le copie nell'egcpool quando rifiutano un carattere (`fill.c:377-437`; non aggirato); `ncplane_mergedown` dopo una metà sinistra orfana seguita da un glifo copre il glifo e gli dà i canali della metà sinistra (`render.c:471-485`, ICH-532); tabella "Piani" di `memory/fase2-wrapper-idiomatico.md` |
 
 ### Cambi dell'API pubblica
 
@@ -1287,12 +1290,23 @@ Nessun metodo nuovo né rimosso, salvo `Util.free` (`Util` è `@api private`). C
 - `Plane#at` solleva `PlaneError` su ogni piano con un bitmap (sixel e Kitty), invece di andare in segfault (lotto 2b,
   ICH-493).
 - `Plane#contents` legge gli EGC di più di 4 byte anche con l'egcpool pieno, con `ncplane_at_yx` (lotto 2b, ICH-490).
+- `Plane#resize_region` (che non conserva niente), `#rotate_cw` e `#rotate_ccw` non perdono più la cella base con
+  l'egcpool pieno: durante la chiamata C l'EGC della base resta nel pool. Una rotazione rifiutata lascia la base com'era
+  e solleva l'errore del C, non quello di `ncplane_set_base`. Un callback Ruby di resize di un figlio vede la base vera
+  (prima: uno spazio); se riempie il pool falliscono le sue scritture, non la base. Senza `Plane::Internals` il
+  workaround non gira. Nuovo `Context#base_restores` (`@api private`) (lotto 2c, ICH-531).
+- `Plane#merge_down`: una metà sinistra orfana di `src` seguita da un glifo diventa in `dst` uno spazio con gli stessi
+  stili e colori, e il glifo resta nella sua cella con i colori composti, anche largo o di più di 4 byte (prima, dal
+  lotto 2b: il glifo largo intero copriva il glifo). Durante la fusione il wrapper cambia quelle metà in `src` e le
+  rimette dopo. Se il glifo non entra nell'egcpool di `dst`, `PlaneError` e `dst` non cambia. Su un piano 50x200 la
+  fusione costa circa 15 ms invece di 11 (lotto 2c, ICH-532).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
 - Lotto 1: nessuno.
 - Lotto 2: nessuno.
 - Lotto 2b: nessuno.
+- Lotto 2c: nessuno.
 
 ### Issue aperte nate dai lotti
 
@@ -1320,6 +1334,10 @@ Nessun metodo nuovo né rimosso, salvo `Util.free` (`Util` è `@api private`). C
 - ICH-214 — di nuovo in Backlog: ruotare il framebuffer da Ruby non si rende sicuro; va riprogettata in un lotto suo
   (lotto 2).
 - ICH-532 — dopo una metà sinistra orfana sull'ultima riga di `src`, `merge_down` lascia in `dst` il glifo largo che
-  copre il glifo di `src`; `dst` deve mostrare uno spazio e quel glifo (lotto 2b, scelta dell'utente; Backlog).
+  copre il glifo di `src`; `dst` deve mostrare uno spazio e quel glifo (lotto 2b, scelta dell'utente; Done nel lotto
+  2c).
 - ICH-531 — il ripristino della cella base dopo un resize o una rotazione richiede spazio nel pool; con il pool pieno
-  la base resta uno spazio (lotto 2b, review round 2; Backlog).
+  la base resta uno spazio (lotto 2b, review round 2; Done nel lotto 2c).
+- ICH-533 — `Plane#putstr`, `#putegc` e `#puttext` sollevano `ArgumentError` invece di `PlaneError` con l'egcpool
+  pieno e un EGC con segni combinanti: il controllo di `zero_width_egc!` carica l'EGC nel pool (lotto 2c, trovata
+  scrivendo le spec di ICH-531; nel lotto 8 con ICH-217 e ICH-232).
