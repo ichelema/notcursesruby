@@ -800,8 +800,13 @@ RSpec.describe Notcurses::Plane do
             pl = nc.stdplane.create_child(rows: 3, cols: 8)
             pl.set_base(egc: '👍🏽', styles: :bold)
             want = pl.base
+            # la base provvisoria è una scrittura grezza della cella (ICH-531): il primo write_bytes
+            fired = false
             trace = TracePoint.new(:c_return) do |tp|
-              Process.kill('INT', Process.pid) if tp.method_id == :ncplane_set_base
+              next if fired || tp.method_id != :write_bytes
+
+              fired = true
+              Process.kill('INT', Process.pid)
             end
             begin
               trace.enable { pl.resize_region(rows: 3, cols: 5) }

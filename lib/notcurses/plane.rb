@@ -1457,7 +1457,8 @@ module Notcurses
     # insieme nel pool: se le nuove non entrano (EGC di dst per più di circa
     # 8 MiB), il wrapper annulla la fusione e solleva PlaneError. Questi
     # controlli raddoppiano circa il costo: su un piano 50x200 la fusione
-    # passa da circa 5 a circa 11 ms.
+    # passa da circa 5 a circa 11 ms, e la ricerca delle metà sinistre orfane
+    # di src la porta a circa 15 ms.
     #
     # Un gestore +trap+ non deve cambiare dst né src durante merge_down (notcurses
     # non è rientrante). Il wrapper rilegge dst prima di rilasciare o
