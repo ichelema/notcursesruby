@@ -1264,17 +1264,26 @@ module Notcurses
     # +ncplane_at_yx+ può non tornare più; il wrapper cerca da sé la metà
     # sinistra e, in quel caso, restituisce la cella base.
     #
+    # Su un piano con un bitmap (sixel o Kitty) solleva PlaneError, come
+    # {#contents}: +ncplane_at_yx+ restituisce lì la sequenza di escape dello
+    # sprixel, che con Kitty il C libera dopo il disegno (+strdup(NULL)+,
+    # SIGSEGV). Il wrapper riconosce il bitmap dai campi privati del piano (vedi
+    # "Campi privati" nella classe): senza, la chiamata va al C.
+    #
     # @param y [Integer, nil] riga; nil = riga del cursore
     # @param x [Integer, nil] colonna; nil = colonna del cursore
     # @return [Cell]
     # @raise [ArgumentError, TypeError] se le coordinate sono fuori dal piano
     #   o non sono Integer
-    # @raise [PlaneError] se il cursore è oltre l'ultima colonna, o se la
-    #   lettura fallisce
+    # @raise [PlaneError] se il cursore è oltre l'ultima colonna, se il piano
+    #   ha un bitmap o se la lettura fallisce
     # @raise [ClosedError] se il piano è chiuso
     def at(y: nil, x: nil)
       ptr = to_ptr
       y, x = cell_coords!(y, x)
+      st = internals(ptr)
+      raise PlaneError, "at(#{y}, #{x}): il piano ha un bitmap e notcurses non ne legge le celle" if st && !st[:sprite].null?
+
       x -= 1 while x.positive? && wide_right?(ptr, y, x)
       return base if wide_right?(ptr, y, x)
 

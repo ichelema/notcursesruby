@@ -22,6 +22,10 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Plane#at` solleva `PlaneError` su un piano con un bitmap (sixel o Kitty) invece di andare in SIGSEGV (ICH-493).
+  Con Kitty il C libera la sequenza dello sprixel dopo il disegno e `ncplane_at_yx` fa `strdup(NULL)`. Lo stesso
+  vale per sixel, dove `at` restituiva la sequenza di escape: come `Plane#contents`, il piano con un bitmap non si
+  legge cella per cella.
 - `Plane#resize_region` senza regione conservata (`keep_rows: 0`), `#rotate_cw` e `#rotate_ccw` non lasciano più la
   cella base su un egcpool liberato (ICH-489). notcurses svuota il pool quando il resize non conserva niente, ma la
   cella base tiene il suo offset: con un EGC di più di 4 byte (per esempio `👍🏽`) `Plane#base` andava in SIGSEGV. Il

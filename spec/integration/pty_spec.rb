@@ -594,8 +594,8 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
   # Su un piano con un bitmap ncplane_at_yx_cell fallisce sempre (notcurses.c:274-277): i controlli dei glifi larghi
   # leggono la cella come "non è un glifo" e i metodi funzionano come prima (fix di review di ICH-450).
   # Con kitty: true il terminale finto si dichiara Kitty, che libera il buffer della sequenza dello sprixel dopo il
-  # disegno (kitty.c:1186-1188); dopo nc.render ncplane_at_yx fa strdup(NULL) (notcurses.c:243). Lì at va in crash
-  # anche prima del lotto 2 e resta fuori dall'esempio.
+  # disegno (kitty.c:1186-1188); dopo nc.render ncplane_at_yx fa strdup(NULL) (notcurses.c:243): at andava in
+  # crash, e ora solleva PlaneError su ogni piano con un bitmap (ICH-493).
   def bitmap_plane_script(kitty: false) = "KITTY = #{kitty}\n" + <<~'RUBY'
     require 'notcurses'
     require 'io/console'
@@ -624,7 +624,7 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
       nc.render if KITTY
       ops = {at: -> { bm.at(y: 0, x: 0) }, erase_region: -> { bm.erase_region(0, 1, 1, 1) },
              gradient: -> { bm.gradient('g', 0, 0, 0, 0, x: 1, rows: 1, cols: 1) }, polyfill: -> { bm.polyfill('x', y: 0, x: 0) }}
-      ops = ops.except(:at).merge(putstr: -> { bm.putstr('x', y: 0, x: 0) }) if KITTY
+      ops = ops.merge(putstr: -> { bm.putstr('x', y: 0, x: 0) }) if KITTY
       ops.each do |name, op|
         op.call
         puts "#{name} ok"
@@ -635,10 +635,12 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     puts 'fine'
   RUBY
 
-  it 'su un piano con un bitmap at, erase_region, gradient e polyfill funzionano come prima (fix di review: PlaneError)' do
+  # ICH-493 (opzione A dell'utente): at solleva PlaneError su ogni piano con un bitmap, sixel compreso, come
+  # contents; prima restituiva la sequenza dello sprixel (sixel) o andava in SIGSEGV (kitty dopo il render).
+  it 'su un piano con un bitmap at solleva PlaneError, erase_region, gradient e polyfill funzionano come prima' do
     out, status, timed_out = run_child(bitmap_plane_script, timeout: 30)
     expect(timed_out).to be(false), out
-    expect(out).to include('at ok', 'erase_region ok', 'gradient ok', 'polyfill ok', 'fine')
+    expect(out).to include('at Notcurses::PlaneError', 'erase_region ok', 'gradient ok', 'polyfill ok', 'fine')
     expect(status.exitstatus).to eq(0), out
   end
 
@@ -646,8 +648,8 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
   it 'su un piano con un bitmap kitty già disegnato le scritture sollevano PlaneError (prima: SIGSEGV)' do
     out, status, timed_out = run_child(bitmap_plane_script(kitty: true), timeout: 30)
     expect(timed_out).to be(false), out
-    expect(out).to include('pixel kitty_animated', 'erase_region ok', 'gradient ok', 'polyfill ok',
-                           'putstr Notcurses::PlaneError', 'fine')
+    expect(out).to include('pixel kitty_animated', 'at Notcurses::PlaneError', 'erase_region ok', 'gradient ok',
+                           'polyfill ok', 'putstr Notcurses::PlaneError', 'fine')
     expect(status.exitstatus).to eq(0), out
   end
 
