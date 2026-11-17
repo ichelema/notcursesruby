@@ -252,3 +252,62 @@ Lavoro in due sessioni: implementazione e primo review-fix loop il 2026-11-15 (f
   - "2b" e non una rinumerazione, per non cambiare i numeri dei lotti 3-15 già citati in `RIPRESA.md` e nei log.
 - Ordine nel lotto: priorità, poi codice vicino: ICH-529, ICH-530 (`merge_down`), ICH-489 (resize), ICH-493
   (`at`), ICH-490 (`contents`, Low).
+
+## Lotto 2b — ICH-529, ICH-530, ICH-489, ICH-493, ICH-490 (PR #24, merge `6374e41`)
+
+Lavoro in una sessione il 2026-11-17 (implementazione, review-fix loop di 2 round, fino a `f209900`). Branch
+`bug/ICH-529-530-489-493-490-opus`; tutte le modifiche in `lib/notcurses/plane.rb`.
+
+### Fix
+
+- **ICH-529 (`undo_merge!`).** Il controllo di `dst` era scaduto quando il codice scriveva il framebuffer vecchio.
+  Il wrapper calcola prima l'offset massimo del pool, poi controlla dimensione, pool e offset prima e dopo
+  `release_gclusters!`, subito prima di `write_bytes` (`3df83f8`, `f209900`).
+- **ICH-530 (metà sinistra orfana sull'ultima riga di `src`).** `stale_right_half?` riconosce la cella con `gcluster` 0
+  e width minore di 2 (`9a4fb40`). La cella dopo la metà orfana diventa la metà destra del glifo: scelta aperta
+  dell'utente (cella vuota o glifo di `src`).
+- **ICH-489 (cella base dopo un resize che non conserva niente).** `ncplane_resize_internal` scarica il pool
+  (`notcurses.c:953-957`), la rotazione fa lo stesso (`fill.c:446`). `keeping_base_cell` sostituisce la base con uno
+  spazio durante la chiamata C e la ripristina dopo, solo se la base è ancora la copia temporanea (`03c0177`,
+  `f209900`). Usato in `resize_region` (con `keep_rows` 0), `rotate_cw` e `rotate_ccw`.
+- **ICH-493 (`Plane#at` su un piano con un bitmap).** Opzione A scelta dall'utente: `PlaneError` su ogni piano con un
+  bitmap, sixel compreso (`09014f0`).
+- **ICH-490 (`Plane#contents` con l'egcpool pieno).** `unpooled_egc` legge con `ncplane_at_yx` (`strdup`) quando
+  `ncplane_at_yx_cell` non copia nel pool; salta i piani con un bitmap (`ab80152`).
+
+### Decisioni
+
+- Dell'utente: ICH-493 con l'opzione A (errore su ogni piano con un bitmap).
+- Dell'utente, dopo il loop: rimuovere il worktree di review di Fable con `--force`; controllare che le spec non
+  falliscano prima di procedere (1124 esempi, 0 fallimenti).
+- Mie: ICH-531 aperta per il ripristino della base che richiede spazio nel pool; finestra `trap` residua di ICH-529
+  documentata nello YARD, non rincorsa.
+
+### Review (2 round, Fable e GPT)
+
+- Round 1: finding su ICH-489 (callback che cambia la base, pool senza spazio, `Interrupt`) e su ICH-529 (secondo
+  controllo dopo `release_gclusters!`); corretti in `f209900`, con spec che falliscono sul codice di `ab80152`
+  (8 esempi, 5 fallimenti).
+- Round 2: solo GPT, perché Fable ha finito il limite d'uso (429, si azzera il 2026-11-20 alle 14:00). Nessun
+  finding da correggere nel lotto; aperta ICH-531. Minore non corretto: il giro `base` → `set_base` perde i bit di
+  stile non definiti.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| `FFI = Notcurses::FFI` dentro un lambda: `NameError` | la costante cambia il lookup di `Notcurses::FFI::Platform` | tolta l'assegnazione |
+| Repro di ICH-530 bloccata sotto l'heap checker | `abort` con il core dump | `Process.setrlimit(:CORE, 0)` |
+| Spec di ICH-530 falliva anche con il fix | la cella base di `with_parent` differiva | `std.create_child` e `ensure` per chiudere i piani |
+| Review di Fable del round 2 fallita | limite d'uso | round 2 solo con GPT, dichiarato nel commento della PR |
+| Merge bloccato dal classificatore dei permessi | regola "Merge Without Review" | merge fatto dall'utente con `gh pr merge 24 --merge` |
+
+### Verifica finale
+
+- Branch (`f209900`): 1124 esempi, 0 fallimenti in ordine normale e con i semi 1234, 4242 e 7; RuboCop 0 offense
+  (100 file); YARD 100 %; nessun warning con `ruby -w`; CI verde su tutta la matrice. Ogni spec nuova falliva sul
+  codice prima del fix.
+- `master` su `6374e41`: 1124 esempi, 0 fallimenti (4 ordini); line coverage 98,25 %, branch 90,29 %; RuboCop 0
+  offense; YARD 100 %; `gem build` riuscito; `git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto; CI di
+  `master` verde.
+- ICH-529, ICH-530, ICH-489, ICH-493 e ICH-490 a Done. Issue nuova: ICH-531 (Backlog).

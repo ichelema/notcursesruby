@@ -1234,6 +1234,9 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
   senza review, su richiesta dell'utente. Lotto 2: due loop da 3 round (il secondo in una sessione nuova, perché il
   contesto era pieno); ICH-214 tolta dopo il primo loop; nel secondo loop due HIGH sui gestori `trap` in `merge_down`,
   tre MEDIUM e quattro LOW corretti; i finding del round 3 corretti dopo il loop senza review, salvo ICH-529.
+  Lotto 2b: 2 round; nel round 2 solo GPT, perché Fable ha finito il limite d'uso (429, si azzera il 2026-11-20); i
+  finding del round 1 (ICH-489 e ICH-529) sono corretti in `f209900`; il ripristino della base che richiede spazio
+  nel pool è ICH-531.
 
 ### Lotti
 
@@ -1241,6 +1244,7 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
 | --- | --- | --- | --- | --- |
 | 1 | [#22](https://github.com/ichelema/notcursesruby/pull/22) | `74deb80` | ICH-449, ICH-450, ICH-448, ICH-225; ICH-481 (nata dall'audit, nel lotto per scelta dell'utente) | `ncplane_erase_region`, `ncplane_gradient`, `ncplane_gradient2x1` e `ncplane_polyfill_yx` cambiano le celle una per una e lasciano metà orfane (ICH-450); `ncplane_mergedown` lascia le metà destre dei glifi larghi con width 0 (`render.c:393-395`, `471-485`, ICH-481); tabella "Piani" di `memory/fase2-wrapper-idiomatico.md` |
 | 2 | [#23](https://github.com/ichelema/notcursesruby/pull/23) | `cb90c4f` | ICH-485, ICH-215, ICH-216, ICH-482, ICH-487 (ICH-485, ICH-482 e ICH-487 nate dal lotto 1); ICH-214 tolta dal lotto, di nuovo in Backlog | `ncplane_resize` con `keep_x > 0` rilascia EGC della regione conservata (`notcurses.c:995-997`, ICH-215) e lascia `logrow` (già noto); `ncplane_dup` crea la copia con `flags = 0` e copia solo `halign` (ICH-216); `ncplane_mergedown` copia gli EGC di più di 4 byte senza rilasciare i vecchi (`render.c:602-603`, ICH-482) e lascia `gcluster` 0 con la larghezza nella cella dopo una metà sinistra (`render.c:471-485`); `ncplane_at_yx` su un piano con bitmap copia la sequenza dello sprixel, già liberata con Kitty (`notcurses.c:236-243`, ICH-487); tabella "Piani" di `memory/fase2-wrapper-idiomatico.md` |
+| 2b | [#24](https://github.com/ichelema/notcursesruby/pull/24) | `6374e41` | ICH-529, ICH-530, ICH-489, ICH-493, ICH-490 (tutte nate dal lotto 2) | `ncplane_resize` che non conserva niente scarica il pool con `egcpool_dump` (`notcurses.c:953-957`) e `ncplane_rotate_cw`/`ncplane_rotate_ccw` fanno lo stesso (`fill.c:446`): la cella base con un EGC di più di 4 byte punta al pool vuoto (ICH-489); `ncplane_at_yx` su un piano con bitmap, anche sixel, legge il framebuffer come celle e va in segfault (ICH-493); `ncplane_mergedown` lascia una metà destra a width 0 e `gcluster` 0 dopo una metà sinistra orfana sull'ultima riga di `src` (`render.c:471-485`, ICH-530) |
 
 ### Cambi dell'API pubblica
 
@@ -1273,11 +1277,22 @@ Nessun metodo nuovo né rimosso, salvo `Util.free` (`Util` è `@api private`). C
   piani con un bitmap restano come prima (lotto 2, ICH-487).
 - `Plane::Internals` (privata) legge e scrive campi di `struct ncplane` 3.0.17; i workaround che la usano non girano
   con un'altra versione della libreria (lotto 2).
+- `Plane#merge_down` ricontrolla `dst` subito prima di riscrivere il framebuffer vecchio nell'annullamento; un `trap`
+  che ridimensiona `dst` in quella finestra resta documentato nello YARD. Dopo una metà sinistra orfana sull'ultima
+  riga di `src`, la cella seguente diventa la metà destra del glifo largo e non svuota più il piano (lotto 2b,
+  ICH-529, ICH-530).
+- `Plane#resize_region` (che non conserva niente), `#rotate_cw` e `#rotate_ccw` tengono valida la cella base con un EGC
+  di più di 4 byte: il wrapper la sostituisce con uno spazio durante la chiamata C e la ripristina dopo. Se il piano ha
+  un callback che cambia la base, il wrapper non la tocca (lotto 2b, ICH-489).
+- `Plane#at` solleva `PlaneError` su ogni piano con un bitmap (sixel e Kitty), invece di andare in segfault (lotto 2b,
+  ICH-493).
+- `Plane#contents` legge gli EGC di più di 4 byte anche con l'egcpool pieno, con `ncplane_at_yx` (lotto 2b, ICH-490).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
 - Lotto 1: nessuno.
 - Lotto 2: nessuno.
+- Lotto 2b: nessuno.
 
 ### Issue aperte nate dai lotti
 
@@ -1304,3 +1319,5 @@ Nessun metodo nuovo né rimosso, salvo `Util.free` (`Util` è `@api private`). C
   di ICH-481, dà `free(): invalid pointer` (lotto 2, review; esiste già su `master`).
 - ICH-214 — di nuovo in Backlog: ruotare il framebuffer da Ruby non si rende sicuro; va riprogettata in un lotto suo
   (lotto 2).
+- ICH-531 — il ripristino della cella base dopo un resize o una rotazione richiede spazio nel pool; con il pool pieno
+  la base resta uno spazio (lotto 2b, review round 2; Backlog).
