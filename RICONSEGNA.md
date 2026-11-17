@@ -1231,13 +1231,16 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
 - **Review di ogni lotto:** `/trinity:workflow:4_review-fix-loop`, due reviewer in parallelo (Fable e GPT via
   LiteLLM), al massimo 3 round. Lotto 1: 3 round (round 1: due HIGH; round 2: tre HIGH e un MEDIUM, di cui due nati
   dal fix del round 2 stesso; round 3: un HIGH, un MEDIUM e due LOW); il HIGH del round 3 e i LOW corretti dopo il loop
-  senza review, su richiesta dell'utente.
+  senza review, su richiesta dell'utente. Lotto 2: due loop da 3 round (il secondo in una sessione nuova, perché il
+  contesto era pieno); ICH-214 tolta dopo il primo loop; nel secondo loop due HIGH sui gestori `trap` in `merge_down`,
+  tre MEDIUM e quattro LOW corretti; i finding del round 3 corretti dopo il loop senza review, salvo ICH-529.
 
 ### Lotti
 
 | Lotto | PR | Merge | Issue | Bug di notcurses nuovi |
 | --- | --- | --- | --- | --- |
 | 1 | [#22](https://github.com/ichelema/notcursesruby/pull/22) | `74deb80` | ICH-449, ICH-450, ICH-448, ICH-225; ICH-481 (nata dall'audit, nel lotto per scelta dell'utente) | `ncplane_erase_region`, `ncplane_gradient`, `ncplane_gradient2x1` e `ncplane_polyfill_yx` cambiano le celle una per una e lasciano metà orfane (ICH-450); `ncplane_mergedown` lascia le metà destre dei glifi larghi con width 0 (`render.c:393-395`, `471-485`, ICH-481); tabella "Piani" di `memory/fase2-wrapper-idiomatico.md` |
+| 2 | [#23](https://github.com/ichelema/notcursesruby/pull/23) | `cb90c4f` | ICH-485, ICH-215, ICH-216, ICH-482, ICH-487 (ICH-485, ICH-482 e ICH-487 nate dal lotto 1); ICH-214 tolta dal lotto, di nuovo in Backlog | `ncplane_resize` con `keep_x > 0` rilascia EGC della regione conservata (`notcurses.c:995-997`, ICH-215) e lascia `logrow` (già noto); `ncplane_dup` crea la copia con `flags = 0` e copia solo `halign` (ICH-216); `ncplane_mergedown` copia gli EGC di più di 4 byte senza rilasciare i vecchi (`render.c:602-603`, ICH-482) e lascia `gcluster` 0 con la larghezza nella cella dopo una metà sinistra (`render.c:471-485`); `ncplane_at_yx` su un piano con bitmap copia la sequenza dello sprixel, già liberata con Kitty (`notcurses.c:236-243`, ICH-487); tabella "Piani" di `memory/fase2-wrapper-idiomatico.md` |
 
 ### Cambi dell'API pubblica
 
@@ -1256,10 +1259,25 @@ Nessun metodo nuovo né rimosso, salvo `Util.free` (`Util` è `@api private`). C
   restituisce il glifo, e una scrittura su una delle due metà cancella il glifo intero. Il cursore di `dst` non
   cambia, anche a fine riga. La fusione legge ogni cella di `dst`: su un piano 50x200 costa qualche millisecondo
   (lotto 1, ICH-481).
+- `Plane#merge_down` rilascia le copie vecchie degli EGC di più di 4 byte di `dst`: il pool non cresce più a ogni
+  fusione. Se le copie nuove non entrano nel pool (EGC di `dst` per più di circa 8 MiB), annulla la fusione e solleva
+  `PlaneError`. Con l'egcpool pieno riscrive anche i glifi larghi che notcurses non rilegge. Su un piano 50x200 costa
+  circa 11 ms invece di 5. Un gestore `trap` non deve cambiare `dst` durante la fusione: i controlli restringono le
+  finestre, non le chiudono (lotto 2, ICH-482, ICH-485).
+- `Plane#resize_region` con `keep_x > 0` conserva gli EGC di più di 4 byte: il resize è in due passi quando
+  `keep_x + x_off > -y_off * cols`, e i callback di resize dei figli girano due volte (la prima sul piano intermedio,
+  più alto). Su un piano che ha fatto scroll i due passi conservano anche l'ordine delle righe. Costo circa 2 ms invece
+  di 0,2 su 50x200 (lotto 2, ICH-215).
+- `Plane#duplicate` copia anche `fixed` e l'allineamento verticale (lotto 2, ICH-216).
+- I resize svuotano anche la metà orfana di un glifo largo che `ncplane_at_yx_cell` non legge (egcpool pieno); i
+  piani con un bitmap restano come prima (lotto 2, ICH-487).
+- `Plane::Internals` (privata) legge e scrive campi di `struct ncplane` 3.0.17; i workaround che la usano non girano
+  con un'altra versione della libreria (lotto 2).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
 - Lotto 1: nessuno.
+- Lotto 2: nessuno.
 
 ### Issue aperte nate dai lotti
 
@@ -1276,3 +1294,13 @@ Nessun metodo nuovo né rimosso, salvo `Util.free` (`Util` è `@api private`). C
   sinistra orfana (lotto 1, review round 3; esiste già su `master`).
 - ICH-488 — controllare `Plane#qrcode` sopra metà di un glifo largo (lotto 1, review; non verificabile con la build
   di Arch, che ha solo lo stub).
+- ICH-489 — cella base dopo un resize che non conserva niente: segfault (lotto 2, primo loop).
+- ICH-490 — `Plane#contents` con l'egcpool pieno (lotto 2, primo loop).
+- ICH-493 — `Plane#at` su un piano con un bitmap Kitty: segfault, anche su `master` (lotto 2, primo loop).
+- ICH-495 — `Stats#fbbytes`: `Canceled`, nasceva dal fix di ICH-214 tolto dal lotto (lotto 2).
+- ICH-529 — `undo_merge!` controlla `dst` e poi scrive il framebuffer vecchio: un `trap` che ridimensiona `dst` in
+  mezzo corrompe l'heap (lotto 2, review round 3; MEDIUM).
+- ICH-530 — una metà sinistra orfana seguita da un glifo sull'ultima riga di `src`, dopo `merge_down` e le scritture
+  di ICH-481, dà `free(): invalid pointer` (lotto 2, review; esiste già su `master`).
+- ICH-214 — di nuovo in Backlog: ruotare il framebuffer da Ruby non si rende sicuro; va riprogettata in un lotto suo
+  (lotto 2).

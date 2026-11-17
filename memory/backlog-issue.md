@@ -157,3 +157,86 @@ Cambi proposti all'utente (criterio 2: le issue che toccano lo stesso codice sta
   ICH-485, ICH-482 e ICH-487 nel lotto 2 (`merge_down` e resize di `plane.rb`); ICH-486 e ICH-488 nel lotto 6 (blit di
   celle, come ICH-223); ICH-484 nel lotto 8 (`Reader`); ICH-483 da sola nel lotto 14 nuovo, perché tocca la Fase 1 e
   serve l'approvazione dell'utente (regola 1). Il lotto di RuboCop diventa il 15.
+
+## Lotto 2 — ICH-485, ICH-215, ICH-216, ICH-482, ICH-487 (PR #23, merge `cb90c4f`)
+
+Lavoro in due sessioni: implementazione e primo review-fix loop il 2026-11-15 (fino a `be426b1`), secondo loop il
+2026-11-17 (fino a `0d36e29`). ICH-214 era nel lotto e ne è uscita dopo il primo loop.
+
+### Fix
+
+- **ICH-485 (glifi illeggibili dopo `merge_down`).** Con l'egcpool pieno `ncplane_at_yx_cell` non rilegge i glifi di
+  più di 4 byte: `rewrite_unreadable!` li legge con `ncplane_at_yx` (`strdup`, niente pool) e li riscrive con stili,
+  colori e cursore; se nemmeno così riesce, svuota le due metà (`097ca23`).
+- **ICH-215 (`resize_region` con `keep_x > 0`).** Il ciclo di rilascio del C (`notcurses.c:995-997`) usa l'indice del
+  framebuffer nuovo come colonna di quello vecchio. Il wrapper fa il resize in due passi: il primo con `extra` righe
+  vuote in alto, il secondo le toglie (`a280dd1`). Poi: il secondo passo si decide dalle condizioni di rifiuto del C
+  (`4e10631`); `release_unused!` (prima `release_dropped!`) rilascia gli EGC delle celle scartate (`d27b695`,
+  `5bb2a4e`); `logrow` azzerato fra i passi (`1971a3c`); niente secondo passo se il primo non ha cambiato `fb`
+  (`c362259`).
+- **ICH-216 (`duplicate`).** `ncplane_dup` crea la copia con `flags = 0` e copia solo `halign`: il wrapper scrive
+  `fixedbound` e `valign` in `Plane::Internals` (`a93badf`).
+- **ICH-482 (egcpool di `dst` in `merge_down`).** `ncplane_mergedown` copia gli EGC di più di 4 byte e libera il
+  framebuffer vecchio senza rilasciarli (`render.c:602-603`). Il wrapper legge il framebuffer prima della fusione e
+  rilascia le copie vecchie (`f96d28e`); se le copie nuove non entrano nel pool, annulla la fusione e solleva
+  `PlaneError` (`11e24c5`). Rinforzi contro i gestori `trap` nel secondo loop (`31de83c`, `fd5c9b2`, `0d36e29`) e
+  falso positivo di `lost_egc?` dopo una metà sinistra orfana (`ec82f5a`).
+- **ICH-487 (metà orfana di un glifo illeggibile tagliato).** `clear_cut_glyphs!` legge con `ncplane_at_yx` le celle
+  che `ncplane_at_yx_cell` non legge (`ce766e7`); salta i piani con un bitmap (campo `sprite`), dove `ncplane_at_yx`
+  copierebbe la sequenza dello sprixel, già liberata con Kitty (`6927260`).
+- **`Plane::Internals`.** Struct privata con il layout di `struct ncplane` 3.0.17 (`internal.h:76-125`) in
+  `plane.rb`, non nel layer FFI; `internals` la restituisce solo con la libreria 3.0.17 e con i campi uguali ai getter
+  pubblici.
+
+### Decisioni
+
+- Dell'utente, primo loop: `Plane::Internals` in lettura e scrittura; ICH-215 con il resize in due passi (i callback
+  dei figli girano due volte); ICH-485 con la riscrittura del glifo illeggibile.
+- Dell'utente, dopo il round 3 del primo loop: ICH-214 fuori dal lotto (`be426b1`) e di nuovo in Backlog. Ruotare il
+  framebuffer da Ruby non si rende sicuro: un `trap` o un altro thread può fare un resize fra la copia e la scrittura
+  (heap overflow). Serve un lock o codice C, forse un helper approvato nel layer FFI (regola 1).
+- Dell'utente, secondo loop: `merge_down` e i gestori `trap` "rinforza e documenta" (un fix completo da Ruby non
+  esiste); `logrow = 0` fra i due passi di `resize_region`; un callback che ridimensiona il piano nel primo passo
+  resta documentato nello YARD.
+- Mie: il secondo loop ha usato il branch reale (`bug/ICH-214-485-215-216-482-487-opus`) anche senza ICH-214 negli
+  argomenti; un solo commit per i fix dopo l'ultimo round (`0d36e29`), perché fix e testi toccano le stesse righe.
+
+### Review (2 loop da 3 round, Fable e GPT)
+
+- Primo loop (2026-11-15, round 1-3): SIGSEGV di `half_at` su bitmap Kitty (ICH-487), EGC persi in silenzio con il
+  pool pieno (ICH-482), secondo passo deciso da `abs_x` e EGC scartati non rilasciati (ICH-215), più i difetti del
+  fix di ICH-214. Round 3: due HIGH, heap overflow in `unscroll!` (ICH-214 tolta) e `release_dropped!` dopo i
+  callback (`5bb2a4e`, senza review).
+- Secondo loop, round 1 (`be426b1`): HIGH per entrambi, `merge_down` con un `trap` che fa `erase` o `resize` su
+  `dst` (SIGSEGV, heap corrotto; `31de83c`); Fable un MEDIUM (`resize_region` perde una riga su un piano che ha fatto
+  scroll, `1971a3c`) e un LOW (tabella, `c4d2373`).
+- Round 2 (`31de83c`): GPT un HIGH (`release_unused!` teneva il puntatore al pool, `fd5c9b2`); Fable un MEDIUM
+  (`lost_egc?` e il residuo di `postpaint_cell`, `ec82f5a`) e tre LOW (`c362259`, `154bbeb`).
+- Round 3 (`154bbeb`): GPT approva senza finding; Fable approva con riserve. `Numeric#nonzero?` sotto la guardia di
+  ricorsione dava `NameError` con un `trap` che fonde altri piani (MEDIUM) e lasciava una finestra fra due
+  `get_uint8` (LOW); YARD che prometteva finestre chiuse e costi non scritti (LOW). Tutti in `0d36e29`, senza review.
+  Il controllo scaduto di `undo_merge!` (MEDIUM) è ICH-529.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| Contesto della sessione del 2026-11-15 pieno | lotto lungo, ICH-214 compresa | review dei commit dopo il round 3 in una sessione nuova |
+| Ogni round trovava un'altra finestra dei `trap` | un `trap` gira anche al ritorno dei metodi C e dentro i blocchi | finestre ristrette e limite nello YARD (decisione dell'utente) |
+| Una spec dei `trap` passava anche sul codice vecchio | il `trap` mandato dall'hook di `TracePoint` gira fuori dalla guardia di `nonzero?` | la spec controlla la causa: nessuna chiamata a `nonzero?` durante `merge_down` |
+| `marked('x')` nella spec arrivava a DEL (127) | carattere di controllo rifiutato da `putstr` | `marked('A')` |
+| Merge bloccato dal classificatore dei permessi | regola "Merge Without Review" | merge fatto dall'utente con `gh pr merge 23 --merge` |
+
+### Verifica finale
+
+- Branch (`0d36e29`): 1111 esempi, 0 fallimenti in ordine normale e con i semi 1234, 4242 e 7; line coverage
+  98,41 %; RuboCop 0 offense (100 file); YARD 0 warning, 100 %; nessun warning con `ruby -w`. CI verde su tutta la
+  matrice e Codecov.
+- Ogni spec nuova del secondo loop falliva sul codice prima del suo fix.
+- `git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb`: vuoto.
+- ICH-485, ICH-215, ICH-216, ICH-482 e ICH-487 a Done dopo il merge; ICH-214 riportata in Backlog (Linear l'aveva
+  messa In Progress per il nome del branch).
+- `master` su `cb90c4f`: 1111 esempi, 0 fallimenti in ordine normale e con i semi 1234, 4242 e 7; RuboCop 0 offense;
+  `gem build` riuscito; CI verde; worktree, branch locale e branch remoto rimossi.
+- Issue nuove: ICH-489, ICH-490, ICH-493 (primo loop), ICH-495 (`Canceled`, nata dal fix di ICH-214), ICH-529 (round
+  3), ICH-530 (difetto già su `master`, aperta con la conferma dell'utente).
