@@ -1694,7 +1694,8 @@ RSpec.describe Notcurses::Plane do
     # metà orfana e, nella cella dopo, il glifo di src con il suo stile e i suoi colori. Prima il wrapper
     # riscriveva il glifo largo intero, che copriva quel glifo.
     it 'dopo una metà sinistra orfana dst ha uno spazio e il glifo di src, su ogni riga (prima: il glifo largo)' do
-      [[0, 'X'], [1, 'X'], [1, "X\u0301\u0301"]].each do |row, glyph| # "X\u0301\u0301": 5 byte, nell'egcpool
+      # "X\u0301\u0301": 5 byte, nell'egcpool; 好: largo, copre Z (prima: spariva anche lui)
+      [[0, 'X', 'a XZ'], [1, 'X', 'a XZ'], [1, "X\u0301\u0301", "a X\u0301\u0301Z"], [1, '好', 'a 好']].each do |row, glyph, line|
         dst = std.create_child(rows: 2, cols: 4)
         src = std.create_child(rows: 2, cols: 4)
         dst.putstr('WXYZ', y: row, x: 0)
@@ -1709,9 +1710,70 @@ RSpec.describe Notcurses::Plane do
         src.merge_down(dst)
         cells = (1..2).map { |x| dst.at(y: row, x: x) }.map { |c| [c.egc, c.styles, c.channels.fg_rgb24] }
         expect(cells).to eq([[' ', [:bold], 0xff0000], [glyph, [:italic], 0x00ff00]]) # prima: 中 nelle due celle
-        expect([dst.contents(y: row, rows: 1), dst.cursor]).to eq(["a #{glyph}Z", [row, 4]])
+        expect([dst.contents(y: row, rows: 1), dst.cursor, src.at(y: row, x: 1).egc]).to eq([line, [row, 4], '中'])
       ensure
         [src, dst].each { |pl| pl&.close }
+      end
+    end
+
+    # review di ICH-532: il glifo dopo la metà orfana prendeva i colori di src, non quelli composti con dst
+    it 'il glifo dopo una metà sinistra orfana ha i colori composti come le altre celle (prima: quelli di src)' do
+      [%i[blend blend], %i[transparent transparent], %i[highcontrast opaque]].each do |fg, bg|
+        dst = std.create_child(rows: 2, cols: 4)
+        dst.set_fg_rgb24(0x0000ff)
+        dst.set_bg_rgb24(0x0000ff)
+        2.times { |y| dst.putstr('WXYZ', y: y, x: 0) }
+        src = std.create_child(rows: 2, cols: 4)
+        src.putstr('a中c', y: 0, x: 0)
+        src.resize_region(rows: 2, cols: 3, keep_rows: 2, keep_cols: 2)
+        src.resize(2, 4)
+        src.set_fg_rgb24(0x00ff00)
+        src.set_bg_rgb24(0x00ff00)
+        src.set_fg_alpha(fg)
+        src.set_bg_alpha(bg)
+        2.times { |y| src.putstr('B', y: y, x: 2) } # riga 1: controllo, senza metà orfana prima
+        src.merge_down(dst)
+        orphan, control = Array.new(2) { |y| dst.at(y: y, x: 2) }
+        expect([orphan.egc, orphan.channels]).to eq(['B', control.channels])
+      ensure
+        [src, dst].each { |pl| pl&.close }
+      end
+    end
+
+    # review di ICH-532: il wrapper riscriveva il glifo dopo la metà orfana tenendo nel pool di dst una copia
+    # della metà sinistra, e senza spazio per la scrittura svuotava la cella senza errore
+    context "con l'egcpool di dst quasi pieno (base da 12 MB)" do
+      # dst 1x4 con "WXYZ"; src 1x4 con "a", la metà sinistra orfana di left e glyph in colonna 2
+      def merge_orphan(left, glyph)
+        dst = std.create_child(rows: 1, cols: 4)
+        dst.set_base(egc: "d#{"\u0301" * 6_000_000}")
+        dst.putstr('WXYZ', y: 0, x: 0)
+        src = std.create_child(rows: 1, cols: 4)
+        src.putstr("a#{left}c", y: 0, x: 0)
+        src.resize_region(rows: 1, cols: 3, keep_rows: 1, keep_cols: 2)
+        src.resize(1, 4)
+        src.putstr(glyph, y: 0, x: 2)
+        yield src, dst
+      ensure
+        [src, dst].each { |pl| pl&.close }
+      end
+
+      it 'dst ha lo spazio e il glifo di src quando il risultato entra nel pool (prima: il glifo spariva)' do
+        left = "中#{"\u0301" * 1_000_000}" # 2 MB
+        glyph = "B#{"\u0301" * 1_500_000}" # 3 MB: con la base fanno 15 MB
+        merge_orphan(left, glyph) do |src, dst|
+          src.merge_down(dst)
+          expect([dst.at(y: 0, x: 1).egc, dst.at(y: 0, x: 2).egc == glyph, dst.cursor]).to eq([' ', true, [0, 4]])
+          expect(src.at(y: 0, x: 1).egc == left).to be(true)
+        end
+      end
+
+      it 'se il glifo di src non entra nel pool la fusione fallisce e dst non cambia (prima: il glifo spariva)' do
+        glyph = "B#{"\u0301" * 2_500_000}" # 5 MB: con la base fanno più di 16 MiB
+        merge_orphan('中', glyph) do |src, dst|
+          expect { src.merge_down(dst) }.to raise_error(Notcurses::PlaneError, /dst non è cambiato/)
+          expect([dst.contents, src.at(y: 0, x: 1).egc, src.at(y: 0, x: 2).egc == glyph]).to eq(['WXYZ', '中', true])
+        end
       end
     end
 
@@ -1989,27 +2051,6 @@ RSpec.describe Notcurses::Plane do
             expect(dst.cursor).to eq([0, 4])
             expect { dst.putstr('Z') }.to raise_error(Notcurses::PlaneError, /non entra/)
             expect(dst.at(y: 2, x: 1).egc.bytesize).to eq(big.bytesize)
-          end
-        end
-
-        # ICH-532: anche quando notcurses non legge la metà orfana (il pool di dst ha due EGC da 6 MB), dst ha
-        # uno spazio e il glifo di src; la metà orfana seguita da una cella vuota resta un glifo intero
-        it 'dopo una metà sinistra orfana che notcurses non legge dst ha uno spazio e il glifo di src (prima: il glifo)' do
-          with_parent(rows: 3, cols: 4) do |dst|
-            glyph = "X\u0301\u0301" # 5 byte, nell'egcpool
-            src = std.create_child(rows: 3, cols: 4, y: dst.y, x: dst.x)
-            src.set_fg_rgb24(0xff0000)
-            src.putstr("a#{big}", y: 0, x: 0)
-            src.putstr("a#{big}c", y: 2, x: 0)
-            src.resize_region(rows: 3, cols: 3, keep_rows: 3, keep_cols: 2)
-            src.resize(3, 4)
-            src.set_fg_rgb24(0x00ff00)
-            src.putstr(glyph, y: 2, x: 2)
-            src.merge_down(dst)
-            src.close
-            cells = [1, 2].map { |x| dst.at(y: 2, x: x) }.map { |c| [c.egc, c.channels.fg_rgb24] }
-            expect(cells).to eq([[' ', 0xff0000], [glyph, 0x00ff00]])
-            expect(dst.at(y: 0, x: 1).egc.bytesize).to eq(big.bytesize)
           end
         end
 

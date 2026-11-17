@@ -1439,13 +1439,14 @@ module Notcurses
     # solo per gli EGC di più di 4 byte): quei glifi il wrapper li riscrive
     # leggendo l'EGC con +ncplane_at_yx+, che non usa il pool, con gli stili e
     # i colori della cella. Se nemmeno questa riscrittura riesce, le due metà
-    # del glifo diventano celle vuote. Anche la cella dopo una metà sinistra
-    # orfana di src (un glifo largo tagliato da un resize, seguito da un altro
-    # glifo) resta in dst con larghezza 1 e senza EGC: il wrapper scrive in
-    # dst, come in src, uno spazio al posto della metà orfana, con i suoi stili
-    # e colori, e il glifo che la segue in src, con i suoi. Se quel glifo è
-    # largo, notcurses lascia una cella uguale a una metà destra: dst mostra
-    # il glifo orfano intero e non il glifo largo che lo segue.
+    # del glifo diventano celle vuote.
+    #
+    # Una metà sinistra orfana di src (un glifo largo tagliato da un resize)
+    # seguita da un glifo: notcurses disegnerebbe il glifo largo intero, sopra
+    # il glifo dopo. Durante la fusione il wrapper la cambia in uno spazio con
+    # gli stessi stili e colori (src torna com'era dopo): dst mostra lo spazio
+    # e il glifo, con i colori composti come nelle altre celle. Senza i campi
+    # privati il glifo largo resta intero.
     #
     # +ncplane_mergedown+ copia anche ogni EGC di più di 4 byte nell'egcpool di
     # dst senza rilasciare le copie vecchie: il pool cresceva a ogni fusione e,
@@ -1458,7 +1459,7 @@ module Notcurses
     # controlli raddoppiano circa il costo: su un piano 50x200 la fusione
     # passa da circa 5 a circa 11 ms.
     #
-    # Un gestore +trap+ non deve cambiare dst durante merge_down (notcurses
+    # Un gestore +trap+ non deve cambiare dst né src durante merge_down (notcurses
     # non è rientrante). Il wrapper rilegge dst prima di rilasciare o
     # ripristinare, ma questo restringe le finestre, non le chiude: un trap
     # gira anche al ritorno dei metodi C. La fusione può restare a metà
@@ -1483,7 +1484,12 @@ module Notcurses
       # trap girano comunque: i controlli di release_unused! e undo_merge! rileggono dst prima di toccarlo
       lost = Thread.handle_interrupt(Object => :never) do
         old = (st = internals(target)) && fb_bytes(st)
-        Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
+        blanked = blank_orphan_lefts!(ptr)
+        begin
+          Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
+        ensure
+          blanked.each { |cell, bytes| cell.write_bytes(bytes) }
+        end
         # il C ha copiato ogni EGC nel framebuffer nuovo e ha liberato quello vecchio senza rilasciarli (ICH-482)
         st = old && internals(target)
         fresh = st && fb_bytes(st)
@@ -1496,7 +1502,7 @@ module Notcurses
       end
       raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (dst non è cambiato)" if lost == :undone
 
-      restore_wide_glyphs!(target, ptr)
+      restore_wide_glyphs!(target)
       # glifi larghi nuovi senza le scritture: un resize del C li può tagliare a dimensioni già controllate
       @context.tracked_plane(target.address)&.cut_glyphs_cols = nil
       raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (celle di dst vuote)" if lost
@@ -2548,7 +2554,7 @@ module Notcurses
       egc = FFI.nccell_extended_gcluster(ptr, cell)
       fb = st[:fb].address
       # gcluster " " (htole), width 1, stessi stili e canali; preparato prima: una sola scrittura
-      temporary = " \0\0\0".b + saved.byteslice(4, 1) + "\x01".b + saved.byteslice(6..)
+      temporary = space_bytes(saved)
       # una volta sola: dopo il ripristino un callback può impostare una base uguale allo spazio provvisorio
       restored = false
       restore = lambda do |done|
@@ -2568,6 +2574,33 @@ module Notcurses
       ensure
         @context.base_restores.delete(restore)
         restore.call(true) unless closed?
+      end
+    end
+
+    # Byte di una nccell con uno spazio (htole) largo 1 al posto dell'EGC di bytes, con gli stessi stili e canali.
+    def space_bytes(bytes) = " \0\0\0".b + bytes.byteslice(4, 1) + "\x01".b + bytes.byteslice(6..)
+
+    # Metà sinistre orfane di ptr (glifi larghi tagliati da un resize) seguite da un glifo: ncplane_mergedown
+    # disegnerebbe il glifo largo intero e lascerebbe la cella dopo senza EGC e con i colori della metà sinistra
+    # (render.c:471-485). Per la fusione il wrapper le cambia in uno spazio con gli stessi stili e canali, senza
+    # rilasciare l'EGC dal pool (ICH-532): il C compone lo spazio e il glifo dopo come le altre celle. Senza
+    # internals non cambia niente.
+    # @return [Array<Array(::FFI::Pointer, String)>] celle cambiate con i loro byte di prima, da riscrivere dopo
+    def blank_orphan_lefts!(ptr)
+      st = internals(ptr)
+      return [] if st.nil?
+
+      cols = st[:lenx]
+      cells = fb_bytes(st).unpack("LxCx#{CELL_BYTES - 6}" * (st[:leny] * cols)).each_slice(2).to_a
+      fb = st[:fb]
+      cells.each_index.filter_map do |i|
+        gcluster, width = cells[i]
+        next if i % cols == cols - 1 || gcluster == 0 || width < 2 || cells[i + 1][0] == 0
+
+        cell = fb + (i * CELL_BYTES)
+        bytes = cell.read_bytes(CELL_BYTES)
+        cell.write_bytes(space_bytes(bytes))
+        [cell, bytes]
       end
     end
 
@@ -2663,10 +2696,8 @@ module Notcurses
     # metà destra orfana e a scritture fuori dalla riga (ICH-481). Il wrapper
     # riscrive quei glifi con ncplane_putc_yx, che rimette la metà destra; il
     # cursore di dst torna dov'era. Un glifo che ncplane_at_yx_cell non riesce
-    # a leggere (egcpool pieno) lo riscrive rewrite_unreadable! (ICH-485). Una
-    # metà sinistra orfana di src seguita da un glifo diventa uno spazio e quel
-    # glifo (split_orphan!, ICH-532).
-    def restore_wide_glyphs!(dst, src)
+    # a leggere (egcpool pieno) lo riscrive rewrite_unreadable! (ICH-485).
+    def restore_wide_glyphs!(dst)
       rows = ::FFI::MemoryPointer.new(:uint)
       cols = ::FFI::MemoryPointer.new(:uint)
       FFI.ncplane_dim_yx(dst, rows, cols)
@@ -2678,15 +2709,13 @@ module Notcurses
       rows.read_uint.times do |y|
         (cols.read_uint - 1).times do |x|
           if FFI.ncplane_at_yx_cell(dst, y, x, cell).negative?
-            next unless stale_right_half?(dst, y, x + 1)
-
-            moved = true if split_orphan!(dst, src, y, x) || rewrite_unreadable!(dst, y, x, 2)
+            moved = true if stale_right_half?(dst, y, x + 1) && rewrite_unreadable!(dst, y, x, 2)
             next
           end
 
           begin
             if FFI.nccell_wide_left_p(cell) && stale_right_half?(dst, y, x + 1)
-              split_orphan!(dst, src, y, x) || Util.check!(FFI.ncplane_putc_yx(dst, y, x, cell), PlaneError, 'ncplane_putc_yx')
+              Util.check!(FFI.ncplane_putc_yx(dst, y, x, cell), PlaneError, 'ncplane_putc_yx')
               moved = true
             end
           ensure
@@ -2731,51 +2760,15 @@ module Notcurses
       egc = Util.take_string(FFI.ncplane_at_yx(ptr, y, x, styles, channels))
       return false if egc.nil? || FFI.ncstrwidth(egc, nil, nil) < min_width
 
-      rc = put_styled(ptr, y, x, egc, styles.read_uint16, channels.read_uint64)
-      FFI.ncplane_erase_region(ptr, y, x, 1, 2) if rc.negative?
-      true
-    end
-
-    # Dopo una metà sinistra orfana di src (un glifo largo tagliato da un resize, seguito da un glifo B)
-    # ncplane_mergedown lascia in dst la cella di B senza EGC (render.c:471-485). Come src, dst mostra uno spazio
-    # al posto della metà orfana, con i suoi stili e canali, e B nella sua cella, con i suoi (ICH-532). Legge B
-    # da src e la metà sinistra da dst con ncplane_at_yx, che non usa l'egcpool; lo spazio rilascia l'EGC della
-    # metà sinistra prima della scrittura di B. Se B non si scrive (egcpool pieno) la sua cella resta vuota.
-    # @return [Boolean] false, senza scrivere, se la cella di src dopo la metà sinistra è vuota, fuori da src o
-    #   la metà destra del glifo, o se in dst (y, x) non è un glifo largo: lì il glifo largo resta intero
-    def split_orphan!(dst, src, y, x)
-      sy = y + FFI.ncplane_abs_y(dst) - FFI.ncplane_abs_y(src)
-      sx = x + 1 + FFI.ncplane_abs_x(dst) - FFI.ncplane_abs_x(src)
-      return false unless sy >= 0 && sy < FFI.ncplane_dim_y(src) && sx >= 0 && sx < FFI.ncplane_dim_x(src)
-      return false unless half_at(src, sy, sx) == :none # ncplane_at_yx su una metà destra orfana può non tornare
-
-      styles = ::FFI::MemoryPointer.new(:uint16)
-      channels = ::FFI::MemoryPointer.new(:uint64)
-      glyph = Util.take_string(FFI.ncplane_at_yx(src, sy, sx, styles, channels))
-      return false if glyph.nil? || glyph.empty?
-
-      left_styles = ::FFI::MemoryPointer.new(:uint16)
-      left_channels = ::FFI::MemoryPointer.new(:uint64)
-      left = Util.take_string(FFI.ncplane_at_yx(dst, y, x, left_styles, left_channels))
-      return false if left.nil? || FFI.ncstrwidth(left, nil, nil) < 2
-
-      put_styled(dst, y, x, ' ', left_styles.read_uint16, left_channels.read_uint64)
-      FFI.ncplane_erase_region(dst, y, x + 1, 1, 1) if put_styled(dst, y, x + 1, glyph, styles.read_uint16,
-                                                                  channels.read_uint64).negative?
-      true
-    end
-
-    # Scrive egc in (y, x) di ptr (+ncplane_putegc_yx+) con gli stili e i canali dati al posto di quelli del
-    # piano, che tornano subito dopo. Restituisce il valore di ncplane_putegc_yx (negativo se fallisce).
-    def put_styled(ptr, y, x, egc, styles, channels)
       plane_styles = FFI.ncplane_styles(ptr)
       plane_channels = FFI.ncplane_channels(ptr)
-      FFI.ncplane_set_styles(ptr, styles)
-      FFI.ncplane_set_channels(ptr, channels)
+      FFI.ncplane_set_styles(ptr, styles.read_uint16)
+      FFI.ncplane_set_channels(ptr, channels.read_uint64)
       rc = FFI.ncplane_putegc_yx(ptr, y, x, egc, nil)
       FFI.ncplane_set_styles(ptr, plane_styles)
       FFI.ncplane_set_channels(ptr, plane_channels)
-      rc
+      FFI.ncplane_erase_region(ptr, y, x, 1, 2) if rc.negative?
+      true
     end
 
     # true se (y, x) è vuota e larga meno di 2: la metà destra lasciata da ncplane_mergedown, con larghezza 0

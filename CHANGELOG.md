@@ -23,10 +23,10 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 ### Corretto
 
 - `Plane#merge_down` non copre più il glifo che in `src` segue una metà sinistra orfana di un glifo largo (ICH-532).
-  Il wrapper riscriveva la metà sinistra come un glifo intero, e il glifo dopo spariva da `dst`. Ora `dst` mostra
-  quello che mostra `src`: uno spazio al posto della metà orfana, con i suoi stili e colori, e il glifo di `src` nella
-  sua cella, con i suoi. Vale anche per un glifo di più di 4 byte e con l'egcpool di `dst` pieno. Se il glifo dopo la
-  metà orfana è largo, `dst` mostra ancora il glifo orfano intero.
+  Il wrapper riscriveva la metà sinistra come un glifo intero, e il glifo dopo spariva da `dst`. Ora, durante la
+  fusione, il wrapper cambia la metà orfana in uno spazio con gli stessi stili e colori (`src` torna com'era dopo):
+  `dst` mostra lo spazio e il glifo di `src`, anche largo o di più di 4 byte, con i colori composti come nelle altre
+  celle. Se il glifo non entra nell'egcpool di `dst`, la fusione fallisce con `PlaneError` e `dst` non cambia.
 - `Plane#rotate_cw`, `#rotate_ccw` e `#resize_region` (che non conserva niente) non perdono più la cella base con
   l'egcpool pieno (ICH-531). Durante la chiamata C il wrapper rilasciava l'EGC della base dal pool, e il C poteva
   usare quello spazio: dopo la chiamata la base non trovava posto, diventava vuota e l'errore di `ncplane_set_base`
