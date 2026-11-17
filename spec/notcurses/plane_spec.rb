@@ -1064,6 +1064,18 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    # ICH-490: ncplane_at_yx_cell copia gli EGC di più di 4 byte nell'egcpool del piano e con il pool pieno (16 MiB)
+    # fallisce; contents sollevava PlaneError anche se il contenuto era intatto e at lo leggeva.
+    it 'contents legge gli EGC lunghi con l\'egcpool pieno, come at (prima: PlaneError)' do
+      with_parent(rows: 2, cols: 4) do |p|
+        big = "漢#{"́" * 3_000_000}" # 6 MB, due righe riempiono il pool
+        2.times { |y| p.putstr(big, y: y, x: 0) }
+        expect(p.contents).to eq(big * 2)
+        expect(p.contents).to eq([0, 1].map { |y| p.at(y: y, x: 0).egc }.join)
+        expect(p.contents(y: 1, rows: 1)).to eq(big)
+      end
+    end
+
     it 'putstr con autogrow allarga il piano' do
       with_parent(rows: 1, cols: 3) do |p|
         p.autogrow = true

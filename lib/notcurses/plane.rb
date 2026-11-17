@@ -1338,7 +1338,9 @@ module Notcurses
     # Bug di 3.0.17 aggirato: +ncplane_contents+ lascia nell'egcpool del piano
     # una copia di ogni EGC di più di 4 byte a ogni chiamata (il pool cresce
     # fino al limite di 16 MiB): il wrapper legge le celle una per una con
-    # +ncplane_at_yx_cell+ e le rilascia.
+    # +ncplane_at_yx_cell+ e le rilascia. Con il pool pieno quella lettura
+    # fallisce sugli EGC di più di 4 byte: il wrapper li legge con
+    # +ncplane_at_yx+, che non usa il pool, come {#at}.
     #
     # @param y [Integer] prima riga, 0...righe
     # @param x [Integer] prima colonna, 0...colonne
@@ -1363,7 +1365,10 @@ module Notcurses
           x.upto(x + cols - 1) do |xx|
             # la cella viene riusata: ncplane_at_yx_cell rilascia prima il contenuto precedente
             len = FFI.ncplane_at_yx_cell(ptr, yy, xx, cell)
-            raise PlaneError, "ncplane_at_yx_cell(#{yy}, #{xx}) fallita" if len.negative?
+            if len.negative?
+              out << unpooled_egc(ptr, yy, xx)
+              next
+            end
 
             egc = FFI.nccell_extended_gcluster(ptr, cell)
             out << egc if len.positive? && egc != "\n" # la cella che ncplane_put lascia dopo un a capo
@@ -2527,6 +2532,18 @@ module Notcurses
       ensure
         set_base(egc: saved.egc, styles: saved.styles, channels: saved.channels) unless closed?
       end
+    end
+
+    # EGC della cella (y, x) letto con ncplane_at_yx (strdup, senza passare dall'egcpool) quando
+    # ncplane_at_yx_cell non riesce a copiarlo nel pool pieno (ICH-490). PlaneError su un piano con un bitmap,
+    # dove ncplane_at_yx copierebbe la sequenza dello sprixel (vedi unreadable_half), e senza internals, dove
+    # il bitmap non si riconosce.
+    def unpooled_egc(ptr, y, x)
+      st = internals(ptr)
+      egc = FFI.ncplane_at_yx(ptr, y, x, nil, nil) if st && st[:sprite].null?
+      raise PlaneError, "ncplane_at_yx_cell(#{y}, #{x}) fallita" if egc.nil? || egc.null?
+
+      Util.take_string(egc).b # contents accumula byte, come nccell_extended_gcluster
     end
 
     # Byte del framebuffer di st (Internals), in ordine fisico. CELL_BYTES invece di NcCell.size (un metodo

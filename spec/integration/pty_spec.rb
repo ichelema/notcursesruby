@@ -622,7 +622,7 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
       rgba = "\xff".b * (64 * 64 * 4)
       bm = Notcurses::Visual.from_rgba(rgba, rows: 64, cols: 64) { |v| v.blit(plane: host, blitter: :pixel, child: true) }
       nc.render if KITTY
-      ops = {at: -> { bm.at(y: 0, x: 0) }, erase_region: -> { bm.erase_region(0, 1, 1, 1) },
+      ops = {at: -> { bm.at(y: 0, x: 0) }, contents: -> { bm.contents }, erase_region: -> { bm.erase_region(0, 1, 1, 1) },
              gradient: -> { bm.gradient('g', 0, 0, 0, 0, x: 1, rows: 1, cols: 1) }, polyfill: -> { bm.polyfill('x', y: 0, x: 0) }}
       ops = ops.merge(putstr: -> { bm.putstr('x', y: 0, x: 0) }) if KITTY
       ops.each do |name, op|
@@ -640,7 +640,7 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
   it 'su un piano con un bitmap at solleva PlaneError, erase_region, gradient e polyfill funzionano come prima' do
     out, status, timed_out = run_child(bitmap_plane_script, timeout: 30)
     expect(timed_out).to be(false), out
-    expect(out).to include('at Notcurses::PlaneError', 'erase_region ok', 'gradient ok', 'polyfill ok', 'fine')
+    expect(out).to include('at Notcurses::PlaneError', 'contents Notcurses::PlaneError', 'erase_region ok', 'gradient ok', 'polyfill ok', 'fine')
     expect(status.exitstatus).to eq(0), out
   end
 
@@ -648,8 +648,8 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
   it 'su un piano con un bitmap kitty già disegnato le scritture sollevano PlaneError (prima: SIGSEGV)' do
     out, status, timed_out = run_child(bitmap_plane_script(kitty: true), timeout: 30)
     expect(timed_out).to be(false), out
-    expect(out).to include('pixel kitty_animated', 'at Notcurses::PlaneError', 'erase_region ok', 'gradient ok',
-                           'polyfill ok', 'putstr Notcurses::PlaneError', 'fine')
+    expect(out).to include('pixel kitty_animated', 'at Notcurses::PlaneError', 'contents Notcurses::PlaneError',
+                           'erase_region ok', 'gradient ok', 'polyfill ok', 'putstr Notcurses::PlaneError', 'fine')
     expect(status.exitstatus).to eq(0), out
   end
 

@@ -22,6 +22,10 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Plane#contents` legge gli EGC di più di 4 byte anche con l'egcpool del piano pieno (ICH-490). `ncplane_at_yx_cell`
+  copia l'EGC nel pool (16 MiB) e fallisce quando non c'è spazio: `contents` sollevava `PlaneError` con il contenuto
+  intatto. Ora legge quelle celle con `ncplane_at_yx`, che non usa il pool, come `Plane#at`. Un piano con un bitmap
+  solleva ancora `PlaneError`.
 - `Plane#at` solleva `PlaneError` su un piano con un bitmap (sixel o Kitty) invece di andare in SIGSEGV (ICH-493).
   Con Kitty il C libera la sequenza dello sprixel dopo il disegno e `ncplane_at_yx` fa `strdup(NULL)`. Lo stesso
   vale per sixel, dove `at` restituiva la sequenza di escape: come `Plane#contents`, il piano con un bitmap non si
