@@ -153,6 +153,28 @@ RSpec.describe Notcurses::Plane do
         expect(copy).to be_closed
       end
     end
+
+    # ncplane_dup di 3.0.17 crea la copia con flags = 0 e copia solo halign (notcurses.c:776, 788-793) (ICH-216).
+    it 'duplicate copia il flag fixed e l\'allineamento verticale (prima: la copia scorreva e non si riallineava)' do
+      with_parent(rows: 4, cols: 4, vscroll: true) do |p|
+        fixed = p.create_child(rows: 1, cols: 1, y: 3, fixed: true)
+        loose = p.create_child(rows: 1, cols: 1, y: 3)
+        fixed.duplicate do |d|
+          p.putstr("\n\n", y: 3, x: 0) # due scroll di p: i figli non fissi salgono di una riga per scroll
+          expect(loose.y).to eq(1)
+          expect(d.yx).to eq(fixed.yx) # prima: [1, 0]
+        end
+      end
+      with_parent do |parent|
+        c = parent.create_child(rows: 2, cols: 4, y: :bottom, x: :center)
+        c.duplicate do |d|
+          parent.resize(12, 30)
+          c.resize_realign
+          d.resize_realign
+          expect(d.yx).to eq([10, 13]) # prima: [8, 13]
+        end
+      end
+    end
   end
 
   describe 'resize' do
@@ -181,6 +203,158 @@ RSpec.describe Notcurses::Plane do
         expect { p.resize_region(rows: 4, cols: 6, keep_rows: 1, keep_cols: 1) }.to raise_error(ArgumentError)
         expect { p.resize_region(rows: 6, cols: 6, keep_rows: 4, keep_cols: 6, y_off: -1) }.to raise_error(ArgumentError)
         expect { p.resize_region(rows: 4, cols: 6, keep_y: 4, keep_rows: 1, keep_cols: 1) }.to raise_error(Notcurses::PlaneError)
+      end
+    end
+
+    # Con keep_x > 0 il C di 3.0.17 rilascia dall'egcpool gli EGC di una parte della regione conservata
+    # (notcurses.c:995-997): prima del fix quelle celle restavano vuote (ICH-215).
+    context 'resize_region con keep_x > 0 e EGC di più di 4 byte nella regione conservata' do
+      # Riga di 8 celle strette, ognuna con un EGC di 5 byte: una lettera da first in poi e due segni combinanti.
+      def marked(first) = Array.new(8) { |i| "#{(first.ord + i).chr}́̂" }
+
+      it 'conserva emoji con ZWJ e con modificatore e lettere con segni combinanti (prima: celle vuote nella riga 0)' do
+        with_parent(rows: 2, cols: 8) do |p|
+          p.putstr('ab👍🏽cd', y: 0, x: 0)
+          p.putegc('👨‍🚀', y: 0, x: 6)
+          p.putstr(marked('a').join, y: 1, x: 0)
+          p.move_cursor(1, 7)
+          p.resize_region(rows: 2, cols: 6, keep_x: 2, keep_rows: 2, keep_cols: 6)
+          expect([p.dims, p.yx, p.cursor]).to eq([[2, 6], [3, 6], [1, 5]])
+          expect(p.contents(y: 0, rows: 1)).to eq('👍🏽cd👨‍🚀') # prima: "👍🏽cd"
+          expect([p.at(y: 0, x: 0).egc, p.at(y: 0, x: 4).egc, p.at(y: 0, x: 5).egc]).to eq(%w[👍🏽 👨‍🚀 👨‍🚀])
+          expect(Array.new(6) { |x| p.at(y: 1, x: x).egc }).to eq(marked('c').first(6))
+        end
+      end
+
+      it 'conserva gli EGC anche quando keep_x supera le nuove colonne (prima: vuote le righe 0 e 1)' do
+        with_parent(rows: 3, cols: 8) do |p|
+          3.times { |y| p.putstr(marked('a'.ord + (8 * y)).join, y: y, x: 0) }
+          p.resize_region(rows: 3, cols: 3, keep_x: 5, keep_rows: 3, keep_cols: 3)
+          expect(p.dims).to eq([3, 3])
+          3.times do |y|
+            expect(Array.new(3) { |x| p.at(y: y, x: x).egc }).to eq(marked('a'.ord + (8 * y))[5, 3])
+          end
+          p.putstr(marked('A').first(3).join, y: 0, x: 0) # una cella corrotta mostrerebbe l'EGC di un'altra
+          expect(Array.new(3) { |x| p.at(y: 1, x: x).egc }).to eq(marked('i')[5, 3])
+        end
+      end
+
+      it 'conserva ogni riga di un piano che ha già fatto scroll (prima del fix: una riga persa)' do
+        with_parent(rows: 3, cols: 8, vscroll: true) do |p|
+          3.times { |y| p.putstr(marked('a'.ord + (8 * y)).join, y: y, x: 0) }
+          p.putstr("\n#{marked("A").join}") # scroll di una riga: logrow diventa 1
+          p.resize_region(rows: 3, cols: 6, keep_x: 2, keep_rows: 3, keep_cols: 6)
+          rows = Array.new(3) { |y| Array.new(6) { |x| p.at(y: y, x: x).egc } }
+          expect(rows).to eq([marked('i')[2, 6], marked('q')[2, 6], marked('A')[2, 6]])
+        end
+      end
+
+      # con la malloc fallita (notcurses.c:918) il primo passo non tocca il piano
+      it 'lascia com\'era un piano che ha già fatto scroll quando il primo passo fallisce (prima: righe permutate)' do
+        skip "manca #{NcHelpers::MALLOC_DEBUG}" unless File.exist?(NcHelpers::MALLOC_DEBUG)
+        script = <<~RUBY
+          require 'notcurses'
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            pl = nc.stdplane.create_child(rows: 3, cols: 4, vscroll: true)
+            %w[aaaa bbbb cccc].each_with_index { |s, y| pl.putstr(s, y: y, x: 0) }
+            pl.putstr("\\ndddd")
+            Process.setrlimit(:AS, 1_500_000_000)
+            begin
+              pl.resize_region(rows: 50_000_000, cols: 4, keep_x: 1, keep_rows: 3, keep_cols: 3)
+            rescue Notcurses::PlaneError
+              nil
+            end
+            p [pl.dims, Array.new(3) { |y| pl.contents(y: y, rows: 1) }]
+          end
+        RUBY
+        expect(NcHelpers.heap_check(script)).to eq([0, %([[3, 4], ["bbbb", "cccc", "dddd"]]\n)])
+      end
+
+      it 'chiama due volte i callback di resize dei figli (il resize è in due passi), una sola senza keep_x' do
+        with_parent(rows: 2, cols: 8) do |p|
+          seen = []
+          p.create_child(rows: 1, cols: 1, resize: ->(_) { seen << p.dims })
+          p.resize_region(rows: 2, cols: 6, keep_x: 2, keep_rows: 2, keep_cols: 6)
+          expect(seen).to eq([[3, 6], [2, 6]])
+          p.resize_region(rows: 2, cols: 4, keep_rows: 2, keep_cols: 4)
+          expect(seen.size).to eq(3)
+        end
+      end
+
+      it 'arriva alle dimensioni chieste anche se il callback di un figlio solleva; una regione fuori dal piano non lo cambia' do
+        with_parent(rows: 2, cols: 8) do |p|
+          expect { p.resize_region(rows: 2, cols: 6, keep_y: 2, keep_x: 2, keep_rows: 1, keep_cols: 6) }
+            .to raise_error(Notcurses::PlaneError)
+          expect([p.dims, p.yx]).to eq([[2, 8], [3, 4]])
+          p.create_child(rows: 1, cols: 1, resize: ->(_) { raise ArgumentError, 'dal callback' })
+          expect { p.resize_region(rows: 2, cols: 6, keep_x: 2, keep_rows: 2, keep_cols: 6) }
+            .to raise_error(ArgumentError, 'dal callback')
+          expect([p.dims, p.yx]).to eq([[2, 6], [3, 6]])
+        end
+      end
+
+      # Con le righe in più del primo passo il ciclo di rilascio del C (notcurses.c:995-997) parte oltre la fine
+      # della riga e non rilascia nemmeno gli EGC delle celle scartate: restavano nel pool (review del round 2).
+      it 'rilascia gli EGC delle celle scartate: ritagli ripetuti non riempiono l\'egcpool (prima: ArgumentError al terzo)' do
+        with_parent(rows: 1, cols: 4) do |p|
+          big = "a#{"́" * 3_000_000}" # 6 MB: tre copie superano i 16 MiB del pool
+          4.times do
+            p.putstr('K', y: 0, x: 1)
+            p.putstr(big, y: 0, x: 2)
+            p.resize_region(rows: 1, cols: 3, keep_x: 1, keep_rows: 1, keep_cols: 1)
+            expect(p.contents).to eq('K')
+            p.resize(1, 4)
+          end
+        end
+      end
+
+      # I callback di resize dei figli girano fra i due passi e possono svuotare il pool del piano: il rilascio degli
+      # EGC scartati non deve leggere un pool vuoto né rilasciare la cella base o gli EGC scritti dal callback
+      # (review del round 3).
+      it 'un callback che svuota il piano non rompe il rilascio degli EGC scartati (prima: NullPointerError, cella base persa)' do
+        marked = "á̂" # 5 byte, nel pool
+        with_parent(rows: 1, cols: 4) do |p|
+          p.putstr(marked, y: 0, x: 2)
+          p.create_child(rows: 1, cols: 1, resize: ->(_) { p.erase })
+          expect { p.resize_region(rows: 1, cols: 3, keep_x: 1, keep_rows: 1, keep_cols: 1) }.not_to raise_error
+        end
+        with_parent(rows: 1, cols: 4) do |p|
+          p.putstr(marked, y: 0, x: 2)
+          p.create_child(rows: 1, cols: 1, resize: lambda { |_|
+            p.erase
+            p.set_base(egc: "B́̂")
+          })
+          p.resize_region(rows: 1, cols: 3, keep_x: 1, keep_rows: 1, keep_cols: 1)
+          expect(p.base.egc).to eq("B́̂")
+        end
+      end
+
+      it "un callback che svuota e riscrive il piano non fa rilasciare offset fuori dal pool nuovo (prima: abort)" do
+        skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
+        script = <<~'RUBY'
+          require 'notcurses'
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true, drain_input: true) do |nc|
+            pl = nc.stdplane.create_child(rows: 60, cols: 200)
+            60.times { |y| pl.putstr('👍🏽' * 100, y: y, x: 0) }
+            pl.create_child(rows: 1, cols: 1, resize: ->(_) { pl.erase; pl.putstr('👍🏽 title', y: 0, x: 0) })
+            pl.resize_region(rows: 60, cols: 190, keep_x: 10, keep_rows: 60, keep_cols: 190)
+            puts pl.contents(y: 0, rows: 1)
+          end
+        RUBY
+        status, out = NcHelpers.heap_check(script)
+        expect(status).to eq(0), out
+        expect(out).to include('👍🏽 title')
+      end
+
+      it 'completa il secondo passo anche se il callback di un figlio rimette il piano nella colonna di prima ' \
+         '(prima: alto 3, con una riga vuota in cima)' do
+        with_parent(rows: 2, cols: 8, y: 3, x: 4) do |p|
+          p.putstr('abcdefgh', y: 0, x: 0)
+          p.create_child(rows: 1, cols: 1, resize: ->(_) { p.move(p.y, 4) })
+          p.resize_region(rows: 2, cols: 6, keep_x: 2, keep_rows: 2, keep_cols: 6)
+          expect([p.dims, p.yx, p.contents(y: 0, rows: 1)]).to eq([[2, 6], [3, 4], 'cdefgh'])
+        end
       end
     end
 
@@ -426,6 +600,55 @@ RSpec.describe Notcurses::Plane do
           Notcurses::FFI.ncplane_resize_simple(p.to_ptr, 2, 4) # di nuovo 2x4: metà sinistra orfana in (0, 3)
           p.putstr('x', y: 0, x: 3)
           expect(p.contents(y: 1, rows: 1)).to eq('WXYZ')
+        end
+      end
+
+      # ncplane_at_yx_cell duplica l'EGC nell'egcpool: con due EGC da 6 MB nel piano la copia non ci sta (limite
+      # di 16 MiB) e la lettura fallisce. Prima del fix il wrapper non riconosceva la metà tagliata (ICH-487).
+      context 'con un glifo che notcurses non riesce a leggere (egcpool pieno)' do
+        it 'la metà sinistra tagliata dal resize diventa una cella vuota: la scrittura lascia intatta la riga sotto (prima: "XY")' do
+          big = "漢#{"́" * 3_000_000}"
+          with_parent(rows: 3, cols: 4) do |p|
+            p.putstr(big, y: 0, x: 0)
+            p.putstr(big, y: 1, x: 2)
+            p.putstr('WXYZ', y: 2, x: 0)
+            p.resize(3, 3)
+            expect(p.at(y: 1, x: 2).egc.bytesize).to eq(0) # prima: i 6 MB del glifo
+            p.putstr('x', y: 1, x: 2)
+            expect(p.contents(y: 2, rows: 1)).to eq('WXY')
+          end
+        end
+
+        it 'un glifo stretto nell\'ultima colonna e un glifo largo intero nelle ultime due restano dove sono' do
+          narrow = "a#{"́" * 3_000_000}"
+          wide = "漢#{"́" * 3_000_000}"
+          with_parent(rows: 2, cols: 4) do |p|
+            p.putstr(narrow, y: 0, x: 2)
+            p.putstr(wide, y: 1, x: 1)
+            p.resize(2, 3)
+            expect(p.at(y: 0, x: 2).egc.bytesize).to eq(narrow.bytesize)
+            expect(p.at(y: 1, x: 2).egc.bytesize).to eq(wide.bytesize) # prima: "", la metà destra cancellata
+          end
+        end
+
+        it "la scrittura sulla metà tagliata nell'ultima riga non corrompe l'heap (prima: abort di glibc)" do
+          skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
+          script = <<~'RUBY'
+            require 'notcurses'
+            Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                    drain_input: true) do |nc|
+              big = "漢#{"́" * 3_000_000}"
+              pl = nc.stdplane.create_child(rows: 3, cols: 4)
+              pl.putstr(big, y: 0, x: 0)
+              pl.putstr('WXYZ', y: 1, x: 0)
+              pl.putstr(big, y: 2, x: 2)
+              pl.resize(3, 3)
+              pl.putstr('x', y: 2, x: 2) # prima: scriveva oltre il framebuffer, e la free del piano abortiva
+              pl.close
+            end
+            puts 'ok'
+          RUBY
+          expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
         end
       end
 
@@ -1173,6 +1396,133 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    # ncplane_mergedown di 3.0.17 copia ogni EGC di più di 4 byte nell'egcpool di dst e libera il framebuffer
+    # vecchio senza rilasciarli (render.c:602-603): il pool cresceva a ogni merge fino al limite di 16 MiB,
+    # poi le celle restavano vuote senza errore (ICH-482).
+    it 'merge_down ripetuto lascia invariato dst con EGC lunghi (prima: vuoto dopo una quindicina di merge da 1 MB)' do
+      with_parent(rows: 1, cols: 4) do |dst|
+        src = dst.create_child(rows: 1, cols: 4)
+        dst.putstr("a#{"́" * 500_000}b", y: 0, x: 0) # un EGC di 1 MB e una "b"
+        want = dst.contents
+        40.times { src.merge_down(dst) }
+        got = dst.contents
+        expect(got.bytesize).to eq(want.bytesize) # prima: 1 ("b")
+        expect(got).to eq(want)
+      end
+    end
+
+    # Durante la fusione il C tiene nel pool le copie vecchie e quelle nuove: con più di metà dei 16 MiB già usati
+    # le copie nuove non entrano, le celle restano vuote e ncplane_mergedown_simple restituisce 0 (ICH-482, review).
+    it 'merge_down con un egcpool di dst senza spazio per le copie solleva PlaneError e lascia dst com\'era (prima: EGC persi)' do
+      with_parent(rows: 2, cols: 4) do |dst|
+        src = dst.create_child(rows: 2, cols: 4)
+        big = "a#{"́" * 3_000_000}" # 6 MB
+        2.times { |y| dst.putstr(big, y: y, x: 0) }
+        expect { src.merge_down(dst) }.to raise_error(Notcurses::PlaneError, /egcpool/)
+        expect(Array.new(2) { |y| dst.at(y: y, x: 0).egc.bytesize }).to eq([big.bytesize] * 2) # prima: [0, 0]
+        dst.putstr('xy', y: 0, x: 1)
+        expect(dst.at(y: 0, x: 0).egc.bytesize).to eq(big.bytesize)
+      end
+    end
+
+    # postpaint_cell (render.c:471-485) azzera il gcluster della cella dopo una metà sinistra e lascia la sua
+    # larghezza: dopo una metà sinistra orfana seguita da un glifo quella cella sembrava un EGC perso (review).
+    it 'merge_down con una metà sinistra orfana seguita da un glifo non solleva PlaneError (prima: errore e ICH-481)' do
+      [['WXYZ', 'WXYZ'], ['👍🏽zz', '👍🏽zz']].each do |text, want|
+        with_parent(rows: 3, cols: 4) do |dst|
+          dst.putstr(text, y: 1, x: 0)
+          src = dst.create_child(rows: 3, cols: 4)
+          src.set_fg_rgb24(0xff0000)
+          src.putstr('a中c', y: 2, x: 0)
+          src.resize_region(rows: 3, cols: 3, keep_rows: 3, keep_cols: 2) # metà sinistra di 中 in colonna 1
+          src.resize(3, 4)
+          src.putstr('X', y: 2, x: 2)
+          src.putstr('a中', y: 0, x: 0)
+          src.merge_down(dst)
+          dst.putstr('中', y: 0, x: 2)
+          dst.putstr('x', y: 0, x: 1) # senza la metà destra di 中 cancellerebbe la prima cella della riga 1
+          dst.putstr('中', y: 0, x: 2)
+          expect(dst.contents(y: 1, rows: 1)).to eq(want)
+        end
+      end
+    end
+
+    # Il rilascio delle copie vecchie e il ripristino leggono il framebuffer e il pool di dst dopo chiamate Ruby,
+    # dove gira un gestore trap. Prima un trap che cambiava dst in quella finestra portava a SIGSEGV
+    # (nccell_release su un pool svuotato) o a un heap corrotto (ripristino con le dimensioni vecchie).
+    context 'con un gestore trap che cambia dst durante la fusione' do
+      # Script per un processo figlio: quando src chiama per la volta at il metodo privato hook, un trap esegue
+      # action su dst; big righe di dst hanno un EGC da 6 MB (con 2 il pool è pieno e la fusione va annullata;
+      # con 1 il pool è abbastanza grande da stare in una mappatura sua, e una lettura dopo la free va in SIGSEGV).
+      def trap_merge_script(action, hook:, at: 1, big: 0)
+        fill = big.zero? ? "dst.putstr('👍🏽x👍🏽', y: 0, x: 0)" : "#{big}.times { |y| dst.putstr(\"a\#{\"\\u0301\" * 3_000_000}\", y: y, x: 0) }"
+        <<~RUBY
+          require 'notcurses'
+          Process.setrlimit(:CORE, 0)
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            dst = nc.stdplane.create_child(rows: 3, cols: 6)
+            src = nc.stdplane.create_child(rows: 1, cols: 1)
+            #{fill}
+            trap('USR1') { dst.#{action} }
+            $calls = 0
+            src.singleton_class.prepend(Module.new do
+              def #{hook}(*args)
+                super.tap { Process.kill('USR1', Process.pid) if ($calls += 1) == #{at} }
+              end
+            end)
+            begin
+              src.merge_down(dst)
+            rescue Notcurses::PlaneError
+              nil
+            end
+            dst.putstr('ab', y: 0, x: 0)
+            dst.contents
+            dst.close
+          end
+          puts 'ok'
+        RUBY
+      end
+
+      before { skip "manca #{NcHelpers::MALLOC_DEBUG}" unless File.exist?(NcHelpers::MALLOC_DEBUG) }
+
+      it 'un erase prima del rilascio delle copie vecchie (prima: SIGSEGV)' do
+        expect(NcHelpers.heap_check(trap_merge_script('erase', hook: :lost_egc?))).to eq([0, "ok\n"])
+      end
+
+      it 'un erase fra la lettura del framebuffer e la fusione (prima: SIGSEGV)' do
+        expect(NcHelpers.heap_check(trap_merge_script('erase', hook: :fb_bytes))).to eq([0, "ok\n"])
+      end
+
+      it 'un resize prima del ripristino con il pool pieno (prima: heap corrotto)' do
+        script = trap_merge_script('resize(1, 4)', hook: :lost_egc?, big: 2)
+        expect(NcHelpers.heap_check(script, timeout: 60)).to eq([0, "ok\n"])
+      end
+
+      # Numeric#nonzero? chiama zero? con la guardia di ricorsione di Ruby: un trap che gira lì dentro e chiama
+      # nonzero? sullo stesso intero riceve NameError (per esempio un trap che fonde altri piani con 👍🏽, primo
+      # byte 0xF0 nei due pool). TracePoint rinvia il trap fuori dalla guardia: la spec controlla la causa.
+      it 'non chiama Numeric#nonzero? nei filtri di merge_down (prima: NameError con un trap che fonde altri piani)' do
+        dst = std.create_child(rows: 1, cols: 4)
+        src = std.create_child(rows: 1, cols: 1)
+        dst.putstr('👍🏽', y: 0, x: 0)
+        calls = []
+        trace = TracePoint.new(:c_call) do |tp|
+          calls << tp.lineno if tp.method_id == :nonzero? && tp.path.end_with?('/plane.rb')
+        end
+        trace.enable { src.merge_down(dst) }
+        expect(calls).to eq([])
+      ensure
+        [src, dst].each { |pl| pl&.close }
+      end
+
+      # la seconda chiamata di pooled è quella dentro release_unused!, prima del filtro che legge il pool
+      it 'un erase mentre il wrapper sceglie le copie vecchie da rilasciare (prima: SIGSEGV)' do
+        script = trap_merge_script('erase', hook: :pooled, at: 2, big: 1)
+        expect(NcHelpers.heap_check(script, timeout: 60)).to eq([0, "ok\n"])
+      end
+    end
+
     context 'con glifi larghi' do
       def merged(text, rows: 1, cols: 6)
         dst = std.create_child(rows: rows, cols: cols)
@@ -1255,6 +1605,92 @@ RSpec.describe Notcurses::Plane do
           puts 'ok'
         RUBY
         expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+      end
+
+      # Per riscrivere un glifo il wrapper lo legge con ncplane_at_yx_cell, che duplica l'EGC nell'egcpool di
+      # dst: con due EGC da 6 MB la copia non ci sta (limite di 16 MiB) e la lettura fallisce. Prima del fix
+      # quei glifi restavano con la metà destra larga 0 (ICH-485).
+      context 'che notcurses non riesce a leggere (egcpool pieno)' do
+        let(:big) { "漢#{"́" * 3_000_000}" }
+
+        # dst 3x4 dopo la fusione di un piano con due glifi da 6 MB: "a" e il glifo nella riga 0, "WXYZ"
+        # nella riga 1, il glifo nella riga 2. Il blocco gira subito prima della fusione.
+        def merged_big(dst)
+          src = std.create_child(rows: 3, cols: 4, y: dst.y, x: dst.x)
+          src.set_fg_rgb24(0xff0000)
+          src.styles = :bold
+          src.putstr("a#{big}", y: 0, x: 0)
+          src.putstr('WXYZ', y: 1, x: 0)
+          src.putstr(big, y: 2, x: 0)
+          yield if block_given?
+          src.merge_down(dst)
+          src.close
+        end
+
+        it 'la metà destra torna una metà destra: le scritture lasciano intatta la riga sotto (prima: "XYZ")' do
+          with_parent(rows: 3, cols: 4) do |dst|
+            dst.set_fg_rgb24(0x00ff00)
+            dst.styles = :italic
+            dst.move_cursor(1, 2)
+            merged_big(dst)
+            expect(dst.at(y: 0, x: 2).egc.bytesize).to eq(big.bytesize) # prima: 0, la cella base
+            glyph = dst.at(y: 0, x: 1)
+            expect([glyph.styles, glyph.channels.fg_rgb24]).to eq([[:bold], 0xff0000])
+            expect([dst.cursor, dst.styles, dst.fg_rgb24]).to eq([[1, 2], [:italic], 0x00ff00])
+            dst.putstr('中', y: 0, x: 2)
+            dst.putstr('x', y: 0, x: 1)
+            dst.putstr('中', y: 0, x: 2)
+            expect([dst.contents(y: 0, rows: 1), dst.contents(y: 1, rows: 1)]).to eq(%w[ax中 WXYZ])
+          end
+        end
+
+        it 'il cursore di dst resta oltre l\'ultima colonna, dopo un glifo che notcurses non riesce a leggere' do
+          with_parent(rows: 3, cols: 4) do |dst|
+            dst.putstr('abcd', y: 0, x: 0) # cursore in (0, 4)
+            src = std.create_child(rows: 3, cols: 4, y: dst.y, x: dst.x)
+            src.putstr(big, y: 0, x: 2)
+            src.putstr(big, y: 2, x: 0)
+            src.merge_down(dst)
+            src.close
+            expect(dst.cursor).to eq([0, 4])
+            expect { dst.putstr('Z') }.to raise_error(Notcurses::PlaneError, /non entra/)
+            expect(dst.at(y: 2, x: 1).egc.bytesize).to eq(big.bytesize)
+          end
+        end
+
+        it 'se nemmeno la riscrittura riesce le due metà del glifo diventano celle vuote' do
+          with_parent(rows: 3, cols: 4) do |dst|
+            merged_big(dst) { allow(Notcurses::FFI).to receive(:ncplane_putegc_yx).and_return(-1) }
+            expect([dst.at(y: 0, x: 1).egc, dst.at(y: 0, x: 2).egc]).to eq(['', ''])
+            expect([dst.contents(y: 0, rows: 1), dst.contents(y: 1, rows: 1)]).to eq(%w[a WXYZ])
+            # svuotato il primo glifo nel pool c'è posto: il secondo si legge e torna intero
+            expect(dst.at(y: 2, x: 1).egc.bytesize).to eq(big.bytesize)
+          end
+        end
+
+        it "le scritture sull'ultima riga non corrompono l'heap (prima: abort di glibc)" do
+          skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
+          script = <<~'RUBY'
+            require 'notcurses'
+            Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                    drain_input: true) do |nc|
+              big = "漢#{"́" * 3_000_000}"
+              dst = nc.stdplane.create_child(rows: 3, cols: 4)
+              src = nc.stdplane.create_child(rows: 3, cols: 4)
+              src.putstr(big, y: 0, x: 0)
+              src.putstr('WXYZ', y: 1, x: 0)
+              src.putstr("a#{big}", y: 2, x: 0)
+              src.merge_down(dst)
+              src.close
+              dst.putstr('中', y: 2, x: 2)
+              dst.putstr('x', y: 2, x: 1)
+              dst.putstr('中', y: 2, x: 2) # prima: scriveva oltre il framebuffer, e la free del piano abortiva
+              dst.close
+            end
+            puts 'ok'
+          RUBY
+          expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+        end
       end
     end
 

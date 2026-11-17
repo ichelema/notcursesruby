@@ -35,6 +35,12 @@ module Notcurses
   # Bug noto di 3.0.17 non aggirato: dopo il primo scroll, {#duplicate}, i
   # resize (anche la crescita per autogrow), {#rotate_cw}/{#rotate_ccw} e il
   # merge sul piano di destinazione permutano o perdono righe.
+  #
+  # Campi privati. Alcuni workaround ({#duplicate}, {#merge_down},
+  # {#resize_region}, il controllo dei glifi larghi tagliati) leggono o
+  # scrivono campi privati del piano C: lo fanno solo con la libreria 3.0.17
+  # e se quei campi coincidono con i valori dell'API pubblica; altrimenti non
+  # fanno nulla e il bug resta.
   class Plane
     include Resource
 
@@ -74,6 +80,30 @@ module Notcurses
 
     CORNERS = %w[ul ur ll lr].freeze
     private_constant :CORNERS
+
+    # Campi privati di +struct ncplane+ fino ad autogrow (notcurses 3.0.17,
+    # src/lib/internal.h:76-125): l'API pubblica non lascia leggere o scrivere
+    # fb, egcpool, cella base, sprite, valign e fixedbound. I workaround li
+    # usano solo attraverso internals, che controlla la versione della libreria
+    # e i campi.
+    #
+    # @api private
+    class Internals < ::FFI::Struct
+      layout :fb, :pointer, :logrow, :int, :x, :uint, :y, :uint, :absx, :int, :absy, :int,
+             :lenx, :uint, :leny, :uint,
+             :pool, :pointer, :poolsize, :int, :poolused, :int, :poolwrite, :int, # egcpool
+             :channels, :uint64, :pile, :pointer, :above, :pointer, :below, :pointer,
+             :bnext, :pointer, :bprev, :pointer, :blist, :pointer, :boundto, :pointer,
+             :sprite, :pointer, :tam, :pointer, :userptr, :pointer, :resizecb, :pointer,
+             :basecell, FFI::NcCell, :name, :pointer, :halign, :int, :valign, :int,
+             :stylemask, :uint16, :margin_b, :int, :margin_r, :int,
+             :scrolling, :bool, :fixedbound, :bool, :autogrow, :bool
+    end
+    private_constant :Internals
+
+    # Byte di una cella (sizeof(nccell)).
+    CELL_BYTES = FFI::NcCell.size
+    private_constant :CELL_BYTES
 
     # @return [Context] contesto a cui appartiene il piano
     attr_reader :context
@@ -346,10 +376,12 @@ module Notcurses
     #
     # Bug di 3.0.17 aggirati: il C posiziona la copia usando le coordinate
     # assolute come relative, la mette in cima alla pila e azzera scrolling e
-    # autogrow; il wrapper sposta la copia e ripristina i due flag. Non si
-    # possono ripristinare il flag fixed e l'allineamento verticale (per
-    # {#resize_realign}). Un callback di resize interno di un widget non viene
-    # copiato (con il C la copia andrebbe in crash al primo resize).
+    # autogrow; il wrapper sposta la copia e ripristina i due flag. Il C non
+    # copia nemmeno il flag fixed e l'allineamento verticale (per
+    # {#resize_realign}): il wrapper li scrive nei campi privati della copia
+    # (vedi "Campi privati" nella classe). Un callback di resize interno di un
+    # widget non viene copiato (con il C la copia andrebbe in crash al primo
+    # resize).
     #
     # @return [Plane] il duplicato; con un blocco, il valore del blocco (il
     #   duplicato viene distrutto alla fine)
@@ -368,6 +400,11 @@ module Notcurses
       copy.move_above(self)
       copy.scrolling = true if scrolling?
       copy.autogrow = true if autogrow?
+      # ncplane_dup crea la copia con flags = 0 e copia solo halign (notcurses.c:776, 793) (ICH-216)
+      if (from = internals(src)) && (to = internals(ptr))
+        to[:fixedbound] = from[:fixedbound]
+        to[:valign] = from[:valign]
+      end
       Util.with_resource(copy, &block)
     end
 
@@ -386,6 +423,15 @@ module Notcurses
     # vale per il piano C: lo tiene il Plane tracciato del piano, e i Plane presi
     # in prestito (tracked: false) usano il suo; senza un Plane tracciato aperto
     # ogni scrittura controlla i bordi.
+    #
+    # Il controllo legge le celle dei bordi con +ncplane_at_yx_cell+, che copia
+    # l'EGC nell'egcpool del piano e fallisce se il pool è pieno (16 MiB; solo
+    # per gli EGC di più di 4 byte). Quelle celle il wrapper le legge con
+    # +ncplane_at_yx+, che non usa il pool, e ne misura la larghezza: anche un
+    # glifo largo che notcurses non riesce a rileggere, se viene tagliato,
+    # diventa una cella vuota. Questa lettura usa i campi privati del piano
+    # per riconoscere un piano con un bitmap (vedi "Campi privati" nella
+    # classe): senza, quelle celle non contano come glifi.
     #
     # @param rows [Integer] nuove righe, >= 1
     # @param cols [Integer] nuove colonne, >= 1
@@ -415,9 +461,22 @@ module Notcurses
     # positivi, una regione che non entra nel nuovo piano (con x_off < 0 il C
     # scrive oltre il buffer), un resize che il C ignora (stesse dimensioni e
     # regione da (0, 0)) e y_off diverso da 0 con la larghezza intera
-    # conservata (il C sposta l'origine ma non il contenuto). Bug non
-    # aggirato: con keep_x > 0 gli EGC di più di 4 byte nella regione
-    # conservata possono risultare corrotti.
+    # conservata (il C sposta l'origine ma non il contenuto).
+    #
+    # Bug di 3.0.17 aggirato: con keep_x > 0 il C rilascia per errore gli EGC
+    # di più di 4 byte di una parte della regione conservata, e quelle celle
+    # restano vuote o mostrano l'EGC di un'altra cella. Il wrapper fa allora il
+    # resize in due passi: prima con qualche riga vuota in più in alto, poi le
+    # toglie. In quel caso, cioè quando keep_x + x_off > -y_off * cols, i
+    # callback di resize dei figli vengono chiamati due volte: la prima con il
+    # piano più alto e spostato in su rispetto al risultato. Su un piano che ha
+    # già fatto scroll il resize in due passi conserva anche l'ordine delle
+    # righe, che negli altri resize cambia (bug noto, nella descrizione della
+    # classe). Un callback che nel primo passo ridimensiona il piano lavora
+    # sul piano intermedio: ne può togliere le righe conservate invece di
+    # quelle vuote in più, e il secondo passo allora fallisce (PlaneError).
+    # Il resize in due passi costa di più: circa 2 ms invece di 0,2 su un
+    # piano 50x200.
     #
     # Un glifo largo tagliato che resta sul bordo del piano diventa una cella
     # vuota, come in {#resize}: con keep_x dentro un glifo largo ne resterebbe
@@ -467,7 +526,31 @@ module Notcurses
       end
 
       ptr = to_ptr
-      rc = FFI.ncplane_resize(ptr, keep_y, keep_x, keep_rows, keep_cols, y_off, x_off, rows, cols)
+      # Il ciclo che rilascia gli EGC delle celle perse (notcurses.c:995-997) parte dall'indice nel
+      # framebuffer nuovo, riga di destinazione * cols - x_off + keep_cols, usato come colonna di quello
+      # vecchio: finché è minore di keep_x + keep_cols rilascia EGC della regione conservata (ICH-215).
+      # extra righe vuote in più in alto portano la prima riga copiata oltre quel punto; il secondo resize
+      # le toglie (con keep_x == 0 il ciclo non tocca la regione).
+      extra = keep_rows.zero? ? 0 : [((keep_x + x_off + cols - 1) / cols) + y_off, 0].max
+      # il C rifiuta senza toccare il piano lo stdplane e una regione fuori dal piano (notcurses.c:842-849,
+      # 1013), controllati qui, e una malloc fallita (notcurses.c:918), controllata dopo il primo passo: negli
+      # altri casi il primo resize è applicato e va completato, anche quando ha restituito il -1 del callback di
+      # un figlio (che può anche aver spostato il piano)
+      two_steps = extra.positive? && address != @context.stdplane.address &&
+                  keep_y + keep_rows <= cur_rows && keep_x + keep_cols <= cur_cols
+      st = two_steps && internals(ptr)
+      old = st && fb_bytes(st)
+      fb = st && st[:fb].address
+      rc = FFI.ncplane_resize(ptr, keep_y, keep_x, keep_rows, keep_cols, y_off - extra, x_off, rows + extra, cols)
+      st = two_steps && internals(ptr)
+      # con la malloc fallita (notcurses.c:918) il primo passo non ha toccato il piano (fb uguale): niente secondo
+      if two_steps && !(fb && st && st[:fb].address == fb)
+        # il C scrive il framebuffer nuovo in ordine logico ma lascia logrow (bug di ICH-214): su un piano che
+        # ha già fatto scroll il secondo passo leggerebbe le righe sbagliate e ne perderebbe una
+        st[:logrow] = 0 if st
+        rc |= FFI.ncplane_resize(ptr, extra, 0, rows, cols, 0, 0, rows, cols)
+      end
+      release_unused!(ptr, pooled(old)) if old
       clear_cut_glyphs!(ptr, force: true) # con keep_x > 0 il contenuto si sposta anche a dimensioni invariate
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, 'ncplane_resize')
@@ -1319,12 +1402,37 @@ module Notcurses
     # dei glifi larghi di dst con larghezza 0, e il wrapper riscrive quei glifi
     # (il cursore di dst non cambia). Per trovarli legge ogni cella di dst: su
     # un piano grande (per esempio 50x200) la fusione costa qualche
-    # millisecondo invece di una frazione.
+    # millisecondo invece di una frazione. La lettura (+ncplane_at_yx_cell+)
+    # copia l'EGC nell'egcpool di dst e fallisce se il pool è pieno (16 MiB;
+    # solo per gli EGC di più di 4 byte): quei glifi il wrapper li riscrive
+    # leggendo l'EGC con +ncplane_at_yx+, che non usa il pool, con gli stili e
+    # i colori della cella. Se nemmeno questa riscrittura riesce, le due metà
+    # del glifo diventano celle vuote.
+    #
+    # +ncplane_mergedown+ copia anche ogni EGC di più di 4 byte nell'egcpool di
+    # dst senza rilasciare le copie vecchie: il pool cresceva a ogni fusione e,
+    # al limite di 16 MiB, le celle di dst restavano vuote senza errore. Il
+    # wrapper rilascia le copie vecchie, che legge dai campi privati di dst con
+    # le condizioni di "Campi privati" nella classe (altrimenti il pool cresce
+    # come prima). Durante la fusione le copie vecchie e quelle nuove stanno
+    # insieme nel pool: se le nuove non entrano (EGC di dst per più di circa
+    # 8 MiB), il wrapper annulla la fusione e solleva PlaneError. Questi
+    # controlli raddoppiano circa il costo: su un piano 50x200 la fusione
+    # passa da circa 5 a circa 11 ms.
+    #
+    # Un gestore +trap+ non deve cambiare dst durante merge_down (notcurses
+    # non è rientrante). Il wrapper rilegge dst prima di rilasciare o
+    # ripristinare, ma questo restringe le finestre, non le chiude: un trap
+    # gira anche al ritorno dei metodi C. La fusione può restare a metà
+    # (copie vecchie nel pool, PlaneError anche con spazio nel pool) e il
+    # processo può andare in crash.
     #
     # @param dst [Plane] piano di destinazione, della stessa pila
     # @return [self]
-    # @raise [PlaneError] se dst è il piano stesso o sta in un'altra pila, o se
-    #   la fusione fallisce (per esempio con un bitmap)
+    # @raise [PlaneError] se dst è il piano stesso o sta in un'altra pila, se
+    #   la fusione fallisce (per esempio con un bitmap), o se l'egcpool di dst
+    #   non ha spazio per copiare i suoi EGC (dst non cambia; se un gestore
+    #   trap ha cambiato dst durante la fusione, alcune celle restano vuote)
     # @raise [TypeError] se dst non è un Plane
     # @raise [ClosedError] se uno dei piani è chiuso
     def merge_down(dst)
@@ -1333,10 +1441,27 @@ module Notcurses
       raise PlaneError, 'merge_down: dst è il piano stesso' if target.address == ptr.address
       raise PlaneError, "merge_down: dst è in un'altra pila" unless FFI.ncpile_top(ptr).address == FFI.ncpile_top(target).address
 
-      Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
+      # un'eccezione asincrona fra il rilascio e il ripristino lascerebbe celle con EGC già rilasciati; i gestori
+      # trap girano comunque: i controlli di release_unused! e undo_merge! rileggono dst prima di toccarlo
+      lost = Thread.handle_interrupt(Object => :never) do
+        old = (st = internals(target)) && fb_bytes(st)
+        Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
+        # il C ha copiato ogni EGC nel framebuffer nuovo e ha liberato quello vecchio senza rilasciarli (ICH-482)
+        st = old && internals(target)
+        fresh = st && fb_bytes(st)
+        if fresh && lost_egc?(fresh, st[:lenx])
+          undo_merge!(target, st, old, fresh) ? :undone : :lost
+        else
+          release_unused!(target, pooled(old)) if fresh
+          nil
+        end
+      end
+      raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (dst non è cambiato)" if lost == :undone
+
       restore_wide_glyphs!(target)
       # glifi larghi nuovi senza le scritture: un resize del C li può tagliare a dimensioni già controllate
       @context.tracked_plane(target.address)&.cut_glyphs_cols = nil
+      raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (celle di dst vuote)" if lost
       self
     end
 
@@ -2356,6 +2481,87 @@ module Notcurses
       [y, x]
     end
 
+    # Campi privati di ptr; nil (niente workaround) se la libreria non è la 3.0.17 o i campi non coincidono con i getter.
+    def internals(ptr)
+      return nil unless Notcurses.lib_version_components.first(3) == [3, 0, 17]
+
+      st = Internals.new(ptr)
+      st if st[:leny] == FFI.ncplane_dim_y(ptr) && st[:lenx] == FFI.ncplane_dim_x(ptr) &&
+            st[:scrolling] == FFI.ncplane_scrolling_p(ptr) && st[:autogrow] == FFI.ncplane_autogrow_p(ptr)
+    end
+
+    # Byte del framebuffer di st (Internals), in ordine fisico. CELL_BYTES invece di NcCell.size (un metodo
+    # Ruby) restringe la finestra fra la lettura di fb e quella dei byte, dove un gestore trap può
+    # ridimensionare il piano; non la chiude: un trap gira anche al ritorno dei metodi C.
+    def fb_bytes(st) = st[:fb].read_bytes(st[:leny] * st[:lenx] * CELL_BYTES)
+
+    # gcluster delle celle in bytes che tengono l'EGC nell'egcpool (byte alto 0x01, cell_extended_p di
+    # egcpool.h:195).
+    def pooled(bytes)
+      bytes.unpack("Lx#{FFI::NcCell.size - 4}" * (bytes.bytesize / FFI::NcCell.size)).select { |g| g >> 24 == 1 }
+    end
+
+    # Rilascia dall'egcpool di ptr gli EGC dei gcluster dati. Prima di ogni rilascio rilegge il pool da st
+    # (Internals di ptr): un gestore trap che ha svuotato il piano lo lascia NULL (SIGSEGV in nccell_release).
+    # Restringe la finestra, non la chiude: il trap può girare anche fra il controllo e il rilascio.
+    def release_gclusters!(ptr, st, gclusters)
+      cell = FFI::NcCell.new
+      gclusters.each do |gcluster|
+        cell[:gcluster] = gcluster
+        FFI.nccell_release(ptr, cell) if !st[:pool].null? && (gcluster & 0xffffff) < st[:poolsize]
+      end
+    end
+
+    # Rilascia gli EGC dei gcluster dati (copie vecchie di merge_down, celle scartate dal resize in due passi
+    # di resize_region) che nessuna cella usa più. Salta quelli ancora nel framebuffer e quelli che il C ha
+    # già rilasciato (primo byte 0: egcpool_release, egcpool.h:168-176, toglierebbe comunque un byte da
+    # poolused); rilascia solo da un inizio di EGC (byte prima 0). I callback di resize dei figli e i gestori
+    # trap possono svuotare o riscrivere il pool (Plane#erase, set_base): salta un pool vuoto, gli offset
+    # oltre il pool di adesso e la cella base, che non sta nel framebuffer.
+    def release_unused!(ptr, gclusters)
+      st = internals(ptr)
+      return if st.nil?
+
+      unused = gclusters - pooled(fb_bytes(st)) - [st[:basecell][:gcluster]]
+      release_gclusters!(ptr, st, unused.select do |g|
+        idx = g & 0xffffff
+        # pool riletto per ogni cella: un trap lo può liberare. != 0 e non nonzero?, che chiama zero? sotto la
+        # guardia di ricorsione di Ruby: un trap che lì chiama nonzero? sullo stesso intero riceve NameError
+        pool = st[:pool]
+        !pool.null? && idx < st[:poolsize] && pool.get_uint8(idx) != 0 && (idx.zero? || pool.get_uint8(idx - 1) == 0)
+      end)
+    end
+
+    # Annulla merge_down: rilascia le copie nuove (fresh) e riscrive il framebuffer di prima (old). Se un
+    # gestore trap ha cambiato dst dopo la lettura di old, la fusione resta com'è: con dimensioni diverse la
+    # scrittura andrebbe oltre il framebuffer, con un pool svuotato le celle punterebbero a EGC liberati.
+    # true se ha riscritto il framebuffer di prima.
+    def undo_merge!(ptr, st, old, fresh)
+      offsets = pooled(old).map { |g| g & 0xffffff }
+      intact = lambda do
+        old.bytesize == st[:leny] * st[:lenx] * CELL_BYTES && !st[:pool].null? && offsets.all? { |i| i < st[:poolsize] }
+      end
+      return false unless intact.call
+
+      release_gclusters!(ptr, st, pooled(fresh))
+      return false unless intact.call
+
+      st[:fb].write_bytes(old)
+      true
+    end
+
+    # true se in bytes (righe di cols celle) c'è una cella che ncplane_mergedown non è riuscita a copiare:
+    # cell_duplicate_far scrive la larghezza e poi, senza spazio nel pool, lascia gcluster a 0
+    # (internal.h:909-922). Salta la cella dopo una metà sinistra: postpaint_cell ne azzera il gcluster e
+    # lascia la larghezza (render.c:471-485), anche quando la metà sinistra è orfana e lì c'era un glifo.
+    def lost_egc?(bytes, cols)
+      cells = bytes.unpack("LxCx#{CELL_BYTES - 6}" * (bytes.bytesize / CELL_BYTES)).each_slice(2).to_a
+      cells.each_with_index.any? do |(g, w), i|
+        pg, pw = cells[i - 1] unless (i % cols).zero?
+        g.zero? && w.positive? && !(pg && pg != 0 && pw >= 2) # != 0: vedi release_unused!
+      end
+    end
+
     # true se la cella (y, x) è la metà destra di un glifo largo.
     def wide_right?(ptr, y, x) = half_at(ptr, y, x) == :right
 
@@ -2364,8 +2570,8 @@ module Notcurses
     # una scrittura sulla metà sinistra non la cancella; da lì si arriva a una
     # metà destra orfana e a scritture fuori dalla riga (ICH-481). Il wrapper
     # riscrive quei glifi con ncplane_putc_yx, che rimette la metà destra; il
-    # cursore di dst torna dov'era. Le celle illeggibili (egcpool pieno, vedi
-    # half_at) restano come sono.
+    # cursore di dst torna dov'era. Un glifo che ncplane_at_yx_cell non riesce
+    # a leggere (egcpool pieno) lo riscrive rewrite_unreadable! (ICH-485).
     def restore_wide_glyphs!(dst)
       rows = ::FFI::MemoryPointer.new(:uint)
       cols = ::FFI::MemoryPointer.new(:uint)
@@ -2377,7 +2583,10 @@ module Notcurses
       moved = false
       rows.read_uint.times do |y|
         (cols.read_uint - 1).times do |x|
-          next if FFI.ncplane_at_yx_cell(dst, y, x, cell).negative?
+          if FFI.ncplane_at_yx_cell(dst, y, x, cell).negative?
+            moved = true if stale_right_half?(dst, y, x + 1) && rewrite_unreadable!(dst, y, x, 2)
+            next
+          end
 
           begin
             if FFI.nccell_wide_left_p(cell) && stale_right_half?(dst, y, x + 1)
@@ -2397,20 +2606,44 @@ module Notcurses
     # scrittura che riempie la riga: lì il wrapper riscrive con il suo stesso
     # contenuto l'ultima cella della riga (la metà sinistra, se è una metà
     # destra), e ncplane_putc_yx lascia il cursore subito dopo. Se notcurses
-    # non riesce a leggere quella cella (egcpool pieno) il cursore resta dove
-    # l'ha lasciato la riscrittura dei glifi (ICH-485).
+    # non riesce a leggere quella cella (egcpool pieno) la riscrive
+    # rewrite_unreadable!, con lo stesso effetto sul cursore (ICH-485).
     def restore_cursor!(ptr, y, x, cols)
       return Util.check!(FFI.ncplane_cursor_move_yx(ptr, y, x), PlaneError, 'ncplane_cursor_move_yx') if x < cols
 
       last = cols > 1 && wide_right?(ptr, y, cols - 1) ? cols - 2 : cols - 1
       cell = FFI::NcCell.new
-      return if FFI.ncplane_at_yx_cell(ptr, y, last, cell).negative?
+      return rewrite_unreadable!(ptr, y, last, 0) if FFI.ncplane_at_yx_cell(ptr, y, last, cell).negative?
 
       begin
         Util.check!(FFI.ncplane_putc_yx(ptr, y, last, cell), PlaneError, 'ncplane_putc_yx')
       ensure
         FFI.nccell_release(ptr, cell)
       end
+    end
+
+    # Riscrive la cella (y, x) con il suo stesso contenuto quando ncplane_at_yx_cell non la legge (egcpool
+    # pieno): ncplane_at_yx copia l'EGC con strdup, senza passare dal pool, e ncplane_putegc_yx lo rimette
+    # con gli stili e i canali della cella al posto di quelli del piano, ripristinati subito dopo.
+    # ncplane_put rilascia la vecchia copia prima di salvare la nuova, quindi nel pool lo spazio c'è. Un EGC
+    # più stretto di min_width resta com'è. Se la scrittura fallisce svuota la cella e quella dopo, cioè le
+    # due metà di un glifo largo.
+    # @return [Boolean] true se ha scritto (il cursore finisce dopo il glifo) o svuotato la cella
+    def rewrite_unreadable!(ptr, y, x, min_width)
+      styles = ::FFI::MemoryPointer.new(:uint16)
+      channels = ::FFI::MemoryPointer.new(:uint64)
+      egc = Util.take_string(FFI.ncplane_at_yx(ptr, y, x, styles, channels))
+      return false if egc.nil? || FFI.ncstrwidth(egc, nil, nil) < min_width
+
+      plane_styles = FFI.ncplane_styles(ptr)
+      plane_channels = FFI.ncplane_channels(ptr)
+      FFI.ncplane_set_styles(ptr, styles.read_uint16)
+      FFI.ncplane_set_channels(ptr, channels.read_uint64)
+      rc = FFI.ncplane_putegc_yx(ptr, y, x, egc, nil)
+      FFI.ncplane_set_styles(ptr, plane_styles)
+      FFI.ncplane_set_channels(ptr, plane_channels)
+      FFI.ncplane_erase_region(ptr, y, x, 1, 2) if rc.negative?
+      true
     end
 
     # true se (y, x) è vuota e larga 0: la metà destra lasciata da ncplane_mergedown.
@@ -2424,12 +2657,13 @@ module Notcurses
     end
 
     # :left o :right se (y, x) è una metà di un glifo largo, :none se no, nil se
-    # notcurses non riesce a leggere la cella: ncplane_at_yx_cell duplica l'EGC
-    # nell'egcpool, quindi fallisce con il pool pieno (solo per gli EGC di più
-    # di 4 byte, che stanno nel pool) e sempre su un piano con un bitmap.
+    # la cella non si può leggere (piano con un bitmap). ncplane_at_yx_cell
+    # duplica l'EGC nell'egcpool, quindi fallisce anche con il pool pieno, ma
+    # solo per gli EGC di più di 4 byte, che stanno nel pool: quelle celle le
+    # legge unreadable_half.
     def half_at(ptr, y, x)
       cell = FFI::NcCell.new
-      return nil if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
+      return unreadable_half(ptr, y, x) if FFI.ncplane_at_yx_cell(ptr, y, x, cell).negative?
 
       if FFI.nccell_wide_left_p(cell) then :left
       elsif FFI.nccell_wide_right_p(cell) then :right
@@ -2437,6 +2671,21 @@ module Notcurses
       end
     ensure
       FFI.nccell_release(ptr, cell)
+    end
+
+    # half_at per una cella che ncplane_at_yx_cell non legge (ICH-487). Con l'egcpool pieno è una cella con
+    # un EGC di più di 4 byte, quindi mai una metà destra, che non ha un EGC: ncplane_at_yx copia l'EGC con
+    # strdup, senza passare dal pool, e la larghezza dice se è una metà sinistra. Su un piano con un bitmap
+    # ncplane_at_yx copierebbe invece la sequenza dello sprixel (notcurses.c:236-243), che con Kitty è già
+    # stata liberata dopo il disegno (kitty.c:1186-1188: strdup(NULL)): nil, come senza internals.
+    def unreadable_half(ptr, y, x)
+      st = internals(ptr)
+      return nil if st.nil? || !st[:sprite].null?
+
+      egc = FFI.ncplane_at_yx(ptr, y, x, nil, nil)
+      return nil if egc.null?
+
+      FFI.ncstrwidth(Util.take_string(egc), nil, nil) > 1 ? :left : :none
     end
 
     # Cancella le metà orfane che un resize lascia sul bordo tagliando un glifo
@@ -2482,9 +2731,9 @@ module Notcurses
     # true se (y, x) è una metà di glifo largo senza l'altra metà: una metà
     # sinistra nell'ultima colonna, una metà destra in colonna 0 o senza la
     # metà sinistra prima. Una metà sinistra seguita da una cella vuota non
-    # conta: una metà destra con width 0 è uguale a una cella vuota, e dopo
-    # merge_down ne restano dove la riscrittura non riesce a leggere il glifo
-    # (egcpool pieno, vedi restore_wide_glyphs!).
+    # conta: una metà destra con width 0 è uguale a una cella vuota, e
+    # notcurses ne lascia (ncplane_mergedown, che restore_wide_glyphs!
+    # corregge; la vista del Reader, ICH-484).
     def orphan_half?(ptr, y, x, cols)
       case half_at(ptr, y, x)
       when :left then x == cols - 1
@@ -2497,11 +2746,11 @@ module Notcurses
     # rettangolo dato) e poi svuota l'altra metà dei glifi larghi che ha
     # coperto solo a metà. I glifi da controllare si leggono prima della
     # chiamata: quelli a cavallo dei lati del rettangolo, o con all: true tutti
-    # quelli del piano. Una metà sinistra che notcurses non riesce a leggere
-    # (egcpool pieno, vedi half_at) conta come glifo se la metà destra c'è.
-    # Dopo la chiamata la stessa cella illeggibile è ancora quella di prima,
-    # salvo con long_fill (il riempimento scrive un EGC di più di 4 byte, che
-    # sta nel pool): allora nel dubbio si svuotano le due metà. La pulizia gira
+    # quelli del piano. Una metà sinistra che half_at non riesce a leggere
+    # (nil: da ICH-487 non più per l'egcpool pieno) conta come glifo se la
+    # metà destra c'è. Dopo la chiamata la stessa cella illeggibile è ancora
+    # quella di prima, salvo con long_fill (il riempimento scrive un EGC di più
+    # di 4 byte): allora nel dubbio si svuotano le due metà. La pulizia gira
     # anche se il blocco solleva: il C può fallire dopo aver già cambiato celle
     # (egcpool pieno), e in quel caso cerca anche le metà destre orfane nel
     # rettangolo.

@@ -22,6 +22,35 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Plane#resize`, `#resize_region`, `#resize_maximize` e il controllo dei bordi prima delle scritture svuotano la
+  metà di un glifo largo tagliato dal resize anche quando notcurses non riesce a rileggere il glifo. Con l'egcpool
+  del piano pieno (16 MiB) `ncplane_at_yx_cell` fallisce sugli EGC di più di 4 byte: il wrapper ora legge quelle
+  celle con `ncplane_at_yx`, che non usa il pool, e ne misura la larghezza. Prima la metà sinistra tagliata restava
+  nell'ultima colonna, e la scrittura successiva su quella cella cancellava la prima cella della riga sotto o,
+  sull'ultima riga, corrompeva l'heap; un glifo largo illeggibile rimasto intero nelle ultime due colonne perdeva
+  invece la metà destra. Anche `#erase_region`, `#gradient`, `#gradient2x1` e `#polyfill` ora leggono quelle celle,
+  e non svuotano più nel dubbio le due metà. La lettura vale solo con la libreria 3.0.17, perché il wrapper deve
+  riconoscere i piani con un bitmap dai campi privati del piano C (ICH-487).
+- `Plane#merge_down` rimette la metà destra anche ai glifi larghi di `dst` che notcurses non riesce a rileggere
+  (egcpool di `dst` pieno, EGC di più di 4 byte): li legge con `ncplane_at_yx`, che non usa il pool, e li riscrive
+  con gli stili e i colori della cella; se nemmeno la riscrittura riesce, le due metà diventano celle vuote. Stili,
+  colori e cursore di `dst` non cambiano. Prima quei glifi restavano con la metà destra larga 0, e alcune sequenze
+  di scritture cancellavano la prima cella della riga sotto o corrompevano l'heap (ICH-485).
+- `Plane#resize_region` con `keep_x > 0` conserva gli EGC di più di 4 byte della regione (emoji con ZWJ o con un
+  modificatore, lettere con più segni combinanti). Prima notcurses 3.0.17 ne rilasciava una parte dall'egcpool:
+  quelle celle restavano vuote, `Plane#contents` sollevava `PlaneError`, e dopo altre scritture una cella poteva
+  mostrare l'EGC di un'altra. Il wrapper fa il resize in due passi (prima con qualche riga vuota in più in alto,
+  poi le toglie): quando serve, cioè con `keep_x + x_off > -y_off * cols`, i callback di resize dei figli vengono
+  chiamati due volte (ICH-215). Su un piano che ha già fatto scroll i due passi conservano ogni riga, nel loro
+  ordine.
+- `Plane#duplicate` copia anche il flag `fixed` e l'allineamento verticale del piano: la copia di un piano creato
+  con `fixed: true` non scorre più con il genitore, e `resize_realign` la riallinea come l'originale. Prima
+  `ncplane_dup` di notcurses 3.0.17 li azzerava (ICH-216).
+- `Plane#merge_down` ripetuto su un `dst` con EGC di più di 4 byte (emoji con un modificatore, lettere con più segni
+  combinanti) lascia invariato il contenuto di `dst`. Prima notcurses 3.0.17 copiava a ogni merge quegli EGC
+  nell'egcpool di `dst` senza rilasciare le copie vecchie: il pool cresceva fino al limite di 16 MiB, poi le celle
+  di `dst` restavano vuote senza errore (ICH-482). Se durante una fusione le copie nuove non entrano nel pool (EGC di
+  `dst` per più di circa 8 MiB), `merge_down` lascia `dst` com'era e solleva `PlaneError`.
 - Le stringhe e i buffer allocati da notcurses (`Plane#at`, `Plane#name`, `Plane#as_rgba`, `Context#stats`,
   `Context#at`, `detected_terminal`, `Notcurses.hostname` e gli altri) si liberano con la `free` di notcurses. Prima
   il wrapper usava la `free` di glibc anche quando `LD_PRELOAD` mette un altro allocatore (jemalloc, tcmalloc,

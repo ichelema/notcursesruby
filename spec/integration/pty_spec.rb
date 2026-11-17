@@ -593,7 +593,10 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
 
   # Su un piano con un bitmap ncplane_at_yx_cell fallisce sempre (notcurses.c:274-277): i controlli dei glifi larghi
   # leggono la cella come "non è un glifo" e i metodi funzionano come prima (fix di review di ICH-450).
-  def bitmap_plane_script = <<~'RUBY'
+  # Con kitty: true il terminale finto si dichiara Kitty, che libera il buffer della sequenza dello sprixel dopo il
+  # disegno (kitty.c:1186-1188); dopo nc.render ncplane_at_yx fa strdup(NULL) (notcurses.c:243). Lì at va in crash
+  # anche prima del lotto 2 e resta fuori dall'esempio.
+  def bitmap_plane_script(kitty: false) = "KITTY = #{kitty}\n" + <<~'RUBY'
     require 'notcurses'
     require 'io/console'
     require 'pty'
@@ -602,7 +605,8 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     slave.winsize = [24, 80, 640, 384]
     STDIN.reopen(slave)
     replies = {
-      "\e[6n" => "\e[5;1R", "\e[c" => "\e[?62;4;22c", "\e[14t" => "\e[4;384;640t", "\e[18t" => "\e[8;24;80t",
+      "\e[6n" => "\e[5;1R", "\e[c" => KITTY ? "\eP>|kitty(0.36.0)\e\\\e_Gi=1;OK\e\\\e[?62;c" : "\e[?62;4;22c",
+      "\e[14t" => "\e[4;384;640t", "\e[18t" => "\e[8;24;80t",
       "\e[?2;1;0S" => "\e[?2;0;640;384S", "\e[?1;1;0S" => "\e[?1;0;256S"
     }
     Thread.new do
@@ -613,11 +617,15 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     rescue IOError, Errno::EIO
     end
     Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      puts "pixel #{nc.pixel_support}"
       host = nc.stdplane.create_child(rows: 5, cols: 8)
       rgba = "\xff".b * (64 * 64 * 4)
       bm = Notcurses::Visual.from_rgba(rgba, rows: 64, cols: 64) { |v| v.blit(plane: host, blitter: :pixel, child: true) }
-      {at: -> { bm.at(y: 0, x: 0) }, erase_region: -> { bm.erase_region(0, 1, 1, 1) },
-       gradient: -> { bm.gradient('g', 0, 0, 0, 0, x: 1, rows: 1, cols: 1) }, polyfill: -> { bm.polyfill('x', y: 0, x: 0) }}.each do |name, op|
+      nc.render if KITTY
+      ops = {at: -> { bm.at(y: 0, x: 0) }, erase_region: -> { bm.erase_region(0, 1, 1, 1) },
+             gradient: -> { bm.gradient('g', 0, 0, 0, 0, x: 1, rows: 1, cols: 1) }, polyfill: -> { bm.polyfill('x', y: 0, x: 0) }}
+      ops = ops.except(:at).merge(putstr: -> { bm.putstr('x', y: 0, x: 0) }) if KITTY
+      ops.each do |name, op|
         op.call
         puts "#{name} ok"
       rescue Notcurses::Error => e
@@ -631,6 +639,15 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     out, status, timed_out = run_child(bitmap_plane_script, timeout: 30)
     expect(timed_out).to be(false), out
     expect(out).to include('at ok', 'erase_region ok', 'gradient ok', 'polyfill ok', 'fine')
+    expect(status.exitstatus).to eq(0), out
+  end
+
+  # ICH-487 (review): il fallback di half_at chiamava ncplane_at_yx anche sui piani con un bitmap.
+  it 'su un piano con un bitmap kitty già disegnato le scritture sollevano PlaneError (prima: SIGSEGV)' do
+    out, status, timed_out = run_child(bitmap_plane_script(kitty: true), timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('pixel kitty_animated', 'erase_region ok', 'gradient ok', 'polyfill ok',
+                           'putstr Notcurses::PlaneError', 'fine')
     expect(status.exitstatus).to eq(0), out
   end
 
