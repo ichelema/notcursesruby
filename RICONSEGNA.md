@@ -1319,5 +1319,7 @@ Nessun metodo nuovo né rimosso, salvo `Util.free` (`Util` è `@api private`). C
   di ICH-481, dà `free(): invalid pointer` (lotto 2, review; esiste già su `master`).
 - ICH-214 — di nuovo in Backlog: ruotare il framebuffer da Ruby non si rende sicuro; va riprogettata in un lotto suo
   (lotto 2).
+- ICH-532 — dopo una metà sinistra orfana sull'ultima riga di `src`, `merge_down` lascia in `dst` il glifo largo che
+  copre il glifo di `src`; `dst` deve mostrare uno spazio e quel glifo (lotto 2b, scelta dell'utente; Backlog).
 - ICH-531 — il ripristino della cella base dopo un resize o una rotazione richiede spazio nel pool; con il pool pieno
   la base resta uno spazio (lotto 2b, review round 2; Backlog).

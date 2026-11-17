@@ -15,9 +15,9 @@
 - **Prossimo step: lotto 3** (ICH-454, ICH-456, ICH-455). Procedura da
   `/trinity:workflow:1_create-worktree master ICH-454 ICH-456 ICH-455 opus` (branch `bug/ICH-454-456-455-opus`).
   Prima: `/trinity:workflow:5_remove-worktree bug+ICH-529-530-489-493-490-opus` (worktree, branch locale e remoto).
-- Aperto dal lotto 2b: la scelta dell'utente su ICH-530 (la cella dopo una metà sinistra orfana diventa la metà
-  destra del glifo largo, invece di una cella vuota o del glifo di `src`); ICH-531 (il ripristino della base dopo un
-  resize o una rotazione richiede spazio nel pool) è in Backlog e va assegnata a un lotto. Nel round 2 Fable non ha
+- Aperte dal lotto 2b, in Backlog, da assegnare a un lotto: ICH-531 (il ripristino della base dopo un resize o una
+  rotazione richiede spazio nel pool) e ICH-532 (scelta dell'utente su ICH-530, opzione 3: dopo una metà sinistra
+  orfana `merge_down` deve lasciare in `dst` uno spazio e il glifo di `src`, non il glifo largo che lo copre). Nel round 2 Fable non ha
   fatto la review (limite d'uso, si azzera il 2026-11-20): se serve, rilancia la review di Fable su `f209900`.
 - **ICH-214 in Backlog**, tolta dal lotto 2: ruotare il framebuffer da Ruby non si rende sicuro (un gestore `trap` o
   un altro thread può fare un resize fra la copia e la scrittura). Serve un lock o codice C: va riprogettata in un

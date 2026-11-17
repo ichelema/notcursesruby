@@ -264,8 +264,8 @@ Lavoro in una sessione il 2026-11-17 (implementazione, review-fix loop di 2 roun
   Il wrapper calcola prima l'offset massimo del pool, poi controlla dimensione, pool e offset prima e dopo
   `release_gclusters!`, subito prima di `write_bytes` (`3df83f8`, `f209900`).
 - **ICH-530 (metà sinistra orfana sull'ultima riga di `src`).** `stale_right_half?` riconosce la cella con `gcluster` 0
-  e width minore di 2 (`9a4fb40`). La cella dopo la metà orfana diventa la metà destra del glifo: scelta aperta
-  dell'utente (cella vuota o glifo di `src`).
+  e width minore di 2 (`9a4fb40`). La cella dopo la metà orfana diventa la metà destra del glifo: l'utente ha scelto
+  (2026-11-17) che `dst` mostri uno spazio e il glifo di `src`; è ICH-532.
 - **ICH-489 (cella base dopo un resize che non conserva niente).** `ncplane_resize_internal` scarica il pool
   (`notcurses.c:953-957`), la rotazione fa lo stesso (`fill.c:446`). `keeping_base_cell` sostituisce la base con uno
   spazio durante la chiamata C e la ripristina dopo, solo se la base è ancora la copia temporanea (`03c0177`,
@@ -280,6 +280,7 @@ Lavoro in una sessione il 2026-11-17 (implementazione, review-fix loop di 2 roun
 - Dell'utente: ICH-493 con l'opzione A (errore su ogni piano con un bitmap).
 - Dell'utente, dopo il loop: rimuovere il worktree di review di Fable con `--force`; controllare che le spec non
   falliscano prima di procedere (1124 esempi, 0 fallimenti).
+- Dell'utente, dopo la chiusura: ICH-530 con l'opzione 3 (lo spazio e il glifo di `src` in `dst`), in ICH-532.
 - Mie: ICH-531 aperta per il ripristino della base che richiede spazio nel pool; finestra `trap` residua di ICH-529
   documentata nello YARD, non rincorsa.
 
