@@ -12,14 +12,16 @@
   ICH-487 a Done). Log in `memory/backlog-issue.md`, esito in `RICONSEGNA.md`. `master` su `cb90c4f`: 1111 esempi, 0
   fallimenti (ordine normale, semi 1234, 4242, 7); coverage 98,41 %; RuboCop 0; YARD 100 %; layer FFI invariato; CI
   verde.
-- **Prossimo step: lotto 3** (ICH-454, ICH-456, ICH-455: linesigs di `EventLoop#run` e Ctrl+C con il protocollo di
-  tastiera kitty). Prima, con l'utente: dove mettere le issue nuove dal lotto 2 (sotto). Poi la procedura da
-  `/trinity:workflow:1_create-worktree master ICH-454 ICH-456 ICH-455 opus`.
-- Issue nuove dal lotto 2, in Backlog, da inserire nei lotti con l'utente: ICH-489 (cella base dopo un resize che non
-  conserva niente, segfault), ICH-490 (`Plane#contents` con l'egcpool pieno), ICH-493 (`Plane#at` su un piano con
-  bitmap Kitty, segfault anche su `master`), ICH-529 (`undo_merge!` controlla `dst` e poi scrive: un `trap` che lo
-  ridimensiona in mezzo corrompe l'heap), ICH-530 (metà sinistra orfana sull'ultima riga di `src`, dopo `merge_down`
-  `free(): invalid pointer`, anche su `master`). ICH-495 è `Canceled`.
+- **Prossimo step: lotto 2b** (ICH-529, ICH-530, ICH-489, ICH-493, ICH-490: le issue nate dal lotto 2, tutte in
+  `lib/notcurses/plane.rb`), poi il lotto 3. Procedura da
+  `/trinity:workflow:1_create-worktree master ICH-529 ICH-530 ICH-489 ICH-493 ICH-490 opus` (branch
+  `bug/ICH-529-530-489-493-490-opus`).
+- Issue nuove dal lotto 2 nel lotto 2b (scelta lasciata a Claude dall'utente il 2026-11-17, motivi in
+  `memory/backlog-issue.md`): ICH-529 (`undo_merge!` controlla `dst` e poi scrive: un `trap` che lo ridimensiona in
+  mezzo corrompe l'heap), ICH-530 (metà sinistra orfana sull'ultima riga di `src`, dopo `merge_down`
+  `free(): invalid pointer`, anche su `master`), ICH-489 (cella base dopo un resize che non conserva niente,
+  segfault), ICH-493 (`Plane#at` su un piano con bitmap Kitty, segfault anche su `master`), ICH-490
+  (`Plane#contents` con l'egcpool pieno). ICH-495 è `Canceled`.
 - **ICH-214 in Backlog**, tolta dal lotto 2: ruotare il framebuffer da Ruby non si rende sicuro (un gestore `trap` o
   un altro thread può fare un resize fra la copia e la scrittura). Serve un lock o codice C: va riprogettata in un
   lotto suo, forse con un helper approvato nel layer FFI (regola 1). Il lotto 2 azzera già `logrow` nel resize in due
@@ -138,7 +140,7 @@ successivi.
 
 Proposta del 2026-11-15, controllata con le descrizioni di Linear e approvata dall'utente con 4 cambi: ICH-225 nel
 lotto 1, ICH-214 nel lotto 2, ICH-464 nel lotto 5, ICH-474 nel lotto 7 (motivi in `memory/backlog-issue.md`).
-Criteri:
+Le issue nate dai lotti 1 e 2 sono state aggiunte dopo (lotti 2, 2b, 6, 8 e 14). Criteri:
 
 1. prima la priorità di Linear (High, poi Medium, poi Low);
 2. le issue che toccano lo stesso codice stanno nello stesso lotto;
@@ -159,6 +161,11 @@ Criteri:
 | 2 | `bug` | ICH-216 | Low | Restore the fixed flag and vertical alignment in Plane#duplicate |
 | 2 | `bug` | ICH-482 | Low | Release the destination egcpool in Plane#merge_down (nata dal lotto 1) |
 | 2 | `bug` | ICH-487 | Low | Clear the orphan half of a cut wide glyph that notcurses cannot read on resize (egcpool full) (nata dal lotto 1) |
+| 2b | `bug` | ICH-529 | Medium | Re-check dst right before undo_merge! writes the old framebuffer in Plane#merge_down (nata dal lotto 2) |
+| 2b | `bug` | ICH-530 | Medium | Keep Plane#merge_down from leaving a broken cell after an orphan wide-glyph left half on the last row of src (nata dal lotto 2) |
+| 2b | `bug` | ICH-489 | Medium | Keep the base cell valid after a resize that keeps nothing (egcpool dump) (nata dal lotto 2) |
+| 2b | `bug` | ICH-493 | Medium | Keep Plane#at from crashing on a Kitty bitmap plane after a render (nata dal lotto 2) |
+| 2b | `bug` | ICH-490 | Low | Make Plane#contents read EGCs when the egcpool has no room for a copy (nata dal lotto 2) |
 | 3 | `bug` | ICH-454 | Medium | Keep notcurses' internal line-signal flag in sync with ISIG in EventLoop#run |
 | 3 | `bug` | ICH-456 | Medium | Raise one line signal per kitty Ctrl+C press, not on its repeat and release |
 | 3 | `bug` | ICH-455 | Low | Do not deliver the queued Ctrl+C of an interrupted run to a following run(no_linesigs: true) |

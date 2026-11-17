@@ -240,3 +240,15 @@ Lavoro in due sessioni: implementazione e primo review-fix loop il 2026-11-15 (f
   `gem build` riuscito; CI verde; worktree, branch locale e branch remoto rimossi.
 - Issue nuove: ICH-489, ICH-490, ICH-493 (primo loop), ICH-495 (`Canceled`, nata dal fix di ICH-214), ICH-529 (round
   3), ICH-530 (difetto già su `master`, aperta con la conferma dell'utente).
+
+## Dopo il lotto 2: issue nuove nei lotti (2026-11-17)
+
+- L'utente ha lasciato la scelta a Claude. Le cinque issue nate dal lotto 2 (ICH-529, ICH-530, ICH-489, ICH-493,
+  ICH-490) vanno in un lotto 2b nuovo, prima del lotto 3:
+  - criterio 2 e 3: tutte `Bug`, tutte in `lib/notcurses/plane.rb` (`merge_down`, resize, `at`, `contents`), e
+    nessun lotto rimasto tocca quel codice;
+  - criterio 1: quattro Medium e una Low, come i lotti 3-10; a parità di priorità passano prima perché quattro sono
+    crash o heap corrotto (il lotto 3 corregge comportamenti dei segnali) e `plane.rb` è appena stato rivisto;
+  - "2b" e non una rinumerazione, per non cambiare i numeri dei lotti 3-15 già citati in `RIPRESA.md` e nei log.
+- Ordine nel lotto: priorità, poi codice vicino: ICH-529, ICH-530 (`merge_down`), ICH-489 (resize), ICH-493
+  (`at`), ICH-490 (`contents`, Low).
