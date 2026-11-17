@@ -15,9 +15,8 @@
 - **Prossimo step: lotto 3** (ICH-454, ICH-456, ICH-455: protocollo di tastiera kitty e Ctrl+C in `EventLoop#run`;
   la prova a vista serve Kitty o Ghostty, vedi "Note sulle issue"). Procedura da
   `/trinity:workflow:1_create-worktree master ICH-454 ICH-456 ICH-455 opus` (branch `bug/ICH-454-456-455-opus`).
-- Prima del lotto 3, l'utente rimuove il worktree e il branch del lotto 2c con
-  `/trinity:workflow:5_remove-worktree bug+ICH-531-532-opus` (il comando non si invoca dal modello). Il worktree ha
-  in più il submodule `notcurses`: `--force` è approvato se `git status` è vuoto.
+- Worktree e branch del lotto 2c già rimossi, anche il branch remoto (GitHub non lo cancella dopo il merge: con
+  `/trinity:workflow:5_remove-worktree` l'utente ha confermato `git push origin --delete`).
 - **Review solo con GPT** (`gpt-bridge:reviewer`) finché Fable non ha crediti (scelta dell'utente del 2026-11-17). Con
   `/trinity:workflow:3_independent-review ... usa gpt` l'orchestratore crea il worktree di review detached, lancia
   il revisore GPT in background e lo rimuove dopo. `.review-tmp` non è in `.gitignore`: il revisore esegue gli script
