@@ -6,24 +6,28 @@
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
 > `git show ad0315b:RIPRESA.md`; quello dei lotti della revisione in `git show 8a4b5f7:RIPRESA.md`.
 
-## Stato e prossimo step (aggiornato il 2026-11-17, dopo il lotto 2b)
+## Stato e prossimo step (aggiornato il 2026-11-17, dopo il lotto 2c)
 
 - Lotto 1 fatto: PR #22, merge `74deb80`. Lotto 2 fatto: PR #23, merge `cb90c4f`. Lotto 2b fatto: PR #24, merge
-  `6374e41` (ICH-529, ICH-530, ICH-489, ICH-493, ICH-490 a Done). Log in `memory/backlog-issue.md`, esito in
-  `RICONSEGNA.md`. `master` su `6374e41`: 1124 esempi, 0 fallimenti (ordine normale, semi 1234, 4242, 7); coverage
-  98,25 %; RuboCop 0; YARD 100 %; layer FFI invariato; CI verde.
-- **Lotto 2c in corso** (ICH-531, ICH-532: le issue nate dal lotto 2b, entrambe in `lib/notcurses/plane.rb`;
-  scelta dell'utente del 2026-11-17): implementazione fatta, PR #25 aperta dal branch `bug/ICH-531-532-opus`
-  (worktree in `.claude/worktrees/bug+ICH-531-532-opus`), 3 commit fino a `9d07656`. **Prossimo step: la review**,
-  con `/trinity:workflow:4_review-fix-loop ICH-531 ICH-532 opus`, **solo con GPT** (`gpt-bridge:reviewer`): Fable è
-  senza crediti (scelta dell'utente del 2026-11-17). Poi il lotto 3 (ICH-454, ICH-456, ICH-455).
+  `6374e41`. Lotto 2c fatto: PR #25, merge `d2c5f7c` (ICH-531, ICH-532 a Done). Log in `memory/backlog-issue.md`,
+  esito in `RICONSEGNA.md`. `master` su `d2c5f7c`: 1133 esempi, 0 fallimenti (ordine normale, semi 1234, 4242, 7);
+  coverage 98,11 %; RuboCop 0; YARD 100 %; layer FFI invariato; CI verde.
+- **Prossimo step: lotto 3** (ICH-454, ICH-456, ICH-455: protocollo di tastiera kitty e Ctrl+C in `EventLoop#run`;
+  la prova a vista serve Kitty o Ghostty, vedi "Note sulle issue"). Procedura da
+  `/trinity:workflow:1_create-worktree master ICH-454 ICH-456 ICH-455 opus` (branch `bug/ICH-454-456-455-opus`).
+- Prima del lotto 3, l'utente rimuove il worktree e il branch del lotto 2c con
+  `/trinity:workflow:5_remove-worktree bug+ICH-531-532-opus` (il comando non si invoca dal modello). Il worktree ha
+  in più il submodule `notcurses`: `--force` è approvato se `git status` è vuoto.
+- **Review solo con GPT** (`gpt-bridge:reviewer`) finché Fable non ha crediti (scelta dell'utente del 2026-11-17). Con
+  `/trinity:workflow:3_independent-review ... usa gpt` l'orchestratore crea il worktree di review detached, lancia
+  il revisore GPT in background e lo rimuove dopo. `.review-tmp` non è in `.gitignore`: il revisore esegue gli script
+  da stdin, senza file, così il worktree resta pulito e si rimuove con `--force`.
 - Nata dal lotto 2c: ICH-533 (`putstr`, `putegc` e `puttext` sollevano `ArgumentError` invece di `PlaneError` con
   l'egcpool pieno e un EGC con segni combinanti), nel lotto 8 con ICH-217 e ICH-232: stesso codice
   (`zero_width_egc!`), scelta dell'utente del 2026-11-17.
-- Nel lotto 2c, nate dal lotto 2b: ICH-531 (il ripristino della base dopo un resize o una
-  rotazione richiede spazio nel pool) e ICH-532 (scelta dell'utente su ICH-530, opzione 3: dopo una metà sinistra
-  orfana `merge_down` deve lasciare in `dst` uno spazio e il glifo di `src`, non il glifo largo che lo copre). Nel round 2 Fable non ha
-  fatto la review (limite d'uso, si azzera il 2026-11-20): se serve, rilancia la review di Fable su `f209900`.
+- Note dal lotto 2c: i workaround di `keeping_base_cell` (ICH-531) e `blank_orphan_lefts!` (ICH-532) scrivono le
+  celle grezze nei campi privati (`Plane::Internals`) e non girano senza; un bug di notcurses nuovo (`rotate_2x1_cw`
+  e `rotate_2x1_ccw` non rilasciano le copie nel pool quando rifiutano un carattere) è nelle tabelle, non aggirato.
 - **ICH-214 in Backlog**, tolta dal lotto 2: ruotare il framebuffer da Ruby non si rende sicuro (un gestore `trap` o
   un altro thread può fare un resize fra la copia e la scrittura). Serve un lock o codice C: va riprogettata in un
   lotto suo, forse con un helper approvato nel layer FFI (regola 1). Il lotto 2 azzera già `logrow` nel resize in due
