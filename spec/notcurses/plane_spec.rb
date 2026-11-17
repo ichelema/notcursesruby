@@ -239,6 +239,16 @@ RSpec.describe Notcurses::Plane do
         end
       end
 
+      it 'conserva ogni riga di un piano che ha già fatto scroll (prima del fix: una riga persa)' do
+        with_parent(rows: 3, cols: 8, vscroll: true) do |p|
+          3.times { |y| p.putstr(marked('a'.ord + (8 * y)).join, y: y, x: 0) }
+          p.putstr("\n#{marked("A").join}") # scroll di una riga: logrow diventa 1
+          p.resize_region(rows: 3, cols: 6, keep_x: 2, keep_rows: 3, keep_cols: 6)
+          rows = Array.new(3) { |y| Array.new(6) { |x| p.at(y: y, x: x).egc } }
+          expect(rows).to eq([marked('i')[2, 6], marked('q')[2, 6], marked('A')[2, 6]])
+        end
+      end
+
       it 'chiama due volte i callback di resize dei figli (il resize è in due passi), una sola senza keep_x' do
         with_parent(rows: 2, cols: 8) do |p|
           seen = []

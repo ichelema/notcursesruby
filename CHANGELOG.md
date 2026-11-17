@@ -41,7 +41,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   quelle celle restavano vuote, `Plane#contents` sollevava `PlaneError`, e dopo altre scritture una cella poteva
   mostrare l'EGC di un'altra. Il wrapper fa il resize in due passi (prima con qualche riga vuota in più in alto,
   poi le toglie): quando serve, cioè con `keep_x + x_off > -y_off * cols`, i callback di resize dei figli vengono
-  chiamati due volte (ICH-215).
+  chiamati due volte (ICH-215). Su un piano che ha già fatto scroll i due passi conservano ogni riga, nel loro
+  ordine.
 - `Plane#duplicate` copia anche il flag `fixed` e l'allineamento verticale del piano: la copia di un piano creato
   con `fixed: true` non scorre più con il genitore, e `resize_realign` la riallinea come l'originale. Prima
   `ncplane_dup` di notcurses 3.0.17 li azzerava (ICH-216).

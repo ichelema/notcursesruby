@@ -465,7 +465,10 @@ module Notcurses
     # resize in due passi: prima con qualche riga vuota in più in alto, poi le
     # toglie. In quel caso, cioè quando keep_x + x_off > -y_off * cols, i
     # callback di resize dei figli vengono chiamati due volte: la prima con il
-    # piano più alto e spostato in su rispetto al risultato.
+    # piano più alto e spostato in su rispetto al risultato. Su un piano che ha
+    # già fatto scroll il resize in due passi conserva anche l'ordine delle
+    # righe, che negli altri resize cambia (bug noto, nella descrizione della
+    # classe).
     #
     # Un glifo largo tagliato che resta sul bordo del piano diventa una cella
     # vuota, come in {#resize}: con keep_x dentro un glifo largo ne resterebbe
@@ -528,7 +531,13 @@ module Notcurses
                   keep_y + keep_rows <= cur_rows && keep_x + keep_cols <= cur_cols
       old = two_steps && (st = internals(ptr)) && fb_bytes(st)
       rc = FFI.ncplane_resize(ptr, keep_y, keep_x, keep_rows, keep_cols, y_off - extra, x_off, rows + extra, cols)
-      rc |= FFI.ncplane_resize(ptr, extra, 0, rows, cols, 0, 0, rows, cols) if two_steps
+      if two_steps
+        # il C scrive il framebuffer nuovo in ordine logico ma lascia logrow (bug di ICH-214): su un piano che
+        # ha già fatto scroll il secondo passo leggerebbe le righe sbagliate e ne perderebbe una
+        st = internals(ptr)
+        st[:logrow] = 0 if st
+        rc |= FFI.ncplane_resize(ptr, extra, 0, rows, cols, 0, 0, rows, cols)
+      end
       release_dropped!(ptr, old) if old
       clear_cut_glyphs!(ptr, force: true) # con keep_x > 0 il contenuto si sposta anche a dimensioni invariate
       @context.raise_callback_errors!
