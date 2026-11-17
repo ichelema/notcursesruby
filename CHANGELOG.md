@@ -22,6 +22,10 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Plane#merge_down`: il ripristino di `dst` (egcpool pieno) controlla dimensione, puntatore del pool e dimensione del
+  pool in una sola espressione, subito prima di scrivere il framebuffer vecchio (ICH-529). Prima il controllo era un
+  lambda con un ciclo: un gestore `trap` che ridimensionava `dst` fra il controllo e la scrittura faceva scrivere 288
+  byte in un blocco da 64 (heap corrotto o SIGSEGV).
 - `Plane#resize`, `#resize_region`, `#resize_maximize` e il controllo dei bordi prima delle scritture svuotano la
   metà di un glifo largo tagliato dal resize anche quando notcurses non riesce a rileggere il glifo. Con l'egcpool
   del piano pieno (16 MiB) `ncplane_at_yx_cell` fallisce sugli EGC di più di 4 byte: il wrapper ora legge quelle

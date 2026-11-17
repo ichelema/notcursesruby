@@ -1521,6 +1521,41 @@ RSpec.describe Notcurses::Plane do
         script = trap_merge_script('erase', hook: :pooled, at: 2, big: 1)
         expect(NcHelpers.heap_check(script, timeout: 60)).to eq([0, "ok\n"])
       end
+
+      # ICH-529: un trap che ridimensiona dst dopo il controllo di undo_merge! e prima di write_bytes faceva
+      # scrivere il framebuffer vecchio (288 byte) in uno nuovo da 64. Un TracePoint manda il segnale a ogni
+      # ritorno di blocco di undo_merge! dopo release_gclusters!, cioè ai punti in cui prima il controllo (un
+      # lambda con all?) restava aperto; ora fra il controllo e la scrittura non ci sono blocchi.
+      it 'un resize dopo il rilascio delle copie nuove non fa scrivere il framebuffer vecchio (prima: heap corrotto)' do
+        script = <<~RUBY
+          require 'notcurses'
+          Process.setrlimit(:CORE, 0)
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            dst = nc.stdplane.create_child(rows: 3, cols: 6)
+            src = nc.stdplane.create_child(rows: 1, cols: 1)
+            2.times { |y| dst.putstr("a\#{"\\u0301" * 3_000_000}", y: y, x: 0) }
+            trap('USR1') { dst.resize(1, 4) }
+            armed = false
+            trace = TracePoint.new(:call, :b_return) do |tp|
+              if tp.event == :call
+                armed = true if tp.method_id == :release_gclusters!
+              elsif armed && tp.method_id == :undo_merge!
+                Process.kill('USR1', Process.pid)
+              end
+            end
+            begin
+              trace.enable { src.merge_down(dst) }
+            rescue Notcurses::PlaneError
+              nil
+            end
+            dst.close
+            src.close
+          end
+          puts 'ok'
+        RUBY
+        expect(NcHelpers.heap_check(script, timeout: 60)).to eq([0, "ok\n"])
+      end
     end
 
     context 'con glifi larghi' do

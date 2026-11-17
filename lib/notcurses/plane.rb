@@ -2535,16 +2535,15 @@ module Notcurses
     # Annulla merge_down: rilascia le copie nuove (fresh) e riscrive il framebuffer di prima (old). Se un
     # gestore trap ha cambiato dst dopo la lettura di old, la fusione resta com'è: con dimensioni diverse la
     # scrittura andrebbe oltre il framebuffer, con un pool svuotato le celle punterebbero a EGC liberati.
-    # true se ha riscritto il framebuffer di prima.
+    # true se ha riscritto il framebuffer di prima. Il controllo prima della scrittura è una sola espressione,
+    # senza blocchi né lambda (ICH-529): un trap che gira dopo il suo ultimo metodo non si può escludere.
     def undo_merge!(ptr, st, old, fresh)
-      offsets = pooled(old).map { |g| g & 0xffffff }
-      intact = lambda do
-        old.bytesize == st[:leny] * st[:lenx] * CELL_BYTES && !st[:pool].null? && offsets.all? { |i| i < st[:poolsize] }
-      end
-      return false unless intact.call
+      size = old.bytesize
+      top = pooled(old).map { |g| g & 0xffffff }.max || -1
+      return false unless size == st[:leny] * st[:lenx] * CELL_BYTES && !st[:pool].null? && top < st[:poolsize]
 
       release_gclusters!(ptr, st, pooled(fresh))
-      return false unless intact.call
+      return false unless size == st[:leny] * st[:lenx] * CELL_BYTES && !st[:pool].null? && top < st[:poolsize]
 
       st[:fb].write_bytes(old)
       true
