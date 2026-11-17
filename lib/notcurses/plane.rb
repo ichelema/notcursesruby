@@ -1420,7 +1420,8 @@ module Notcurses
     # @return [self]
     # @raise [PlaneError] se dst è il piano stesso o sta in un'altra pila, se
     #   la fusione fallisce (per esempio con un bitmap), o se l'egcpool di dst
-    #   non ha spazio per copiare i suoi EGC (dst non cambia)
+    #   non ha spazio per copiare i suoi EGC (dst non cambia; se un gestore
+    #   trap ha cambiato dst durante la fusione, alcune celle restano vuote)
     # @raise [TypeError] se dst non è un Plane
     # @raise [ClosedError] se uno dei piani è chiuso
     def merge_down(dst)
@@ -1437,18 +1438,19 @@ module Notcurses
         # il C ha copiato ogni EGC nel framebuffer nuovo e ha liberato quello vecchio senza rilasciarli (ICH-482)
         st = old && internals(target)
         fresh = st && fb_bytes(st)
-        if fresh && lost_egc?(fresh)
-          undo_merge!(target, st, old, fresh)
-          true
+        if fresh && lost_egc?(fresh, st[:lenx])
+          undo_merge!(target, st, old, fresh) ? :undone : :lost
         else
           release_unused!(target, pooled(old)) if fresh
-          false
+          nil
         end
       end
-      raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (dst non è cambiato)" if lost
+      raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (dst non è cambiato)" if lost == :undone
+
       restore_wide_glyphs!(target)
       # glifi larghi nuovi senza le scritture: un resize del C li può tagliare a dimensioni già controllate
       @context.tracked_plane(target.address)&.cut_glyphs_cols = nil
+      raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (celle di dst vuote)" if lost
       self
     end
 
@@ -2518,22 +2520,30 @@ module Notcurses
     # Annulla merge_down: rilascia le copie nuove (fresh) e riscrive il framebuffer di prima (old). Se un
     # gestore trap ha cambiato dst dopo la lettura di old, la fusione resta com'è: con dimensioni diverse la
     # scrittura andrebbe oltre il framebuffer, con un pool svuotato le celle punterebbero a EGC liberati.
+    # true se ha riscritto il framebuffer di prima.
     def undo_merge!(ptr, st, old, fresh)
       offsets = pooled(old).map { |g| g & 0xffffff }
       intact = lambda do
         old.bytesize == st[:leny] * st[:lenx] * CELL_BYTES && !st[:pool].null? && offsets.all? { |i| i < st[:poolsize] }
       end
-      return unless intact.call
+      return false unless intact.call
 
       release_gclusters!(ptr, st, pooled(fresh))
-      st[:fb].write_bytes(old) if intact.call
+      return false unless intact.call
+
+      st[:fb].write_bytes(old)
+      true
     end
 
-    # true se in bytes c'è una cella che ncplane_mergedown non è riuscita a copiare: cell_duplicate_far
-    # scrive la larghezza e poi, senza spazio nel pool, lascia gcluster a 0 (internal.h:909-922).
-    def lost_egc?(bytes)
-      bytes.unpack("LxCx#{FFI::NcCell.size - 6}" * (bytes.bytesize / FFI::NcCell.size)).each_slice(2).any? do |g, w|
-        g.zero? && w.positive?
+    # true se in bytes (righe di cols celle) c'è una cella che ncplane_mergedown non è riuscita a copiare:
+    # cell_duplicate_far scrive la larghezza e poi, senza spazio nel pool, lascia gcluster a 0
+    # (internal.h:909-922). Salta la cella dopo una metà sinistra: postpaint_cell ne azzera il gcluster e
+    # lascia la larghezza (render.c:471-485), anche quando la metà sinistra è orfana e lì c'era un glifo.
+    def lost_egc?(bytes, cols)
+      cells = bytes.unpack("LxCx#{CELL_BYTES - 6}" * (bytes.bytesize / CELL_BYTES)).each_slice(2).to_a
+      cells.each_with_index.any? do |(g, w), i|
+        pg, pw = cells[i - 1] unless (i % cols).zero?
+        g.zero? && w.positive? && !(pg&.nonzero? && pw >= 2)
       end
     end
 

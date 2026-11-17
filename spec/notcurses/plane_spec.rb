@@ -1403,6 +1403,28 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    # postpaint_cell (render.c:471-485) azzera il gcluster della cella dopo una metà sinistra e lascia la sua
+    # larghezza: dopo una metà sinistra orfana seguita da un glifo quella cella sembrava un EGC perso (review).
+    it 'merge_down con una metà sinistra orfana seguita da un glifo non solleva PlaneError (prima: errore e ICH-481)' do
+      [['WXYZ', 'WXYZ'], ['👍🏽zz', '👍🏽zz']].each do |text, want|
+        with_parent(rows: 3, cols: 4) do |dst|
+          dst.putstr(text, y: 1, x: 0)
+          src = dst.create_child(rows: 3, cols: 4)
+          src.set_fg_rgb24(0xff0000)
+          src.putstr('a中c', y: 2, x: 0)
+          src.resize_region(rows: 3, cols: 3, keep_rows: 3, keep_cols: 2) # metà sinistra di 中 in colonna 1
+          src.resize(3, 4)
+          src.putstr('X', y: 2, x: 2)
+          src.putstr('a中', y: 0, x: 0)
+          src.merge_down(dst)
+          dst.putstr('中', y: 0, x: 2)
+          dst.putstr('x', y: 0, x: 1) # senza la metà destra di 中 cancellerebbe la prima cella della riga 1
+          dst.putstr('中', y: 0, x: 2)
+          expect(dst.contents(y: 1, rows: 1)).to eq(want)
+        end
+      end
+    end
+
     # Il rilascio delle copie vecchie e il ripristino leggono il framebuffer e il pool di dst dopo chiamate Ruby,
     # dove gira un gestore trap. Prima un trap che cambiava dst in quella finestra portava a SIGSEGV
     # (nccell_release su un pool svuotato) o a un heap corrotto (ripristino con le dimensioni vecchie).
