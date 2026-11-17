@@ -12,10 +12,14 @@
   `6374e41` (ICH-529, ICH-530, ICH-489, ICH-493, ICH-490 a Done). Log in `memory/backlog-issue.md`, esito in
   `RICONSEGNA.md`. `master` su `6374e41`: 1124 esempi, 0 fallimenti (ordine normale, semi 1234, 4242, 7); coverage
   98,25 %; RuboCop 0; YARD 100 %; layer FFI invariato; CI verde.
-- **Prossimo step: lotto 2c** (ICH-531, ICH-532: le issue nate dal lotto 2b, entrambe in `lib/notcurses/plane.rb`;
-  scelta dell'utente del 2026-11-17), poi il lotto 3 (ICH-454, ICH-456, ICH-455). Procedura da
-  `/trinity:workflow:1_create-worktree master ICH-531 ICH-532 opus` (branch `bug/ICH-531-532-opus`). Il worktree del
-  lotto 2b è già rimosso.
+- **Lotto 2c in corso** (ICH-531, ICH-532: le issue nate dal lotto 2b, entrambe in `lib/notcurses/plane.rb`;
+  scelta dell'utente del 2026-11-17): implementazione fatta, PR #25 aperta dal branch `bug/ICH-531-532-opus`
+  (worktree in `.claude/worktrees/bug+ICH-531-532-opus`), 3 commit fino a `9d07656`. **Prossimo step: la review**,
+  con `/trinity:workflow:4_review-fix-loop ICH-531 ICH-532 opus`, **solo con GPT** (`gpt-bridge:reviewer`): Fable è
+  senza crediti (scelta dell'utente del 2026-11-17). Poi il lotto 3 (ICH-454, ICH-456, ICH-455).
+- Nata dal lotto 2c: ICH-533 (`putstr`, `putegc` e `puttext` sollevano `ArgumentError` invece di `PlaneError` con
+  l'egcpool pieno e un EGC con segni combinanti), nel lotto 8 con ICH-217 e ICH-232: stesso codice
+  (`zero_width_egc!`), scelta dell'utente del 2026-11-17.
 - Nel lotto 2c, nate dal lotto 2b: ICH-531 (il ripristino della base dopo un resize o una
   rotazione richiede spazio nel pool) e ICH-532 (scelta dell'utente su ICH-530, opzione 3: dopo una metà sinistra
   orfana `merge_down` deve lasciare in `dst` uno spazio e il glifo di `src`, non il glifo largo che lo copre). Nel round 2 Fable non ha
@@ -138,7 +142,7 @@ successivi.
 
 Proposta del 2026-11-15, controllata con le descrizioni di Linear e approvata dall'utente con 4 cambi: ICH-225 nel
 lotto 1, ICH-214 nel lotto 2, ICH-464 nel lotto 5, ICH-474 nel lotto 7 (motivi in `memory/backlog-issue.md`).
-Le issue nate dai lotti 1, 2 e 2b sono state aggiunte dopo (lotti 2, 2b, 2c, 6, 8 e 14). Criteri:
+Le issue nate dai lotti 1, 2, 2b e 2c sono state aggiunte dopo (lotti 2, 2b, 2c, 6, 8 e 14). Criteri:
 
 1. prima la priorità di Linear (High, poi Medium, poi Low);
 2. le issue che toccano lo stesso codice stanno nello stesso lotto;
@@ -184,6 +188,7 @@ Le issue nate dai lotti 1, 2 e 2b sono state aggiunte dopo (lotti 2, 2b, 2c, 6, 
 | 8 | `bug` | ICH-217 | Low | Handle graphemes that notcurses segments differently from Ruby |
 | 8 | `bug` | ICH-232 | Low | Reject graphemes that notcurses splits differently in UI widget text checks |
 | 8 | `bug` | ICH-484 | Low | Keep the width of wide-glyph right halves in the Reader view after Backspace, Ctrl+U and Ctrl+W (nata dal lotto 1) |
+| 8 | `bug` | ICH-533 | Low | Raise PlaneError, not ArgumentError, when the egcpool has no room for an EGC with combining marks in Plane#putstr, #putegc and #puttext (nata dal lotto 2c) |
 | 9 | `bug` | ICH-230 | Medium | Bound the unfinished line in LogView#append by bytes |
 | 10 | `bug` | ICH-220 | Medium | Make the Tabbed header follow plane resizes |
 | 10 | `bug` | ICH-221 | Medium | Fix Tree focus drift with items of different heights |
