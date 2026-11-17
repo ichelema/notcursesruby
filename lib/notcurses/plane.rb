@@ -2549,11 +2549,14 @@ module Notcurses
       fb = st[:fb].address
       # gcluster " " (htole), width 1, stessi stili e canali; preparato prima: una sola scrittura
       temporary = " \0\0\0".b + saved.byteslice(4, 1) + "\x01".b + saved.byteslice(6..)
+      # una volta sola: dopo il ripristino un callback può impostare una base uguale allo spazio provvisorio
+      restored = false
       restore = lambda do |done|
-        next unless cell.to_ptr.read_bytes(CELL_BYTES) == temporary
+        next if restored || cell.to_ptr.read_bytes(CELL_BYTES) != temporary
 
         if st[:fb].address != fb
           Util.check!(FFI.ncplane_set_base(ptr, egc, cell[:stylemask], cell[:channels]), PlaneError, 'ncplane_set_base')
+          restored = true
         elsif done
           cell.to_ptr.write_bytes(saved)
         end

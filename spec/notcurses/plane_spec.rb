@@ -743,6 +743,30 @@ RSpec.describe Notcurses::Plane do
           RUBY
           expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
         end
+
+        # review di ICH-531: il wrapper riconosceva la base provvisoria solo dai byte, e rimetteva la base vecchia
+        # sopra quella di un callback uguale allo spazio provvisorio (stessi stili e canali)
+        it "#{name}: la base uguale allo spazio provvisorio impostata da un callback resta (prima: la base vecchia)" do
+          script = <<~RUBY
+            require 'notcurses'
+            Process.setrlimit(:CORE, 0)
+            Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                    drain_input: true) do |nc|
+              pl = nc.stdplane.create_child(rows: 3, cols: 8)
+              pl.set_base(egc: '👍🏽', styles: :bold)
+              child = pl.create_child(rows: 1, cols: 1)
+              child.set_resize_callback do
+                pl.set_base(egc: ' ', styles: :bold)
+                0
+              end
+              #{call}
+              abort "base: \#{pl.base.inspect}" unless pl.base == Notcurses::Cell.new(egc: ' ', styles: :bold)
+              pl.close
+            end
+            puts 'ok'
+          RUBY
+          expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+        end
       end
 
       # review: ncplane_base copia l'EGC nel pool, e con il pool senza spazio per la copia falliva prima del resize
