@@ -1403,6 +1403,58 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    # Il rilascio delle copie vecchie e il ripristino leggono il framebuffer e il pool di dst dopo chiamate Ruby,
+    # dove gira un gestore trap. Prima un trap che cambiava dst in quella finestra portava a SIGSEGV
+    # (nccell_release su un pool svuotato) o a un heap corrotto (ripristino con le dimensioni vecchie).
+    context 'con un gestore trap che cambia dst durante la fusione' do
+      # Script per un processo figlio: quando src chiama per la volta at il metodo privato hook, un trap esegue
+      # action su dst; big riempie il pool di dst (la fusione va annullata).
+      def trap_merge_script(action, hook:, at: 1, big: false)
+        fill = big ? "2.times { |y| dst.putstr(\"a\#{\"\\u0301\" * 3_000_000}\", y: y, x: 0) }" : "dst.putstr('👍🏽x👍🏽', y: 0, x: 0)"
+        <<~RUBY
+          require 'notcurses'
+          Process.setrlimit(:CORE, 0)
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            dst = nc.stdplane.create_child(rows: 3, cols: 6)
+            src = nc.stdplane.create_child(rows: 1, cols: 1)
+            #{fill}
+            trap('USR1') { dst.#{action} }
+            $calls = 0
+            src.singleton_class.prepend(Module.new do
+              def #{hook}(*args)
+                super.tap { Process.kill('USR1', Process.pid) if ($calls += 1) == #{at} }
+              end
+            end)
+            begin
+              src.merge_down(dst)
+            rescue Notcurses::PlaneError
+              nil
+            end
+            dst.putstr('ab', y: 0, x: 0)
+            dst.contents
+            dst.close
+          end
+          puts 'ok'
+        RUBY
+      end
+
+      before { skip "manca #{NcHelpers::MALLOC_DEBUG}" unless File.exist?(NcHelpers::MALLOC_DEBUG) }
+
+      it 'un erase prima del rilascio delle copie vecchie (prima: SIGSEGV)' do
+        expect(NcHelpers.heap_check(trap_merge_script('erase', hook: :lost_egc?))).to eq([0, "ok\n"])
+      end
+
+      it 'un erase fra la lettura del framebuffer e la fusione (prima: SIGSEGV)' do
+        expect(NcHelpers.heap_check(trap_merge_script('erase', hook: :fb_bytes))).to eq([0, "ok\n"])
+      end
+
+      it 'un resize prima del ripristino con il pool pieno (prima: heap corrotto)' do
+        script = trap_merge_script('resize(1, 4)', hook: :lost_egc?, big: true)
+        expect(NcHelpers.heap_check(script, timeout: 60)).to eq([0, "ok\n"])
+      end
+    end
+
     context 'con glifi larghi' do
       def merged(text, rows: 1, cols: 6)
         dst = std.create_child(rows: rows, cols: cols)

@@ -101,6 +101,10 @@ module Notcurses
     end
     private_constant :Internals
 
+    # Byte di una cella (sizeof(nccell)).
+    CELL_BYTES = FFI::NcCell.size
+    private_constant :CELL_BYTES
+
     # @return [Context] contesto a cui appartiene il piano
     attr_reader :context
 
@@ -538,7 +542,7 @@ module Notcurses
         st[:logrow] = 0 if st
         rc |= FFI.ncplane_resize(ptr, extra, 0, rows, cols, 0, 0, rows, cols)
       end
-      release_dropped!(ptr, old) if old
+      release_unused!(ptr, pooled(old)) if old
       clear_cut_glyphs!(ptr, force: true) # con keep_x > 0 il contenuto si sposta anche a dimensioni invariate
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, 'ncplane_resize')
@@ -1406,6 +1410,12 @@ module Notcurses
     # insieme nel pool: se le nuove non entrano (EGC di dst per più di circa
     # 8 MiB), il wrapper annulla la fusione e solleva PlaneError.
     #
+    # Un gestore +trap+ non deve cambiare dst durante merge_down (notcurses
+    # non è rientrante): il wrapper rilegge dst prima di rilasciare o
+    # ripristinare e non tocca un pool svuotato o un framebuffer di altre
+    # dimensioni, ma la fusione può restare a metà (copie vecchie nel pool,
+    # PlaneError anche con spazio nel pool).
+    #
     # @param dst [Plane] piano di destinazione, della stessa pila
     # @return [self]
     # @raise [PlaneError] se dst è il piano stesso o sta in un'altra pila, se
@@ -1419,19 +1429,21 @@ module Notcurses
       raise PlaneError, 'merge_down: dst è il piano stesso' if target.address == ptr.address
       raise PlaneError, "merge_down: dst è in un'altra pila" unless FFI.ncpile_top(ptr).address == FFI.ncpile_top(target).address
 
-      # un'eccezione asincrona fra il rilascio e il ripristino lascerebbe celle con EGC già rilasciati
+      # un'eccezione asincrona fra il rilascio e il ripristino lascerebbe celle con EGC già rilasciati; i gestori
+      # trap girano comunque: i controlli di release_unused! e undo_merge! rileggono dst prima di toccarlo
       lost = Thread.handle_interrupt(Object => :never) do
         old = (st = internals(target)) && fb_bytes(st)
         Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
         # il C ha copiato ogni EGC nel framebuffer nuovo e ha liberato quello vecchio senza rilasciarli (ICH-482)
-        if old
-          st = internals(target)
-          fresh = fb_bytes(st)
-          lost = lost_egc?(fresh)
-          release_gclusters!(target, pooled(lost ? fresh : old))
-          st[:fb].write_bytes(old) if lost
+        st = old && internals(target)
+        fresh = st && fb_bytes(st)
+        if fresh && lost_egc?(fresh)
+          undo_merge!(target, st, old, fresh)
+          true
+        else
+          release_unused!(target, pooled(old)) if fresh
+          false
         end
-        lost
       end
       raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (dst non è cambiato)" if lost
       restore_wide_glyphs!(target)
@@ -2465,8 +2477,9 @@ module Notcurses
             st[:scrolling] == FFI.ncplane_scrolling_p(ptr) && st[:autogrow] == FFI.ncplane_autogrow_p(ptr)
     end
 
-    # Byte del framebuffer di st (Internals), in ordine fisico.
-    def fb_bytes(st) = st[:fb].read_bytes(st[:leny] * st[:lenx] * FFI::NcCell.size)
+    # Byte del framebuffer di st (Internals), in ordine fisico. Fra la lettura di fb e quella dei byte nessun
+    # metodo Ruby (NcCell.size lo è): un gestore trap potrebbe ridimensionare il piano.
+    def fb_bytes(st) = st[:fb].read_bytes(st[:leny] * st[:lenx] * CELL_BYTES)
 
     # gcluster delle celle in bytes che tengono l'EGC nell'egcpool (byte alto 0x01, cell_extended_p di
     # egcpool.h:195).
@@ -2474,33 +2487,47 @@ module Notcurses
       bytes.unpack("Lx#{FFI::NcCell.size - 4}" * (bytes.bytesize / FFI::NcCell.size)).select { |g| g >> 24 == 1 }
     end
 
-    # Rilascia dall'egcpool di ptr gli EGC dei gcluster dati.
-    def release_gclusters!(ptr, gclusters)
+    # Rilascia dall'egcpool di ptr gli EGC dei gcluster dati. Prima di ogni rilascio rilegge il pool da st
+    # (Internals di ptr): un gestore trap che ha svuotato il piano lo lascia NULL (SIGSEGV in nccell_release).
+    def release_gclusters!(ptr, st, gclusters)
       cell = FFI::NcCell.new
       gclusters.each do |gcluster|
         cell[:gcluster] = gcluster
-        FFI.nccell_release(ptr, cell)
+        FFI.nccell_release(ptr, cell) if !st[:pool].null? && (gcluster & 0xffffff) < st[:poolsize]
       end
     end
 
-    # Dopo il resize in due passi di resize_region rilascia gli EGC delle celle scartate (old: byte del
-    # framebuffer di prima): con le righe in più il ciclo del C parte oltre la fine della riga e non li
-    # rilascia. Salta quelli ancora nel framebuffer e quelli che il C ha già rilasciato (primo byte 0:
-    # egcpool_release, egcpool.h:168-176, toglierebbe comunque un byte da poolused); rilascia solo da un
-    # inizio di EGC (byte prima 0). I callback di resize dei figli girano fra i due passi e possono svuotare o
-    # riscrivere il pool (Plane#erase, set_base): salta un pool vuoto, gli offset oltre il pool di adesso e la
-    # cella base, che non sta nel framebuffer.
-    def release_dropped!(ptr, old)
+    # Rilascia gli EGC dei gcluster dati (copie vecchie di merge_down, celle scartate dal resize in due passi
+    # di resize_region) che nessuna cella usa più. Salta quelli ancora nel framebuffer e quelli che il C ha
+    # già rilasciato (primo byte 0: egcpool_release, egcpool.h:168-176, toglierebbe comunque un byte da
+    # poolused); rilascia solo da un inizio di EGC (byte prima 0). I callback di resize dei figli e i gestori
+    # trap possono svuotare o riscrivere il pool (Plane#erase, set_base): salta un pool vuoto, gli offset
+    # oltre il pool di adesso e la cella base, che non sta nel framebuffer.
+    def release_unused!(ptr, gclusters)
       st = internals(ptr)
       return if st.nil? || st[:pool].null?
 
       pool = st[:pool]
       size = st[:poolsize]
-      dropped = pooled(old) - pooled(fb_bytes(st)) - [st[:basecell][:gcluster]]
-      release_gclusters!(ptr, dropped.select do |g|
+      unused = gclusters - pooled(fb_bytes(st)) - [st[:basecell][:gcluster]]
+      release_gclusters!(ptr, st, unused.select do |g|
         idx = g & 0xffffff
         idx < size && pool.get_uint8(idx).nonzero? && (idx.zero? || pool.get_uint8(idx - 1).zero?)
       end)
+    end
+
+    # Annulla merge_down: rilascia le copie nuove (fresh) e riscrive il framebuffer di prima (old). Se un
+    # gestore trap ha cambiato dst dopo la lettura di old, la fusione resta com'è: con dimensioni diverse la
+    # scrittura andrebbe oltre il framebuffer, con un pool svuotato le celle punterebbero a EGC liberati.
+    def undo_merge!(ptr, st, old, fresh)
+      offsets = pooled(old).map { |g| g & 0xffffff }
+      intact = lambda do
+        old.bytesize == st[:leny] * st[:lenx] * CELL_BYTES && !st[:pool].null? && offsets.all? { |i| i < st[:poolsize] }
+      end
+      return unless intact.call
+
+      release_gclusters!(ptr, st, pooled(fresh))
+      st[:fb].write_bytes(old) if intact.call
     end
 
     # true se in bytes c'è una cella che ncplane_mergedown non è riuscita a copiare: cell_duplicate_far
