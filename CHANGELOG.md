@@ -22,6 +22,27 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Plane#contents` legge gli EGC di più di 4 byte anche con l'egcpool del piano pieno (ICH-490). `ncplane_at_yx_cell`
+  copia l'EGC nel pool (16 MiB) e fallisce quando non c'è spazio: `contents` sollevava `PlaneError` con il contenuto
+  intatto. Ora legge quelle celle con `ncplane_at_yx`, che non usa il pool, come `Plane#at`. Un piano con un bitmap
+  solleva ancora `PlaneError`.
+- `Plane#at` solleva `PlaneError` su un piano con un bitmap (sixel o Kitty) invece di andare in SIGSEGV (ICH-493).
+  Con Kitty il C libera la sequenza dello sprixel dopo il disegno e `ncplane_at_yx` fa `strdup(NULL)`. Lo stesso
+  vale per sixel, dove `at` restituiva la sequenza di escape: come `Plane#contents`, il piano con un bitmap non si
+  legge cella per cella.
+- `Plane#resize_region` senza regione conservata (`keep_rows: 0`), `#rotate_cw` e `#rotate_ccw` non lasciano più la
+  cella base su un egcpool liberato (ICH-489). notcurses svuota il pool quando il resize non conserva niente, ma la
+  cella base tiene il suo offset: con un EGC di più di 4 byte (per esempio `👍🏽`) `Plane#base` andava in SIGSEGV. Il
+  wrapper rimette la stessa cella base (EGC, stili e canali) dopo il resize.
+- `Plane#merge_down` non lascia più in `dst` una cella rotta dopo una metà sinistra orfana di un glifo largo in
+  `src` (ICH-530). notcurses lascia la cella a destra con `gcluster` 0 e la larghezza della cella di `src`; il
+  wrapper cercava solo le metà destre con larghezza 0. Ora riscrive anche questo caso: la metà sinistra torna un
+  glifo intero e il glifo che la seguiva in `src` è coperto. Prima la sequenza di scritture successiva su quella
+  riga corrompeva l'heap (`free(): invalid pointer` in `Plane#close`).
+- `Plane#merge_down`: il ripristino di `dst` (egcpool pieno) controlla dimensione, puntatore del pool e dimensione del
+  pool in una sola espressione, subito prima di scrivere il framebuffer vecchio (ICH-529). Prima il controllo era un
+  lambda con un ciclo: un gestore `trap` che ridimensionava `dst` fra il controllo e la scrittura faceva scrivere 288
+  byte in un blocco da 64 (heap corrotto o SIGSEGV).
 - `Plane#resize`, `#resize_region`, `#resize_maximize` e il controllo dei bordi prima delle scritture svuotano la
   metà di un glifo largo tagliato dal resize anche quando notcurses non riesce a rileggere il glifo. Con l'egcpool
   del piano pieno (16 MiB) `ncplane_at_yx_cell` fallisce sugli EGC di più di 4 byte: il wrapper ora legge quelle

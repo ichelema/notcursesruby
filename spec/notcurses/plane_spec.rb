@@ -686,6 +686,112 @@ RSpec.describe Notcurses::Plane do
         expect([status.exitstatus, out]).to eq([0, "ok\n"])
       end
     end
+
+    # ICH-489: ncplane_resize_internal svuota l'egcpool quando non conserva niente (notcurses.c:953-957), ma la
+    # cella base teneva il suo offset: con un EGC di più di 4 byte Plane#base andava in SIGSEGV.
+    context 'con un resize che non conserva niente e una cella base con un EGC lungo' do
+      before { skip "manca #{NcHelpers::MALLOC_DEBUG}" unless File.exist?(NcHelpers::MALLOC_DEBUG) }
+
+      calls = {
+        'resize_region senza regione' => 'pl.resize_region(rows: 3, cols: 5)',
+        'rotate_cw' => 'pl.rotate_cw',
+        'rotate_ccw' => 'pl.rotate_ccw'
+      }
+
+      calls.each do |name, call|
+        it "#{name} conserva la cella base (prima: SIGSEGV in Plane#base)" do
+          script = <<~RUBY
+            require 'notcurses'
+            Process.setrlimit(:CORE, 0)
+            Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                    drain_input: true) do |nc|
+              pl = nc.stdplane.create_child(rows: 3, cols: 8)
+              red = Notcurses::Channels.rgb(255, 0, 0, 0, 0, 0)
+              pl.set_base(egc: '👍🏽', styles: :bold, channels: red)
+              want = pl.base
+              #{call}
+              abort "base: \#{pl.base.inspect}" unless pl.base == want
+              pl.putstr('ab', y: 0, x: 0)
+              nc.render
+              abort 'base dopo la scrittura' unless pl.base == want
+              pl.close
+            end
+            puts 'ok'
+          RUBY
+          expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+        end
+
+        # review: la base provvisoria (uno spazio) non deve cancellare quella che un callback di resize imposta
+        it "#{name}: la base impostata da un callback di resize resta (prima: la base vecchia la sovrascriveva)" do
+          script = <<~RUBY
+            require 'notcurses'
+            Process.setrlimit(:CORE, 0)
+            Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                    drain_input: true) do |nc|
+              pl = nc.stdplane.create_child(rows: 3, cols: 8)
+              pl.set_base(egc: '👍🏽', styles: :bold)
+              child = pl.create_child(rows: 1, cols: 1)
+              child.set_resize_callback do
+                pl.set_base(egc: 'X', styles: :italic)
+                0
+              end
+              #{call}
+              abort "base: \#{pl.base.inspect}" unless pl.base == Notcurses::Cell.new(egc: 'X', styles: :italic)
+              pl.close
+            end
+            puts 'ok'
+          RUBY
+          expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+        end
+      end
+
+      # review: ncplane_base copia l'EGC nel pool, e con il pool senza spazio per la copia falliva prima del resize
+      it 'resize_region con il pool senza spazio per una copia della base conserva la base (prima: PlaneError)' do
+        script = <<~RUBY
+          require 'notcurses'
+          Process.setrlimit(:CORE, 0)
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            big = "漢\#{"\u0301" * 3_000_000}"
+            pl = nc.stdplane.create_child(rows: 3, cols: 8)
+            pl.set_base(egc: big)
+            pl.putstr(big, y: 0, x: 0)
+            pl.resize_region(rows: 3, cols: 5)
+            abort "dims: \#{pl.dims.inspect}" unless pl.dims == [3, 5]
+            abort 'base' unless pl.base.egc == big
+            pl.close
+          end
+          puts 'ok'
+        RUBY
+        expect(NcHelpers.heap_check(script, timeout: 60)).to eq([0, "ok\n"])
+      end
+
+      # review: un'eccezione asincrona subito dopo la base provvisoria lasciava la base a uno spazio
+      it 'un Interrupt dopo la base provvisoria lascia la base com\'era (prima: uno spazio)' do
+        script = <<~RUBY
+          require 'notcurses'
+          Process.setrlimit(:CORE, 0)
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            pl = nc.stdplane.create_child(rows: 3, cols: 8)
+            pl.set_base(egc: '👍🏽', styles: :bold)
+            want = pl.base
+            trace = TracePoint.new(:c_return) do |tp|
+              Process.kill('INT', Process.pid) if tp.method_id == :ncplane_set_base
+            end
+            begin
+              trace.enable { pl.resize_region(rows: 3, cols: 5) }
+            rescue Interrupt
+              nil
+            end
+            abort "base: \#{pl.base.inspect}" unless pl.base == want
+            pl.close
+          end
+          puts 'ok'
+        RUBY
+        expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+      end
+    end
   end
 
   describe 'nome, genitore e pile' do
@@ -1029,6 +1135,18 @@ RSpec.describe Notcurses::Plane do
         expect(p.at(y: 1, x: 0)).to eq(Notcurses::Cell.new(egc: ''))
         nc.render
         expect(nc.at(4, 4)).to be_empty # il C la disegna come uno spazio (render.c:619)
+      end
+    end
+
+    # ICH-490: ncplane_at_yx_cell copia gli EGC di più di 4 byte nell'egcpool del piano e con il pool pieno (16 MiB)
+    # fallisce; contents sollevava PlaneError anche se il contenuto era intatto e at lo leggeva.
+    it 'contents legge gli EGC lunghi con l\'egcpool pieno, come at (prima: PlaneError)' do
+      with_parent(rows: 2, cols: 4) do |p|
+        big = "漢#{"́" * 3_000_000}" # 6 MB, due righe riempiono il pool
+        2.times { |y| p.putstr(big, y: y, x: 0) }
+        expect(p.contents).to eq(big * 2)
+        expect(p.contents).to eq([0, 1].map { |y| p.at(y: y, x: 0).egc }.join)
+        expect(p.contents(y: 1, rows: 1)).to eq(big)
       end
     end
 
@@ -1447,6 +1565,59 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    # ICH-530: la cella dopo la metà sinistra orfana restava in dst con gcluster 0 e la larghezza di quella di
+    # src (1): la riscrittura delle metà destre cercava solo quelle di larghezza 0, e la sequenza di scritture su
+    # quella riga di dst corrompeva l'heap (free(): invalid pointer in Plane#close).
+    context 'con una metà sinistra orfana sull\'ultima riga di src' do
+      before { skip "manca #{NcHelpers::MALLOC_DEBUG}" unless File.exist?(NcHelpers::MALLOC_DEBUG) }
+
+      it 'dst resta valido dopo una sequenza di scritture (prima: free(): invalid pointer)' do
+        script = <<~RUBY
+          require 'notcurses'
+          Process.setrlimit(:CORE, 0)
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            30.times do
+              dst = nc.stdplane.create_child(rows: 2, cols: 4)
+              dst.putstr('WXYZ', y: 1, x: 0)
+              src = nc.stdplane.create_child(rows: 2, cols: 4)
+              src.set_fg_rgb24(0xff0000)
+              src.putstr('a中c', y: 1, x: 0)
+              src.resize_region(rows: 2, cols: 3, keep_rows: 2, keep_cols: 2)
+              src.resize(2, 4)
+              src.putstr('X', y: 1, x: 2)
+              src.merge_down(dst)
+              src.close
+              dst.putstr('中', y: 1, x: 2)
+              dst.putstr('x', y: 1, x: 1)
+              dst.putstr('中', y: 1, x: 2)
+              dst.close
+            end
+          end
+          puts 'ok'
+        RUBY
+        expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+      end
+    end
+
+    it 'la cella dopo una metà sinistra orfana è valida in dst, su ogni riga (prima: gcluster 0 e larghezza 1)' do
+      [0, 1].each do |row|
+        dst = std.create_child(rows: 2, cols: 4)
+        src = std.create_child(rows: 2, cols: 4)
+        dst.putstr('WXYZ', y: row, x: 0)
+        src.set_fg_rgb24(0xff0000)
+        src.putstr('a中c', y: row, x: 0)
+        src.resize_region(rows: 2, cols: 3, keep_rows: 2, keep_cols: 2)
+        src.resize(2, 4)
+        src.putstr('X', y: row, x: 2)
+        src.merge_down(dst)
+        expect(dst.at(y: row, x: 2).egc).to eq('中') # prima: ''
+        expect(dst.contents(y: row, rows: 1)).to eq('a中Z')
+      ensure
+        [src, dst].each { |pl| pl&.close }
+      end
+    end
+
     # Il rilascio delle copie vecchie e il ripristino leggono il framebuffer e il pool di dst dopo chiamate Ruby,
     # dove gira un gestore trap. Prima un trap che cambiava dst in quella finestra portava a SIGSEGV
     # (nccell_release su un pool svuotato) o a un heap corrotto (ripristino con le dimensioni vecchie).
@@ -1519,6 +1690,72 @@ RSpec.describe Notcurses::Plane do
       # la seconda chiamata di pooled è quella dentro release_unused!, prima del filtro che legge il pool
       it 'un erase mentre il wrapper sceglie le copie vecchie da rilasciare (prima: SIGSEGV)' do
         script = trap_merge_script('erase', hook: :pooled, at: 2, big: 1)
+        expect(NcHelpers.heap_check(script, timeout: 60)).to eq([0, "ok\n"])
+      end
+
+      # ICH-529: un trap che ridimensiona dst dopo il controllo di undo_merge! e prima di write_bytes faceva
+      # scrivere il framebuffer vecchio (288 byte) in uno nuovo da 64. Un TracePoint manda il segnale a ogni
+      # ritorno di blocco di undo_merge! dopo release_gclusters!, cioè ai punti in cui prima il controllo (un
+      # lambda con all?) restava aperto; ora fra il controllo e la scrittura non ci sono blocchi.
+      it 'un resize dopo il rilascio delle copie nuove non fa scrivere il framebuffer vecchio (prima: heap corrotto)' do
+        script = <<~RUBY
+          require 'notcurses'
+          Process.setrlimit(:CORE, 0)
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            dst = nc.stdplane.create_child(rows: 3, cols: 6)
+            src = nc.stdplane.create_child(rows: 1, cols: 1)
+            2.times { |y| dst.putstr("a\#{"\\u0301" * 3_000_000}", y: y, x: 0) }
+            trap('USR1') { dst.resize(1, 4) }
+            armed = false
+            trace = TracePoint.new(:call, :b_return) do |tp|
+              if tp.event == :call
+                armed = true if tp.method_id == :release_gclusters!
+              elsif armed && tp.method_id == :undo_merge!
+                Process.kill('USR1', Process.pid)
+              end
+            end
+            begin
+              trace.enable { src.merge_down(dst) }
+            rescue Notcurses::PlaneError
+              nil
+            end
+            dst.close
+            src.close
+          end
+          puts 'ok'
+        RUBY
+        expect(NcHelpers.heap_check(script, timeout: 60)).to eq([0, "ok\n"])
+      end
+
+      # ICH-529 (review): la spec precedente manda il segnale solo ai ritorni di blocco, che il codice nuovo non ha
+      # più. Qui il resize arriva al ritorno di release_gclusters!, prima del controllo: dst deve restare 1x4 e il
+      # framebuffer vecchio non va scritto. Senza il secondo controllo di undo_merge! l'heap si corrompe.
+      it 'un resize al ritorno di release_gclusters! lascia dst 1x4 senza scrivere il framebuffer vecchio' do
+        script = <<~RUBY
+          require 'notcurses'
+          Process.setrlimit(:CORE, 0)
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            dst = nc.stdplane.create_child(rows: 3, cols: 6)
+            src = nc.stdplane.create_child(rows: 1, cols: 1)
+            2.times { |y| dst.putstr("a\#{"\\u0301" * 3_000_000}", y: y, x: 0) }
+            fired = 0
+            trap('USR1') { fired += 1; dst.resize(1, 4) }
+            trace = TracePoint.new(:return) do |tp|
+              Process.kill('USR1', Process.pid) if tp.method_id == :release_gclusters!
+            end
+            begin
+              trace.enable { src.merge_down(dst) }
+            rescue Notcurses::PlaneError
+              nil
+            end
+            abort "trap: \#{fired}, dst: \#{dst.dims.inspect}" unless fired == 1 && dst.dims == [1, 4]
+            dst.close
+            src.close
+          end
+          puts 'ok'
+        RUBY
         expect(NcHelpers.heap_check(script, timeout: 60)).to eq([0, "ok\n"])
       end
     end
