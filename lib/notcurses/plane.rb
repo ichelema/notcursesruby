@@ -36,11 +36,11 @@ module Notcurses
   # resize (anche la crescita per autogrow), {#rotate_cw}/{#rotate_ccw} e il
   # merge sul piano di destinazione permutano o perdono righe.
   #
-  # Campi privati. Alcuni workaround ({#duplicate}, {#merge_down},
-  # {#resize_region}, il controllo dei glifi larghi tagliati) leggono o
-  # scrivono campi privati del piano C: lo fanno solo con la libreria 3.0.17
-  # e se quei campi coincidono con i valori dell'API pubblica; altrimenti non
-  # fanno nulla e il bug resta.
+  # Campi privati. Alcuni workaround ({#duplicate}, {#merge_down}, {#at},
+  # {#contents}, {#resize_region}, il controllo dei glifi larghi tagliati)
+  # leggono o scrivono campi privati del piano C: lo fanno solo con la
+  # libreria 3.0.17 e se quei campi coincidono con i valori dell'API pubblica;
+  # altrimenti non fanno nulla e il bug resta.
   class Plane
     include Resource
 
@@ -481,7 +481,9 @@ module Notcurses
     # Bug di 3.0.17 aggirato: un resize che non conserva niente (keep_rows 0)
     # svuota l'egcpool, e la cella base con un EGC di più di 4 byte finiva su
     # un pool liberato (SIGSEGV in {#base}). Il wrapper rimette la cella base
-    # dopo il resize.
+    # dopo il resize; durante il resize la base è uno spazio, e un callback di
+    # resize di un figlio che la legge la vede così. Se il callback cambia la
+    # base, il wrapper lascia la sua.
     #
     # Un glifo largo tagliato che resta sul bordo del piano diventa una cella
     # vuota, come in {#resize}: con keep_x dentro un glifo largo ne resterebbe
@@ -2520,18 +2522,28 @@ module Notcurses
     # Esegue il blocco, che fa un resize del C senza conservare niente (anche la rotazione, che ridimensiona il
     # piano a vuoto): notcurses.c:953-957 svuota l'egcpool, ma la cella base tiene il suo offset e Plane#base va
     # in SIGSEGV (ICH-489). Con un EGC di più di 4 byte, che sta nel pool, la cella base diventa uno spazio durante
-    # la chiamata (set_base rilascia l'EGC prima che il pool sia svuotato) e torna com'era dopo. Con active falso
-    # (un resize che conserva celle, e quindi il pool) il blocco gira senza altro.
+    # la chiamata (set_base rilascia l'EGC prima che il pool sia svuotato) e torna com'era dopo, a meno che un
+    # callback di resize o un trap l'abbia cambiata nel frattempo: quella base vince. Con active falso (un resize
+    # che conserva celle, e quindi il pool) il blocco gira senza altro.
     def keeping_base_cell(active = true)
-      saved = base if active
+      ptr = to_ptr
+      saved = read_base(ptr) if active
       return yield unless saved && saved.egc.bytesize > 4
 
-      set_base(egc: ' ', styles: saved.styles, channels: saved.channels)
+      temporary = Cell.new(egc: ' ', styles: saved.styles, channels: saved.channels)
       begin
+        set_base(egc: ' ', styles: saved.styles, channels: saved.channels)
         yield
       ensure
-        set_base(egc: saved.egc, styles: saved.styles, channels: saved.channels) unless closed?
+        set_base(egc: saved.egc, styles: saved.styles, channels: saved.channels) if !closed? && read_base(ptr) == temporary
       end
+    end
+
+    # Cella base letta dal campo privato di ptr, senza la copia nel pool che fa ncplane_base: con il pool senza
+    # spazio per la copia ncplane_base fallisce (ICH-489, review). Senza internals ripiega su {#base}.
+    def read_base(ptr)
+      st = internals(ptr)
+      st ? cell_content(ptr, st[:basecell]) : base
     end
 
     # EGC della cella (y, x) letto con ncplane_at_yx (strdup, senza passare dall'egcpool) quando
