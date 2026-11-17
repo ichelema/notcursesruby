@@ -1499,6 +1499,23 @@ RSpec.describe Notcurses::Plane do
         expect(NcHelpers.heap_check(script, timeout: 60)).to eq([0, "ok\n"])
       end
 
+      # Numeric#nonzero? chiama zero? con la guardia di ricorsione di Ruby: un trap che gira lì dentro e chiama
+      # nonzero? sullo stesso intero riceve NameError (per esempio un trap che fonde altri piani con 👍🏽, primo
+      # byte 0xF0 nei due pool). TracePoint rinvia il trap fuori dalla guardia: la spec controlla la causa.
+      it 'non chiama Numeric#nonzero? nei filtri di merge_down (prima: NameError con un trap che fonde altri piani)' do
+        dst = std.create_child(rows: 1, cols: 4)
+        src = std.create_child(rows: 1, cols: 1)
+        dst.putstr('👍🏽', y: 0, x: 0)
+        calls = []
+        trace = TracePoint.new(:c_call) do |tp|
+          calls << tp.lineno if tp.method_id == :nonzero? && tp.path.end_with?('/plane.rb')
+        end
+        trace.enable { src.merge_down(dst) }
+        expect(calls).to eq([])
+      ensure
+        [src, dst].each { |pl| pl&.close }
+      end
+
       # la seconda chiamata di pooled è quella dentro release_unused!, prima del filtro che legge il pool
       it 'un erase mentre il wrapper sceglie le copie vecchie da rilasciare (prima: SIGSEGV)' do
         script = trap_merge_script('erase', hook: :pooled, at: 2, big: 1)

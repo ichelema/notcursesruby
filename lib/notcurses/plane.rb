@@ -475,6 +475,8 @@ module Notcurses
     # classe). Un callback che nel primo passo ridimensiona il piano lavora
     # sul piano intermedio: ne può togliere le righe conservate invece di
     # quelle vuote in più, e il secondo passo allora fallisce (PlaneError).
+    # Il resize in due passi costa di più: circa 2 ms invece di 0,2 su un
+    # piano 50x200.
     #
     # Un glifo largo tagliato che resta sul bordo del piano diventa una cella
     # vuota, come in {#resize}: con keep_x dentro un glifo largo ne resterebbe
@@ -1414,13 +1416,16 @@ module Notcurses
     # le condizioni di "Campi privati" nella classe (altrimenti il pool cresce
     # come prima). Durante la fusione le copie vecchie e quelle nuove stanno
     # insieme nel pool: se le nuove non entrano (EGC di dst per più di circa
-    # 8 MiB), il wrapper annulla la fusione e solleva PlaneError.
+    # 8 MiB), il wrapper annulla la fusione e solleva PlaneError. Questi
+    # controlli raddoppiano circa il costo: su un piano 50x200 la fusione
+    # passa da circa 5 a circa 11 ms.
     #
     # Un gestore +trap+ non deve cambiare dst durante merge_down (notcurses
-    # non è rientrante): il wrapper rilegge dst prima di rilasciare o
-    # ripristinare e non tocca un pool svuotato o un framebuffer di altre
-    # dimensioni, ma la fusione può restare a metà (copie vecchie nel pool,
-    # PlaneError anche con spazio nel pool).
+    # non è rientrante). Il wrapper rilegge dst prima di rilasciare o
+    # ripristinare, ma questo restringe le finestre, non le chiude: un trap
+    # gira anche al ritorno dei metodi C. La fusione può restare a metà
+    # (copie vecchie nel pool, PlaneError anche con spazio nel pool) e il
+    # processo può andare in crash.
     #
     # @param dst [Plane] piano di destinazione, della stessa pila
     # @return [self]
@@ -2485,8 +2490,9 @@ module Notcurses
             st[:scrolling] == FFI.ncplane_scrolling_p(ptr) && st[:autogrow] == FFI.ncplane_autogrow_p(ptr)
     end
 
-    # Byte del framebuffer di st (Internals), in ordine fisico. Fra la lettura di fb e quella dei byte nessun
-    # metodo Ruby (NcCell.size lo è): un gestore trap potrebbe ridimensionare il piano.
+    # Byte del framebuffer di st (Internals), in ordine fisico. CELL_BYTES invece di NcCell.size (un metodo
+    # Ruby) restringe la finestra fra la lettura di fb e quella dei byte, dove un gestore trap può
+    # ridimensionare il piano; non la chiude: un trap gira anche al ritorno dei metodi C.
     def fb_bytes(st) = st[:fb].read_bytes(st[:leny] * st[:lenx] * CELL_BYTES)
 
     # gcluster delle celle in bytes che tengono l'EGC nell'egcpool (byte alto 0x01, cell_extended_p di
@@ -2497,6 +2503,7 @@ module Notcurses
 
     # Rilascia dall'egcpool di ptr gli EGC dei gcluster dati. Prima di ogni rilascio rilegge il pool da st
     # (Internals di ptr): un gestore trap che ha svuotato il piano lo lascia NULL (SIGSEGV in nccell_release).
+    # Restringe la finestra, non la chiude: il trap può girare anche fra il controllo e il rilascio.
     def release_gclusters!(ptr, st, gclusters)
       cell = FFI::NcCell.new
       gclusters.each do |gcluster|
@@ -2518,8 +2525,10 @@ module Notcurses
       unused = gclusters - pooled(fb_bytes(st)) - [st[:basecell][:gcluster]]
       release_gclusters!(ptr, st, unused.select do |g|
         idx = g & 0xffffff
-        pool = st[:pool] # riletto per ogni cella: un trap lo può liberare fra due chiamate Ruby
-        !pool.null? && idx < st[:poolsize] && pool.get_uint8(idx).nonzero? && (idx.zero? || pool.get_uint8(idx - 1).zero?)
+        # pool riletto per ogni cella: un trap lo può liberare. != 0 e non nonzero?, che chiama zero? sotto la
+        # guardia di ricorsione di Ruby: un trap che lì chiama nonzero? sullo stesso intero riceve NameError
+        pool = st[:pool]
+        !pool.null? && idx < st[:poolsize] && pool.get_uint8(idx) != 0 && (idx.zero? || pool.get_uint8(idx - 1) == 0)
       end)
     end
 
@@ -2549,7 +2558,7 @@ module Notcurses
       cells = bytes.unpack("LxCx#{CELL_BYTES - 6}" * (bytes.bytesize / CELL_BYTES)).each_slice(2).to_a
       cells.each_with_index.any? do |(g, w), i|
         pg, pw = cells[i - 1] unless (i % cols).zero?
-        g.zero? && w.positive? && !(pg&.nonzero? && pw >= 2)
+        g.zero? && w.positive? && !(pg && pg != 0 && pw >= 2) # != 0: vedi release_unused!
       end
     end
 
