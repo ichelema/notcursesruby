@@ -12,10 +12,11 @@
   `6374e41` (ICH-529, ICH-530, ICH-489, ICH-493, ICH-490 a Done). Log in `memory/backlog-issue.md`, esito in
   `RICONSEGNA.md`. `master` su `6374e41`: 1124 esempi, 0 fallimenti (ordine normale, semi 1234, 4242, 7); coverage
   98,25 %; RuboCop 0; YARD 100 %; layer FFI invariato; CI verde.
-- **Prossimo step: lotto 3** (ICH-454, ICH-456, ICH-455). Procedura da
-  `/trinity:workflow:1_create-worktree master ICH-454 ICH-456 ICH-455 opus` (branch `bug/ICH-454-456-455-opus`).
-  Prima: `/trinity:workflow:5_remove-worktree bug+ICH-529-530-489-493-490-opus` (worktree, branch locale e remoto).
-- Aperte dal lotto 2b, in Backlog, da assegnare a un lotto: ICH-531 (il ripristino della base dopo un resize o una
+- **Prossimo step: lotto 2c** (ICH-531, ICH-532: le issue nate dal lotto 2b, entrambe in `lib/notcurses/plane.rb`;
+  scelta dell'utente del 2026-11-17), poi il lotto 3 (ICH-454, ICH-456, ICH-455). Procedura da
+  `/trinity:workflow:1_create-worktree master ICH-531 ICH-532 opus` (branch `bug/ICH-531-532-opus`). Il worktree del
+  lotto 2b è già rimosso.
+- Nel lotto 2c, nate dal lotto 2b: ICH-531 (il ripristino della base dopo un resize o una
   rotazione richiede spazio nel pool) e ICH-532 (scelta dell'utente su ICH-530, opzione 3: dopo una metà sinistra
   orfana `merge_down` deve lasciare in `dst` uno spazio e il glifo di `src`, non il glifo largo che lo copre). Nel round 2 Fable non ha
   fatto la review (limite d'uso, si azzera il 2026-11-20): se serve, rilancia la review di Fable su `f209900`.
@@ -137,7 +138,7 @@ successivi.
 
 Proposta del 2026-11-15, controllata con le descrizioni di Linear e approvata dall'utente con 4 cambi: ICH-225 nel
 lotto 1, ICH-214 nel lotto 2, ICH-464 nel lotto 5, ICH-474 nel lotto 7 (motivi in `memory/backlog-issue.md`).
-Le issue nate dai lotti 1 e 2 sono state aggiunte dopo (lotti 2, 2b, 6, 8 e 14). Criteri:
+Le issue nate dai lotti 1, 2 e 2b sono state aggiunte dopo (lotti 2, 2b, 2c, 6, 8 e 14). Criteri:
 
 1. prima la priorità di Linear (High, poi Medium, poi Low);
 2. le issue che toccano lo stesso codice stanno nello stesso lotto;
@@ -163,6 +164,8 @@ Le issue nate dai lotti 1 e 2 sono state aggiunte dopo (lotti 2, 2b, 6, 8 e 14).
 | 2b | `bug` | ICH-489 | Medium | Keep the base cell valid after a resize that keeps nothing (egcpool dump) (nata dal lotto 2) |
 | 2b | `bug` | ICH-493 | Medium | Keep Plane#at from crashing on a Kitty bitmap plane after a render (nata dal lotto 2) |
 | 2b | `bug` | ICH-490 | Low | Make Plane#contents read EGCs when the egcpool has no room for a copy (nata dal lotto 2) |
+| 2c | `bug` | ICH-531 | Medium | Keep the base cell when the egcpool fills up during a resize or rotation that keeps nothing (nata dal lotto 2b) |
+| 2c | `bug` | ICH-532 | Low | Keep Plane#merge_down from covering the glyph after an orphan wide-glyph left half on the last row of src (nata dal lotto 2b) |
 | 3 | `bug` | ICH-454 | Medium | Keep notcurses' internal line-signal flag in sync with ISIG in EventLoop#run |
 | 3 | `bug` | ICH-456 | Medium | Raise one line signal per kitty Ctrl+C press, not on its repeat and release |
 | 3 | `bug` | ICH-455 | Low | Do not deliver the queued Ctrl+C of an interrupted run to a following run(no_linesigs: true) |
