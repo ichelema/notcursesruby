@@ -22,6 +22,10 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Plane#resize_region` senza regione conservata (`keep_rows: 0`), `#rotate_cw` e `#rotate_ccw` non lasciano più la
+  cella base su un egcpool liberato (ICH-489). notcurses svuota il pool quando il resize non conserva niente, ma la
+  cella base tiene il suo offset: con un EGC di più di 4 byte (per esempio `👍🏽`) `Plane#base` andava in SIGSEGV. Il
+  wrapper rimette la stessa cella base (EGC, stili e canali) dopo il resize.
 - `Plane#merge_down` non lascia più in `dst` una cella rotta dopo una metà sinistra orfana di un glifo largo in
   `src` (ICH-530). notcurses lascia la cella a destra con `gcluster` 0 e la larghezza della cella di `src`; il
   wrapper cercava solo le metà destre con larghezza 0. Ora riscrive anche questo caso: la metà sinistra torna un

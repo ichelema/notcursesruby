@@ -478,6 +478,11 @@ module Notcurses
     # Il resize in due passi costa di più: circa 2 ms invece di 0,2 su un
     # piano 50x200.
     #
+    # Bug di 3.0.17 aggirato: un resize che non conserva niente (keep_rows 0)
+    # svuota l'egcpool, e la cella base con un EGC di più di 4 byte finiva su
+    # un pool liberato (SIGSEGV in {#base}). Il wrapper rimette la cella base
+    # dopo il resize.
+    #
     # Un glifo largo tagliato che resta sul bordo del piano diventa una cella
     # vuota, come in {#resize}: con keep_x dentro un glifo largo ne resterebbe
     # la metà destra in colonna 0, e la scrittura successiva andrebbe nella riga
@@ -541,7 +546,9 @@ module Notcurses
       st = two_steps && internals(ptr)
       old = st && fb_bytes(st)
       fb = st && st[:fb].address
-      rc = FFI.ncplane_resize(ptr, keep_y, keep_x, keep_rows, keep_cols, y_off - extra, x_off, rows + extra, cols)
+      rc = keeping_base_cell(keep_rows.zero?) do
+        FFI.ncplane_resize(ptr, keep_y, keep_x, keep_rows, keep_cols, y_off - extra, x_off, rows + extra, cols)
+      end
       st = two_steps && internals(ptr)
       # con la malloc fallita (notcurses.c:918) il primo passo non ha toccato il piano (fb uguale): niente secondo
       if two_steps && !(fb && st && st[:fb].address == fb)
@@ -1148,6 +1155,8 @@ module Notcurses
     # diventano colonne/2 e le colonne righe*2, l'origine non cambia. Servono
     # un numero pari di colonne e celle con soli "", " ", "▀", "▄" o "█"; la
     # rotazione perde informazione (cw e poi ccw non restituisce l'originale).
+    # La cella base resta com'era (vedi {#resize_region}, resize che non
+    # conserva niente).
     #
     # @return [self]
     # @raise [PlaneError] se la rotazione non è possibile (anche sullo
@@ -1155,7 +1164,7 @@ module Notcurses
     #   ridimensionato e vuoto)
     # @raise [ClosedError] se il piano è chiuso
     def rotate_cw
-      rc = FFI.ncplane_rotate_cw(to_ptr)
+      rc = keeping_base_cell { FFI.ncplane_rotate_cw(to_ptr) }
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, 'ncplane_rotate_cw')
       self
@@ -1168,7 +1177,7 @@ module Notcurses
     # @raise [PlaneError] se la rotazione non è possibile
     # @raise [ClosedError] se il piano è chiuso
     def rotate_ccw
-      rc = FFI.ncplane_rotate_ccw(to_ptr)
+      rc = keeping_base_cell { FFI.ncplane_rotate_ccw(to_ptr) }
       @context.raise_callback_errors!
       Util.check!(rc, PlaneError, 'ncplane_rotate_ccw')
       self
@@ -2492,6 +2501,23 @@ module Notcurses
       st = Internals.new(ptr)
       st if st[:leny] == FFI.ncplane_dim_y(ptr) && st[:lenx] == FFI.ncplane_dim_x(ptr) &&
             st[:scrolling] == FFI.ncplane_scrolling_p(ptr) && st[:autogrow] == FFI.ncplane_autogrow_p(ptr)
+    end
+
+    # Esegue il blocco, che fa un resize del C senza conservare niente (anche la rotazione, che ridimensiona il
+    # piano a vuoto): notcurses.c:953-957 svuota l'egcpool, ma la cella base tiene il suo offset e Plane#base va
+    # in SIGSEGV (ICH-489). Con un EGC di più di 4 byte, che sta nel pool, la cella base diventa uno spazio durante
+    # la chiamata (set_base rilascia l'EGC prima che il pool sia svuotato) e torna com'era dopo. Con active falso
+    # (un resize che conserva celle, e quindi il pool) il blocco gira senza altro.
+    def keeping_base_cell(active = true)
+      saved = base if active
+      return yield unless saved && saved.egc.bytesize > 4
+
+      set_base(egc: ' ', styles: saved.styles, channels: saved.channels)
+      begin
+        yield
+      ensure
+        set_base(egc: saved.egc, styles: saved.styles, channels: saved.channels) unless closed?
+      end
     end
 
     # Byte del framebuffer di st (Internals), in ordine fisico. CELL_BYTES invece di NcCell.size (un metodo

@@ -686,6 +686,38 @@ RSpec.describe Notcurses::Plane do
         expect([status.exitstatus, out]).to eq([0, "ok\n"])
       end
     end
+
+    # ICH-489: ncplane_resize_internal svuota l'egcpool quando non conserva niente (notcurses.c:953-957), ma la
+    # cella base teneva il suo offset: con un EGC di più di 4 byte Plane#base andava in SIGSEGV.
+    context 'con un resize che non conserva niente e una cella base con un EGC lungo' do
+      {
+        'resize_region senza regione' => 'pl.resize_region(rows: 3, cols: 5)',
+        'rotate_cw' => 'pl.rotate_cw',
+        'rotate_ccw' => 'pl.rotate_ccw'
+      }.each do |name, call|
+        it "#{name} conserva la cella base (prima: SIGSEGV in Plane#base)" do
+          script = <<~RUBY
+            require 'notcurses'
+            Process.setrlimit(:CORE, 0)
+            Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                    drain_input: true) do |nc|
+              pl = nc.stdplane.create_child(rows: 3, cols: 8)
+              red = Notcurses::Channels.rgb(255, 0, 0, 0, 0, 0)
+              pl.set_base(egc: '👍🏽', styles: :bold, channels: red)
+              want = pl.base
+              #{call}
+              abort "base: \#{pl.base.inspect}" unless pl.base == want
+              pl.putstr('ab', y: 0, x: 0)
+              nc.render
+              abort 'base dopo la scrittura' unless pl.base == want
+              pl.close
+            end
+            puts 'ok'
+          RUBY
+          expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+        end
+      end
+    end
   end
 
   describe 'nome, genitore e pile' do
