@@ -22,6 +22,12 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Plane#rotate_cw`, `#rotate_ccw` e `#resize_region` (che non conserva niente) non perdono più la cella base con
+  l'egcpool pieno (ICH-531). Durante la chiamata C il wrapper rilasciava l'EGC della base dal pool, e il C poteva
+  usare quello spazio: dopo la chiamata la base non trovava posto, diventava vuota e l'errore di `ncplane_set_base`
+  nascondeva quello del C. Ora l'EGC resta nel pool durante la chiamata. Se il C rifiuta la rotazione, la base resta
+  com'era e il metodo solleva l'errore del C. Se il C fa il resize, la base torna prima del primo callback Ruby di
+  resize di un figlio: un callback che riempie il pool vede fallire le sue scritture, non la base.
 - `Plane#contents` legge gli EGC di più di 4 byte anche con l'egcpool del piano pieno (ICH-490). `ncplane_at_yx_cell`
   copia l'EGC nel pool (16 MiB) e fallisce quando non c'è spazio: `contents` sollevava `PlaneError` con il contenuto
   intatto. Ora legge quelle celle con `ncplane_at_yx`, che non usa il pool, come `Plane#at`. Un piano con un bitmap

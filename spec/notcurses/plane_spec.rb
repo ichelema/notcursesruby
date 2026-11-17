@@ -791,6 +791,72 @@ RSpec.describe Notcurses::Plane do
         RUBY
         expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
       end
+
+      # ICH-531: la base provvisoria rilasciava l'EGC della base dal pool prima della chiamata C, che poteva usare
+      # quello spazio; dopo la chiamata set_base non trovava posto (limite di 16 MiB) e la base andava persa.
+      %w[rotate_cw rotate_ccw].each do |name|
+        it "#{name} rifiutato con il pool pieno lascia la base e solleva l'errore del C (prima: ncplane_set_base)" do
+          script = <<~RUBY
+            require 'notcurses'
+            Process.setrlimit(:CORE, 0)
+            Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                    drain_input: true) do |nc|
+              big = "漢\#{"\\u0301" * 3_000_000}"
+              pl = nc.stdplane.create_child(rows: 3, cols: 8)
+              pl.set_base(egc: big, styles: :bold, channels: Notcurses::Channels.rgb(255, 0, 0, 0, 0, 0))
+              want = pl.base
+              pl.putstr(big, y: 0, x: 0)
+              begin
+                pl.#{name}
+                abort 'nessun errore'
+              rescue Notcurses::PlaneError => e
+                abort "errore: \#{e.message}" unless e.message.include?('ncplane_#{name}')
+              end
+              abort "dims: \#{pl.dims.inspect}" unless pl.dims == [3, 8]
+              abort 'base vuota' unless pl.at(y: 2, x: 7).egc == big
+              pl.erase_region(0, 0, 1, 2) # ncplane_base copia la base nel pool: serve spazio per la copia
+              abort 'base' unless pl.base == want
+              pl.close
+            end
+            puts 'ok'
+          RUBY
+          expect(NcHelpers.heap_check(script, timeout: 60)).to eq([0, "ok\n"])
+        end
+      end
+
+      it 'resize_region con un callback di un figlio che riempie il pool conserva la base (prima: la perdeva)' do
+        script = <<~RUBY
+          require 'notcurses'
+          Process.setrlimit(:CORE, 0)
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            big = "漢\#{"\\u0301" * 3_000_000}"
+            pl = nc.stdplane.create_child(rows: 3, cols: 8)
+            pl.set_base(egc: big, styles: :bold, channels: Notcurses::Channels.rgb(255, 0, 0, 0, 0, 0))
+            want = pl.base
+            errors = []
+            child = pl.create_child(rows: 1, cols: 1)
+            child.set_resize_callback do
+              %w[a b].each_with_index do |c, y|
+                pl.putstr("\#{c}\#{"\\u0301" * 3_000_000}", y: y, x: 0)
+              rescue Notcurses::PlaneError, ArgumentError => e # il controllo di zero_width_egc! carica l'EGC nel pool
+                errors << e.message
+              end
+              0
+            end
+            pl.resize_region(rows: 3, cols: 5)
+            abort "dims: \#{pl.dims.inspect}" unless pl.dims == [3, 5]
+            # il pool (16 MiB) ha posto per la base e per uno solo dei due EGC del callback
+            abort "errori del callback: \#{errors.inspect}" unless errors.size == 1
+            abort 'base vuota' unless pl.at(y: 2, x: 4).egc == big
+            pl.erase
+            abort 'base' unless pl.base == want
+            pl.close
+          end
+          puts 'ok'
+        RUBY
+        expect(NcHelpers.heap_check(script, timeout: 60)).to eq([0, "ok\n"])
+      end
     end
   end
 
