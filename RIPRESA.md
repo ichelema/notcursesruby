@@ -34,6 +34,10 @@
     `Plane::Internals` (`lib/notcurses/plane.rb:91`). Coda piena e `drain_input` alzano senza accodare.
 - Prova a vista in Kitty non ancora fatta: la fa l'utente, da una finestra di Kitty con il controllo remoto, nel
   worktree del lotto: `NC_GRAPHICS=1 bundle exec rspec spec/graphics/terminal_spec.rb -e 'Ctrl+C con CapsLock'`.
+- **Dopo i fix di ICH-536, ICH-537 e ICH-538:** review-fix loop, PR #26 fuori dal draft (`gh pr ready 26`), CI verde,
+  merge fatto dall'utente (`gh pr merge 26 --merge`, vedi sotto), poi chiusura del lotto 3 (passo 7 della procedura)
+  e `/trinity:workflow:5_remove-worktree bug+ICH-454-456-455-opus`. Con l'opzione (b) prima va la PR del lotto 3b nel
+  branch del lotto 3, poi la PR #26 su `master`.
 - **Review con GPT e Sonnet**: `gpt-bridge:reviewer` e `trinity:reviewer` con `model: sonnet` ed `effort: max` al
   posto di Fable (scelta dell'utente del 2026-11-18; worktree di review `review+<base-name>-sonnet`). I revisori
   eseguono gli script da stdin, senza file e senza `.review-tmp` (non è in `.gitignore`), e rspec in una subshell con
