@@ -105,6 +105,11 @@ ruby "$(gem contents notcursesruby | grep examples/demo.rb)"
 - Alcuni bug di notcurses 3.0.17 sono aggirati nel wrapper; alcune funzioni C non sono offerte perché in 3.0.17 non
   funzionano (render su buffer o su file, cancellazione delle voci di un `Selector`).
 - Ctrl+S, Ctrl+Q e i tasti dei segnali non arrivano all'applicazione senza le opzioni di `run` descritte sopra.
+- Con notcurses 3.0.17 un carattere UTF-8 di più byte spezzato fra due letture dell'input blocca il thread di input
+  di notcurses: `get` ed `EventLoop#run` non ricevono più tasti, e `Context#close` e `Direct#close` non ritornano.
+  Succede quando notcurses legge stdin senza un terminale separato: stdin sul terminale (per esempio un incolla lungo
+  di testo non ASCII) o rediretto senza `/dev/tty`. Il wrapper non lo può evitare; la correzione è proposta a
+  notcurses ([PR #2954](https://github.com/dankamongmen/notcurses/pull/2954)).
 - Provata su Linux x86_64 e su macOS arm64 (Homebrew). La CI gira solo su Linux: su macOS la suite va eseguita a
   mano.
 - I blitter a pixel sono provati su un terminale vero solo con la grafica kitty (Kitty e Ghostty, spec in

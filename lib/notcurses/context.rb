@@ -697,6 +697,14 @@ module Notcurses
     # e non consegnati da run arrivano ai get successivi, prima della coda di
     # notcurses.
     #
+    # Limite di notcurses 3.0.17 (ICH-463): se una lettura dell'input finisce a
+    # metà di un carattere UTF-8 di più byte, il thread di input di notcurses
+    # gira per sempre su quei byte (process_melange, in.c:2402-2434). get non
+    # riceve più eventi e {#close} non ritorna. Succede quando notcurses legge
+    # stdin senza un terminale separato: stdin sul terminale (per esempio un
+    # incolla lungo di testo non ASCII) o rediretto senza /dev/tty. Il wrapper
+    # non lo può evitare: la correzione è proposta a notcurses (PR #2954).
+    #
     # @param timeout [Numeric, nil] secondi di attesa massima, 0..2147483647
     #   (2^31 - 1, circa 68 anni); nil = attende senza limite; 0 = non attende
     # @return [Input, nil] l'evento, o nil se il timeout scade. Con stdin chiuso

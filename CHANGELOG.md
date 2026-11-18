@@ -274,6 +274,14 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 - README, esempio `Notcurses::UI`: il risultato si stampa dopo il blocco di `Context.open`; prima la riga finiva
   sullo schermo alternativo e la chiusura la cancellava (ICH-304).
 
+### Limiti noti
+
+- notcurses 3.0.17 si blocca quando una lettura dell'input finisce a metà di un carattere UTF-8 di più byte:
+  `Context#get`, `Direct#get` ed `EventLoop#run` non ricevono più input, e `Context#close` e `Direct#close` non
+  ritornano. Succede con stdin sul terminale (per esempio un incolla lungo di testo non ASCII) o rediretto senza
+  `/dev/tty`. Il wrapper non lo può evitare: il limite è nello YARD e nel README, e la correzione è proposta a
+  notcurses ([PR #2954](https://github.com/dankamongmen/notcurses/pull/2954)) (ICH-463).
+
 ## [0.1.0] - 2026-10-27
 
 Prima versione. Binding completo di notcurses 3.0.17.
