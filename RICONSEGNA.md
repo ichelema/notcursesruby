@@ -576,9 +576,11 @@ MISE_EXEC_AUTO_INSTALL=false BUNDLE_GEMFILE="$S/gemfile31/Gemfile" TERM=xterm-25
 - Riassunto del funzionamento (i dettagli sono nel YARD di ogni classe e nel design):
   - un giro di `run`: `IO.select` sul fd di `Context#inputready_fd` e su un pipe di risveglio, con il timeout del
     primo timer; poi il resize segnalato, tutto l'input pronto, i blocchi di `post`, i timer scaduti e al massimo un
-    render;
-  - solo il thread del ciclo chiama notcurses; `post` e `stop` funzionano da qualsiasi thread e dai `trap` (`Queue`
-    e un byte sul pipe, niente `Mutex`);
+    render (dal lotto 3 delle issue in Backlog `run` attende sul pipe del thread di input del contesto, non sul fd
+    di notcurses);
+  - solo il thread del ciclo chiama notcurses (dal lotto 3 delle issue in Backlog anche il thread di input, che
+    durante `run` legge i tasti con `notcurses_getvec`); `post` e `stop` funzionano da qualsiasi thread e dai `trap`
+    (`Queue` e un byte sul pipe, niente `Mutex`);
   - consegna in `App`: componente con il focus (o sotto il mouse), risalita ai contenitori fino alla radice attiva,
     poi `on_key`, Tab e Shift+Tab, `on_input`;
   - un componente ridisegna tutto dal proprio stato a ogni layout: nessun widget scorre i propri piani o copia celle

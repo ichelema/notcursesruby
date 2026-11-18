@@ -37,22 +37,25 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   (`Context#linesigs_flag?`, nuovo, `@api private`): `run` non chiama più `linesigs_disable` con il flag già spento,
   che con `loglevel: :warning` scriveva "linedisc signals already disabled" a ogni `run` dopo il primo (ICH-538).
   Con il flag già spento `run(no_linesigs: true)` spegne solo ISIG (`Context#isig_disable`, nuovo, `@api private`).
-- `EventLoop#run` alza un solo segnale per ogni pressione di Ctrl+C, Ctrl+Z e Ctrl+\ di kitty (ICH-456). notcurses
-  lo alzava anche per la ripetizione e il rilascio del tasto, anche dopo la fine di `run`: un Ctrl+C interrompeva
-  due volte. Ora all'avvio `run` toglie il compito a notcurses (`Context#linesigs_disable`) e rimette ISIG com'era
+- `EventLoop#run` alza un solo segnale per ogni pressione di Ctrl+C, Ctrl+Z e Ctrl+\ di kitty (ICH-456). notcurses lo
+  alzava anche per la ripetizione e il rilascio del tasto, anche dopo la fine di `run`: un Ctrl+C interrompeva due
+  volte. Ora all'avvio `run` toglie il compito a notcurses (`Context#linesigs_disable`) e rimette ISIG com'era
   (`Context#isig_enable`, nuovo, `@api private`). Durante `run` un thread di input del contesto (`InputReader`,
   `Context#input_reader_start` e `#input_reader_stop`, nuovi, `@api private`) legge i tasti appena arrivano e alza il
   segnale alla pressione, subito anche mentre un handler, un timer o un blocco di `post` occupa il ciclo, e anche per
   Ctrl+C con CapsLock o NumLock (ICH-536); la ripetizione e il rilascio non alzano niente. Il thread legge la coda di
   notcurses a blocchi (`notcurses_getvec`, che notcurses permette in parallelo al render) e la tiene vuota: una
-  raffica di più di 8192 tasti con il ciclo occupato non fa più perdere il Ctrl+C che la segue. Durante `run`
-  `Context#get` e `#getvec` leggono gli eventi del thread. Limiti: il thread ha bisogno del GVL, quindi un handler
-  che lo tiene ritarda il segnale (con più di 8192 tasti nel frattempo notcurses scarta anche Ctrl+C); notcurses
-  consegna gli eventi più lentamente di quanto li mette in coda, e una raffica molto lunga (nelle prove 200000 tasti
-  in un colpo) riempie la coda anche con il thread libero. Dopo `run` il flag di notcurses resta spento: fuori da
-  `run` un Ctrl+C di kitty non alza segnali e arriva al `run` successivo; `Context#linesigs_enable` ridà il compito a
-  notcurses. Con un contesto che scarta l'input (`drain_input: true`) `run` non legge i tasti e il compito resta a
-  notcurses. Senza terminale (input da una pipe) notcurses non spegne il flag, e il limite resta.
+  raffica di 10000 tasti con il ciclo occupato non fa più perdere il Ctrl+C che la segue. Durante `run`
+  `Context#get` e `#getvec` leggono gli eventi del thread, e `Key::EOF` resta disponibile a ogni lettura, come in
+  notcurses. Un secondo Ctrl+C mentre `run` fa pulizia arriva alla fine della pulizia (`run` solleva `Interrupt`).
+  Limiti: il thread ha bisogno del GVL, quindi un handler che lo tiene ritarda il segnale (con più di 8192 tasti nel
+  frattempo notcurses scarta anche Ctrl+C); notcurses consegna gli eventi più lentamente di quanto li mette in coda:
+  nelle prove 10000 tasti in un colpo non perdono niente, mentre con 20000-50000 tasti, sotto carico, il Ctrl+C dopo
+  la raffica si è perso in circa una corsa su sei. Dopo `run` `Context#inputready_fd` non segnala gli eventi già letti
+  dal thread: prima di attendere su di esso serve `Context#get(timeout: 0)`. Dopo `run` il flag di notcurses resta
+  spento: fuori da `run` un Ctrl+C di kitty non alza segnali e arriva al `run` successivo; `Context#linesigs_enable`
+  ridà il compito a notcurses. Con un contesto che scarta l'input (`drain_input: true`) `run` non legge i tasti e il
+  compito resta a notcurses. Senza terminale (input da una pipe) notcurses non spegne il flag, e il limite resta.
 - `Plane#merge_down` non copre più il glifo che in `src` segue una metà sinistra orfana di un glifo largo (ICH-532).
   Il wrapper riscriveva la metà sinistra come un glifo intero, e il glifo dopo spariva da `dst`. Ora, durante la
   fusione, il wrapper cambia la metà orfana in uno spazio con gli stessi stili e colori (`src` torna com'era dopo):

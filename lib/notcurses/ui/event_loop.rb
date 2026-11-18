@@ -198,10 +198,12 @@ module Notcurses
       # lo tiene (codice Ruby per un quanto di 100 ms, una chiamata C che non lo
       # rilascia per tutta la sua durata) ritarda il segnale, e se intanto
       # arrivano più di 8192 tasti notcurses scarta quelli in più, anche
-      # Ctrl+C, senza segnale; notcurses consegna gli eventi più lentamente di
-      # quanto li mette in coda, e una raffica molto lunga (nelle prove 200000
-      # tasti in un colpo, non 50000) riempie la coda anche con il thread
-      # libero.
+      # Ctrl+C, senza segnale; notcurses consegna gli eventi
+      # (+notcurses_getvec+, circa 1,5 µs l'uno) più lentamente di quanto li
+      # mette in coda, quindi anche con il thread libero una raffica lunga può
+      # riempire la coda. Nelle prove su un pty finto 10000 tasti in un colpo
+      # non hanno mai perso niente; con 20000-50000 tasti, sotto carico, il
+      # Ctrl+C dopo la raffica si è perso in circa una corsa su sei.
       #
       # Un secondo Ctrl+C (o un'altra eccezione asincrona) mentre run fa
       # pulizia arriva alla fine della pulizia: run solleva Interrupt invece di

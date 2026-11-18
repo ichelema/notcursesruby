@@ -100,8 +100,8 @@ ruby "$(gem contents notcursesruby | grep examples/demo.rb)"
 
 ## Limiti noti
 
-- notcurses non è thread-safe: un contesto va usato da un solo thread alla volta. In `Notcurses::UI` gli altri
-  thread passano il lavoro al ciclo con `post`.
+- notcurses non è thread-safe: un contesto va usato da un solo thread alla volta (l'eccezione è il thread di input
+  con cui `EventLoop#run` legge i tasti). In `Notcurses::UI` gli altri thread passano il lavoro al ciclo con `post`.
 - Alcuni bug di notcurses 3.0.17 sono aggirati nel wrapper; alcune funzioni C non sono offerte perché in 3.0.17 non
   funzionano (render su buffer o su file, cancellazione delle voci di un `Selector`).
 - Ctrl+S, Ctrl+Q e i tasti dei segnali non arrivano all'applicazione senza le opzioni di `run` descritte sopra.

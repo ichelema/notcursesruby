@@ -10,8 +10,10 @@
 #
 # Thread safety: notcurses non è thread-safe. Il wrapper non aggiunge lock
 # attorno alle chiamate C: un contesto e tutti i suoi oggetti vanno usati da un
-# solo thread alla volta. L'unico lock interno protegge il registro del contesto
-# attivo (notcurses ammette un solo contesto per processo).
+# solo thread alla volta. Unica eccezione: durante {Notcurses::UI::EventLoop#run}
+# un thread di input del contesto legge i tasti con +notcurses_getvec+, che
+# notcurses permette in parallelo al render. L'unico lock interno protegge il
+# registro del contesto attivo (notcurses ammette un solo contesto per processo).
 #
 # @example
 #   require 'notcurses'
