@@ -22,6 +22,11 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `EventLoop#run` segue ISIG del terminale anche per i tasti di segnale di kitty dopo uno `stty` (ICH-454).
+  notcurses decide se alzare il segnale da un flag suo, che `stty` non cambia: dopo `stty -isig` un
+  `run(no_linesigs: true)` usciva con `:interrupt` invece di consegnare Ctrl+C a `on_key`, e dopo
+  `Context#linesigs_disable` e `stty isig` Ctrl+C non faceva niente. Ora `run` spegne il flag di notcurses a ogni
+  avvio, anche con ISIG già spento, e decide solo da ISIG.
 - `EventLoop#run` alza un solo segnale per ogni pressione di Ctrl+C, Ctrl+Z e Ctrl+\ di kitty (ICH-456). notcurses
   lo alzava anche per la ripetizione e il rilascio del tasto, anche dopo la fine di `run`: un Ctrl+C interrompeva
   due volte. Ora all'avvio `run` toglie il compito a notcurses (`Context#linesigs_disable`), rimette ISIG com'era

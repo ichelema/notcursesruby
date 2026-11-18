@@ -321,8 +321,10 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
   RUBY
 
   # Più run dello stesso EventLoop, ognuno con un timer di sicurezza: stampa
-  # il motivo d'uscita e i modificatori arrivati a on_key('c', ctrl: true).
+  # il motivo d'uscita e i modificatori arrivati a on_key('c', ctrl: true),
+  # più " stty diverso" se stty -g dopo run non è quello di prima.
   def kitty_signals_script = kitty_prelude + <<~'RUBY'
+    stty = ->(flag) { IO.popen(['stty', flag], in: slave, &:read) }
     Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
       ev = Notcurses::UI::EventLoop.new(nc)
       seen = []
@@ -333,6 +335,7 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
       Signal.trap('QUIT') { quits += 1 }
       session = lambda do |name, keys, **opts|
         seen.clear
+        before = stty.('-g')
         user = keys && Thread.new do
           wait_for('run') { ev.running? }
           type.(keys)
@@ -341,7 +344,7 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
         reason = ev.run(**opts)
         timer.cancel
         user&.join
-        puts "#{name}: #{reason} #{seen.inspect}"
+        puts "#{name}: #{reason} #{seen.inspect}#{' stty diverso' if stty.('-g') != before}"
       end
       session.('numlock', "\e[99;133u")
       session.('capslock', "\e[99;69u")
@@ -352,6 +355,13 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
       session.('no_linesigs', "\e[99;133u", no_linesigs: true)
       session.('xterm modifyOtherKeys', "\e[27;5;99~")
       session.('dopo xterm', nil)
+      # ICH-454: ISIG cambiato fuori da notcurses
+      system('stty', '-isig', in: slave)
+      session.('stty -isig', "\e[99;5u", no_linesigs: true)
+      system('stty', 'isig', in: slave)
+      nc.linesigs_disable
+      system('stty', 'isig', in: slave)
+      session.('linesigs_disable e stty isig', "\e[99;5u")
       # ICH-456: un segnale per pressione, niente per la ripetizione e il rilascio
       nc.linesigs_enable # il default di notcurses: ISIG e il suo flag accesi
       session.('solo rilascio', "\e[99;5:3u")
@@ -541,18 +551,20 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(out).to end_with("fine\n")
   end
 
-  it 'protocollo kitty: Ctrl+C e Ctrl+\ sono segnali una volta per pressione, e non arrivano a on_key' do
+  it 'protocollo kitty: Ctrl+C e Ctrl+\ sono segnali una volta per pressione, anche dopo stty, e non arrivano a on_key' do
     skip 'pty e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
 
     out, status, timed_out = run_child(kitty_signals_script, timeout: 60)
     expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
     expect(status.exitstatus).to eq(0), out
+    expect(out).not_to include('stty diverso') # stty -g dopo ogni run è quello di prima
     expect(out).to include("numlock: interrupt []\n", "capslock: interrupt []\n", "solo ctrl: interrupt []\n")
     expect(out).to include("dopo solo ctrl: stop []\n") # l'evento in coda non viene consegnato
     expect(out).to include("ripetizione e rilascio: stop []\n")
     expect(out).to include("ctrl+\\ con numlock: stop []\n")
     expect(out).to include("no_linesigs: stop [[:ctrl, :numlock]]\n")
     expect(out).to include("xterm modifyOtherKeys: interrupt []\n", "dopo xterm: stop []\n")
+    expect(out).to include("stty -isig: stop [[:ctrl]]\n", "linesigs_disable e stty isig: interrupt []\n") # ICH-454
     expect(out).to include("solo rilascio: stop []\n", "solo ripetizione: stop []\n", "premuto: interrupt []\n") # ICH-456
     expect(out).to include("fuori da run: nessun Interrupt\n")
     expect(out).to include("premuto, ripetuto e rilasciato: stop []\n", "ctrl+\\ premuto, ripetuto e rilasciato: stop []\n")
