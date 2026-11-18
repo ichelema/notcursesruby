@@ -13,9 +13,8 @@
   ICH-455, ICH-536, ICH-537, ICH-538 a Done). Log in `memory/backlog-issue.md`, esito in `RICONSEGNA.md`. `master` su
   `e15b40a` (più i commit di documentazione): 1177 esempi, 0 fallimenti (ordine normale, semi 1234, 4242, 7);
   coverage 98,33 %; RuboCop 0; YARD 100 %; gem costruita; layer FFI invariato; CI verde.
-- **Prima del lotto 4**: il worktree del lotto 3 `.claude/worktrees/bug+ICH-454-456-455-opus` è ancora presente,
-  con il branch locale e remoto. Lo rimuove l'utente con `/trinity:workflow:5_remove-worktree bug+ICH-454-456-455-opus`
-  (il comando non si lancia dallo strumento Skill).
+- Worktree `.claude/worktrees/bug+ICH-454-456-455-opus` e branch `bug/ICH-454-456-455-opus` rimossi, anche il
+  remoto (`/trinity:workflow:5_remove-worktree`, lanciato dall'utente: il comando non si lancia dallo strumento Skill).
 - **Prossimo step: lotto 4**, ICH-463 (Medium): con stdin rediretto, un carattere UTF-8 a cavallo della lettura da
   8192 byte blocca notcurses. Comandi: `/trinity:workflow:1_create-worktree master ICH-463 opus`, poi
   `/trinity:workflow:2_work-issue ICH-463 opus` e gli altri della procedura. La spec gira in un processo figlio con un
