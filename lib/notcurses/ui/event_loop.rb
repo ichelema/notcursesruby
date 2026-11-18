@@ -184,9 +184,9 @@ module Notcurses
       # ("\e[27;5;99~"). I byte di controllo (0x03 con intr rimappato, input
       # da una pipe) arrivano invece come tasti, anche con kitty. run legge
       # ISIG solo all'avvio: stty, {Context#linesigs_disable} o
-      # {Context#linesigs_enable} durante run non cambiano la scelta (il
-      # secondo ridà il compito a notcurses: due segnali per pressione); per i
-      # tasti serve no_linesigs.
+      # {Context#linesigs_enable} durante run non cambiano la scelta
+      # ({Context#linesigs_enable} ridà il compito a notcurses: due segnali per
+      # pressione); per i tasti serve no_linesigs.
       #
       # Dopo run il flag di notcurses resta spento: fuori da run un Ctrl+C di
       # kitty non alza segnali e resta in coda, e il run successivo lo tratta
@@ -198,9 +198,10 @@ module Notcurses
       # linesigs_disable non spegne il flag; con input e output su due
       # terminali diversi notcurses cambia ISIG su quello di output, run su
       # quello di input; un Ctrl+C arrivato prima della presa in carico (al
-      # primo run, o dopo {Context#linesigs_enable}) lo alza notcurses, e run
-      # lo alza di nuovo quando legge il tasto rimasto in coda; all'avvio di
-      # run un byte 0x03 arrivato nell'istante in cui ISIG è spento è un tasto.
+      # primo run, o dopo {Context#linesigs_enable}) lo alza notcurses, e il
+      # tasto resta in coda: run lo alza di nuovo quando lo legge, e con
+      # no_linesigs lo consegna a {#on_key}; all'avvio di run un byte 0x03
+      # arrivato nell'istante in cui ISIG è spento è un tasto.
       #
       # @param no_flow_control [Boolean] disattiva IXON durante run
       # @param no_linesigs [Boolean] disattiva ISIG durante run
