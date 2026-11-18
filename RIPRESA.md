@@ -25,9 +25,9 @@
 - Note dal lotto 3: con kitty `run` spegne il flag dei segnali di notcurses e lo lascia spento dopo `run` (scelta
   dell'utente); con la coda di input piena (8192 eventi) notcurses scarta il tasto nuovo (`in.c:523`), e sotto carico
   CPU anche il Ctrl+C dopo 10000 tasti si è perso, di rado (commento su ICH-536). La coverage locale varia fra 98,33 e
-  98,41 % fra una corsa e l'altra: alcune righe dipendono dai tempi dei thread. Prova a vista in Kitty non segnalata
-  dall'utente: `NC_GRAPHICS=1 bundle exec rspec spec/graphics/terminal_spec.rb -e 'Ctrl+C con CapsLock'` da una
-  finestra di Kitty con il controllo remoto.
+  98,41 % fra una corsa e l'altra: alcune righe dipendono dai tempi dei thread. Prova a vista in Kitty fatta
+  dall'utente dopo il merge: `NC_GRAPHICS=1 bundle exec rspec spec/graphics/terminal_spec.rb -e 'Ctrl+C con
+  CapsLock'`, 1 esempio, 0 fallimenti.
 - **Review con GPT e Sonnet**: `gpt-bridge:reviewer` e `trinity:reviewer` con `model: sonnet` ed `effort: max` al
   posto di Fable (scelta dell'utente del 2026-11-18; worktree di review `review+<base-name>-sonnet`). I revisori
   eseguono gli script da stdin, senza file e senza `.review-tmp` (non è in `.gitignore`), e rspec in una subshell con

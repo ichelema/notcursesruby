@@ -529,4 +529,5 @@ Commit: `519c918` (ICH-538), `eb2e126` (ICH-537), `57472d5` (ICH-536); round 1: 
   `related` verso ICH-536).
 - Branch: 1177 esempi, 0 fallimenti (ordine normale e semi 1234, 4242, 7); coverage 98,33 %; RuboCop 0; YARD 100 %;
   layer FFI invariato.
-- Prova a vista in Kitty: l'utente non l'ha segnalata prima del merge.
+- Prova a vista in Kitty fatta dall'utente dopo il merge, su `master`: `NC_GRAPHICS=1 bundle exec rspec
+  spec/graphics/terminal_spec.rb -e 'Ctrl+C con CapsLock'`, 1 esempio, 0 fallimenti.
