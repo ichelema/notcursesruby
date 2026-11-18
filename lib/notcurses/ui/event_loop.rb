@@ -240,7 +240,10 @@ module Notcurses
       # primo run, o dopo {Context#linesigs_enable}) lo alza notcurses, e il
       # tasto resta in coda: il thread di input lo alza di nuovo, e con
       # no_linesigs lo consegna a {#on_key}; all'avvio di run un byte 0x03
-      # arrivato nell'istante in cui ISIG è spento è un tasto.
+      # arrivato nell'istante in cui ISIG è spento è un tasto; un carattere
+      # UTF-8 di più byte spezzato fra due letture dell'input blocca il thread
+      # di input di notcurses: run non riceve più tasti e {Context#close} non
+      # ritorna ({Context#get}, ICH-463).
       #
       # @param no_flow_control [Boolean] disattiva IXON durante run
       # @param no_linesigs [Boolean] disattiva ISIG durante run

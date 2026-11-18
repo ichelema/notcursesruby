@@ -865,6 +865,10 @@ module Notcurses
     # L'attesa non avviene dentro il C: il wrapper attende con +IO#wait_readable+
     # sul descrittore di +ncdirect_inputready_fd+, che rilascia il GVL.
     #
+    # Limite di notcurses 3.0.17 (ICH-463), come in {Context#get}: un carattere
+    # UTF-8 di più byte spezzato fra due letture dell'input blocca il thread di
+    # input di notcurses. get non riceve più eventi e {#close} non ritorna.
+    #
     # @param timeout [Numeric, nil] secondi di attesa massima, 0..2147483647
     #   (2^31 - 1, circa 68 anni); nil = senza limite; 0 = non attende
     # @return [Input, nil] l'evento, o nil se il timeout scade. A fine input
