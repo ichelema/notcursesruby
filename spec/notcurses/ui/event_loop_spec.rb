@@ -770,6 +770,82 @@ RSpec.describe Notcurses::UI::EventLoop do
       end
     end
 
+    it "un Interrupt alla prima riga dell'ensure di run non salta la pulizia: run lo solleva alla fine" do
+      source = File.readlines(described_class.instance_method(:run).source_location.first)
+      start = described_class.instance_method(:run).source_location.last
+      ensure_line = (start..source.size).find { |n| source[n - 1].match?(/\A {8}ensure$/) }
+      NcHelpers.open_context do |c|
+        feeding_input(c) do
+          ev = described_class.new(c)
+          fds = open_fds
+          ev.post { ev.stop }
+          hits = []
+          # come un segnale consegnato appena entrati nell'ensure, prima di ogni altra istruzione
+          trace = TracePoint.new(:line) do |tp|
+            raise Interrupt if tp.lineno > ensure_line && hits.push(tp.lineno).size == 1
+          end
+          expect do
+            trace.enable(target: described_class.instance_method(:run)) { ev.run(no_linesigs: true) }
+          end.to raise_error(Interrupt)
+          expect(hits.size).to be > 1 # la pulizia è ricominciata dopo l'Interrupt
+          expect(ev).not_to be_running
+          expect(input_threads).to be_empty
+          expect(open_fds).to eq(fds)
+          expect(c).to have_received(:isig_enable).once
+        end
+      end
+    end
+
+    it 'un Interrupt durante la pulizia arriva anche quando run gira dentro il rescue di un altro errore' do
+      NcHelpers.open_context do |c|
+        feeding_input(c) do
+          ev = described_class.new(c)
+          calls = 0
+          allow(c).to receive(:input_reader_stop).and_wrap_original do |original, *args|
+            result = original.call(*args)
+            raise Interrupt if (calls += 1) == 1 # come un secondo Ctrl+C durante la pulizia
+
+            result
+          end
+          ev.post { ev.stop }
+          begin
+            raise ArgumentError, 'errore gestito'
+          rescue ArgumentError
+            # $! è l'errore gestito, non l'eccezione con cui run esce
+            expect { ev.run }.to raise_error(Interrupt)
+          end
+          expect(calls).to eq(2) # la pulizia è ricominciata
+          expect(ev).not_to be_running
+          expect(input_threads).to be_empty
+        end
+      end
+    end
+
+    it 'c e z senza Ctrl passano dal filtro del thread di input solo mentre il tasto è tenuto' do
+      NcHelpers.open_context do |c|
+        feeding_input(c) do |type, ints|
+          ev = new_loop(c)
+          filtered = []
+          allow(ev).to receive(:line_signal).and_wrap_original do |original, input|
+            filtered << input.id
+            original.call(input)
+          end
+          keys = []
+          ev.on_input { |input| keys << input.id }
+          ev.on_key('y') { ev.stop }
+          ev.post { type.call(*Array.new(500) { |i| [i.even? ? 'c' : 'z', 1, 0, false] }, ['y', 1, 0, false]) }
+          expect(run_loop(ev)).to eq(:stop)
+          expect(filtered).to be_empty # costruire un Input per ogni c o z rallenterebbe il thread
+          expect(keys.size).to eq(500)
+          # con Ctrl+C tenuto passa dal filtro la c senza Ctrl (Ctrl lasciato prima), non la z
+          ev.post { type.call(['C', 1, ctrl, true], ['z', 1, 0, false], ['c', 3, 0, false], ['y', 1, 0, false]) }
+          expect(run_loop(ev)).to eq(:stop)
+          expect(filtered).to eq(['C'.ord, 'c'.ord])
+          expect(ints.size).to eq(1)
+        end
+      end
+    end
+
     it 'un Interrupt mentre close aspetta il thread di input arriva dopo lo stop di notcurses' do
       NcHelpers.open_context do |c|
         feeding_input(c) do |type|

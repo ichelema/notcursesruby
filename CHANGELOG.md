@@ -46,14 +46,15 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   segnale alla pressione, subito anche mentre un handler, un timer o un blocco di `post` occupa il ciclo, e anche per
   Ctrl+C con CapsLock o NumLock (ICH-536); la ripetizione e il rilascio non alzano niente. Il thread legge la coda di
   notcurses a blocchi (`notcurses_getvec`, che notcurses permette in parallelo al render) e la tiene vuota: una
-  raffica di 10000 tasti con il ciclo occupato non fa più perdere il Ctrl+C che la segue. Durante `run` `Context#get`
-  e `#getvec` leggono gli eventi del thread, e `Key::EOF` resta disponibile a ogni lettura, come in notcurses. Un
-  secondo Ctrl+C mentre `run` fa pulizia arriva alla fine della pulizia (`run` solleva `Interrupt`); anche su Ruby 3.1
-  e 3.2, dove l'Interrupt di un segnale non si rimanda, perché la pulizia ricomincia e finisce. Limiti: il thread ha
-  bisogno del GVL, quindi un handler che lo tiene ritarda il segnale (con più di 8192 tasti nel frattempo notcurses
-  scarta anche Ctrl+C); notcurses consegna gli eventi più lentamente di quanto li mette in coda: nelle prove 10000
-  tasti in un colpo non perdono niente, mentre con 20000-50000 tasti, sotto carico, il Ctrl+C dopo la raffica si è
-  perso in circa una corsa su sei. Durante `run` per attendere un tasto serve `Context#get` con un timeout, non
+  raffica di 10000 tasti con il ciclo occupato, con la macchina scarica, non fa più perdere il Ctrl+C che la segue.
+  Durante `run` `Context#get` e `#getvec` leggono gli eventi del thread, e `Key::EOF` resta disponibile a ogni
+  lettura, come in notcurses. Un secondo Ctrl+C mentre `run` fa pulizia arriva alla fine della pulizia (`run` solleva
+  `Interrupt`); anche su Ruby 3.1 e 3.2, dove l'Interrupt di un segnale non si rimanda, perché la pulizia ricomincia e
+  finisce. Limiti: il thread ha bisogno del GVL, quindi un handler che lo tiene ritarda il segnale (con più di 8192
+  tasti nel frattempo notcurses scarta anche Ctrl+C); notcurses consegna gli eventi più lentamente di quanto li mette
+  in coda: nelle prove, con la macchina scarica, 10000 tasti in un colpo non perdono niente; con altri processi che
+  occupano la CPU anche il Ctrl+C dopo 10000 tasti si è perso, di rado, e con 20000-50000 tasti, sotto carico, in
+  circa una corsa su sei. Durante `run` per attendere un tasto serve `Context#get` con un timeout, non
   `Context#inputready_fd`; dopo `run` il descrittore non segnala gli eventi già letti dal thread, e prima di attendere
   su di esso serve `Context#get(timeout: 0)`. Dopo `run` il flag di notcurses resta spento: fuori da `run` un Ctrl+C
   di kitty non alza segnali e arriva al `run` successivo; `Context#linesigs_enable` ridà il compito a notcurses. Con

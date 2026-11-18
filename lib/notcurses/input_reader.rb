@@ -11,10 +11,11 @@ module Notcurses
   # buffer come blocchi grezzi, e {Context#get} e {Context#getvec} ne fanno
   # {Input} quando li prendono. Il pipe {#ready_io} diventa leggibile quando il
   # buffer riceve eventi. Così il filtro alza il segnale di Ctrl+C, Ctrl+Z e
-  # Ctrl+\ appena il tasto arriva, anche con il ciclo occupato in un handler,
-  # e il thread svuota la coda di notcurses (8192 eventi) più in fretta di
-  # quanto il thread C la riempie: costruire un {Input} costa circa 60 volte
-  # leggere l'id.
+  # Ctrl+\ appena il tasto arriva, anche con il ciclo occupato in un handler.
+  # Per svuotare in fretta la coda di notcurses (8192 eventi) il thread legge
+  # solo l'id degli altri eventi: costruire un {Input} costa circa 60 volte
+  # leggere l'id. Il thread C di notcurses però non aspetta: con la coda piena
+  # scarta i tasti nuovi (i limiti sono in {UI::EventLoop#run}).
   #
   # notcurses permette +notcurses_get+ in parallelo a +notcurses_render+, con
   # un solo thread alla volta nello stack di input (notcurses_input.3): mentre
@@ -57,7 +58,8 @@ module Notcurses
     #
     # @param filter [Proc] chiamato nel thread con l'{Input} di ogni evento
     #   letto che ha un id in ids; un valore vero scarta l'evento
-    # @param ids [Hash{Integer => Object}] id degli eventi da filtrare
+    # @param ids [#key?] id degli eventi da filtrare (un Hash, o un oggetto
+    #   con key? che il thread chiama per ogni evento)
     # @return [IO] il pipe {#ready_io}
     def start(filter, ids)
       # un'eccezione asincrona arriva dopo, con filtro e thread registrati; su Ruby 3.1 e 3.2 l'Interrupt di un
@@ -90,10 +92,17 @@ module Notcurses
         # halt prima di togliere l'ultimo filtro: il thread non deve leggere tasti senza filtro
         interrupted = halt if index && @filters.size == 1
         @filters.delete_at(index) if index
-        if @filters.empty? && @ready_r
-          pipes = [@ready_r, @ready_w, @stop_r, @stop_w]
-          @ready_r = @ready_w = @stop_r = @stop_w = nil # prima della chiusura: uno stop ripetuto non li richiude
-          pipes.each { |io| io&.close }
+        if @filters.empty?
+          # uno alla volta, prima chiuso e poi dimenticato: uno stop interrotto lascia aperti solo pipe che conosce
+          # ancora, e close su un pipe già chiuso non fa niente
+          @ready_r&.close
+          @ready_r = nil
+          @ready_w&.close
+          @ready_w = nil
+          @stop_r&.close
+          @stop_r = nil
+          @stop_w&.close
+          @stop_w = nil
         end
         interrupted
       end

@@ -168,11 +168,18 @@ RSpec.describe "Notcurses::InputReader" do
     expect(reader).not_to be_active
   end
 
-  it "uno stop ripetuto dopo un'interruzione finisce il lavoro senza richiudere i pipe" do
-    io = reader.start(filter, ids)
-    reader.stop(filter)
-    expect(io).to be_closed
+  it "uno stop interrotto mentre chiude i pipe non ne perde nessuno: uno stop ripetuto chiude gli altri" do
+    reader.start(filter, ids)
+    pipes = %i[@ready_r @ready_w @stop_r @stop_w].map { |name| reader.instance_variable_get(name) }
+    calls = 0
+    allow(pipes[2]).to receive(:close).and_wrap_original do |original|
+      original.call
+      raise Interrupt if (calls += 1) == 1 # come l'Interrupt di un segnale su Ruby 3.1, dopo la chiusura
+    end
+    expect { reader.stop(filter) }.to raise_error(Interrupt)
+    expect(pipes.last).not_to be_closed
     expect(reader.stop(filter)).to be_nil
+    expect(pipes).to all(be_closed)
     expect(reader.ready_io).to be_nil
   end
 

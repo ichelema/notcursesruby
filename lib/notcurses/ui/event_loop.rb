@@ -130,7 +130,16 @@ module Notcurses
       # rilascio di un tasto tenuto arrivano senza Ctrl se l'utente lascia prima Ctrl
       SIGNAL_KEYS = { 'C'.ord => 'C'.ord, 'c'.ord => 'C'.ord, 'Z'.ord => 'Z'.ord, 'z'.ord => 'Z'.ord,
                       '\\'.ord => '\\'.ord }.freeze
-      private_constant :MOD_CTRL, :MOD_ALT, :MOD_SHIFT, :MOD_OTHER, :MOD_LOCKS, :LINE_SIGNALS, :SIGNAL_KEYS
+      # Gli id che il thread di input passa a line_signal: C, Z e \ sempre, c e z solo mentre il tasto è tenuto
+      # (held, {Context#held_signal_keys}). Ogni evento filtrato costa un Input e rallenta lo svuotamento della coda:
+      # una raffica di c o z non deve perdere il Ctrl+C prima di una raffica di altre lettere.
+      SignalIds = Struct.new(:held) do
+        def key?(id)
+          key = SIGNAL_KEYS[id]
+          !key.nil? && (key == id || held.key?(key))
+        end
+      end
+      private_constant :MOD_CTRL, :MOD_ALT, :MOD_SHIFT, :MOD_OTHER, :MOD_LOCKS, :LINE_SIGNALS, :SIGNAL_KEYS, :SignalIds
 
       # @return [Context]
       attr_reader :context
@@ -206,9 +215,10 @@ module Notcurses
       # Ctrl+C, senza segnale; notcurses consegna gli eventi
       # (+notcurses_getvec+, circa 1,5 µs l'uno) più lentamente di quanto li
       # mette in coda, quindi anche con il thread libero una raffica lunga può
-      # riempire la coda. Nelle prove su un pty finto 10000 tasti in un colpo
-      # non hanno mai perso niente; con 20000-50000 tasti, sotto carico, il
-      # Ctrl+C dopo la raffica si è perso in circa una corsa su sei.
+      # riempire la coda. Nelle prove su un pty finto, con la macchina scarica,
+      # 10000 tasti in un colpo non hanno perso niente; con altri processi che
+      # occupano la CPU anche il Ctrl+C dopo 10000 tasti si è perso, di rado, e
+      # con 20000-50000 tasti, sotto carico, in circa una corsa su sei.
       #
       # Un secondo Ctrl+C (o un'altra eccezione asincrona) mentre run fa
       # pulizia arriva alla fine della pulizia: run solleva Interrupt invece di
@@ -256,6 +266,10 @@ module Notcurses
         ixon = false
         linesigs = false
         filter = nil
+        # qui e non nell'ensure: fra l'ingresso nell'ensure e il begin protetto un Interrupt salterebbe la pulizia
+        pending = nil
+        interrupted = nil
+        done = false
         begin
           ixon = @context.flow_control_disable if no_flow_control
           # senza ISIG noto linesigs? solleva: con no_linesigs come prima, senza il ciclo non alza segnali
@@ -294,7 +308,7 @@ module Notcurses
           unless @context.drain_input?
             # il filtro esiste prima dell'avvio: l'ensure lo toglie anche se un Interrupt arriva prima di @input
             filter = ->(input) { line_signal(input) }
-            @input = @context.input_reader_start(SIGNAL_KEYS, &filter)
+            @input = @context.input_reader_start(SignalIds.new(@context.held_signal_keys), &filter)
           end
           @reason = :stop
           @dims = @context.dims
@@ -312,10 +326,11 @@ module Notcurses
           @reason
         rescue Interrupt
           :interrupt
+        rescue Exception => e # rubocop:disable Lint/RescueException
+          # l'eccezione con cui run esce: nell'ensure $! è anche quella di un rescue esterno che chiama run
+          pending = e
+          raise
         ensure
-          pending = $!
-          interrupted = nil
-          done = false
           begin
             # un secondo Ctrl+C (o un'altra eccezione asincrona) arriva dopo la pulizia, non a metà
             Thread.handle_interrupt(Object => :never) do
@@ -713,7 +728,7 @@ module Notcurses
       end
 
       # Filtro del thread di input ({Context#input_reader_start}), chiamato in
-      # quel thread per gli eventi con un id di SIGNAL_KEYS: alza il segnale
+      # quel thread per gli eventi con un id di SignalIds: alza il segnale
       # appena il tasto arriva, una volta per pressione, anche con CapsLock o
       # NumLock (protocollo kitty) e con il ciclo occupato. run ha tolto il
       # compito a notcurses 3.0.17, che lo alzerebbe solo con Ctrl da solo e

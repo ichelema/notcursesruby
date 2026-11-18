@@ -859,8 +859,9 @@ module Notcurses
     # contesto: vale il filtro del run più interno. Finché il thread gira,
     # {#get} e {#getvec} leggono solo gli eventi che il thread non ha scartato.
     #
-    # @param ids [Hash{Integer => Object}] id degli eventi da passare al filtro
-    #   (gli altri vanno nel buffer senza filtro)
+    # @param ids [#key?] id degli eventi da passare al filtro (gli altri vanno
+    #   nel buffer senza filtro): un Hash, o un oggetto con key? che il thread
+    #   di input chiama per ogni evento
     # @yieldparam input [Input] evento letto con un id in ids, nel thread di
     #   input
     # @yieldreturn [Boolean] true per scartarlo
