@@ -74,22 +74,26 @@ module Notcurses
     # {#start} lo registri). Senza altri run ferma il thread e chiude i pipe;
     # il buffer resta.
     #
+    # Idempotente: su Ruby 3.1 e 3.2 l'Interrupt di un segnale non si rimanda
+    # e può interrompere stop a metà; chiamato di nuovo, stop finisce il
+    # lavoro.
+    #
     # @param filter [Proc] il filtro passato a {#start}
-    # @return [Exception, nil] l'eccezione asincrona arrivata mentre aspettava
-    #   il thread (vedi {#halt}), da sollevare dopo la pulizia del chiamante
+    # @return [Exception, nil] l'Interrupt di un segnale arrivato mentre
+    #   aspettava il thread su Ruby 3.1 e 3.2 (vedi {#halt}), da sollevare
+    #   dopo la pulizia del chiamante; un'eccezione rimandata arriva invece
+    #   alla fine di stop
     def stop(filter)
-      # tutto o niente: un'eccezione asincrona a metà lascerebbe filtri, thread e pipe del run finito (su Ruby 3.1
-      # e 3.2 l'Interrupt di un segnale non si rimanda: lì vale solo per quello che arriva durante halt)
+      # tutto o niente: un'eccezione asincrona a metà lascerebbe filtri, thread e pipe del run finito
       Thread.handle_interrupt(Object => :never) do
         index = @filters.rindex { |registered, _| registered.equal?(filter) }
-        next if index.nil?
-
         # halt prima di togliere l'ultimo filtro: il thread non deve leggere tasti senza filtro
-        interrupted = halt if @filters.size == 1
-        @filters.delete_at(index)
-        if @filters.empty?
-          [@ready_r, @ready_w, @stop_r, @stop_w].each { |io| io&.close }
-          @ready_r = @ready_w = @stop_r = @stop_w = nil
+        interrupted = halt if index && @filters.size == 1
+        @filters.delete_at(index) if index
+        if @filters.empty? && @ready_r
+          pipes = [@ready_r, @ready_w, @stop_r, @stop_w]
+          @ready_r = @ready_w = @stop_r = @stop_w = nil # prima della chiusura: uno stop ripetuto non li richiude
+          pipes.each { |io| io&.close }
         end
         interrupted
       end
@@ -101,13 +105,13 @@ module Notcurses
     # ClosedError. Idempotente; si può chiamare da un gestore +trap+, anche
     # mentre un altro halt aspetta lo stesso thread.
     #
-    # Un'eccezione asincrona durante l'attesa (l'Interrupt di un altro Ctrl+C,
-    # anche rimandata da un Thread.handle_interrupt del chiamante) non la
-    # interrompe: halt aspetta lo stesso il thread e restituisce l'eccezione.
-    # Rimandarla non basta: Ruby 3.1 e 3.2 non rimandano l'Interrupt di un
-    # segnale.
+    # Un'eccezione asincrona durante l'attesa non la interrompe: halt la
+    # rimanda, e alla fine del suo blocco la cattura e la restituisce (dentro
+    # un Thread.handle_interrupt del chiamante arriva invece alla fine di
+    # quello). Ruby 3.1 e 3.2 non rimandano l'Interrupt di un segnale: halt lo
+    # cattura nell'attesa, aspetta di nuovo il thread e lo restituisce.
     #
-    # @return [Exception, nil] l'eccezione arrivata durante l'attesa
+    # @return [Exception, nil] l'eccezione catturata
     def halt
       @gate&.close # un thread avviato ma non ancora registrato esce senza leggere
       thread = @thread
@@ -117,8 +121,7 @@ module Notcurses
       @stop_w.write_nonblock("\0", exception: false)
       interrupted = nil
       begin
-        # :immediate: l'eccezione arriva qui anche dentro un handle_interrupt(:never) del chiamante
-        Thread.handle_interrupt(Object => :immediate) { thread.join }
+        Thread.handle_interrupt(Object => :never) { thread.join }
       rescue Exception => e # rubocop:disable Lint/RescueException
         interrupted ||= e
         retry if thread.alive? # il contesto non deve chiudersi sotto il thread
@@ -202,7 +205,12 @@ module Notcurses
       # il thread legge solo dopo la registrazione in @thread: un'eccezione asincrona prima (su Ruby 3.1 e 3.2
       # l'Interrupt di un segnale non si rimanda) non lascia un thread che nessun halt aspetta
       gate = @gate = Thread::Queue.new
-      @thread = Thread.new { pump(input) if gate.pop } # rubocop:disable ThreadSafety/NewThread -- è lo scopo della classe
+      # rubocop:disable ThreadSafety/NewThread -- è lo scopo della classe
+      @thread = Thread.new do
+        # il thread nasce dentro il :never di start: senza :immediate Thread#kill non lo fermerebbe
+        Thread.handle_interrupt(Object => :immediate) { pump(input) if gate.pop }
+      end
+      # rubocop:enable ThreadSafety/NewThread
       @thread.name = "notcurses-input"
       gate.push(true) unless gate.closed?
     end

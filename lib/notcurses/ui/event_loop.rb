@@ -214,10 +214,8 @@ module Notcurses
       # pulizia arriva alla fine della pulizia: run solleva Interrupt invece di
       # restituire :interrupt, con il terminale, i trap e il thread di input
       # già a posto. Su Ruby 3.1 e 3.2 l'Interrupt di un segnale non si
-      # rimanda: lì vale solo per un Ctrl+C che arriva mentre run aspetta il
-      # thread di input; un segnale da fuori (un Ctrl+C di un terminale
-      # classico) negli altri istanti interrompe la pulizia, come nelle
-      # versioni precedenti.
+      # rimanda: interrompe la pulizia, che ricomincia (i suoi passi sono
+      # idempotenti) e finisce prima che run lo sollevi.
       #
       # Dopo run il flag di notcurses resta spento: fuori da run un Ctrl+C di
       # kitty non alza segnali e resta in coda, e il thread di input del run
@@ -284,18 +282,19 @@ module Notcurses
           end
           @line_signals = isig && !no_linesigs
           wake_r, @wake_w = IO.pipe
+          # prima del thread di input: il SIGINT di un Ctrl+C già in coda non deve arrivare fra i due trap
+          if @context.no_winch_sighandler?
+            @old_winch = Signal.trap('WINCH') { resize_signal }
+            # lo stesso flag toglie anche il gestore di SIGCONT di notcurses: dopo fg serve un refresh
+            @old_cont = Signal.trap('CONT') { resize_signal }
+            winch = true
+          end
           # il thread di input del contesto legge i tasti e alza i segnali appena arrivano, anche con il
           # ciclo occupato; @input diventa leggibile quando ci sono eventi da consegnare
           unless @context.drain_input?
             # il filtro esiste prima dell'avvio: l'ensure lo toglie anche se un Interrupt arriva prima di @input
             filter = ->(input) { line_signal(input) }
             @input = @context.input_reader_start(SIGNAL_KEYS, &filter)
-          end
-          if @context.no_winch_sighandler?
-            @old_winch = Signal.trap('WINCH') { resize_signal }
-            # lo stesso flag toglie anche il gestore di SIGCONT di notcurses: dopo fg serve un refresh
-            @old_cont = Signal.trap('CONT') { resize_signal }
-            winch = true
           end
           @reason = :stop
           @dims = @context.dims
@@ -314,27 +313,36 @@ module Notcurses
         rescue Interrupt
           :interrupt
         ensure
+          pending = $!
           interrupted = nil
-          # un secondo Ctrl+C (o un'altra eccezione asincrona) arriva dopo la pulizia, non a metà; su Ruby 3.1 e 3.2
-          # l'Interrupt di un segnale arriva dopo solo se arriva mentre input_reader_stop aspetta il thread
-          Thread.handle_interrupt(Object => :never) do
-            # per primo: da qui il thread di input non alza più segnali; un Ctrl+C arrivato mentre lo aspetta
-            # torna come valore (su Ruby 3.1 e 3.2 handle_interrupt non rimanda l'Interrupt di un segnale)
-            interrupted = @context.input_reader_stop(filter) if filter
-            # nil vorrebbe dire IGNORE, che i processi figli erediterebbero
-            if winch
-              Signal.trap('WINCH', @old_winch || 'SYSTEM_DEFAULT')
-              Signal.trap('CONT', @old_cont || 'SYSTEM_DEFAULT')
+          done = false
+          begin
+            # un secondo Ctrl+C (o un'altra eccezione asincrona) arriva dopo la pulizia, non a metà
+            Thread.handle_interrupt(Object => :never) do
+              # per primo: da qui il thread di input non alza più segnali
+              stopped = @context.input_reader_stop(filter) if filter
+              interrupted ||= stopped
+              # nil vorrebbe dire IGNORE, che i processi figli erediterebbero
+              if winch
+                Signal.trap('WINCH', @old_winch || 'SYSTEM_DEFAULT')
+                Signal.trap('CONT', @old_cont || 'SYSTEM_DEFAULT')
+              end
+              @wake_w&.close
+              @wake_w = nil
+              wake_r&.close
+              @input = nil
+              @stop_requested = false
+              @running = false
+              restore_terminal(ixon, linesigs, pending || interrupted)
+              done = true
             end
-            @wake_w&.close
-            @wake_w = nil
-            wake_r&.close
-            @input = nil
-            @stop_requested = false
-            @running = false
-            restore_terminal(ixon, linesigs, $! || interrupted)
+          rescue SignalException => e
+            # su Ruby 3.1 e 3.2 handle_interrupt non rimanda l'Interrupt di un segnale: la pulizia, fatta di passi
+            # idempotenti, ricomincia
+            interrupted ||= e
+            retry unless done
           end
-          raise interrupted if interrupted && $!.nil?
+          raise interrupted if interrupted && pending.nil?
         end
       end
 

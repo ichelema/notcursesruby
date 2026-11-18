@@ -137,7 +137,7 @@ RSpec.describe "Notcurses::InputReader" do
 
   # Ruby 3.1 e 3.2 non rimandano l'Interrupt di un segnale dentro Thread.handle_interrupt: lo stub lo simula.
   [true, false].each do |deferred|
-    it "un'eccezione asincrona durante stop torna come valore: filtro tolto, thread fermo, pipe chiusi " \
+    it "un'eccezione asincrona durante stop arriva dopo la pulizia: filtro tolto, thread fermo, pipe chiusi " \
        "(handle_interrupt #{deferred ? "che rimanda" : "che non rimanda, come Ruby 3.1"})" do
       allow(Thread).to receive(:handle_interrupt) { |*, &block| block.call } unless deferred
       reader.start(filter, ids)
@@ -148,12 +148,32 @@ RSpec.describe "Notcurses::InputReader" do
       feed("C")
       sleep 0.1
       Thread.new { (sleep 0.1) && main.raise(Interrupt) } # rubocop:disable ThreadSafety/NewThread
-      expect(reader.stop(slow)).to be_a(Interrupt)
+      if deferred
+        expect { reader.stop(slow) }.to raise_error(Interrupt) # rimandata alla fine di stop
+      else
+        expect(reader.stop(slow)).to be_a(Interrupt) # catturata nell'attesa del thread
+      end
       expect(reader).not_to be_active
       expect(reader.ready_io).to be_nil
       reader.start(filter, ids)
       expect(reader).to be_active
     end
+  end
+
+  it "il thread di input si ferma con Thread#kill, anche se nasce dentro il Thread.handle_interrupt di start" do
+    reader.start(filter, ids)
+    thread = Thread.list.find { |t| t.name == "notcurses-input" && t.alive? }
+    thread.kill
+    expect(thread.join(1)).to equal(thread)
+    expect(reader).not_to be_active
+  end
+
+  it "uno stop ripetuto dopo un'interruzione finisce il lavoro senza richiudere i pipe" do
+    io = reader.start(filter, ids)
+    reader.stop(filter)
+    expect(io).to be_closed
+    expect(reader.stop(filter)).to be_nil
+    expect(reader.ready_io).to be_nil
   end
 
   it "un'eccezione asincrona fra la creazione del thread e la sua registrazione non lascia un thread che legge" do

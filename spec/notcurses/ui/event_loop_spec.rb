@@ -713,6 +713,63 @@ RSpec.describe Notcurses::UI::EventLoop do
       end
     end
 
+    it 'un Thread#kill del thread di run mentre la pulizia aspetta il thread di input arriva a pulizia finita' do
+      NcHelpers.open_context do |c|
+        feeding_input(c) do |type|
+          ev = described_class.new(c)
+          allow(ev).to receive(:line_signal).and_wrap_original do |original, input|
+            sleep 0.5 # il thread di input resta nel filtro mentre run lo ferma
+            original.call(input)
+          end
+          ev.post do
+            type.call(['C', 1, ctrl, true])
+            sleep 0.05 # il thread entra nel filtro
+            ev.stop
+          end
+          fds = open_fds
+          worker = Thread.new { ev.run(no_linesigs: true) }
+          sleep 0.3 # la pulizia aspetta il thread di input
+          worker.kill
+          expect(worker.join(2)).to equal(worker)
+          expect(ev).not_to be_running
+          expect(input_threads).to be_empty
+          expect(open_fds).to eq(fds)
+          expect(c).to have_received(:isig_enable) # ISIG rimesso com'era
+        end
+      end
+    end
+
+    it 'un Interrupt che su Ruby 3.1 e 3.2 interrompe la pulizia di run la fa ricominciare: run lo solleva alla fine' do
+      NcHelpers.open_context do |c|
+        feeding_input(c) do
+          allow(Thread).to receive(:handle_interrupt) { |*, &block| block.call } # come Ruby 3.1: niente rinvio
+          ev = described_class.new(c)
+          injected = []
+          allow(c).to receive(:input_reader_stop).and_wrap_original do |original, *args|
+            result = original.call(*args)
+            raise Interrupt if injected.push(:stop).size == 1 # dopo lo stop del thread, prima del resto
+
+            result
+          end
+          allow(ev).to receive(:restore_terminal).and_wrap_original do |original, *args|
+            raise Interrupt if injected.push(:restore).size == 3 # al primo ripristino del terminale
+
+            original.call(*args)
+          end
+          fds = open_fds
+          ev.post { ev.stop }
+          expect { ev.run(no_linesigs: true) }.to raise_error(Interrupt)
+          expect(injected).to eq(%i[stop stop restore stop restore])
+          expect(ev).not_to be_running
+          expect(input_threads).to be_empty
+          expect(open_fds).to eq(fds)
+          expect(c).to have_received(:isig_enable).once
+          ev.post { ev.stop }
+          expect(ev.run).to eq(:stop) # il ciclo resta usabile
+        end
+      end
+    end
+
     it 'un Interrupt mentre close aspetta il thread di input arriva dopo lo stop di notcurses' do
       NcHelpers.open_context do |c|
         feeding_input(c) do |type|
