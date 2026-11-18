@@ -379,3 +379,73 @@ parere di design), `13294e1` (nuovo fix di ICH-532 dopo la review), `c73e251` (n
   90,33 %; RuboCop 0 offense; YARD 100 %; `gem build` riuscito; `git diff ad0315b -- lib/notcurses/ffi
   lib/notcurses/ffi.rb` vuoto; CI di `master` verde.
 - ICH-531 e ICH-532 a Done. Issue nuova: ICH-533 (Backlog, lotto 8).
+
+## Lotto 3 — ICH-454, ICH-456, ICH-455 (PR #26, in draft)
+
+Lavoro in una sessione il 2026-11-17 e 18 (implementazione, review-fix loop di 3 round). Branch
+`bug/ICH-454-456-455-opus`, worktree `.claude/worktrees/bug+ICH-454-456-455-opus` ancora presente, con il submodule
+`notcurses` inizializzato. Codice in `lib/notcurses/ui/event_loop.rb` e `lib/notcurses/context.rb`. Commit: `19d07e9`
+(ICH-456, codice comune), `acc117b` (spec di ICH-454), `87526c4` (spec di ICH-455), `cc73e93`, `a80c4ba`, `cdd74de`
+(round 1), `7a5e12a`, `bbad936` (round 2), `82953cb` (dopo il round 3).
+
+### Fix
+
+- **Causa comune.** notcurses 3.0.17 alza SIGINT, SIGSTOP e SIGQUIT per Ctrl+C, Ctrl+Z e Ctrl+\ di kitty e di xterm
+  con modifyOtherKeys (`modifiers == NCKEY_MOD_CTRL`) nel suo thread di input, da un flag privato (`ictx->linesigs`)
+  che `stty` non cambia, per ogni evtype (pressione, ripetizione, rilascio), e mette anche il tasto in coda
+  (`in.c:506-552`). Il flag parte da ISIG all'init (`termdesc.c:1400-1404`). Solo `notcurses_linesigs_disable` ed
+  `enable` lo cambiano, e scrivono anche ISIG; con `ttyfd < 0` non fanno niente (`in.c:2840-2918`).
+- **Presa in carico (ICH-456, e da lì ICH-454 e ICH-455).** All'avvio `run` chiama `Context#linesigs_disable` e
+  rimette ISIG com'era con `Context#isig_enable` (nuovo, `@api private`, solo `tcsetattr`; `ixon!` e `isig_enable`
+  usano `tty_flag!`). Il ripristino di ISIG è armato prima del cambio. `line_signal` alza il segnale a ogni pressione
+  (`:press` o `:unknown`) dopo aver letto il tasto e scarta ripetizioni e rilasci. Dopo `run` il flag resta spento.
+- **Round 1 e 2.** Con `drain_input` `run` non legge i tasti e lascia i segnali a notcurses, come su `master`
+  (`a80c4ba`). `line_signal` ricorda il tasto che ha alzato il segnale (`@signal_key`) e scarta la sua ripetizione e il
+  suo rilascio anche nel `run` dopo (`7a5e12a`).
+
+### Decisioni
+
+- Dell'utente: opzione B, il flag di notcurses resta spento dopo `run` (con A un rilascio dopo `run` alza ancora
+  `Interrupt`: criterio di ICH-456); la prova a vista in Kitty la fa l'utente a mano; review con GPT e con Sonnet effort
+  max al posto di Fable; il limite "Ctrl+C non interrompe un handler bloccato e si perde con la coda piena" **non è
+  accettato**: PR #26 in draft e ICH-536 per una soluzione con un helper FFI approvato, in una sessione nuova.
+- Mie: limiti di notcurses scritti nello YARD di `run` (senza terminale, input e output su due terminali, Ctrl+C
+  prima della presa in carico alzato due volte o consegnato con `no_linesigs`, 0x03 nell'istante in cui ISIG è spento);
+  commit separati per issue con le versioni intermedie messe nell'indice (`git update-index --cacheinfo`); ICH-537 unisce
+  due finding del round 3 sullo stesso codice; gli ID delle issue nuove stanno solo nel commento della PR, non nella
+  descrizione (l'automazione di Linear le porterebbe a In Progress).
+
+### Review (3 round, GPT e Sonnet effort max)
+
+- Secondo parere di design prima del codice (`gpt-bridge:deep-reasoner`): opzione B; quattro rischi (niente tty,
+  terminali diversi, presa in carico non atomica, ripristino da armare prima del cambio), finiti nel piano.
+- Round 1: GPT MEDIUM, con `drain_input` nessuno alzava più il segnale (`a80c4ba`); Sonnet LOW, lo spec `stty -isig`
+  passava anche senza il fix (`cc73e93`), e LOW, il doppio segnale prima della presa in carico (`cdd74de`).
+- Round 2: GPT HIGH e Sonnet MEDIUM, con kitty il segnale nasce quando il ciclo legge il tasto: un handler, un timer o
+  un `post` bloccato non si interrompe più (su `master` notcurses lo alzava subito) e con la coda piena (`BUFSIZ`,
+  `in.c:522`) il Ctrl+C si perde: residuo, ICH-536. GPT MEDIUM, la ripetizione di un Ctrl+C tenuto arrivava a `on_key`
+  del `run(no_linesigs: true)` dopo (`7a5e12a`). Sonnet LOW, YARD (`bbad936`) e descrizione della PR.
+- Round 3: GPT MEDIUM, la pressione di un altro tasto di segnale azzera `@signal_key`, e Sonnet LOW, `@signal_key` è
+  per `EventLoop` mentre la coda è per `Context`: ICH-537. Sonnet LOW, con `loglevel: :warning` ogni `run` dopo il
+  primo scrive "linedisc signals already disabled" (`in.c:2841`): ICH-538. LOW di testo corretti senza review
+  (`82953cb`, descrizione della PR).
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| Gli spec di ICH-456 passavano su `master` | il caso 2 di ICH-454 lasciava spento il flag per il resto dello script | `nc.linesigs_enable` prima delle sessioni di ICH-456 |
+| Gli spec unitari di `run` non provano la presa in carico | il contesto di `NcHelpers` ha `drain_input: true` | helper `reading_input` (stub di `drain_input?`, `inputready_fd` su un pipe, `get`) |
+| RuboCop `Lint/UselessAssignment` su `linesigs = isig` | non vede la lettura in `ensure` | assegnamento condizionale |
+| Output del figlio pty troncato da RSpec | il matcher `include` tronca | riga temporanea `File.write(ENV['KITTY_OUT'], out)`, tolta subito |
+| Suite completa nel worktree nuovo | submodule `notcurses` assente | `git submodule update --init --depth 1 notcurses` |
+| Il reviewer Sonnet ha scritto `/tmp/ncerr.txt` | prova con `loglevel: :warning` | rimosso dall'utente |
+
+### Stato a fine sessione
+
+- Branch su `82953cb` (solo documentazione dopo `bbad936`): 1138 esempi, 0 fallimenti; RuboCop 0 offense; YARD 100 %;
+  layer FFI invariato; line coverage 98,09 % misurata prima della review (`87526c4`). CI verde su `bbad936`; su
+  `82953cb` in corso alla chiusura.
+- ICH-454, ICH-456, ICH-455 In Progress; PR #26 in draft con il commento della review. Issue nuove in Backlog:
+  ICH-536 (High), ICH-537 (Medium), ICH-538 (Low), con relazione `related` verso ICH-456 e ICH-455.
+- Prova a vista in Kitty non ancora fatta.
