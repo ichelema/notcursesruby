@@ -8,8 +8,9 @@ module Notcurses
   # dell'input ({App}), il resize e i widget composti ({Container}, {Label},
   # {Button}, {TextInput}, {ListView}, {LogView}, {Dialog}).
   #
-  # Thread: solo il thread che esegue {EventLoop#run} chiama notcurses; gli
-  # altri thread passano dal ciclo con {EventLoop#post}.
+  # Thread: solo il thread che esegue {EventLoop#run} chiama notcurses, tranne
+  # il thread di input del contesto, che durante run legge i tasti; gli altri
+  # thread passano dal ciclo con {EventLoop#post}.
   module UI
   end
 end

@@ -576,9 +576,11 @@ MISE_EXEC_AUTO_INSTALL=false BUNDLE_GEMFILE="$S/gemfile31/Gemfile" TERM=xterm-25
 - Riassunto del funzionamento (i dettagli sono nel YARD di ogni classe e nel design):
   - un giro di `run`: `IO.select` sul fd di `Context#inputready_fd` e su un pipe di risveglio, con il timeout del
     primo timer; poi il resize segnalato, tutto l'input pronto, i blocchi di `post`, i timer scaduti e al massimo un
-    render;
-  - solo il thread del ciclo chiama notcurses; `post` e `stop` funzionano da qualsiasi thread e dai `trap` (`Queue`
-    e un byte sul pipe, niente `Mutex`);
+    render (dal lotto 3 delle issue in Backlog `run` attende sul pipe del thread di input del contesto, non sul fd
+    di notcurses);
+  - solo il thread del ciclo chiama notcurses (dal lotto 3 delle issue in Backlog anche il thread di input, che
+    durante `run` legge i tasti con `notcurses_getvec`); `post` e `stop` funzionano da qualsiasi thread e dai `trap`
+    (`Queue` e un byte sul pipe, niente `Mutex`);
   - consegna in `App`: componente con il focus (o sotto il mouse), risalita ai contenitori fino alla radice attiva,
     poi `on_key`, Tab e Shift+Tab, `on_input`;
   - un componente ridisegna tutto dal proprio stato a ogni layout: nessun widget scorre i propri piani o copia celle
@@ -632,7 +634,7 @@ comune (`Util.c_region`); la copertura FFI non cambia (477 chiamate, 154 escluse
 | In `read_input_nblock` la condizione su `errno` non è mai vera dove `EAGAIN == EWOULDBLOCK` (Linux): ogni errore di `read`, anche EIO, segna la fine dell'input | `in.c:2180-2190` | letto nel C, non riprodotto: per esempio un pty il cui master si chiude dà `Key::EOF`, e `run` restituisce `:eof` |
 | notcurses divide il keycap `"1️⃣"` diversamente da Ruby e ne scrive U+20E3 come carattere di larghezza zero | `nccell_load` | il controllo del testo dei widget non lo vede; il disegno lo scrive come `"?"` invece di sollevare |
 | Nessuno stile «reverse»; senza tty `cursor_disable` e `mice_enable` sollevano `ContextError` | — | il focus si mostra con i colori; `App` ignora l'errore di `cursor_disable` |
-| Con il protocollo tastiera kitty notcurses alza SIGINT, SIGSTOP o SIGQUIT per Ctrl+C, Ctrl+Z e Ctrl+\ solo se i modificatori sono Ctrl da solo: con CapsLock o NumLock (kitty li aggiunge) non alza niente e consegna il tasto; con Ctrl da solo alza il segnale e mette anche l'evento in coda | `in.c:506-516` | con ISIG attivo `EventLoop#run` alza lo stesso segnale al proprio processo alla pressione, e non consegna questi tasti (ICH-280) |
+| Con il protocollo tastiera kitty notcurses alza SIGINT, SIGSTOP o SIGQUIT per Ctrl+C, Ctrl+Z e Ctrl+\ solo se i modificatori sono Ctrl da solo: con CapsLock o NumLock (kitty li aggiunge) non alza niente e consegna il tasto; con Ctrl da solo alza il segnale e mette anche l'evento in coda. Lo alza anche per la ripetizione e il rilascio (notcurses chiede il flag kitty 2, i tipi di evento), e lo decide da un flag privato (`ictx->linesigs`) che `stty` non cambia: lo cambiano solo `notcurses_linesigs_disable` ed `enable`, che scrivono anche ISIG, e con `ttyfd < 0` nemmeno loro | `in.c:506-516`, `in.c:2840-2918`, `termdesc.c:390` | all'avvio `EventLoop#run` spegne il flag con `notcurses_linesigs_disable` e rimette ISIG com'era con `tcsetattr` (`Context#isig_enable`); con ISIG attivo alza lui lo stesso segnale al proprio processo, una volta per pressione e dopo aver letto il tasto, e non consegna questi tasti (ICH-280, ICH-454, ICH-456, ICH-455). Dopo `run` il flag resta spento. Con `drain_input` `run` non legge i tasti e lascia i segnali a notcurses, come su `master` (con `no_linesigs` spegne il flag e lo riaccende alla fine con `linesigs_enable`); senza terminale il flag resta acceso: limiti scritti nello YARD |
 | Il report SGR del movimento con un tasto premuto (bit 32) diventa una nuova pressione dello stesso tasto: `mouse_click` mette `NCTYPE_PRESS` per ogni report `M` e `id = NCKEY_BUTTON1 + mods % 4` | `in.c:610-620` | `App` tratta come drag una pressione di BUTTON1..3 con lo stesso tasto già premuto: niente focus, niente componenti, solo `on_input`; un drag non ripete il clic di un `Button` (ICH-283) |
 | Sulla console Linux il mouse viene da gpm: ogni evento (pressione, rilascio, drag, qualsiasi tasto) diventa `\e[<0;x;yM`, cioè una pressione di BUTTON1, e un rilascio non arriva mai | `mice.c:4-19`, `gpm.c:31` | `App` non applica la regola del drag quando `Context#detected_terminal` è `"FBcon"` o `"VT"`: lì ogni pressione è un clic (trovato nella review del lotto 8) |
 

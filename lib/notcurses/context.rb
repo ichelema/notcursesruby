@@ -319,6 +319,9 @@ module Notcurses
         @mice_enabled = false
         @drain_input = drain_input
         @no_winch_sighandler = no_winch_sighandler
+        @linesigs_flag = initial_linesigs_flag
+        @held_signal_keys = {}
+        @input_reader = nil
         @stdplane = Plane.new(FFI.notcurses_stdplane(ptr), owned: false, context: self)
         @closed = false
       rescue Exception # rubocop:disable Lint/RescueException
@@ -356,7 +359,9 @@ module Notcurses
     #
     # close si può chiamare da un gestore +trap+ (per esempio
     # <tt>trap('TERM') { nc.close; exit }</tt>): il registro si libera anche
-    # lì, e un nuovo contesto si può aprire dopo.
+    # lì, e un nuovo contesto si può aprire dopo. Durante
+    # {UI::EventLoop#run} close ferma prima il thread di input; un Ctrl+C che
+    # arriva mentre lo aspetta si solleva dopo lo stop.
     #
     # @return [nil]
     # @raise [ContextError] se +notcurses_stop+ restituisce un errore (il
@@ -369,6 +374,15 @@ module Notcurses
       return mark_closed!(fclose: false) unless @pid == Process.pid
 
       check_not_in_callback!('Context#close', ContextError)
+      # il thread di input di run non deve chiamare notcurses dopo lo stop; un Ctrl+C arrivato mentre halt lo
+      # aspetta si solleva alla fine
+      interrupted = @input_reader&.halt
+      if @closed # un gestore trap ha chiuso il contesto mentre halt aspettava il thread
+        raise interrupted if interrupted
+
+        return nil
+      end
+
       first_error = close_children
       # prima della chiamata: Ruby consegna un Ctrl-C al suo ritorno, quando il C ha già liberato il contesto
       @closed = true
@@ -377,6 +391,7 @@ module Notcurses
       ensure
         mark_closed!(fclose: @own_fp)
       end
+      raise interrupted if interrupted
       raise first_error if first_error
       # notcurses_stop restituisce l'OR di più ritorni: qualsiasi valore diverso da 0 è un errore
       raise ContextError, "notcurses_stop fallita (#{rc})" unless rc.zero?
@@ -675,6 +690,13 @@ module Notcurses
     # sul descrittore di +notcurses_inputready_fd+, che rilascia il GVL, quindi
     # gli altri thread Ruby e i segnali (Ctrl-C → Interrupt) restano serviti.
     #
+    # Durante {UI::EventLoop#run} i tasti li legge un thread di input del
+    # contesto, che alza i segnali di Ctrl+C, Ctrl+Z e Ctrl+\ e scarta quei
+    # tasti: get (per esempio in un handler) restituisce gli eventi che il
+    # thread ha già letto, e attende sul suo pipe. Gli eventi letti dal thread
+    # e non consegnati da run arrivano ai get successivi, prima della coda di
+    # notcurses.
+    #
     # @param timeout [Numeric, nil] secondi di attesa massima, 0..2147483647
     #   (2^31 - 1, circa 68 anni); nil = attende senza limite; 0 = non attende
     # @return [Input, nil] l'evento, o nil se il timeout scade. Con stdin chiuso
@@ -685,17 +707,12 @@ module Notcurses
     #   0..2147483647
     # @raise [ClosedError] se il contesto è chiuso
     def get(timeout: nil)
-      wait_input(timeout) do
-        ni = FFI::NcInput.new
-        id = FFI.notcurses_get_nblock(to_ptr, ni)
-        raise InputError, 'notcurses_get: errore di input (o input scartato con drain_input)' if id == 0xffff_ffff
-
-        Input.new(ni) unless id.zero?
-      end
+      wait_input(timeout) { next_input }
     end
 
     # Legge fino a count eventi già pronti (+notcurses_getvec+). Attende come
-    # {#get} finché ce n'è almeno uno. Il risultato si ferma al primo evento
+    # {#get} finché ce n'è almeno uno; durante {UI::EventLoop#run} legge, come
+    # {#get}, gli eventi del thread di input. Il risultato si ferma al primo evento
     # {Key::EOF} (il C riempirebbe tutto il vettore di EOF). Legge a blocchi di
     # 8192 eventi, la dimensione della coda di input di notcurses, finché la
     # coda è vuota o count è raggiunto: la memoria dipende dagli eventi letti,
@@ -737,7 +754,12 @@ module Notcurses
     end
 
     # Descrittore che diventa leggibile quando c'è input
-    # (+notcurses_inputready_fd+). Non chiuderlo.
+    # (+notcurses_inputready_fd+). Non chiuderlo. Durante {UI::EventLoop#run}
+    # il descrittore è del thread di input, che svuota la coda di notcurses:
+    # per attendere un tasto usa {#get} con un timeout. Dopo run il thread può
+    # aver lasciato eventi nel suo buffer, che il descrittore non segnala:
+    # prima di attendere su di esso chiama {#get}(timeout: 0) finché
+    # restituisce nil.
     #
     # @return [Integer]
     # @raise [InputError] se il descrittore non è disponibile
@@ -786,6 +808,7 @@ module Notcurses
     # @raise [ClosedError] se il contesto è chiuso
     def linesigs_disable
       Util.check!(FFI.notcurses_linesigs_disable(to_ptr), ContextError, 'notcurses_linesigs_disable')
+      @linesigs_flag = false
       self
     end
 
@@ -796,7 +819,73 @@ module Notcurses
     # @raise [ClosedError] se il contesto è chiuso
     def linesigs_enable
       Util.check!(FFI.notcurses_linesigs_enable(to_ptr), ContextError, 'notcurses_linesigs_enable')
+      @linesigs_flag = true
       self
+    end
+
+    # Stato del flag privato con cui notcurses alza SIGINT, SIGSTOP e SIGQUIT
+    # per Ctrl+C, Ctrl+Z e Ctrl+\ di kitty e di xterm (in.c:506-516). Il C non
+    # lo lascia leggere: lo tiene il wrapper. All'init il flag segue ISIG del
+    # terminale, ed è acceso senza terminale (termdesc.c:1400-1404); lo
+    # cambiano solo {#linesigs_disable} e {#linesigs_enable}. Lo usa
+    # {UI::EventLoop#run}, per non chiamare linesigs_disable con il flag già
+    # spento (notcurses scriverebbe un avviso).
+    #
+    # @return [Boolean] true se il flag è acceso
+    # @raise [ClosedError] se il contesto è chiuso
+    # @api private
+    def linesigs_flag?
+      to_ptr
+      @linesigs_flag
+    end
+
+    # Tasti di segnale (Ctrl+C, Ctrl+Z, Ctrl+\) per cui {UI::EventLoop#run} ha
+    # alzato il segnale e di cui non è ancora arrivato il rilascio: la loro
+    # ripetizione e il loro rilascio non arrivano a nessun ciclo. Sta nel
+    # contesto, come la coda dei tasti. Una voce per tasto, tolta dal suo
+    # rilascio o da una nuova pressione dello stesso tasto.
+    #
+    # @return [Hash{Integer => true}] id del tasto (per esempio 'C'.ord);
+    #   modificabile, solo per {UI::EventLoop}
+    # @raise [ClosedError] se il contesto è chiuso
+    # @api private
+    def held_signal_keys
+      to_ptr
+      @held_signal_keys
+    end
+
+    # Avvia il thread di input di {UI::EventLoop#run} (+InputReader+), o
+    # aggiunge il filtro di un run annidato di un altro ciclo sullo stesso
+    # contesto: vale il filtro del run più interno. Finché il thread gira,
+    # {#get} e {#getvec} leggono solo gli eventi che il thread non ha scartato.
+    #
+    # @param ids [#key?] id degli eventi da passare al filtro (gli altri vanno
+    #   nel buffer senza filtro): un Hash, o un oggetto con key? che il thread
+    #   di input chiama per ogni evento
+    # @yieldparam input [Input] evento letto con un id in ids, nel thread di
+    #   input
+    # @yieldreturn [Boolean] true per scartarlo
+    # @return [IO] pipe che diventa leggibile quando arrivano eventi; poi
+    #   {#get}(timeout: 0) fino a nil
+    # @raise [InputError] se il descrittore di input non è disponibile
+    # @raise [ClosedError] se il contesto è chiuso
+    # @api private
+    def input_reader_start(ids, &filter)
+      to_ptr
+      @input_reader ||= InputReader.new(-> { inputready_fd }, ->(buf, slots) { getvec_into(buf, slots) })
+      @input_reader.start(filter, ids)
+    end
+
+    # Toglie il filtro di un run, se {#input_reader_start} l'ha registrato;
+    # senza altri run ferma il thread di input. Funziona anche con il contesto
+    # chiuso ({#close} ha già fermato il thread).
+    #
+    # @param filter [Proc] il blocco passato a {#input_reader_start}
+    # @return [Exception, nil] l'eccezione asincrona (un altro Ctrl+C) arrivata
+    #   mentre aspettava il thread, da sollevare dopo la pulizia del chiamante
+    # @api private
+    def input_reader_stop(filter)
+      @input_reader&.stop(filter)
     end
 
     # Disattiva il controllo di flusso (IXON), che notcurses lascia attivo:
@@ -844,6 +933,41 @@ module Notcurses
       raise ContextError, "segnali da tastiera: ISIG non noto su #{RUBY_PLATFORM}" unless FFI::ISIG
 
       input_tty { |fd| termios(fd)[:c_lflag].anybits?(FFI::ISIG) }
+    end
+
+    # Riaccende ISIG sul terminale di {#flow_control_disable}, senza
+    # riaccendere i segnali che notcurses alza per i tasti kitty e xterm
+    # ({#linesigs_enable} riaccende entrambi). Lo usa {UI::EventLoop#run}, che
+    # quei segnali li alza da sé.
+    #
+    # @return [self]
+    # @raise [ContextError] se tcgetattr o tcsetattr falliscono, o se ISIG non
+    #   è noto su questo sistema
+    # @raise [ClosedError] se il contesto è chiuso
+    # @api private
+    def isig_enable
+      to_ptr
+      raise ContextError, "segnali da tastiera: ISIG non noto su #{RUBY_PLATFORM}" unless FFI::ISIG
+
+      input_tty { |fd| tty_flag!(fd, :c_lflag, FFI::ISIG, true) }
+      self
+    end
+
+    # Spegne ISIG sul terminale di {#flow_control_disable}, senza toccare il
+    # flag dei segnali di notcurses ({#linesigs_flag?}). Lo usa
+    # {UI::EventLoop#run}(no_linesigs: true) quando il flag è già spento.
+    #
+    # @return [self]
+    # @raise [ContextError] se tcgetattr o tcsetattr falliscono, o se ISIG non
+    #   è noto su questo sistema
+    # @raise [ClosedError] se il contesto è chiuso
+    # @api private
+    def isig_disable
+      to_ptr
+      raise ContextError, "segnali da tastiera: ISIG non noto su #{RUBY_PLATFORM}" unless FFI::ISIG
+
+      input_tty { |fd| tty_flag!(fd, :c_lflag, FFI::ISIG, false) }
+      self
     end
 
     # --- capacità ---
@@ -1099,6 +1223,17 @@ module Notcurses
       nil
     end
 
+    # Valore del flag dei segnali di notcurses subito dopo l'init: ISIG del
+    # terminale, acceso senza terminale o con ISIG non leggibile.
+    # @return [Boolean]
+    def initial_linesigs_flag
+      return true unless FFI::ISIG
+
+      input_tty { |fd| termios(fd)[:c_lflag].anybits?(FFI::ISIG) ? :on : :off } != :off
+    rescue ContextError
+      true
+    end
+
     # Il terminale da cui notcurses legge i tasti (init_inputlayer, in.c):
     # stdin se è un tty, altrimenti /dev/tty.
     # @return il valore del blocco, false senza terminale
@@ -1122,11 +1257,17 @@ module Notcurses
     def ixon!(fd, on)
       raise ContextError, "controllo di flusso: IXON non noto su #{RUBY_PLATFORM}" unless FFI::IXON
 
+      tty_flag!(fd, :c_iflag, FFI::IXON, on)
+    end
+
+    # Porta il bit flag del campo field di termios a on sul terminale fd.
+    # @return [Boolean] il valore precedente
+    def tty_flag!(fd, field, flag, on)
       tios = termios(fd)
-      was = tios[:c_iflag].anybits?(FFI::IXON)
+      was = tios[field].anybits?(flag)
       return was if was == on
 
-      tios[:c_iflag] ^= FFI::IXON
+      tios[field] ^= flag
       termios_check!(FFI.tcsetattr(fd, FFI::TCSANOW, tios), 'tcsetattr')
       was
     end
@@ -1177,30 +1318,77 @@ module Notcurses
       end
     end
 
-    # Eventi già in coda, al massimo count, letti a blocchi di GETVEC_MAX slot.
-    # Le chiamate C sono consecutive e gli Input nascono dopo: durante una
-    # raffica la coda si svuota prima che notcurses scarti altri eventi.
+    # Prossimo evento senza attendere: durante run solo dal buffer del thread
+    # di input; fuori da run prima quello che resta nel buffer, poi la coda di
+    # notcurses.
+    # @return [Input, nil]
+    def next_input
+      reader = @input_reader
+      return pull_input unless reader&.active? || reader&.pending?
+
+      to_ptr # il buffer non chiama il C, che controlla da sé il contesto chiuso
+      return reader.take if reader.active?
+
+      reader.take || pull_input
+    end
+
+    # Un evento dalla coda di notcurses, senza attendere (+notcurses_get_nblock+).
+    # @return [Input, nil]
+    def pull_input
+      ni = FFI::NcInput.new
+      id = FFI.notcurses_get_nblock(to_ptr, ni)
+      raise InputError, 'notcurses_get: errore di input (o input scartato con drain_input)' if id == 0xffff_ffff
+
+      Input.new(ni) unless id.zero?
+    end
+
+    # Eventi già pronti, al massimo count: come {#next_input}, prima il buffer
+    # del thread di input, poi (fuori da run) la coda di notcurses.
     # @return [Array<Input>, nil] nil senza eventi
     def queued_inputs(count)
+      reader = @input_reader
+      events = []
+      if reader&.active? || reader&.pending?
+        to_ptr # il buffer non chiama il C, che controlla da sé il contesto chiuso
+        events = reader.take_many(count)
+        # nel buffer resta altro solo con count raggiunto o con un errore da sollevare al giro dopo
+        done = reader.active? || reader.pending?
+      end
+      events.concat(pull_inputs(count - events.size)) unless done || events.size == count
+      events.empty? ? nil : events
+    end
+
+    # Eventi della coda di notcurses, al massimo count, letti a blocchi di
+    # GETVEC_MAX slot. Le chiamate C sono consecutive e gli Input nascono
+    # dopo: durante una raffica la coda si svuota prima che notcurses scarti
+    # altri eventi.
+    # @return [Array<Input>] anche vuoto
+    def pull_inputs(count)
       size = FFI::NcInput.size
       blocks = []
       taken = 0
       loop do
         slots = [count - taken, GETVEC_MAX].min
         buf = ::FFI::MemoryPointer.new(FFI::NcInput, slots)
-        # deadline assoluta {0, 0}: già scaduta, quindi la chiamata non attende.
-        # to_ptr a ogni blocco: un gestore trap può chiudere il contesto tra due chiamate
-        n = FFI.notcurses_getvec(to_ptr, FFI::Timespec.new, buf, slots)
-        raise InputError, 'notcurses_getvec: errore di input' if n.negative?
-
+        n = getvec_into(buf, slots)
         blocks << [buf, n] if n.positive?
         taken += n
         # blocco non pieno: la coda è vuota. A fine input il C riempie ogni blocco di EOF
         break if n < slots || taken == count || FFI::NcInput.new(buf + ((n - 1) * size))[:id] == Key::EOF
       end
-      return nil if blocks.empty?
-
       blocks.flat_map { |buf, n| Array.new(n) { |i| Input.new(FFI::NcInput.new(buf + (i * size))) } }
+    end
+
+    # Scrive in buf fino a slots eventi già in coda (+notcurses_getvec+), senza
+    # attendere: deadline assoluta {0, 0}, già scaduta. to_ptr a ogni chiamata:
+    # un gestore trap può chiudere il contesto tra due chiamate. Lo usa anche
+    # il thread di input.
+    # @return [Integer] eventi scritti
+    def getvec_into(buf, slots)
+      n = FFI.notcurses_getvec(to_ptr, FFI::Timespec.new, buf, slots)
+      raise InputError, 'notcurses_getvec: errore di input' if n.negative?
+
+      n
     end
 
     # Ripete il blocco finché restituisce un valore, attendendo l'input fuori
@@ -1218,9 +1406,11 @@ module Notcurses
         remaining = deadline && (deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC))
         return nil if remaining && remaining <= 0
 
-        # il descrittore è di notcurses: autoclose false, lo chiude notcurses_stop
-        @input_io ||= IO.for_fd(inputready_fd, autoclose: false)
-        @input_io.wait_readable(remaining)
+        # durante run il pipe del thread di input; fuori da run il descrittore di notcurses (autoclose false:
+        # lo chiude notcurses_stop)
+        io = @input_reader&.active? && @input_reader.ready_io
+        io ||= (@input_io ||= IO.for_fd(inputready_fd, autoclose: false))
+        io.wait_readable(remaining)
       end
     end
   end

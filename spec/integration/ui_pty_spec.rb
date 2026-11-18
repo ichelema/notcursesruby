@@ -321,18 +321,22 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
   RUBY
 
   # Più run dello stesso EventLoop, ognuno con un timer di sicurezza: stampa
-  # il motivo d'uscita e i modificatori arrivati a on_key('c', ctrl: true).
+  # il motivo d'uscita e i tasti arrivati a on_key (i modificatori di Ctrl+C,
+  # :x per x), più " stty diverso" se stty -g dopo run non è quello di prima.
   def kitty_signals_script = kitty_prelude + <<~'RUBY'
+    stty = ->(flag) { IO.popen(['stty', flag], in: slave, &:read) }
     Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
       ev = Notcurses::UI::EventLoop.new(nc)
       seen = []
       ev.on_key('c', ctrl: true) { |input| seen << input.modifier_list }
+      ev.on_key('x') { seen << :x }
       evtypes = []
       ev.on_input { |input| evtypes << input.evtype } # :press per un byte solo se kitty è acceso (in.c:501)
       quits = 0
       Signal.trap('QUIT') { quits += 1 }
       session = lambda do |name, keys, **opts|
         seen.clear
+        before = stty.('-g')
         user = keys && Thread.new do
           wait_for('run') { ev.running? }
           type.(keys)
@@ -341,22 +345,223 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
         reason = ev.run(**opts)
         timer.cancel
         user&.join
-        puts "#{name}: #{reason} #{seen.inspect}"
+        puts "#{name}: #{reason} #{seen.inspect}#{' stty diverso' if stty.('-g') != before}"
       end
       session.('numlock', "\e[99;133u")
       session.('capslock', "\e[99;69u")
-      session.('solo ctrl', "\e[99;5u") # il segnale lo alza notcurses, l'evento resta in coda
-      session.('dopo solo ctrl', nil)
+      session.('solo ctrl', "\e[99;5u") # il segnale lo alza run, dopo aver letto l'evento
+      session.('dopo solo ctrl', nil, no_linesigs: true) # ICH-455: il Ctrl+C non resta in coda
+      session.('ctrl+c e x', "\e[99;5ux")
+      session.('dopo ctrl+c e x', nil, no_linesigs: true) # la x resta in coda
+      session.('ctrl+c tenuto e x', "\e[99;5u\e[99;5:2u\e[99;5:3ux")
+      session.('dopo ctrl+c tenuto e x', nil, no_linesigs: true) # la ripetizione non arriva a on_key
       session.('ripetizione e rilascio', "\e[99;133:2u\e[99;133:3u")
       session.('ctrl+\\ con numlock', "\e[92;133u")
       session.('no_linesigs', "\e[99;133u", no_linesigs: true)
-      session.('xterm modifyOtherKeys', "\e[27;5;99~") # il segnale lo alza notcurses, l'evento resta in coda
-      session.('dopo xterm', nil)
+      session.('no_linesigs solo ctrl', "\e[99;5u", no_linesigs: true)
+      session.('xterm modifyOtherKeys', "\e[27;5;99~")
+      session.('dopo xterm', nil, no_linesigs: true)
+      # ICH-454: ISIG cambiato fuori da notcurses
+      nc.linesigs_enable # il flag di notcurses torna acceso: lo spegne solo run, stty no
+      system('stty', '-isig', in: slave)
+      session.('stty -isig', "\e[99;5u", no_linesigs: true)
+      system('stty', 'isig', in: slave)
+      nc.linesigs_disable
+      system('stty', 'isig', in: slave)
+      session.('linesigs_disable e stty isig', "\e[99;5u")
+      # ICH-456: un segnale per pressione, niente per la ripetizione e il rilascio
+      nc.linesigs_enable # il default di notcurses: ISIG e il suo flag accesi
+      session.('solo rilascio', "\e[99;5:3u")
+      session.('solo ripetizione', "\e[99;5:2u")
+      session.('premuto', "\e[99;5u")
+      outside = begin
+        type.("\e[99;5:2u\e[99;5:3u") # ripetizione e rilascio dopo run, con il contesto aperto
+        sleep 0.3
+        'nessun Interrupt'
+      rescue Interrupt
+        'Interrupt'
+      end
+      puts "fuori da run: #{outside}"
+      ints = 0
+      Signal.trap('INT') { ints += 1 }
+      session.('premuto, ripetuto e rilasciato', "\e[99;5u\e[99;5:2u\e[99;5:3u")
+      session.('ctrl+\\ premuto, ripetuto e rilasciato', "\e[92;5u\e[92;5:2u\e[92;5:3u")
       system('stty', 'intr', 'undef', in: slave)
       session.('byte 0x03', "\x03") # ISIG resta: con kitty il byte arriva :press, ma è un tasto
       system('stty', 'intr', '^C', in: slave)
       session.('tasto classico', 'a')
-      puts "kitty #{kitty.()} quits #{quits} evtypes #{evtypes.inspect}"
+      puts "kitty #{kitty.()} quits #{quits} ints #{ints} evtypes #{evtypes.inspect}"
+    end
+    puts 'fine'
+  RUBY
+
+  # ICH-538: con loglevel :warning notcurses scrive "linedisc signals already
+  # disabled" se linesigs_disable trova il suo flag già spento (in.c:2841).
+  # stderr del figlio finisce nell'output. Dopo linesigs_enable run spegne di
+  # nuovo il flag: un Ctrl+C tenuto alza un solo SIGINT.
+  def kitty_loglevel_script = kitty_prelude + <<~'RUBY'
+    stty = ->(flag) { IO.popen(['stty', flag], in: slave, &:read) }
+    opts = { output: slave.path, termtype: 'xterm-256color', suppress_banners: true, loglevel: :warning }
+    Notcurses::Context.open(**opts) do |nc|
+      ev = Notcurses::UI::EventLoop.new(nc)
+      ints = 0
+      Signal.trap('INT') { ints += 1 }
+      session = lambda do |name, keys = nil, **run_opts|
+        before = stty.('-g')
+        user = keys && Thread.new do
+          wait_for('run') { ev.running? }
+          type.(keys)
+        end
+        timer = ev.after(keys ? 1 : 0) { ev.stop }
+        reason = ev.run(**run_opts)
+        timer.cancel
+        user&.join
+        $stderr.flush
+        puts "#{name}: #{reason}#{' stty diverso' if stty.('-g') != before}"
+      end
+      session.('primo')
+      session.('secondo')
+      session.('no_linesigs', no_linesigs: true)
+      session.('terzo')
+      nc.linesigs_enable
+      session.('dopo linesigs_enable', "\e[99;5u\e[99;5:2u\e[99;5:3u")
+      session.('ultimo')
+      puts "kitty #{kitty.()} ints #{ints}"
+    end
+    puts 'fine'
+  RUBY
+
+  # ICH-537: la memoria del tasto di segnale tenuto premuto vale per ogni tasto
+  # e per il contesto. Stampa il motivo d'uscita, i tasti arrivati a on_key e
+  # gli eventi arrivati a on_input, come [carattere, evtype].
+  def kitty_held_keys_script = kitty_prelude + <<~'RUBY'
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      keys = []
+      inputs = []
+      new_loop = lambda do
+        ev = Notcurses::UI::EventLoop.new(nc)
+        ev.on_key('c', ctrl: true) { |input| keys << ['c', input.evtype] }
+        ev.on_key('\\', ctrl: true) { |input| keys << ['\\', input.evtype] }
+        ev.on_input { |input| inputs << [input.id.chr, input.evtype] if input.id < 0x80 }
+        ev
+      end
+      session = lambda do |name, ev, typed, **opts|
+        keys.clear
+        inputs.clear
+        user = typed && Thread.new do
+          wait_for('run') { ev.running? }
+          type.(typed)
+        end
+        timer = ev.after(1) { ev.stop }
+        reason = ev.run(**opts)
+        timer.cancel
+        user&.join
+        puts "#{name}: #{reason} #{keys.inspect} #{inputs.inspect}"
+      end
+      a = new_loop.()
+      session.('tenuto', a, "\e[99;5u")
+      # un Ctrl+\ nuovo, poi la ripetizione e il rilascio del Ctrl+C di prima
+      session.('altro tasto di segnale', a, "\e[92;5u\e[99;5:2u\e[99;5:3u", no_linesigs: true)
+      session.('premuto, ripetuto e rilasciato', a, "\e[99;5u\e[99;5:2u\e[99;5:3u")
+      b = new_loop.()
+      session.('secondo ciclo', b, nil, no_linesigs: true)
+      session.('nuova pressione', b, "\e[99;5u", no_linesigs: true)
+      session.('tenuto di nuovo', a, "\e[99;5u")
+      # Ctrl lasciato prima di C: ripetizione e rilascio di C arrivano senza Ctrl
+      session.('lasciato Ctrl prima di C', b, "\e[99;1:2u\e[99;1:3u", no_linesigs: true)
+      puts "kitty #{kitty.()}"
+    end
+    puts 'fine'
+  RUBY
+
+  # ICH-536: il segnale di un tasto kitty arriva subito anche con il ciclo
+  # occupato (un blocco di post, un timer, un handler che dormono). Ogni riga
+  # dice "subito" se il segnale (o l'uscita da run) arriva entro 1 s dall'avvio
+  # di run; il tasto parte a 0,3 s. Ctrl+Z ferma il processo: un processo
+  # monitor lo vede fermo in /proc, manda SIGCONT e stampa l'istante di ogni
+  # stop (CLOCK_MONOTONIC è lo stesso per i due processi).
+  def kitty_busy_script = kitty_prelude + <<~'RUBY'
+    clock = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
+    monitor_src = <<~'MON'
+      pid = Integer(ARGV[0])
+      finish = Process.clock_gettime(Process::CLOCK_MONOTONIC) + Float(ARGV[1])
+      state = -> { s = File.read("/proc/#{pid}/stat"); s[s.rindex(')') + 2] }
+      stops = []
+      while Process.clock_gettime(Process::CLOCK_MONOTONIC) < finish
+        if state.() == 'T'
+          stops << Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          Process.kill(:CONT, pid)
+          sleep 0.01 while state.() == 'T'
+        end
+        sleep 0.01
+      end
+      puts stops.join(' ')
+    MON
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      ev = Notcurses::UI::EventLoop.new(nc)
+      ev.on_key('x') { sleep 2 }
+      start = nil
+      when_s = ->(t) { t && t - start < 1 ? 'subito' : format('dopo %.1f s', t ? t - start : -1) }
+      session = lambda do |busy, *steps, limit: 4|
+        user = Thread.new do
+          wait_for('run') { ev.running? }
+          steps.each { |step| step.is_a?(Numeric) ? sleep(step) : type.(step) }
+        end
+        busy&.call
+        timer = ev.after(limit) { ev.stop }
+        start = clock.()
+        reason = ev.run
+        ended = clock.()
+        timer.cancel
+        user.join
+        [reason, ended]
+      end
+      %w[post timer handler].each do |name|
+        busy = { 'post' => -> { ev.post { sleep 2 } }, 'timer' => -> { ev.after(0) { sleep 2 } } }[name]
+        reason, ended = session.(busy, *(name == 'handler' ? ['x'] : []), 0.3, "\e[99;5u")
+        puts "#{name}: #{reason} #{when_s.(ended)}"
+      end
+      # un trap che conta: run non esce, e ogni segnale ha il suo istante
+      signals = []
+      Signal.trap('INT') { signals << [:int, clock.()] }
+      Signal.trap('QUIT') { signals << [:quit, clock.()] }
+      { 'ctrl+c' => "\e[99;5u\e[99;5:2u\e[99;5:3u", 'ctrl+\\' => "\e[92;5u\e[92;5:2u\e[92;5:3u" }.each do |name, keys|
+        signals.clear
+        reason, = session.(-> { ev.post { sleep 1.5 } }, 0.3, keys, limit: 2)
+        puts "#{name} contato: #{reason} #{signals.map(&:first).inspect} #{when_s.(signals.dig(0, 1))}"
+      end
+      Signal.trap('INT', 'DEFAULT')
+      Signal.trap('QUIT', 'DEFAULT')
+      mon_r, mon_w = IO.pipe
+      monitor = spawn(RbConfig.ruby, '-e', monitor_src, Process.pid.to_s, '3', out: mon_w)
+      mon_w.close
+      reason, = session.(-> { ev.post { sleep 1.5 } }, 0.3, "\e[122;5u\e[122;5:2u\e[122;5:3u", limit: 2)
+      Process.wait(monitor)
+      stops = mon_r.read.split.map(&:to_f)
+      puts "ctrl+z: #{reason} #{stops.size} #{when_s.(stops.first)}"
+      # più di 8192 tasti (la coda di notcurses) mentre un timer dorme, poi Ctrl+C
+      reason, ended = session.(-> { ev.after(0) { sleep 2 } }, 0.3, ('a' * 10_000) + "\e[99;5u")
+      puts "coda piena: #{reason} #{format('%.1f s', ended - start)}"
+      puts "kitty #{kitty.()}"
+    end
+    puts 'fine'
+  RUBY
+
+  # Un contesto che scarta l'input non accende il protocollo kitty, ma un
+  # terminale può mandare lo stesso le sequenze (xterm con modifyOtherKeys: 2):
+  # notcurses scarta il tasto e alza il segnale, run non legge niente.
+  def kitty_drain_script = kitty_prelude + <<~'RUBY'
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true, drain_input: true) do |nc|
+      ev = Notcurses::UI::EventLoop.new(nc)
+      user = Thread.new do
+        wait_for('run') { ev.running? }
+        type.("\e[99;5u")
+      end
+      timer = ev.after(1) { ev.stop }
+      reason = ev.run
+      timer.cancel
+      user.join
+      puts "drain: #{reason}"
     end
     puts 'fine'
   RUBY
@@ -393,7 +598,7 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
         wait_for('Tab') { app.focused.equal?(button) && releases.size == 4 }
         type.("\e[13u\e[13;1:3u") # Invio
         wait_for('Invio') { pressed == 1 && releases.size == 5 }
-        type.("\e[99;5u") # Ctrl+C: il segnale lo alza notcurses
+        type.("\e[99;5u") # Ctrl+C: il segnale lo alza run
       rescue StandardError => e
         failure = e
         app.stop
@@ -524,20 +729,81 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(out).to end_with("fine\n")
   end
 
-  it 'protocollo kitty: Ctrl+C e Ctrl+\ con CapsLock o NumLock sono segnali, e non arrivano a on_key' do
+  it 'protocollo kitty: Ctrl+C e Ctrl+\ sono segnali una volta per pressione, anche dopo stty, e non arrivano a on_key' do
     skip 'pty e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
 
-    out, status, timed_out = run_child(kitty_signals_script, timeout: 30)
+    out, status, timed_out = run_child(kitty_signals_script, timeout: 60)
     expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
     expect(status.exitstatus).to eq(0), out
+    expect(out).not_to include('stty diverso') # stty -g dopo ogni run è quello di prima
     expect(out).to include("numlock: interrupt []\n", "capslock: interrupt []\n", "solo ctrl: interrupt []\n")
-    expect(out).to include("dopo solo ctrl: stop []\n") # l'evento in coda non viene consegnato
+    expect(out).to include("dopo solo ctrl: stop []\n") # ICH-455
+    expect(out).to include("ctrl+c e x: interrupt []\n", "dopo ctrl+c e x: stop [:x]\n")
+    expect(out).to include("ctrl+c tenuto e x: interrupt []\n", "dopo ctrl+c tenuto e x: stop [:x]\n")
     expect(out).to include("ripetizione e rilascio: stop []\n")
     expect(out).to include("ctrl+\\ con numlock: stop []\n")
-    expect(out).to include("no_linesigs: stop [[:ctrl, :numlock]]\n")
+    expect(out).to include("no_linesigs: stop [[:ctrl, :numlock]]\n", "no_linesigs solo ctrl: stop [[:ctrl]]\n")
     expect(out).to include("xterm modifyOtherKeys: interrupt []\n", "dopo xterm: stop []\n")
+    expect(out).to include("stty -isig: stop [[:ctrl]]\n", "linesigs_disable e stty isig: interrupt []\n") # ICH-454
+    expect(out).to include("solo rilascio: stop []\n", "solo ripetizione: stop []\n", "premuto: interrupt []\n") # ICH-456
+    expect(out).to include("fuori da run: nessun Interrupt\n")
+    expect(out).to include("premuto, ripetuto e rilasciato: stop []\n", "ctrl+\\ premuto, ripetuto e rilasciato: stop []\n")
     expect(out).to include("byte 0x03: stop [[:ctrl]]\n")
-    expect(out).to include('kitty true quits 1 evtypes [:press]') # :press: notcurses ha acceso il protocollo
+    expect(out).to include('kitty true quits 2 ints 1 evtypes [:press]') # :press: notcurses ha acceso il protocollo
+    expect(out).to end_with("fine\n")
+  end
+
+  it 'ICH-538: con loglevel :warning più run di fila non trovano mai il flag dei segnali già spento' do
+    skip 'pty e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
+
+    out, status, timed_out = run_child(kitty_loglevel_script, timeout: 30)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(status.exitstatus).to eq(0), out
+    expect(out).not_to include('already disabled'), out
+    expect(out).not_to include('stty diverso'), out
+    expect(out).to include("primo: stop\n", "secondo: stop\n", "no_linesigs: stop\n", "terzo: stop\n")
+    expect(out).to include("dopo linesigs_enable: stop\n", "ultimo: stop\n")
+    expect(out).to include('kitty true ints 1') # dopo linesigs_enable run toglie di nuovo il segnale a notcurses
+    expect(out).to end_with("fine\n")
+  end
+
+  it 'ICH-537: la ripetizione e il rilascio di un tasto di segnale tenuto non arrivano a un altro run, per tasto e per contesto' do
+    skip 'pty e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
+
+    out, status, timed_out = run_child(kitty_held_keys_script, timeout: 30)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(status.exitstatus).to eq(0), out
+    expect(out).to include("tenuto: interrupt [] []\n")
+    expect(out).to include(%(altro tasto di segnale: stop [["\\\\", :press]] []\n))
+    expect(out).to include("premuto, ripetuto e rilasciato: interrupt [] []\n")
+    expect(out).to include("secondo ciclo: stop [] []\n") # un altro EventLoop sullo stesso contesto
+    expect(out).to include(%(nuova pressione: stop [["c", :press]] []\n))
+    expect(out).to include("tenuto di nuovo: interrupt [] []\n", "lasciato Ctrl prima di C: stop [] []\n")
+    expect(out).to include('kitty true')
+    expect(out).to end_with("fine\n")
+  end
+
+  it 'ICH-536: con il ciclo occupato Ctrl+C, Ctrl+\ e Ctrl+Z di kitty alzano subito un solo segnale' do
+    skip 'pty e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
+
+    out, status, timed_out = run_child(kitty_busy_script, timeout: 60)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(status.exitstatus).to eq(0), out
+    expect(out).to include("post: interrupt subito\n", "timer: interrupt subito\n", "handler: interrupt subito\n")
+    expect(out).to include("ctrl+c contato: stop [:int] subito\n", "ctrl+\\ contato: stop [:quit] subito\n")
+    expect(out).to include("ctrl+z: stop 1 subito\n") # SIGSTOP: un solo stop, durante il blocco di post
+    expect(out).to include('coda piena: interrupt')
+    expect(out).to include('kitty true')
+    expect(out).to end_with("fine\n")
+  end
+
+  it 'drain_input: il Ctrl+C di kitty resta un segnale di notcurses, perché run non legge i tasti' do
+    skip 'pty e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
+
+    out, status, timed_out = run_child(kitty_drain_script, timeout: 30)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(status.exitstatus).to eq(0), out
+    expect(out).to include("drain: interrupt\n")
     expect(out).to end_with("fine\n")
   end
 
