@@ -466,6 +466,9 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
       b = new_loop.()
       session.('secondo ciclo', b, nil, no_linesigs: true)
       session.('nuova pressione', b, "\e[99;5u", no_linesigs: true)
+      session.('tenuto di nuovo', a, "\e[99;5u")
+      # Ctrl lasciato prima di C: ripetizione e rilascio di C arrivano senza Ctrl
+      session.('lasciato Ctrl prima di C', b, "\e[99;1:2u\e[99;1:3u", no_linesigs: true)
       puts "kitty #{kitty.()}"
     end
     puts 'fine'
@@ -775,6 +778,7 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(out).to include("premuto, ripetuto e rilasciato: interrupt [] []\n")
     expect(out).to include("secondo ciclo: stop [] []\n") # un altro EventLoop sullo stesso contesto
     expect(out).to include(%(nuova pressione: stop [["c", :press]] []\n))
+    expect(out).to include("tenuto di nuovo: interrupt [] []\n", "lasciato Ctrl prima di C: stop [] []\n")
     expect(out).to include('kitty true')
     expect(out).to end_with("fine\n")
   end

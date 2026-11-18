@@ -763,6 +763,37 @@ RSpec.describe Notcurses::UI::EventLoop do
       end
     end
 
+    it 'ripetizione e rilascio del tasto tenuto si scartano anche dopo aver lasciato Ctrl; una c nuova arriva' do
+      NcHelpers.open_context do |c|
+        feeding_input(c) do |type, ints|
+          ev = new_loop(c)
+          keys = []
+          ev.on_key('c') { |input| keys << [:c, input.evtype] }
+          ev.on_input { |input| keys << [input.id, input.evtype] }
+          ev.on_key('y') { ev.stop }
+          held_ctrl_c = lambda do
+            ev.post { type.call(['C', 1, ctrl, true], ['y', 1, 0, false]) }
+            expect(run_loop(ev)).to eq(:stop)
+            expect(c.held_signal_keys).to eq({ 'C'.ord => true })
+            keys.clear
+          end
+          held_ctrl_c.call
+          # Ctrl lasciato prima di C: ripetizione e rilascio arrivano senza Ctrl, con id minuscolo
+          ev.post { type.call(['c', 2, 0, false], ['c', 3, 0, false], ['y', 1, 0, false]) }
+          expect(ev.run(no_linesigs: true)).to eq(:stop)
+          expect(keys).to eq([])
+          expect(c.held_signal_keys).to be_empty
+          held_ctrl_c.call
+          # una pressione nuova di c, senza Ctrl, arriva e libera la memoria: il suo rilascio arriva anche lui
+          ev.post { type.call(['c', 1, 0, false], ['c', 2, 0, false], ['c', 3, 0, false], ['y', 1, 0, false]) }
+          expect(ev.run).to eq(:stop)
+          expect(keys).to eq([[:c, :press], [:c, :repeat], ['c'.ord, :release]])
+          expect(c.held_signal_keys).to be_empty
+          expect(ints.size).to eq(2)
+        end
+      end
+    end
+
     it 'un blocco che chiude il contesto durante run ferma prima il thread di input' do
       NcHelpers.open_context do |c|
         feeding_input(c) do # niente EOF: il blocco gira di sicuro con il thread acceso

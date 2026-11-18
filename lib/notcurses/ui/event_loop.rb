@@ -126,7 +126,11 @@ module Notcurses
       MOD_LOCKS = FFI::NCKEY_MOD_CAPSLOCK | FFI::NCKEY_MOD_NUMLOCK
       # i segnali che notcurses alza per Ctrl+C, Ctrl+Z e Ctrl+\ (in.c:506-516)
       LINE_SIGNALS = { 'C'.ord => 'INT', 'Z'.ord => 'STOP', '\\'.ord => 'QUIT' }.freeze
-      private_constant :MOD_CTRL, :MOD_ALT, :MOD_SHIFT, :MOD_OTHER, :MOD_LOCKS, :LINE_SIGNALS
+      # id con cui arriva ogni tasto di segnale: senza Ctrl notcurses non lo fa maiuscolo, e la ripetizione e il
+      # rilascio di un tasto tenuto arrivano senza Ctrl se l'utente lascia prima Ctrl
+      SIGNAL_KEYS = { 'C'.ord => 'C'.ord, 'c'.ord => 'C'.ord, 'Z'.ord => 'Z'.ord, 'z'.ord => 'Z'.ord,
+                      '\\'.ord => '\\'.ord }.freeze
+      private_constant :MOD_CTRL, :MOD_ALT, :MOD_SHIFT, :MOD_OTHER, :MOD_LOCKS, :LINE_SIGNALS, :SIGNAL_KEYS
 
       # @return [Context]
       attr_reader :context
@@ -185,7 +189,8 @@ module Notcurses
       # rilasci). La ripetizione e il rilascio del tasto che ha alzato il
       # segnale non arrivano nemmeno ai run successivi, anche con no_linesigs,
       # anche di un altro EventLoop sullo stesso contesto, anche dopo la
-      # pressione di un altro tasto di segnale. Lo stesso vale per il Ctrl+C di
+      # pressione di un altro tasto di segnale, anche se l'utente lascia Ctrl
+      # prima del tasto. Lo stesso vale per il Ctrl+C di
       # xterm con modifyOtherKeys ("\e[27;5;99~"). I byte di controllo (0x03
       # con intr rimappato, input da una pipe) arrivano invece come tasti,
       # anche con kitty. run legge ISIG solo all'avvio: stty,
@@ -280,7 +285,7 @@ module Notcurses
           unless @context.drain_input?
             # il filtro esiste prima dell'avvio: l'ensure lo toglie anche se un Interrupt arriva prima di @input
             filter = ->(input) { line_signal(input) }
-            @input = @context.input_reader_start(LINE_SIGNALS, &filter)
+            @input = @context.input_reader_start(SIGNAL_KEYS, &filter)
           end
           if @context.no_winch_sighandler?
             @old_winch = Signal.trap('WINCH') { resize_signal }
@@ -695,7 +700,7 @@ module Notcurses
       end
 
       # Filtro del thread di input ({Context#input_reader_start}), chiamato in
-      # quel thread per gli eventi con un id di LINE_SIGNALS: alza il segnale
+      # quel thread per gli eventi con un id di SIGNAL_KEYS: alza il segnale
       # appena il tasto arriva, una volta per pressione, anche con CapsLock o
       # NumLock (protocollo kitty) e con il ciclo occupato. run ha tolto il
       # compito a notcurses 3.0.17, che lo alzerebbe solo con Ctrl da solo e
@@ -704,27 +709,28 @@ module Notcurses
       # Un byte classico non è un segnale: notcurses controlla Ctrl prima di
       # trasformare 0x03 in 'C' (in.c:539), e il campo ctrl della struct resta
       # falso (anche con kitty, che lo fa :press). La ripetizione e il rilascio
-      # del tasto che ha alzato il segnale non arrivano nemmeno ai run dopo:
-      # il tasto resta in {Context#held_signal_keys} fino al suo rilascio o a
-      # una sua nuova pressione.
-      # @return [Boolean] true se l'evento è un tasto di segnale
+      # del tasto che ha alzato il segnale non arrivano nemmeno ai run dopo,
+      # anche senza Ctrl (l'utente lascia Ctrl prima del tasto): il tasto resta
+      # in {Context#held_signal_keys} fino al suo rilascio o a una sua nuova
+      # pressione, con o senza Ctrl.
+      # @return [Boolean] true se l'evento va scartato
       def line_signal(input)
-        signal = LINE_SIGNALS[input.id]
-        return false unless signal && input.ctrl_field? && (input.modifiers & ~MOD_LOCKS) == MOD_CTRL
+        key = SIGNAL_KEYS[input.id]
+        return false unless key
 
         held = @context.held_signal_keys
         if input.press?
-          held.delete(input.id)
-        elsif held.key?(input.id)
-          held.delete(input.id) if input.release?
+          held.delete(key)
+        elsif held.key?(key)
+          held.delete(key) if input.release?
           return true
         end
-        return false unless @line_signals
+        return false unless @line_signals && input.ctrl_field? && (input.modifiers & ~MOD_LOCKS) == MOD_CTRL
 
         if input.press?
-          held[input.id] = true # prima del segnale: il thread principale lo gestisce subito, anche con un altro run
+          held[key] = true # prima del segnale: il thread principale lo gestisce subito, anche con un altro run
           # raise() come notcurses: pid 0 colpirebbe anche il gruppo (i figli di Subprocess)
-          Process.kill(signal, Process.pid)
+          Process.kill(LINE_SIGNALS[key], Process.pid)
         end
         true
       end
