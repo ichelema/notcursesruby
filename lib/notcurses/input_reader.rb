@@ -48,6 +48,7 @@ module Notcurses
       @pending = []
       @filters = []
       @thread = nil
+      @gate = nil
       @stop = false
       @ready_r = @ready_w = @stop_r = @stop_w = nil
     end
@@ -59,8 +60,8 @@ module Notcurses
     # @param ids [Hash{Integer => Object}] id degli eventi da filtrare
     # @return [IO] il pipe {#ready_io}
     def start(filter, ids)
-      # un'eccezione asincrona (il SIGINT di un Ctrl+C già in coda) arriva dopo: filtro e thread sono già
-      # registrati, e lo stop del chiamante li trova
+      # un'eccezione asincrona arriva dopo, con filtro e thread registrati; su Ruby 3.1 e 3.2 l'Interrupt di un
+      # segnale non si rimanda, e lo stop del chiamante trova comunque il filtro (vedi anche start_thread)
       Thread.handle_interrupt(Object => :never) do
         # il filtro prima del thread: il primo evento letto deve già passare dal filtro
         @filters.push([filter, ids])
@@ -74,7 +75,8 @@ module Notcurses
     # il buffer resta.
     #
     # @param filter [Proc] il filtro passato a {#start}
-    # @return [nil]
+    # @return [Exception, nil] l'eccezione asincrona arrivata mentre aspettava
+    #   il thread (vedi {#halt}), da sollevare dopo la pulizia del chiamante
     def stop(filter)
       # tutto o niente: un'eccezione asincrona a metà lascerebbe filtri, thread e pipe del run finito
       Thread.handle_interrupt(Object => :never) do
@@ -82,14 +84,14 @@ module Notcurses
         next if index.nil?
 
         # halt prima di togliere l'ultimo filtro: il thread non deve leggere tasti senza filtro
-        halt if @filters.size == 1
+        interrupted = halt if @filters.size == 1
         @filters.delete_at(index)
-        next unless @filters.empty?
-
-        [@ready_r, @ready_w, @stop_r, @stop_w].each { |io| io&.close }
-        @ready_r = @ready_w = @stop_r = @stop_w = nil
+        if @filters.empty?
+          [@ready_r, @ready_w, @stop_r, @stop_w].each { |io| io&.close }
+          @ready_r = @ready_w = @stop_r = @stop_w = nil
+        end
+        interrupted
       end
-      nil
     end
 
     # Ferma il thread e lo aspetta: dopo il ritorno il thread non chiama più
@@ -98,21 +100,31 @@ module Notcurses
     # ClosedError. Idempotente; si può chiamare da un gestore +trap+, anche
     # mentre un altro halt aspetta lo stesso thread.
     #
-    # @return [nil]
+    # Un'eccezione asincrona durante l'attesa (l'Interrupt di un altro Ctrl+C,
+    # anche rimandata da un Thread.handle_interrupt del chiamante) non la
+    # interrompe: halt aspetta lo stesso il thread e restituisce l'eccezione.
+    # Rimandarla non basta: Ruby 3.1 e 3.2 non rimandano l'Interrupt di un
+    # segnale.
+    #
+    # @return [Exception, nil] l'eccezione arrivata durante l'attesa
     def halt
+      @gate&.close # un thread avviato ma non ancora registrato esce senza leggere
       thread = @thread
       return nil unless thread
 
       @stop = true
       @stop_w.write_nonblock("\0", exception: false)
-      # un'eccezione asincrona lascerebbe il thread vivo (il contesto potrebbe chiudersi sotto di lui) o
-      # @thread impostato su un thread finito: arriva dopo
-      Thread.handle_interrupt(Object => :never) do
-        thread.join
-        @thread = nil if @thread.equal?(thread)
-        @ready_w&.write_nonblock("\0", exception: false)
+      interrupted = nil
+      begin
+        # :immediate: l'eccezione arriva qui anche dentro un handle_interrupt(:never) del chiamante
+        Thread.handle_interrupt(Object => :immediate) { thread.join }
+      rescue Exception => e # rubocop:disable Lint/RescueException
+        interrupted ||= e
+        retry if thread.alive? # il contesto non deve chiudersi sotto il thread
       end
-      nil
+      @thread = nil if @thread.equal?(thread)
+      @ready_w&.write_nonblock("\0", exception: false)
+      interrupted
     end
 
     # @return [Boolean] true se il thread gira: gli eventi arrivano solo dal
@@ -186,8 +198,12 @@ module Notcurses
       drain(@stop_r)
       @stop = false
       @ready_w.write_nonblock("\0", exception: false) unless @pending.empty? # eventi del run precedente
-      @thread = Thread.new { pump(input) } # rubocop:disable ThreadSafety/NewThread -- è lo scopo della classe
+      # il thread legge solo dopo la registrazione in @thread: un'eccezione asincrona prima (su Ruby 3.1 e 3.2
+      # l'Interrupt di un segnale non si rimanda) non lascia un thread che nessun halt aspetta
+      gate = @gate = Thread::Queue.new
+      @thread = Thread.new { pump(input) if gate.pop } # rubocop:disable ThreadSafety/NewThread -- è lo scopo della classe
       @thread.name = "notcurses-input"
+      gate.push(true) unless gate.closed?
     end
 
     # Corpo del thread: un errore di lettura va nel buffer, al posto
@@ -215,7 +231,7 @@ module Notcurses
       end
     rescue Exception => e # rubocop:disable Lint/RescueException
       @pending << e
-      @ready_w.write_nonblock("\0", exception: false)
+      @ready_w&.write_nonblock("\0", exception: false)
     end
 
     # Mette nel buffer i count eventi di block: a tratti grezzi, tranne quelli

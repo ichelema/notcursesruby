@@ -672,38 +672,65 @@ RSpec.describe Notcurses::UI::EventLoop do
       expect(out).to end_with("fine\n")
     end
 
-    it 'un Interrupt durante la pulizia di run esce dopo: il contesto resta usabile da un altro ciclo' do
+    # Ruby 3.1 e 3.2 non rimandano l'Interrupt di un segnale dentro Thread.handle_interrupt: lo stub lo simula.
+    [true, false].each do |deferred|
+      it "un Interrupt durante la pulizia di run esce dopo: il contesto resta usabile da un altro ciclo " \
+         "(handle_interrupt #{deferred ? "che rimanda" : "che non rimanda, come Ruby 3.1"})" do
+        allow(Thread).to receive(:handle_interrupt) { |*, &block| block.call } unless deferred
+        NcHelpers.open_context do |c|
+          feeding_input(c) do |type, ints|
+            ev = described_class.new(c)
+            allow(ev).to receive(:line_signal).and_wrap_original do |original, input|
+              sleep 0.4 # il thread di input resta nel filtro mentre run lo ferma
+              original.call(input)
+            end
+            main = Thread.current
+            ev.post do
+              type.call(['C', 1, ctrl, true])
+              sleep 0.05 # il thread entra nel filtro
+              Thread.new { (sleep 0.15) && main.raise(Interrupt) }
+              ev.stop
+            end
+            fds = open_fds
+            expect { ev.run }.to raise_error(Interrupt) # dopo la pulizia, non a metà
+            expect(ev).not_to be_running
+            expect(input_threads).to be_empty
+            expect(open_fds).to eq(fds)
+            other = described_class.new(c)
+            keys = []
+            other.on_input do |input|
+              keys << [input.id, input_threads.size]
+              other.stop if input.id == 'x'.ord
+            end
+            other.post { type.call(['C', 1, ctrl, true], ['x', 1, 0, false]) }
+            started = clock
+            expect(other.run).to eq(:stop)
+            expect(clock - started).to be < 1
+            expect(keys).to eq([['x'.ord, 1]]) # il thread gira durante run, il Ctrl+C è un segnale
+            expect(ints.size).to eq(2)
+          end
+        end
+      end
+    end
+
+    it 'un Interrupt mentre close aspetta il thread di input arriva dopo lo stop di notcurses' do
       NcHelpers.open_context do |c|
-        feeding_input(c) do |type, ints|
+        feeding_input(c) do |type|
           ev = described_class.new(c)
           allow(ev).to receive(:line_signal).and_wrap_original do |original, input|
-            sleep 0.4 # il thread di input resta nel filtro mentre run lo ferma
+            sleep 0.4 # il thread di input resta nel filtro mentre close lo ferma
             original.call(input)
           end
           main = Thread.current
           ev.post do
-            type.call(['C', 1, ctrl, true])
+            type.call(['x', 1, 0, false], ['C', 1, ctrl, true])
             sleep 0.05 # il thread entra nel filtro
             Thread.new { (sleep 0.15) && main.raise(Interrupt) }
-            ev.stop
+            c.close
           end
-          fds = open_fds
-          expect { ev.run }.to raise_error(Interrupt) # dopo la pulizia, non a metà
-          expect(ev).not_to be_running
+          expect(ev.run).to eq(:interrupt) # l'Interrupt esce da close, poi da run
+          expect(c).to be_closed
           expect(input_threads).to be_empty
-          expect(open_fds).to eq(fds)
-          other = described_class.new(c)
-          keys = []
-          other.on_input do |input|
-            keys << [input.id, input_threads.size]
-            other.stop if input.id == 'x'.ord
-          end
-          other.post { type.call(['C', 1, ctrl, true], ['x', 1, 0, false]) }
-          started = clock
-          expect(other.run).to eq(:stop)
-          expect(clock - started).to be < 1
-          expect(keys).to eq([['x'.ord, 1]]) # il thread gira durante run, il Ctrl+C è un segnale
-          expect(ints.size).to eq(2)
         end
       end
     end

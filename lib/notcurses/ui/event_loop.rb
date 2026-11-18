@@ -305,10 +305,12 @@ module Notcurses
         rescue Interrupt
           :interrupt
         ensure
+          interrupted = nil
           # un secondo Ctrl+C (o un'altra eccezione asincrona) arriva dopo la pulizia, non a metà
           Thread.handle_interrupt(Object => :never) do
-            # per primo: da qui il thread di input non alza più segnali
-            @context.input_reader_stop(filter) if filter
+            # per primo: da qui il thread di input non alza più segnali; un Ctrl+C arrivato mentre lo aspetta
+            # torna come valore (su Ruby 3.1 e 3.2 handle_interrupt non rimanda l'Interrupt di un segnale)
+            interrupted = @context.input_reader_stop(filter) if filter
             # nil vorrebbe dire IGNORE, che i processi figli erediterebbero
             if winch
               Signal.trap('WINCH', @old_winch || 'SYSTEM_DEFAULT')
@@ -320,8 +322,9 @@ module Notcurses
             @input = nil
             @stop_requested = false
             @running = false
-            restore_terminal(ixon, linesigs, $!)
+            restore_terminal(ixon, linesigs, $! || interrupted)
           end
+          raise interrupted if interrupted && $!.nil?
         end
       end
 

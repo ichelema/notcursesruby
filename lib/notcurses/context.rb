@@ -359,7 +359,9 @@ module Notcurses
     #
     # close si può chiamare da un gestore +trap+ (per esempio
     # <tt>trap('TERM') { nc.close; exit }</tt>): il registro si libera anche
-    # lì, e un nuovo contesto si può aprire dopo.
+    # lì, e un nuovo contesto si può aprire dopo. Durante
+    # {UI::EventLoop#run} close ferma prima il thread di input; un Ctrl+C che
+    # arriva mentre lo aspetta si solleva dopo lo stop.
     #
     # @return [nil]
     # @raise [ContextError] se +notcurses_stop+ restituisce un errore (il
@@ -372,9 +374,14 @@ module Notcurses
       return mark_closed!(fclose: false) unless @pid == Process.pid
 
       check_not_in_callback!('Context#close', ContextError)
-      @input_reader&.halt # il thread di input di run non deve chiamare notcurses dopo lo stop
-      # un gestore trap può aver chiuso il contesto mentre halt aspettava il thread
-      return nil if @closed
+      # il thread di input di run non deve chiamare notcurses dopo lo stop; un Ctrl+C arrivato mentre halt lo
+      # aspetta si solleva alla fine
+      interrupted = @input_reader&.halt
+      if @closed # un gestore trap ha chiuso il contesto mentre halt aspettava il thread
+        raise interrupted if interrupted
+
+        return nil
+      end
 
       first_error = close_children
       # prima della chiamata: Ruby consegna un Ctrl-C al suo ritorno, quando il C ha già liberato il contesto
@@ -384,6 +391,7 @@ module Notcurses
       ensure
         mark_closed!(fclose: @own_fp)
       end
+      raise interrupted if interrupted
       raise first_error if first_error
       # notcurses_stop restituisce l'OR di più ritorni: qualsiasi valore diverso da 0 è un errore
       raise ContextError, "notcurses_stop fallita (#{rc})" unless rc.zero?
@@ -870,11 +878,11 @@ module Notcurses
     # chiuso ({#close} ha già fermato il thread).
     #
     # @param filter [Proc] il blocco passato a {#input_reader_start}
-    # @return [nil]
+    # @return [Exception, nil] l'eccezione asincrona (un altro Ctrl+C) arrivata
+    #   mentre aspettava il thread, da sollevare dopo la pulizia del chiamante
     # @api private
     def input_reader_stop(filter)
       @input_reader&.stop(filter)
-      nil
     end
 
     # Disattiva il controllo di flusso (IXON), che notcurses lascia attivo:

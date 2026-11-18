@@ -135,20 +135,39 @@ RSpec.describe "Notcurses::InputReader" do
     reader.stop(inner)
   end
 
-  it "un'eccezione asincrona durante stop arriva dopo: filtro tolto, thread fermo, pipe chiusi" do
-    reader.start(filter, ids)
-    main = Thread.current
-    slow = ->(_input) { (sleep 0.4) && false } # il thread di input resta nel filtro
-    reader.start(slow, ids)
-    reader.stop(filter) # restano solo i run annidati: il thread continua
-    feed("C")
-    sleep 0.1
-    Thread.new { (sleep 0.1) && main.raise(Interrupt) } # rubocop:disable ThreadSafety/NewThread
-    expect { reader.stop(slow) }.to raise_error(Interrupt)
-    expect(reader).not_to be_active
+  # Ruby 3.1 e 3.2 non rimandano l'Interrupt di un segnale dentro Thread.handle_interrupt: lo stub lo simula.
+  [true, false].each do |deferred|
+    it "un'eccezione asincrona durante stop torna come valore: filtro tolto, thread fermo, pipe chiusi " \
+       "(handle_interrupt #{deferred ? "che rimanda" : "che non rimanda, come Ruby 3.1"})" do
+      allow(Thread).to receive(:handle_interrupt) { |*, &block| block.call } unless deferred
+      reader.start(filter, ids)
+      main = Thread.current
+      slow = ->(_input) { (sleep 0.4) && false } # il thread di input resta nel filtro
+      reader.start(slow, ids)
+      reader.stop(filter) # restano solo i run annidati: il thread continua
+      feed("C")
+      sleep 0.1
+      Thread.new { (sleep 0.1) && main.raise(Interrupt) } # rubocop:disable ThreadSafety/NewThread
+      expect(reader.stop(slow)).to be_a(Interrupt)
+      expect(reader).not_to be_active
+      expect(reader.ready_io).to be_nil
+      reader.start(filter, ids)
+      expect(reader).to be_active
+    end
+  end
+
+  it "un'eccezione asincrona fra la creazione del thread e la sua registrazione non lascia un thread che legge" do
+    created = nil
+    allow(Thread).to receive(:new).and_wrap_original do |original, *args, &block|
+      created = original.call(*args, &block)
+      raise Interrupt # come l'Interrupt di un segnale su Ruby 3.1, prima di @thread = ...
+    end
+    feed("a")
+    expect { reader.start(filter, ids) }.to raise_error(Interrupt)
+    expect(reader.stop(filter)).to be_nil # chiude il cancello: il thread esce senza leggere
+    expect(created.join(1)).to equal(created)
+    expect(pulls).to be_empty
     expect(reader.ready_io).to be_nil
-    reader.start(filter, ids)
-    expect(reader).to be_active
   end
 
   it "un errore di lettura arriva dopo gli eventi letti prima e ferma il thread" do
