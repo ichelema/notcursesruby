@@ -471,6 +471,79 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     puts 'fine'
   RUBY
 
+  # ICH-536: il segnale di un tasto kitty arriva subito anche con il ciclo
+  # occupato (un blocco di post, un timer, un handler che dormono). Ogni riga
+  # dice "subito" se il segnale (o l'uscita da run) arriva entro 1 s dall'avvio
+  # di run; il tasto parte a 0,3 s. Ctrl+Z ferma il processo: un processo
+  # monitor lo vede fermo in /proc, manda SIGCONT e stampa l'istante di ogni
+  # stop (CLOCK_MONOTONIC è lo stesso per i due processi).
+  def kitty_busy_script = kitty_prelude + <<~'RUBY'
+    clock = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
+    monitor_src = <<~'MON'
+      pid = Integer(ARGV[0])
+      finish = Process.clock_gettime(Process::CLOCK_MONOTONIC) + Float(ARGV[1])
+      state = -> { s = File.read("/proc/#{pid}/stat"); s[s.rindex(')') + 2] }
+      stops = []
+      while Process.clock_gettime(Process::CLOCK_MONOTONIC) < finish
+        if state.() == 'T'
+          stops << Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          Process.kill(:CONT, pid)
+          sleep 0.01 while state.() == 'T'
+        end
+        sleep 0.01
+      end
+      puts stops.join(' ')
+    MON
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      ev = Notcurses::UI::EventLoop.new(nc)
+      ev.on_key('x') { sleep 2 }
+      start = nil
+      when_s = ->(t) { t && t - start < 1 ? 'subito' : format('dopo %.1f s', t ? t - start : -1) }
+      session = lambda do |busy, *steps, limit: 4|
+        user = Thread.new do
+          wait_for('run') { ev.running? }
+          steps.each { |step| step.is_a?(Numeric) ? sleep(step) : type.(step) }
+        end
+        busy&.call
+        timer = ev.after(limit) { ev.stop }
+        start = clock.()
+        reason = ev.run
+        ended = clock.()
+        timer.cancel
+        user.join
+        [reason, ended]
+      end
+      %w[post timer handler].each do |name|
+        busy = { 'post' => -> { ev.post { sleep 2 } }, 'timer' => -> { ev.after(0) { sleep 2 } } }[name]
+        reason, ended = session.(busy, *(name == 'handler' ? ['x'] : []), 0.3, "\e[99;5u")
+        puts "#{name}: #{reason} #{when_s.(ended)}"
+      end
+      # un trap che conta: run non esce, e ogni segnale ha il suo istante
+      signals = []
+      Signal.trap('INT') { signals << [:int, clock.()] }
+      Signal.trap('QUIT') { signals << [:quit, clock.()] }
+      { 'ctrl+c' => "\e[99;5u\e[99;5:2u\e[99;5:3u", 'ctrl+\\' => "\e[92;5u\e[92;5:2u\e[92;5:3u" }.each do |name, keys|
+        signals.clear
+        reason, = session.(-> { ev.post { sleep 1.5 } }, 0.3, keys, limit: 2)
+        puts "#{name} contato: #{reason} #{signals.map(&:first).inspect} #{when_s.(signals.dig(0, 1))}"
+      end
+      Signal.trap('INT', 'DEFAULT')
+      Signal.trap('QUIT', 'DEFAULT')
+      mon_r, mon_w = IO.pipe
+      monitor = spawn(RbConfig.ruby, '-e', monitor_src, Process.pid.to_s, '3', out: mon_w)
+      mon_w.close
+      reason, = session.(-> { ev.post { sleep 1.5 } }, 0.3, "\e[122;5u\e[122;5:2u\e[122;5:3u", limit: 2)
+      Process.wait(monitor)
+      stops = mon_r.read.split.map(&:to_f)
+      puts "ctrl+z: #{reason} #{stops.size} #{when_s.(stops.first)}"
+      # più di 8192 tasti (la coda di notcurses) mentre un timer dorme, poi Ctrl+C
+      reason, ended = session.(-> { ev.after(0) { sleep 2 } }, 0.3, ('a' * 10_000) + "\e[99;5u")
+      puts "coda piena: #{reason} #{format('%.1f s', ended - start)}"
+      puts "kitty #{kitty.()}"
+    end
+    puts 'fine'
+  RUBY
+
   # Un contesto che scarta l'input non accende il protocollo kitty, ma un
   # terminale può mandare lo stesso le sequenze (xterm con modifyOtherKeys: 2):
   # notcurses scarta il tasto e alza il segnale, run non legge niente.
@@ -702,6 +775,20 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(out).to include("premuto, ripetuto e rilasciato: interrupt [] []\n")
     expect(out).to include("secondo ciclo: stop [] []\n") # un altro EventLoop sullo stesso contesto
     expect(out).to include(%(nuova pressione: stop [["c", :press]] []\n))
+    expect(out).to include('kitty true')
+    expect(out).to end_with("fine\n")
+  end
+
+  it 'ICH-536: con il ciclo occupato Ctrl+C, Ctrl+\ e Ctrl+Z di kitty alzano subito un solo segnale' do
+    skip 'pty e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
+
+    out, status, timed_out = run_child(kitty_busy_script, timeout: 60)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(status.exitstatus).to eq(0), out
+    expect(out).to include("post: interrupt subito\n", "timer: interrupt subito\n", "handler: interrupt subito\n")
+    expect(out).to include("ctrl+c contato: stop [:int] subito\n", "ctrl+\\ contato: stop [:quit] subito\n")
+    expect(out).to include("ctrl+z: stop 1 subito\n") # SIGSTOP: un solo stop, durante il blocco di post
+    expect(out).to include('coda piena: interrupt')
     expect(out).to include('kitty true')
     expect(out).to end_with("fine\n")
   end

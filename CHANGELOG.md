@@ -24,11 +24,11 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 - Dopo un `EventLoop#run` uscito con `:interrupt` per il Ctrl+C di kitty (`\e[99;5u`) o di xterm con modifyOtherKeys
   (`\e[27;5;99~`), un `run(no_linesigs: true)` non consegna più quel Ctrl+C a `on_key` (ICH-455). notcurses alzava
-  il segnale e metteva anche il tasto in coda, e `run` usciva prima di leggerlo. Ora `run` legge il tasto prima di
-  alzare il segnale: in coda restano solo i tasti successivi, che arrivano al `run` dopo. Anche la ripetizione e il
-  rilascio di un Ctrl+C tenuto premuto restano fuori dai `run` dopo, anche di un altro `EventLoop` o `App` sullo
-  stesso contesto e dopo la pressione di un altro tasto di segnale (ICH-537): il contesto ricorda ogni tasto di
-  segnale tenuto premuto fino al suo rilascio (`Context#held_signal_keys`, nuovo, `@api private`).
+  il segnale e metteva anche il tasto in coda, e `run` usciva prima di leggerlo. Ora il thread di input di `run` legge
+  il tasto prima di alzare il segnale: restano solo i tasti successivi, che arrivano al `run` dopo. Anche la
+  ripetizione e il rilascio di un Ctrl+C tenuto premuto restano fuori dai `run` dopo, anche di un altro `EventLoop` o
+  `App` sullo stesso contesto e dopo la pressione di un altro tasto di segnale (ICH-537): il contesto ricorda ogni
+  tasto di segnale tenuto premuto fino al suo rilascio (`Context#held_signal_keys`, nuovo, `@api private`).
 - `EventLoop#run` segue ISIG del terminale anche per i tasti di segnale di kitty dopo uno `stty` (ICH-454).
   notcurses decide se alzare il segnale da un flag suo, che `stty` non cambia: dopo `stty -isig` un
   `run(no_linesigs: true)` usciva con `:interrupt` invece di consegnare Ctrl+C a `on_key`, e dopo
@@ -39,12 +39,20 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   Con il flag già spento `run(no_linesigs: true)` spegne solo ISIG (`Context#isig_disable`, nuovo, `@api private`).
 - `EventLoop#run` alza un solo segnale per ogni pressione di Ctrl+C, Ctrl+Z e Ctrl+\ di kitty (ICH-456). notcurses
   lo alzava anche per la ripetizione e il rilascio del tasto, anche dopo la fine di `run`: un Ctrl+C interrompeva
-  due volte. Ora all'avvio `run` toglie il compito a notcurses (`Context#linesigs_disable`), rimette ISIG com'era
-  (`Context#isig_enable`, nuovo, `@api private`) e alza lui il segnale alla pressione; la ripetizione e il rilascio
-  non alzano niente. Dopo `run` il flag di notcurses resta spento: fuori da `run` un Ctrl+C di kitty non alza
-  segnali e arriva al `run` successivo; `Context#linesigs_enable` ridà il compito a notcurses. Con un contesto che
-  scarta l'input (`drain_input: true`) `run` non legge i tasti e il compito resta a notcurses. Senza terminale
-  (input da una pipe) notcurses non spegne il flag, e il limite resta.
+  due volte. Ora all'avvio `run` toglie il compito a notcurses (`Context#linesigs_disable`) e rimette ISIG com'era
+  (`Context#isig_enable`, nuovo, `@api private`). Durante `run` un thread di input del contesto (`InputReader`,
+  `Context#input_reader_start` e `#input_reader_stop`, nuovi, `@api private`) legge i tasti appena arrivano e alza il
+  segnale alla pressione, subito anche mentre un handler, un timer o un blocco di `post` occupa il ciclo, e anche per
+  Ctrl+C con CapsLock o NumLock (ICH-536); la ripetizione e il rilascio non alzano niente. Il thread legge la coda di
+  notcurses a blocchi (`notcurses_getvec`, che notcurses permette in parallelo al render) e la tiene vuota: una
+  raffica di più di 8192 tasti con il ciclo occupato non fa più perdere il Ctrl+C che la segue. Durante `run`
+  `Context#get` e `#getvec` leggono gli eventi del thread. Limiti: il thread ha bisogno del GVL, quindi un handler
+  che lo tiene ritarda il segnale (con più di 8192 tasti nel frattempo notcurses scarta anche Ctrl+C); notcurses
+  consegna gli eventi più lentamente di quanto li mette in coda, e una raffica molto lunga (nelle prove 200000 tasti
+  in un colpo) riempie la coda anche con il thread libero. Dopo `run` il flag di notcurses resta spento: fuori da
+  `run` un Ctrl+C di kitty non alza segnali e arriva al `run` successivo; `Context#linesigs_enable` ridà il compito a
+  notcurses. Con un contesto che scarta l'input (`drain_input: true`) `run` non legge i tasti e il compito resta a
+  notcurses. Senza terminale (input da una pipe) notcurses non spegne il flag, e il limite resta.
 - `Plane#merge_down` non copre più il glifo che in `src` segue una metà sinistra orfana di un glifo largo (ICH-532).
   Il wrapper riscriveva la metà sinistra come un glifo intero, e il glifo dopo spariva da `dst`. Ora, durante la
   fusione, il wrapper cambia la metà orfana in uno spazio con gli stessi stili e colori (`src` torna com'era dopo):

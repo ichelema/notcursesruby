@@ -490,5 +490,139 @@ RSpec.describe Notcurses::UI::EventLoop do
       expect { ev.run }.to raise_error(Notcurses::ClosedError)
       expect { described_class.new(ev.context) }.to raise_error(Notcurses::ClosedError)
     end
+
+    def input_threads = Thread.list.select { |t| t.name == 'notcurses-input' && t.alive? }
+
+    # stdin è /dev/null: notcurses mette in coda Key::EOF, che arriva dal thread di input di run
+    it 'con un contesto che legge stdin run esce con :eof, poi get legge da notcurses e il thread non resta' do
+      NcHelpers.open_context(drain_input: false) do |c|
+        ev = described_class.new(c)
+        fds = open_fds
+        got = :none
+        ev.on_input { got = c.get(timeout: 0) } # durante run get legge il buffer del thread
+        expect(ev.run).to eq(:eof)
+        expect(got).to eq(:none) # EOF lo gestisce solo run
+        expect(input_threads).to be_empty
+        expect(open_fds).to eq(fds) # i pipe del thread sono chiusi
+        expect(c.get(timeout: 2).id).to eq(Notcurses::Key::EOF)
+        expect(ev.run).to eq(:eof) # un altro run riavvia il thread
+        expect(c.getvec(3, timeout: 2).map(&:id)).to eq([Notcurses::Key::EOF])
+      end
+    end
+
+    # Tasti finti per il thread di input di run: getvec_into scrive nel buffer
+    # gli eventi in coda, [id, evtype, modificatori, campo ctrl]. Il contesto
+    # sembra leggere i tasti con ISIG attivo e il flag di notcurses spento.
+    # Un trap('INT') che conta tiene il segnale lontano da RSpec.
+    def feeding_input(context)
+      reader, writer = IO.pipe
+      queue = []
+      allow(context).to receive_messages(drain_input?: false, inputready_fd: reader.fileno, linesigs?: true,
+        linesigs_flag?: false, isig_disable: context, isig_enable: context)
+      allow(context).to receive(:getvec_into) do |buf, slots|
+        reader.read_nonblock(4096, exception: false)
+        batch = queue.shift(slots)
+        batch.each_with_index do |(id, evtype, mods, ctrl), i|
+          s = Notcurses::FFI::NcInput.new(buf + (i * Notcurses::FFI::NcInput.size))
+          s.clear # il buffer di InputReader non è azzerato: notcurses scrive ogni struct per intero
+          s[:id] = id.is_a?(String) ? id.ord : id
+          s[:evtype] = evtype
+          s[:modifiers] = mods
+          s[:ctrl] = ctrl
+        end
+        batch.size
+      end
+      type = lambda do |*events|
+        queue.concat(events)
+        writer.write('x')
+      end
+      ints = []
+      old = Signal.trap('INT') { ints << clock }
+      yield type, ints, queue
+    ensure
+      Signal.trap('INT', old || 'DEFAULT')
+      reader&.close
+      writer&.close
+    end
+
+    ctrl = Notcurses::FFI::NCKEY_MOD_CTRL
+
+    it 'il thread di input alza un segnale per pressione, scarta ripetizione e rilascio e passa gli altri tasti' do
+      NcHelpers.open_context do |c|
+        feeding_input(c) do |type, ints|
+          ev = new_loop(c)
+          keys = []
+          ev.on_key('c', ctrl: true) { keys << :ctrl_c }
+          ev.on_input do |input|
+            keys << input.id
+            ev.stop if input.id == 'x'.ord
+          end
+          ev.post do
+            type.call(['C', 1, ctrl, true], ['C', 2, ctrl, true], ['C', 3, ctrl, true], ['x', 1, 0, false])
+            sleep 1 # il segnale arriva durante il blocco, dal thread di input
+          end
+          started = clock
+          expect(run_loop(ev)).to eq(:stop)
+          expect(ints.size).to eq(1)
+          expect(ints.first - started).to be < 0.9
+          expect(keys).to eq(['x'.ord])
+          expect(c.held_signal_keys).to be_empty # il rilascio ha tolto il tasto
+        end
+      end
+    end
+
+    it 'il tasto tenuto resta nel contesto fra i run; get e getvec leggono il buffer durante e dopo run' do
+      NcHelpers.open_context do |c|
+        feeding_input(c) do |type, ints, queue|
+          ev = new_loop(c)
+          keys = []
+          ev.on_key('c', ctrl: true) { |input| keys << [:c, input.evtype] }
+          ev.on_key('\\', ctrl: true) { |input| keys << [:backslash, input.evtype] }
+          ev.on_input { |input| keys << [input.id, input.evtype] }
+          ev.on_key('y') { ev.stop }
+          ev.post { type.call(['C', 1, ctrl, true], ['y', 1, 0, false]) }
+          expect(run_loop(ev)).to eq(:stop)
+          expect(ints.size).to eq(1)
+          expect(c.held_signal_keys).to eq({ 'C'.ord => true })
+          waited = :none
+          ev.post do
+            waited = c.get(timeout: 0.05) # niente nel buffer: attende sul pipe del thread
+            type.call(['\\', 1, ctrl, true], ['C', 2, ctrl, true], ['C', 3, ctrl, true], ['y', 1, 0, false])
+          end
+          expect(ev.run(no_linesigs: true)).to eq(:stop)
+          expect(waited).to be_nil
+          expect(keys).to eq([[:backslash, :press]]) # ICH-537: il Ctrl+\ nuovo non cancella il Ctrl+C tenuto
+          expect(c.held_signal_keys).to be_empty
+          # stop prima che il ciclo legga: i tasti restano nel buffer del contesto
+          ev.post do
+            type.call(['a', 1, 0, false], ['b', 1, 0, false], ['d', 1, 0, false])
+            sleep 0.01 until queue.empty?
+            sleep 0.05
+            ev.stop
+          end
+          expect(ev.run).to eq(:stop)
+          expect(c.get(timeout: 0).id).to eq('a'.ord)
+          expect(c.getvec(5, timeout: 0).map(&:id)).to eq(%w[b d].map(&:ord))
+          expect(ints.size).to eq(1)
+        end
+      end
+    end
+
+    it 'un blocco che chiude il contesto durante run ferma prima il thread di input' do
+      NcHelpers.open_context do |c|
+        feeding_input(c) do # niente EOF: il blocco gira di sicuro con il thread acceso
+          ev = described_class.new(c)
+          threads = nil
+          ev.post do
+            running = input_threads.size
+            c.close
+            threads = [running, input_threads.size]
+          end
+          expect(ev.run).to eq(:stop)
+          expect(threads).to eq([1, 0])
+          expect(c).to be_closed
+        end
+      end
+    end
   end
 end

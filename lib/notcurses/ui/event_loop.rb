@@ -68,18 +68,20 @@ module Notcurses
     # massimo una volta per giro. Si usa da solo, oppure attraverso {App}, che
     # aggiunge componenti e focus.
     #
-    # Un giro di {#run}: +IO.select+ sul descrittore di
-    # {Context#inputready_fd} e su un pipe di risveglio, con il timeout del
-    # primo timer; poi, nell'ordine, il resize segnalato, tutto l'input pronto
-    # (notcurses svuota il pipe di prontezza a ogni lettura, anche con altri
-    # eventi in coda), i blocchi di {#post}, i timer scaduti, e un
-    # {Context#render} se il giro ha consegnato qualcosa. {#run} rende anche lo
-    # schermo all'avvio. Il primo giro di ogni {#run} non attende: consegna
-    # subito gli eventi che il run precedente ha lasciato nella coda di
-    # notcurses (uscito con {#stop} o con un'eccezione).
+    # Un giro di {#run}: +IO.select+ sul pipe del thread di input del
+    # contesto (che legge i tasti da notcurses, vedi {#run}) e su un pipe di
+    # risveglio, con il timeout del primo timer; poi, nell'ordine, il resize
+    # segnalato, tutto l'input pronto, i blocchi di {#post}, i timer scaduti, e
+    # un {Context#render} se il giro ha consegnato qualcosa. {#run} rende anche
+    # lo schermo all'avvio. Il primo giro di ogni {#run} non attende: consegna
+    # subito gli eventi che il run precedente ha lasciato (uscito con {#stop}
+    # o con un'eccezione).
     #
-    # Thread. Solo il thread che esegue {#run} chiama notcurses: gli handler, i
-    # timer e i blocchi di {#post} girano lì. {#post} e {#stop} sono gli unici
+    # Thread. Gli handler, i timer e i blocchi di {#post} girano nel thread
+    # che esegue {#run}. Solo quel thread chiama notcurses, tranne il thread di
+    # input del contesto, che durante run legge i tasti con
+    # +notcurses_getvec+ (notcurses lo permette in parallelo al render; vedi
+    # {Context#get}). {#post} e {#stop} sono gli unici
     # metodi per gli altri thread e per i gestori +trap+ (usano una Queue e un
     # byte sul pipe, niente Mutex, che in un trap non si può usare). Gli altri
     # metodi si chiamano dal thread del ciclo, o prima di {#run}. Il ciclo non
@@ -174,24 +176,36 @@ module Notcurses
       # lo alzerebbe da un flag suo, che stty non cambia, solo con Ctrl da solo
       # e anche per la ripetizione e il rilascio: all'avvio run gli toglie
       # questo compito ({Context#linesigs_disable}, poi rimette ISIG com'era),
-      # se il flag è acceso ({Context#linesigs_flag?}).
-      # Con ISIG attivo run alza lo stesso segnale (SIGINT, SIGSTOP, SIGQUIT) al
-      # proprio processo, una volta per pressione e dopo aver letto il tasto, e
-      # non consegna questi tasti (con o senza CapsLock e NumLock, nemmeno
-      # ripetizioni e rilasci). La ripetizione e il rilascio del tasto che ha
-      # alzato il segnale non arrivano nemmeno ai run successivi, anche con
-      # no_linesigs, anche di un altro EventLoop sullo stesso contesto, anche
-      # dopo la pressione di un altro tasto di segnale. Lo stesso vale per il Ctrl+C di xterm con modifyOtherKeys
-      # ("\e[27;5;99~"). I byte di controllo (0x03 con intr rimappato, input
-      # da una pipe) arrivano invece come tasti, anche con kitty. run legge
-      # ISIG solo all'avvio: stty, {Context#linesigs_disable} o
-      # {Context#linesigs_enable} durante run non cambiano la scelta
-      # ({Context#linesigs_enable} ridà il compito a notcurses: due segnali per
-      # pressione); per i tasti serve no_linesigs.
+      # se il flag è acceso ({Context#linesigs_flag?}). Durante run un thread
+      # di input del contesto legge i tasti appena arrivano, anche mentre un
+      # handler, un timer o un blocco di {#post} occupa il ciclo. Con ISIG
+      # attivo il thread alza subito lo stesso segnale (SIGINT, SIGSTOP,
+      # SIGQUIT) al processo, una volta per pressione, e il ciclo non consegna
+      # questi tasti (con o senza CapsLock e NumLock, nemmeno ripetizioni e
+      # rilasci). La ripetizione e il rilascio del tasto che ha alzato il
+      # segnale non arrivano nemmeno ai run successivi, anche con no_linesigs,
+      # anche di un altro EventLoop sullo stesso contesto, anche dopo la
+      # pressione di un altro tasto di segnale. Lo stesso vale per il Ctrl+C di
+      # xterm con modifyOtherKeys ("\e[27;5;99~"). I byte di controllo (0x03
+      # con intr rimappato, input da una pipe) arrivano invece come tasti,
+      # anche con kitty. run legge ISIG solo all'avvio: stty,
+      # {Context#linesigs_disable} o {Context#linesigs_enable} durante run non
+      # cambiano la scelta ({Context#linesigs_enable} ridà il compito a
+      # notcurses: due segnali per pressione); per i tasti serve no_linesigs.
+      #
+      # Il thread di input tiene vuota la coda di notcurses (8192 eventi). Due
+      # limiti: il thread ha bisogno del GVL per leggere, quindi un handler che
+      # lo tiene (codice Ruby per un quanto di 100 ms, una chiamata C che non lo
+      # rilascia per tutta la sua durata) ritarda il segnale, e se intanto
+      # arrivano più di 8192 tasti notcurses scarta quelli in più, anche
+      # Ctrl+C, senza segnale; notcurses consegna gli eventi più lentamente di
+      # quanto li mette in coda, e una raffica molto lunga (nelle prove 200000
+      # tasti in un colpo, non 50000) riempie la coda anche con il thread
+      # libero.
       #
       # Dopo run il flag di notcurses resta spento: fuori da run un Ctrl+C di
-      # kitty non alza segnali e resta in coda, e il run successivo lo tratta
-      # quando lo legge. {Context#linesigs_enable} ridà il compito a notcurses,
+      # kitty non alza segnali e resta in coda, e il thread di input del run
+      # successivo lo tratta quando lo legge. {Context#linesigs_enable} ridà il compito a notcurses,
       # con le ripetizioni e i rilasci. Con un contesto che scarta l'input
       # ({Context#drain_input?}) run non legge i tasti e lascia il compito a
       # notcurses, che scarta il tasto e alza il segnale. Limiti di notcurses
@@ -200,7 +214,7 @@ module Notcurses
       # terminali diversi notcurses cambia ISIG su quello di output, run su
       # quello di input; un Ctrl+C arrivato prima della presa in carico (al
       # primo run, o dopo {Context#linesigs_enable}) lo alza notcurses, e il
-      # tasto resta in coda: run lo alza di nuovo quando lo legge, e con
+      # tasto resta in coda: il thread di input lo alza di nuovo, e con
       # no_linesigs lo consegna a {#on_key}; all'avvio di run un byte 0x03
       # arrivato nell'istante in cui ISIG è spento è un tasto.
       #
@@ -253,8 +267,9 @@ module Notcurses
           end
           @line_signals = isig && !no_linesigs
           wake_r, @wake_w = IO.pipe
-          # il descrittore è di notcurses: autoclose false, lo chiude notcurses_stop
-          @input = @context.drain_input? ? nil : IO.for_fd(@context.inputready_fd, autoclose: false)
+          # il thread di input del contesto legge i tasti e alza i segnali appena arrivano, anche con il
+          # ciclo occupato; @input diventa leggibile quando ci sono eventi da consegnare
+          @input = @context.drain_input? ? nil : @context.input_reader_start(LINE_SIGNALS) { |input| line_signal(input) }
           if @context.no_winch_sighandler?
             @old_winch = Signal.trap('WINCH') { resize_signal }
             # lo stesso flag toglie anche il gestore di SIGCONT di notcurses: dopo fg serve un refresh
@@ -278,6 +293,8 @@ module Notcurses
         rescue Interrupt
           :interrupt
         ensure
+          # per primo: da qui il thread di input non alza più segnali
+          @context.input_reader_stop if @input
           # nil vorrebbe dire IGNORE, che i processi figli erediterebbero
           if winch
             Signal.trap('WINCH', @old_winch || 'SYSTEM_DEFAULT')
@@ -572,7 +589,7 @@ module Notcurses
             @reason = :eof
             @stop_requested = true
           when Key::RESIZE then handle_resize(refresh: true)
-          else dispatch(input) unless line_signal(input)
+          else dispatch(input) # i tasti di segnale li ha già scartati il thread di input (line_signal)
           end
         end
         worked
@@ -659,10 +676,13 @@ module Notcurses
         input.id == id && mods.anybits?(MOD_SHIFT) == shift
       end
 
-      # Il segnale lo alza il ciclo, una volta per pressione, anche con CapsLock
-      # o NumLock (protocollo kitty): run ha tolto il compito a notcurses 3.0.17,
-      # che lo alzerebbe solo con Ctrl da solo e anche per ripetizioni e
-      # rilasci (in.c:506). Con ISIG attivo questi tasti non vengono consegnati.
+      # Filtro del thread di input ({Context#input_reader_start}), chiamato in
+      # quel thread per gli eventi con un id di LINE_SIGNALS: alza il segnale
+      # appena il tasto arriva, una volta per pressione, anche con CapsLock o
+      # NumLock (protocollo kitty) e con il ciclo occupato. run ha tolto il
+      # compito a notcurses 3.0.17, che lo alzerebbe solo con Ctrl da solo e
+      # anche per ripetizioni e rilasci (in.c:506). Con ISIG attivo questi
+      # tasti non vengono consegnati.
       # Un byte classico non è un segnale: notcurses controlla Ctrl prima di
       # trasformare 0x03 in 'C' (in.c:539), e il campo ctrl della struct resta
       # falso (anche con kitty, che lo fa :press). La ripetizione e il rilascio
@@ -684,7 +704,7 @@ module Notcurses
         return false unless @line_signals
 
         if input.press?
-          held[input.id] = true # prima del segnale: Interrupt esce da qui
+          held[input.id] = true # prima del segnale: il thread principale lo gestisce subito, anche con un altro run
           # raise() come notcurses: pid 0 colpirebbe anche il gruppo (i figli di Subprocess)
           Process.kill(signal, Process.pid)
         end
