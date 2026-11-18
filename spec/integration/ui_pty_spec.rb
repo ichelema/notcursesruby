@@ -353,6 +353,8 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
       session.('dopo solo ctrl', nil, no_linesigs: true) # ICH-455: il Ctrl+C non resta in coda
       session.('ctrl+c e x', "\e[99;5ux")
       session.('dopo ctrl+c e x', nil, no_linesigs: true) # la x resta in coda
+      session.('ctrl+c tenuto e x', "\e[99;5u\e[99;5:2u\e[99;5:3ux")
+      session.('dopo ctrl+c tenuto e x', nil, no_linesigs: true) # la ripetizione non arriva a on_key
       session.('ripetizione e rilascio', "\e[99;133:2u\e[99;133:3u")
       session.('ctrl+\\ con numlock', "\e[92;133u")
       session.('no_linesigs', "\e[99;133u", no_linesigs: true)
@@ -585,6 +587,7 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(out).to include("numlock: interrupt []\n", "capslock: interrupt []\n", "solo ctrl: interrupt []\n")
     expect(out).to include("dopo solo ctrl: stop []\n") # ICH-455
     expect(out).to include("ctrl+c e x: interrupt []\n", "dopo ctrl+c e x: stop [:x]\n")
+    expect(out).to include("ctrl+c tenuto e x: interrupt []\n", "dopo ctrl+c tenuto e x: stop [:x]\n")
     expect(out).to include("ripetizione e rilascio: stop []\n")
     expect(out).to include("ctrl+\\ con numlock: stop []\n")
     expect(out).to include("no_linesigs: stop [[:ctrl, :numlock]]\n", "no_linesigs solo ctrl: stop [[:ctrl]]\n")
