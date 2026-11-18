@@ -214,7 +214,6 @@ module Notcurses
     # dopo Key::EOF (il C riempie di EOF il resto del blocco).
     # @return [Boolean] true se ha trovato Key::EOF
     def scan(block, count)
-      filter, ids = @filters.last
       from = 0
       count.times do |i|
         id = block.get_uint32((i * EVENT_BYTES) + ID_OFFSET)
@@ -222,6 +221,8 @@ module Notcurses
           push_raw(block, from, i + 1)
           return true
         end
+        # il filtro del run più interno all'arrivo dell'evento: un run annidato può iniziare durante il blocco
+        filter, ids = @filters.last
         next unless ids&.key?(id)
 
         push_raw(block, from, i)

@@ -183,6 +183,24 @@ RSpec.describe "Notcurses::InputReader" do
     expect(reader).not_to be_active
   end
 
+  it "un run annidato che parte durante un blocco filtra gli eventi seguenti dello stesso blocco" do
+    inner = []
+    inner_filter = ->(input) { (inner << input.id) && true }
+    outer_filter = lambda do |input|
+      seen << input.id
+      reader.start(inner_filter, ids) if input.id == "Z".ord # come un run annidato che parte adesso
+      false
+    end
+    reader.start(outer_filter, ids)
+    feed("Z", "C", "a")
+    expect(take_ids(2)).to eq(%w[Z a].map(&:ord))
+    expect(seen).to eq(["Z".ord])
+    expect(inner).to eq(["C".ord]) # il C dello stesso blocco va al filtro del run interno
+    reader.stop(inner_filter)
+    reader.stop(outer_filter)
+    expect(reader).not_to be_active
+  end
+
   it "se l'avvio fallisce il filtro non resta nella pila" do
     calls = 0
     fd = lambda do
