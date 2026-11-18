@@ -57,6 +57,7 @@ RSpec.describe "Notcurses::InputReader" do
       reader.ready_io.wait_readable(0.05)
       while (event = reader.take)
         ids << event.id
+        return ids if event.id == Notcurses::Key::EOF # EOF resta nel buffer: take lo ridarebbe
       end
     end
     ids
@@ -102,6 +103,23 @@ RSpec.describe "Notcurses::InputReader" do
     sleep 0.1
     expect(pulls.size).to eq(calls)
     expect(reader).to be_active
+  end
+
+  it "Key::EOF resta nel buffer: take e take_many lo ridanno a ogni lettore, anche dopo stop e un altro start" do
+    reader.start(filter, ids)
+    feed("a", Notcurses::Key::EOF)
+    expect(take_ids(2)).to eq(["a".ord, Notcurses::Key::EOF])
+    expect(reader.take.id).to eq(Notcurses::Key::EOF)
+    expect(reader.take_many(5).map(&:id)).to eq([Notcurses::Key::EOF])
+    expect(reader).to be_pending
+    reader.stop(filter)
+    expect(reader.take.id).to eq(Notcurses::Key::EOF)
+    io = reader.start(filter, ids)
+    feed(Notcurses::Key::EOF) # un run dopo rilegge EOF da notcurses: nel buffer resta uno solo
+    expect(io.wait_readable(1)).to be_truthy
+    expect(wait_until { queue.empty? }).to be(true)
+    expect(reader.take_many(5).map(&:id)).to eq([Notcurses::Key::EOF])
+    expect(reader.instance_variable_get(:@pending).size).to eq(1)
   end
 
   it "un thread finito per un errore viene riavviato dal run dopo" do

@@ -128,6 +128,9 @@ module Notcurses
 
     # Prende il primo evento del buffer. Svuota prima il pipe {#ready_io}:
     # chi aspetta su {#ready_io} deve chiamare take finché restituisce nil.
+    # {Key::EOF} resta nel buffer, come in notcurses, che lo restituisce a ogni
+    # lettura: lo vedono tutti i lettori (un {Context#get} in un handler, un
+    # run annidato e il ciclo che li ha chiamati).
     #
     # @return [Input, nil] nil con il buffer vuoto
     # @raise [InputError] l'errore di lettura del thread, al suo posto nella
@@ -137,6 +140,7 @@ module Notcurses
       item = @pending.first
       return nil if item.nil?
       return take_raw(item) if item.is_a?(Array)
+      return item if eof?(item)
 
       @pending.shift
       raise item if item.is_a?(Exception)
@@ -144,7 +148,8 @@ module Notcurses
       item
     end
 
-    # Prende fino a count eventi del buffer, fermandosi prima di un errore.
+    # Prende fino a count eventi del buffer, fermandosi prima di un errore e
+    # dopo {Key::EOF}, che resta nel buffer (vedi {#take}).
     #
     # @param count [Integer] massimo, >= 1
     # @return [Array<Input>] gli eventi presi, anche vuoto
@@ -156,6 +161,10 @@ module Notcurses
         if item.is_a?(Exception)
           raise @pending.shift if events.empty?
 
+          break
+        end
+        if eof?(item)
+          events << item
           break
         end
         events << (item.is_a?(Array) ? take_raw(item) : @pending.shift)
@@ -218,7 +227,9 @@ module Notcurses
       count.times do |i|
         id = block.get_uint32((i * EVENT_BYTES) + ID_OFFSET)
         if id == Key::EOF
-          push_raw(block, from, i + 1)
+          push_raw(block, from, i)
+          # un Input a sé, che take lascia nel buffer; uno solo anche se un run dopo rilegge EOF
+          @pending << input_at(block, i) unless eof?(@pending.last)
           return true
         end
         # il filtro del run più interno all'arrivo dell'evento: un run annidato può iniziare durante il blocco
@@ -250,6 +261,8 @@ module Notcurses
     end
 
     def input_at(block, index) = Input.new(FFI::NcInput.new(block + (index * EVENT_BYTES)))
+
+    def eof?(item) = item.is_a?(Input) && item.id == Key::EOF
 
     def drain(reader)
       return if reader.nil?

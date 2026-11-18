@@ -708,6 +708,34 @@ RSpec.describe Notcurses::UI::EventLoop do
       end
     end
 
+    it 'Key::EOF arriva a tutti: a un get in un handler e a un run annidato, poi al ciclo che li ha chiamati' do
+      NcHelpers.open_context do |c|
+        feeding_input(c) do |type|
+          outer = new_loop(c)
+          got = nil
+          outer.post do
+            type.call([Notcurses::Key::EOF, 0, 0, false])
+            got = c.get(timeout: 2)&.id # l'handler legge EOF prima del ciclo
+          end
+          expect(run_loop(outer)).to eq(:eof)
+          expect(got).to eq(Notcurses::Key::EOF)
+          expect(c.get(timeout: 0).id).to eq(Notcurses::Key::EOF) # come notcurses: EOF a ogni lettura
+        end
+      end
+      NcHelpers.open_context do |c|
+        feeding_input(c) do |type|
+          outer = new_loop(c)
+          inner_reason = nil
+          outer.post do
+            type.call([Notcurses::Key::EOF, 0, 0, false])
+            inner_reason = described_class.new(c).run # il run annidato legge EOF prima del ciclo
+          end
+          expect(run_loop(outer)).to eq(:eof)
+          expect(inner_reason).to eq(:eof)
+        end
+      end
+    end
+
     it 'un blocco che chiude il contesto durante run ferma prima il thread di input' do
       NcHelpers.open_context do |c|
         feeding_input(c) do # niente EOF: il blocco gira di sicuro con il thread acceso
