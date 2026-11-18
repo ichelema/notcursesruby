@@ -6,20 +6,30 @@
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
 > `git show ad0315b:RIPRESA.md`; quello dei lotti della revisione in `git show 8a4b5f7:RIPRESA.md`.
 
-## Stato e prossimo step (aggiornato il 2026-11-18, dopo il lotto 3)
+## Stato e prossimo step (aggiornato il 2026-11-18, dopo il lotto 4)
 
 - Lotto 1 fatto: PR #22, merge `74deb80`. Lotto 2 fatto: PR #23, merge `cb90c4f`. Lotto 2b fatto: PR #24, merge
   `6374e41`. Lotto 2c fatto: PR #25, merge `d2c5f7c`. Lotto 3 fatto: PR #26, merge `e15b40a` (ICH-454, ICH-456,
-  ICH-455, ICH-536, ICH-537, ICH-538 a Done). Log in `memory/backlog-issue.md`, esito in `RICONSEGNA.md`. `master` su
-  `e15b40a` (più i commit di documentazione): 1177 esempi, 0 fallimenti (ordine normale, semi 1234, 4242, 7);
-  coverage 98,33 %; RuboCop 0; YARD 100 %; gem costruita; layer FFI invariato; CI verde.
-- Worktree `.claude/worktrees/bug+ICH-454-456-455-opus` e branch `bug/ICH-454-456-455-opus` rimossi, anche il
-  remoto (`/trinity:workflow:5_remove-worktree`, lanciato dall'utente: il comando non si lancia dallo strumento Skill).
-- **Prossimo step: lotto 4**, ICH-463 (Medium): con stdin rediretto, un carattere UTF-8 a cavallo della lettura da
-  8192 byte blocca notcurses. Comandi: `/trinity:workflow:1_create-worktree master ICH-463 opus`, poi
-  `/trinity:workflow:2_work-issue ICH-463 opus` e gli altri della procedura. La spec gira in un processo figlio con un
-  timeout (regola 11). Dal lotto 3, durante `EventLoop#run` i tasti li legge il thread di input del contesto
-  (`Notcurses::InputReader`, `notcurses_getvec`), non il ciclo: controlla ICH-463 anche con quel percorso.
+  ICH-455, ICH-536, ICH-537, ICH-538 a Done). Lotto 4 fatto: PR #27, merge `494ffe0`, solo documentazione (ICH-463 in
+  Blocked). Log in `memory/backlog-issue.md`, esito in `RICONSEGNA.md`. Stato di `master` su `494ffe0`: 1177 esempi, 0
+  fallimenti (semi 1234, 4242, 7); coverage 98,33 %; RuboCop 0; YARD 100 %; gem costruita; layer FFI invariato; CI
+  verde.
+- Worktree `.claude/worktrees/bug+ICH-463-opus` e branch `bug/ICH-463-opus` (anche remoto) ancora presenti: l'utente
+  lancia `/trinity:workflow:5_remove-worktree bug+ICH-463-opus` (il comando non si lancia dallo strumento Skill).
+- **ICH-463 in Blocked** (stato del team ICH «Waiting on something outside this repo»), scelta dell'utente: la
+  correzione è in notcurses (`process_melange`, `in.c:2427`: `consumed < 0` → `<= 0`), proposta upstream con la PR
+  [#2954](https://github.com/dankamongmen/notcurses/pull/2954) (issue #2947), dal fork
+  `/mnt/data/Sviluppo/Progetti/Fork/20261118_notcurses` (branch `fix/melange-split-utf8`). Nessun workaround nel
+  wrapper e nessun aggiornamento del submodule. Si riprende con una versione di notcurses corretta e usabile dalla
+  gem: ripeti il repro, aggiungi la spec (processo figlio con timeout), togli il limite da YARD, README e CHANGELOG,
+  chiudi la issue. Se upstream non mergia, le alternative sono nella PR #27. L'automazione di Linear ha portato la
+  issue a In Progress e a Done anche con `Refs` (il nome del branch contiene l'ID): dopo ogni evento della PR
+  controlla lo stato.
+- **Prossimo step: lotto 5**, ICH-475 (Medium: chiudere il contesto o il visual mentre un altro thread è dentro
+  `Visual#decode` è un use-after-free) e ICH-464 (Low: finestra fra `to_ptr` e la chiamata C per un `close` da un
+  trap). Prima del fix chiedi all'utente la scelta che le descrizioni lasciano aperta ("Scelte aperte", regola 14).
+  Comandi: `/trinity:workflow:1_create-worktree master ICH-475 ICH-464 opus`, poi
+  `/trinity:workflow:2_work-issue ICH-475 ICH-464 opus` e gli altri della procedura.
 - Nata dal lotto 3: ICH-539 (Low), finestre dei segnali su Ruby 3.1 e 3.2 nella pulizia di `EventLoop#run`, in
   `InputReader#halt` e in `Context#close`, nel lotto 7 con ICH-226 e ICH-474 (scelta dell'utente del 2026-11-18).
 - Note dal lotto 3: con kitty `run` spegne il flag dei segnali di notcurses e lo lascia spento dopo `run` (scelta
@@ -190,7 +200,7 @@ Le issue nate dai lotti 1, 2, 2b, 2c e 3 sono state aggiunte dopo (lotti 2, 2b, 
 | 3 (seguito) | `bug` | ICH-536 | High | Raise the kitty Ctrl+C line signal at once, also while an EventLoop handler is busy or the input queue is full (nata dal lotto 3; fatta sul branch della PR #26) |
 | 3 (seguito) | `bug` | ICH-537 | Medium | Keep the memory of a held signal key per key and per Context in EventLoop#run (nata dal lotto 3) |
 | 3 (seguito) | `bug` | ICH-538 | Low | Do not call notcurses_linesigs_disable at every EventLoop#run when the flag is already off (nata dal lotto 3) |
-| 4 | `bug` | ICH-463 | Medium | Stop notcurses from blocking when a UTF-8 character is split across the 8192-byte input read |
+| 4 | `bug` | ICH-463 | Medium | Stop notcurses from blocking when a UTF-8 character is split across the 8192-byte input read (fatto: PR #27 solo documentazione, issue in Blocked fino alla correzione upstream) |
 | 5 | `bug` | ICH-475 | Medium | Closing the context or the visual while another thread is inside Visual#decode is a use-after-free |
 | 5 | `bug` | ICH-464 | Low | Close the window between to_ptr and the C call for a close from a trap handler |
 | 6 | `bug` | ICH-458 | Medium | Make Direct#stream redraw :pixel frames in place when they end on the last screen row |
