@@ -754,10 +754,12 @@ module Notcurses
     end
 
     # Descrittore che diventa leggibile quando c'è input
-    # (+notcurses_inputready_fd+). Non chiuderlo. Durante e dopo
-    # {UI::EventLoop#run} il thread di input può aver già tolto gli eventi
-    # dalla coda di notcurses, e il descrittore non li segnala: prima di
-    # attendere su di esso chiama {#get}(timeout: 0) finché restituisce nil.
+    # (+notcurses_inputready_fd+). Non chiuderlo. Durante {UI::EventLoop#run}
+    # il descrittore è del thread di input, che svuota la coda di notcurses:
+    # per attendere un tasto usa {#get} con un timeout. Dopo run il thread può
+    # aver lasciato eventi nel suo buffer, che il descrittore non segnala:
+    # prima di attendere su di esso chiama {#get}(timeout: 0) finché
+    # restituisce nil.
     #
     # @return [Integer]
     # @raise [InputError] se il descrittore non è disponibile
