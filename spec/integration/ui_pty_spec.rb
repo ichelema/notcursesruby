@@ -395,6 +395,42 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     puts 'fine'
   RUBY
 
+  # ICH-538: con loglevel :warning notcurses scrive "linedisc signals already
+  # disabled" se linesigs_disable trova il suo flag già spento (in.c:2841).
+  # stderr del figlio finisce nell'output. Dopo linesigs_enable run spegne di
+  # nuovo il flag: un Ctrl+C tenuto alza un solo SIGINT.
+  def kitty_loglevel_script = kitty_prelude + <<~'RUBY'
+    stty = ->(flag) { IO.popen(['stty', flag], in: slave, &:read) }
+    opts = { output: slave.path, termtype: 'xterm-256color', suppress_banners: true, loglevel: :warning }
+    Notcurses::Context.open(**opts) do |nc|
+      ev = Notcurses::UI::EventLoop.new(nc)
+      ints = 0
+      Signal.trap('INT') { ints += 1 }
+      session = lambda do |name, keys = nil, **run_opts|
+        before = stty.('-g')
+        user = keys && Thread.new do
+          wait_for('run') { ev.running? }
+          type.(keys)
+        end
+        timer = ev.after(keys ? 1 : 0) { ev.stop }
+        reason = ev.run(**run_opts)
+        timer.cancel
+        user&.join
+        $stderr.flush
+        puts "#{name}: #{reason}#{' stty diverso' if stty.('-g') != before}"
+      end
+      session.('primo')
+      session.('secondo')
+      session.('no_linesigs', no_linesigs: true)
+      session.('terzo')
+      nc.linesigs_enable
+      session.('dopo linesigs_enable', "\e[99;5u\e[99;5:2u\e[99;5:3u")
+      session.('ultimo')
+      puts "kitty #{kitty.()} ints #{ints}"
+    end
+    puts 'fine'
+  RUBY
+
   # Un contesto che scarta l'input non accende il protocollo kitty, ma un
   # terminale può mandare lo stesso le sequenze (xterm con modifyOtherKeys: 2):
   # notcurses scarta il tasto e alza il segnale, run non legge niente.
@@ -598,6 +634,20 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(out).to include("premuto, ripetuto e rilasciato: stop []\n", "ctrl+\\ premuto, ripetuto e rilasciato: stop []\n")
     expect(out).to include("byte 0x03: stop [[:ctrl]]\n")
     expect(out).to include('kitty true quits 2 ints 1 evtypes [:press]') # :press: notcurses ha acceso il protocollo
+    expect(out).to end_with("fine\n")
+  end
+
+  it 'ICH-538: con loglevel :warning più run di fila non trovano mai il flag dei segnali già spento' do
+    skip 'pty e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
+
+    out, status, timed_out = run_child(kitty_loglevel_script, timeout: 30)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(status.exitstatus).to eq(0), out
+    expect(out).not_to include('already disabled'), out
+    expect(out).not_to include('stty diverso'), out
+    expect(out).to include("primo: stop\n", "secondo: stop\n", "no_linesigs: stop\n", "terzo: stop\n")
+    expect(out).to include("dopo linesigs_enable: stop\n", "ultimo: stop\n")
+    expect(out).to include('kitty true ints 1') # dopo linesigs_enable run toglie di nuovo il segnale a notcurses
     expect(out).to end_with("fine\n")
   end
 

@@ -319,6 +319,7 @@ module Notcurses
         @mice_enabled = false
         @drain_input = drain_input
         @no_winch_sighandler = no_winch_sighandler
+        @linesigs_flag = initial_linesigs_flag
         @stdplane = Plane.new(FFI.notcurses_stdplane(ptr), owned: false, context: self)
         @closed = false
       rescue Exception # rubocop:disable Lint/RescueException
@@ -786,6 +787,7 @@ module Notcurses
     # @raise [ClosedError] se il contesto è chiuso
     def linesigs_disable
       Util.check!(FFI.notcurses_linesigs_disable(to_ptr), ContextError, 'notcurses_linesigs_disable')
+      @linesigs_flag = false
       self
     end
 
@@ -796,7 +798,24 @@ module Notcurses
     # @raise [ClosedError] se il contesto è chiuso
     def linesigs_enable
       Util.check!(FFI.notcurses_linesigs_enable(to_ptr), ContextError, 'notcurses_linesigs_enable')
+      @linesigs_flag = true
       self
+    end
+
+    # Stato del flag privato con cui notcurses alza SIGINT, SIGSTOP e SIGQUIT
+    # per Ctrl+C, Ctrl+Z e Ctrl+\ di kitty e di xterm (in.c:506-516). Il C non
+    # lo lascia leggere: lo tiene il wrapper. All'init il flag segue ISIG del
+    # terminale, ed è acceso senza terminale (termdesc.c:1400-1404); lo
+    # cambiano solo {#linesigs_disable} e {#linesigs_enable}. Lo usa
+    # {UI::EventLoop#run}, per non chiamare linesigs_disable con il flag già
+    # spento (notcurses scriverebbe un avviso).
+    #
+    # @return [Boolean] true se il flag è acceso
+    # @raise [ClosedError] se il contesto è chiuso
+    # @api private
+    def linesigs_flag?
+      to_ptr
+      @linesigs_flag
     end
 
     # Disattiva il controllo di flusso (IXON), che notcurses lascia attivo:
@@ -861,6 +880,23 @@ module Notcurses
       raise ContextError, "segnali da tastiera: ISIG non noto su #{RUBY_PLATFORM}" unless FFI::ISIG
 
       input_tty { |fd| tty_flag!(fd, :c_lflag, FFI::ISIG, true) }
+      self
+    end
+
+    # Spegne ISIG sul terminale di {#flow_control_disable}, senza toccare il
+    # flag dei segnali di notcurses ({#linesigs_flag?}). Lo usa
+    # {UI::EventLoop#run}(no_linesigs: true) quando il flag è già spento.
+    #
+    # @return [self]
+    # @raise [ContextError] se tcgetattr o tcsetattr falliscono, o se ISIG non
+    #   è noto su questo sistema
+    # @raise [ClosedError] se il contesto è chiuso
+    # @api private
+    def isig_disable
+      to_ptr
+      raise ContextError, "segnali da tastiera: ISIG non noto su #{RUBY_PLATFORM}" unless FFI::ISIG
+
+      input_tty { |fd| tty_flag!(fd, :c_lflag, FFI::ISIG, false) }
       self
     end
 
@@ -1115,6 +1151,17 @@ module Notcurses
       FFI.fclose(@fp) if fclose
       Notcurses.release_context(self)
       nil
+    end
+
+    # Valore del flag dei segnali di notcurses subito dopo l'init: ISIG del
+    # terminale, acceso senza terminale o con ISIG non leggibile.
+    # @return [Boolean]
+    def initial_linesigs_flag
+      return true unless FFI::ISIG
+
+      input_tty { |fd| termios(fd)[:c_lflag].anybits?(FFI::ISIG) ? :on : :off } != :off
+    rescue ContextError
+      true
     end
 
     # Il terminale da cui notcurses legge i tasti (init_inputlayer, in.c):

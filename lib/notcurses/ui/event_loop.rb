@@ -174,7 +174,8 @@ module Notcurses
       # sequenza e non come byte, e il terminale non alza il segnale. notcurses
       # lo alzerebbe da un flag suo, che stty non cambia, solo con Ctrl da solo
       # e anche per la ripetizione e il rilascio: all'avvio run gli toglie
-      # questo compito ({Context#linesigs_disable}, poi rimette ISIG com'era).
+      # questo compito ({Context#linesigs_disable}, poi rimette ISIG com'era),
+      # se il flag è acceso ({Context#linesigs_flag?}).
       # Con ISIG attivo run alza lo stesso segnale (SIGINT, SIGSTOP, SIGQUIT) al
       # proprio processo, una volta per pressione e dopo aver letto il tasto, e
       # non consegna questi tasti (con o senza CapsLock e NumLock, nemmeno
@@ -231,13 +232,19 @@ module Notcurses
           # senza ISIG noto linesigs? solleva: con no_linesigs come prima, senza il ciclo non alza segnali
           isig = (no_linesigs || !FFI::ISIG.nil?) && @context.linesigs?
           if FFI::ISIG && !@context.drain_input?
-            # notcurses alza i segnali dei tasti kitty e xterm da un flag suo, che stty non cambia, anche per
-            # ripetizioni e rilasci (in.c:506): solo linesigs_disable lo spegne, insieme a ISIG
-            linesigs = isig # da qui ISIG può restare spento: restore_terminal lo riaccende
-            @context.linesigs_disable
-            if isig && !no_linesigs
-              @context.isig_enable
-              linesigs = false
+            if @context.linesigs_flag?
+              # notcurses alza i segnali dei tasti kitty e xterm da un flag suo, che stty non cambia, anche per
+              # ripetizioni e rilasci (in.c:506): solo linesigs_disable lo spegne, insieme a ISIG
+              linesigs = isig # da qui ISIG può restare spento: restore_terminal lo riaccende
+              @context.linesigs_disable
+              if isig && !no_linesigs
+                @context.isig_enable
+                linesigs = false
+              end
+            elsif no_linesigs && isig
+              # flag già spento: linesigs_disable scriverebbe un avviso (in.c:2841), basta ISIG
+              linesigs = true
+              @context.isig_disable
             end
           elsif no_linesigs && isig
             # con drain_input notcurses scarta i tasti senza metterli in coda (in.c:518): il segnale resta suo

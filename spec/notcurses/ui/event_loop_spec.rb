@@ -339,21 +339,30 @@ RSpec.describe Notcurses::UI::EventLoop do
 
     it 'con un contesto che legge i tasti run toglie i loro segnali a notcurses e rimette ISIG con isig_enable' do
       reading_input do
-        allow(nc).to receive(:linesigs?).and_return(false, true)
-        expect(nc).to receive(:linesigs_disable).twice.and_return(nc) # ICH-454: anche con ISIG già spento
-        expect(nc).to receive(:isig_enable).once.and_return(nc) # alla fine del secondo run
-        expect(nc).not_to receive(:linesigs_enable) # il flag di notcurses resta spento: i segnali li alza run
+        # il C non tocca il terminale di chi esegue i test; il wrapper tiene lo stato del flag
+        allow(Notcurses::FFI).to receive(:notcurses_linesigs_enable).and_return(0)
+        expect(Notcurses::FFI).to receive(:notcurses_linesigs_disable).twice.and_return(0)
+        nc.linesigs_enable
+        allow(nc).to receive(:linesigs?).and_return(false, true, true, true)
+        expect(nc).to receive(:isig_disable).once.and_return(nc) # secondo run: il flag è già spento, basta ISIG
+        expect(nc).to receive(:isig_enable).twice.and_return(nc) # alla fine del secondo run, all'avvio del quarto
         ev = new_loop
-        2.times do
+        2.times do # ICH-454: il primo spegne il flag anche con ISIG già spento
           ev.post { ev.stop }
           expect(ev.run(no_linesigs: true)).to eq(:stop)
         end
+        expect(nc.linesigs_flag?).to be(false) # il flag di notcurses resta spento: i segnali li alza run
+        ev.post { ev.stop }
+        expect(ev.run).to eq(:stop) # ICH-538: flag già spento e ISIG acceso, run non tocca niente
+        nc.linesigs_enable
+        ev.post { ev.stop }
+        expect(ev.run).to eq(:stop) # flag riacceso: run lo spegne di nuovo
       end
     end
 
     it 'senza no_linesigs run riaccende ISIG subito; se non ci riesce, ritenta alla fine' do
       reading_input do
-        allow(nc).to receive_messages(linesigs?: true, linesigs_disable: nc)
+        allow(nc).to receive_messages(linesigs?: true, linesigs_flag?: true, linesigs_disable: nc)
         calls = 0
         allow(nc).to receive(:isig_enable) do
           calls += 1
