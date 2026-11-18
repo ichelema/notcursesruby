@@ -78,7 +78,8 @@ module Notcurses
     # @return [Exception, nil] l'eccezione asincrona arrivata mentre aspettava
     #   il thread (vedi {#halt}), da sollevare dopo la pulizia del chiamante
     def stop(filter)
-      # tutto o niente: un'eccezione asincrona a metà lascerebbe filtri, thread e pipe del run finito
+      # tutto o niente: un'eccezione asincrona a metà lascerebbe filtri, thread e pipe del run finito (su Ruby 3.1
+      # e 3.2 l'Interrupt di un segnale non si rimanda: lì vale solo per quello che arriva durante halt)
       Thread.handle_interrupt(Object => :never) do
         index = @filters.rindex { |registered, _| registered.equal?(filter) }
         next if index.nil?

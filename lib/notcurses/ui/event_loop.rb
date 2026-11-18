@@ -213,7 +213,11 @@ module Notcurses
       # Un secondo Ctrl+C (o un'altra eccezione asincrona) mentre run fa
       # pulizia arriva alla fine della pulizia: run solleva Interrupt invece di
       # restituire :interrupt, con il terminale, i trap e il thread di input
-      # già a posto.
+      # già a posto. Su Ruby 3.1 e 3.2 l'Interrupt di un segnale non si
+      # rimanda: lì vale solo per un Ctrl+C che arriva mentre run aspetta il
+      # thread di input; un segnale da fuori (un Ctrl+C di un terminale
+      # classico) negli altri istanti interrompe la pulizia, come nelle
+      # versioni precedenti.
       #
       # Dopo run il flag di notcurses resta spento: fuori da run un Ctrl+C di
       # kitty non alza segnali e resta in coda, e il thread di input del run
@@ -311,7 +315,8 @@ module Notcurses
           :interrupt
         ensure
           interrupted = nil
-          # un secondo Ctrl+C (o un'altra eccezione asincrona) arriva dopo la pulizia, non a metà
+          # un secondo Ctrl+C (o un'altra eccezione asincrona) arriva dopo la pulizia, non a metà; su Ruby 3.1 e 3.2
+          # l'Interrupt di un segnale arriva dopo solo se arriva mentre input_reader_stop aspetta il thread
           Thread.handle_interrupt(Object => :never) do
             # per primo: da qui il thread di input non alza più segnali; un Ctrl+C arrivato mentre lo aspetta
             # torna come valore (su Ruby 3.1 e 3.2 handle_interrupt non rimanda l'Interrupt di un segnale)
