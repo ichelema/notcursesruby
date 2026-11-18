@@ -6,43 +6,30 @@
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
 > `git show ad0315b:RIPRESA.md`; quello dei lotti della revisione in `git show 8a4b5f7:RIPRESA.md`.
 
-## Stato e prossimo step (aggiornato il 2026-11-18, lotto 3 pronto per il merge)
+## Stato e prossimo step (aggiornato il 2026-11-18, dopo il lotto 3)
 
 - Lotto 1 fatto: PR #22, merge `74deb80`. Lotto 2 fatto: PR #23, merge `cb90c4f`. Lotto 2b fatto: PR #24, merge
-  `6374e41`. Lotto 2c fatto: PR #25, merge `d2c5f7c` (ICH-531, ICH-532 a Done). Log in `memory/backlog-issue.md`,
-  esito in `RICONSEGNA.md`. `master` su `d2c5f7c`: 1133 esempi, 0 fallimenti (ordine normale, semi 1234, 4242, 7);
-  coverage 98,11 %; RuboCop 0; YARD 100 %; layer FFI invariato; CI verde.
-- **Lotto 3 pronto per il merge: PR #26 fuori dal draft**, CI verde su `e78d5cd` (Ruby 3.1.7, 3.2.11, 3.3.13,
-  3.4.12, 4.0.9, codecov). Issue: ICH-454, ICH-456, ICH-455, ICH-536, ICH-537, ICH-538, tutte In Progress, con
-  `Fixes` nella descrizione. Branch `bug/ICH-454-456-455-opus` su `e78d5cd`, worktree
-  `.claude/worktrees/bug+ICH-454-456-455-opus` ancora presente (con il submodule `notcurses`).
-- ICH-536, ICH-537 e ICH-538 sono sul branch della PR #26 (opzione (a), scelta dell'utente del 2026-11-18), con il
-  disegno B scelto dall'utente: un thread Ruby di input del `Context` (`Notcurses::InputReader`, costante privata)
-  legge la coda di notcurses durante `run` e alza il segnale alla pressione, anche con il ciclo occupato. Nessun
-  cambio a `lib/notcurses/ffi/`. Il testo nuovo di ICH-536 (criteri e vincoli tecnici, limite del GVL) l'ha
-  confermato l'utente ed è su Linear.
-- Review-fix loop di 3 round con GPT e Sonnet: finding, verify e scarti nei commenti della review sulla PR #26. I 4
-  finding del round 3 (tutti LOW dopo il triage) sono corretti in `e78d5cd`, ognuno con una spec; nessuna issue nuova.
-  Branch: 1177 esempi, 0 fallimenti (ordine normale e semi 1234, 4242, 7); coverage 98,33 % (le stesse 100 righe non
-  coperte di `92ffe55`: alcune righe dipendono dai tempi dei thread); RuboCop 0; YARD 100 %; layer FFI invariato.
-- Limite noto, documentato nello YARD di `run` e nel CHANGELOG: per l'input da terminale notcurses 3.0.17 non frena
-  chi scrive, e con la coda piena (8192 eventi) scarta il tasto nuovo (`in.c:523`). L'esempio pty di ICH-536 con
-  10000 tasti e poi Ctrl+C è fallito 1 volta su 11 corse della suite in locale, con un altro processo che occupava
-  una CPU; da solo passa 8 volte su 8.
-- **Prossimo step: il merge della PR #26, che fa l'utente** (`gh pr merge 26 --merge`). Prima del merge, se
-  l'utente vuole, la prova a vista in Kitty, da una finestra di Kitty con il controllo remoto, nel worktree del
-  lotto: `NC_GRAPHICS=1 bundle exec rspec spec/graphics/terminal_spec.rb -e 'Ctrl+C con CapsLock'`.
-- **Dopo il merge:** chiusura del lotto 3 (passo 7 della procedura). Il log del lotto in `memory/backlog-issue.md`
-  (capitolo "Lotto 3", oggi fermo al draft) deve aggiungere ICH-536, ICH-537 e ICH-538: disegno B, decisioni
-  dell'utente, i round della review (dai commenti sulla PR #26). Poi
-  `/trinity:workflow:5_remove-worktree bug+ICH-454-456-455-opus`.
-- Da chiedere all'utente alla chiusura (regola 16: nessuna issue senza la sua conferma):
-  - una issue per la pulizia di `run` contro segnali esterni su Ruby 3.1 e 3.2, dove l'Interrupt di un segnale
-    non si rimanda: restano finestre strette fuori da `Thread.handle_interrupt`;
-  - due bug di notcurses da aggiungere alle tabelle di `RICONSEGNA.md`: un assert in `kitty_kbd_txt` (`in.c:803`)
-    con le sequenze CSI-u spezzate, e un assert in `process_escape` (`in.c:2229`);
-  - se ritoccare il criterio 2 di ICH-536 («more than 8192 keys») rispetto alle soglie misurate sotto carico.
-- File lasciati in `/tmp` dal revisore Sonnet del round 2 (`/tmp/_probe_out*.txt`, `/tmp/_probe_plain.txt`,
+  `6374e41`. Lotto 2c fatto: PR #25, merge `d2c5f7c`. Lotto 3 fatto: PR #26, merge `e15b40a` (ICH-454, ICH-456,
+  ICH-455, ICH-536, ICH-537, ICH-538 a Done). Log in `memory/backlog-issue.md`, esito in `RICONSEGNA.md`. `master` su
+  `e15b40a` (più i commit di documentazione): 1177 esempi, 0 fallimenti (ordine normale, semi 1234, 4242, 7);
+  coverage 98,33 %; RuboCop 0; YARD 100 %; gem costruita; layer FFI invariato; CI verde.
+- **Prima del lotto 4**: il worktree del lotto 3 `.claude/worktrees/bug+ICH-454-456-455-opus` è ancora presente,
+  con il branch locale e remoto. Lo rimuove l'utente con `/trinity:workflow:5_remove-worktree bug+ICH-454-456-455-opus`
+  (il comando non si lancia dallo strumento Skill).
+- **Prossimo step: lotto 4**, ICH-463 (Medium): con stdin rediretto, un carattere UTF-8 a cavallo della lettura da
+  8192 byte blocca notcurses. Comandi: `/trinity:workflow:1_create-worktree master ICH-463 opus`, poi
+  `/trinity:workflow:2_work-issue ICH-463 opus` e gli altri della procedura. La spec gira in un processo figlio con un
+  timeout (regola 11). Dal lotto 3, durante `EventLoop#run` i tasti li legge il thread di input del contesto
+  (`Notcurses::InputReader`, `notcurses_getvec`), non il ciclo: controlla ICH-463 anche con quel percorso.
+- Nata dal lotto 3: ICH-539 (Low), finestre dei segnali su Ruby 3.1 e 3.2 nella pulizia di `EventLoop#run`, in
+  `InputReader#halt` e in `Context#close`, nel lotto 7 con ICH-226 e ICH-474 (scelta dell'utente del 2026-11-18).
+- Note dal lotto 3: con kitty `run` spegne il flag dei segnali di notcurses e lo lascia spento dopo `run` (scelta
+  dell'utente); con la coda di input piena (8192 eventi) notcurses scarta il tasto nuovo (`in.c:523`), e sotto carico
+  CPU anche il Ctrl+C dopo 10000 tasti si è perso, di rado (commento su ICH-536). La coverage locale varia fra 98,33 e
+  98,41 % fra una corsa e l'altra: alcune righe dipendono dai tempi dei thread. Prova a vista in Kitty non segnalata
+  dall'utente: `NC_GRAPHICS=1 bundle exec rspec spec/graphics/terminal_spec.rb -e 'Ctrl+C con CapsLock'` da una
+  finestra di Kitty con il controllo remoto.
+- File lasciati in `/tmp` dal revisore Sonnet del lotto 3 (`/tmp/_probe_out*.txt`, `/tmp/_probe_plain.txt`,
   `/tmp/_t22_31.txt` … `/tmp/_t22_36.txt`): nessuno li ha cancellati (niente `rm`); li rimuove l'utente, se vuole.
 - **Review con GPT e Sonnet**: `gpt-bridge:reviewer` e `trinity:reviewer` con `model: sonnet` ed `effort: max` al
   posto di Fable (scelta dell'utente del 2026-11-18; worktree di review `review+<base-name>-sonnet`). I revisori
@@ -172,7 +159,7 @@ successivi.
 
 Proposta del 2026-11-15, controllata con le descrizioni di Linear e approvata dall'utente con 4 cambi: ICH-225 nel
 lotto 1, ICH-214 nel lotto 2, ICH-464 nel lotto 5, ICH-474 nel lotto 7 (motivi in `memory/backlog-issue.md`).
-Le issue nate dai lotti 1, 2, 2b, 2c e 3 sono state aggiunte dopo (lotti 2, 2b, 2c, 3, 6, 8 e 14). Criteri:
+Le issue nate dai lotti 1, 2, 2b, 2c e 3 sono state aggiunte dopo (lotti 2, 2b, 2c, 3, 6, 7, 8 e 14). Criteri:
 
 1. prima la priorità di Linear (High, poi Medium, poi Low);
 2. le issue che toccano lo stesso codice stanno nello stesso lotto;
@@ -217,6 +204,7 @@ Le issue nate dai lotti 1, 2, 2b, 2c e 3 sono state aggiunte dopo (lotti 2, 2b, 
 | 7 | `bug` | ICH-441 | Medium | Handle Process.daemon with an open Context or Direct without leaving the terminal altered |
 | 7 | `bug` | ICH-226 | Low | Harden Context and Direct init against a second Ctrl-C and Thread#kill |
 | 7 | `bug` | ICH-474 | Low | Keep the C resource when an async exception arrives during Visual.from_file, Direct#load_image or Direct#render_frame |
+| 7 | `bug` | ICH-539 | Low | Close the signal windows left in the cleanup of EventLoop#run and in InputReader#halt on Ruby 3.1 and 3.2 (nata dal lotto 3) |
 | 8 | `bug` | ICH-218 | Medium | Make Reader delete the character in column 0 |
 | 8 | `bug` | ICH-217 | Low | Handle graphemes that notcurses segments differently from Ruby |
 | 8 | `bug` | ICH-232 | Low | Reject graphemes that notcurses splits differently in UI widget text checks |
