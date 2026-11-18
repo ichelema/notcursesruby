@@ -380,7 +380,7 @@ parere di design), `13294e1` (nuovo fix di ICH-532 dopo la review), `c73e251` (n
   lib/notcurses/ffi.rb` vuoto; CI di `master` verde.
 - ICH-531 e ICH-532 a Done. Issue nuova: ICH-533 (Backlog, lotto 8).
 
-## Lotto 3 — ICH-454, ICH-456, ICH-455 (PR #26, in draft)
+## Lotto 3 — ICH-454, ICH-456, ICH-455, poi ICH-536, ICH-537, ICH-538 (PR #26, merge `e15b40a`)
 
 Lavoro in una sessione il 2026-11-17 e 18 (implementazione, review-fix loop di 3 round). Branch
 `bug/ICH-454-456-455-opus`, worktree `.claude/worktrees/bug+ICH-454-456-455-opus` ancora presente, con il submodule
@@ -441,7 +441,7 @@ Lavoro in una sessione il 2026-11-17 e 18 (implementazione, review-fix loop di 3
 | Suite completa nel worktree nuovo | submodule `notcurses` assente | `git submodule update --init --depth 1 notcurses` |
 | Il reviewer Sonnet ha scritto `/tmp/ncerr.txt` | prova con `loglevel: :warning` | rimosso dall'utente |
 
-### Stato a fine sessione
+### Stato a fine della prima sessione
 
 - Branch su `82953cb` (solo documentazione dopo `bbad936`): 1138 esempi, 0 fallimenti; RuboCop 0 offense; YARD 100 %;
   layer FFI invariato; line coverage 98,09 % misurata prima della review (`87526c4`). CI verde su `bbad936`; su
@@ -449,3 +449,84 @@ Lavoro in una sessione il 2026-11-17 e 18 (implementazione, review-fix loop di 3
 - ICH-454, ICH-456, ICH-455 In Progress; PR #26 in draft con il commento della review. Issue nuove in Backlog:
   ICH-536 (High), ICH-537 (Medium), ICH-538 (Low), con relazione `related` verso ICH-456 e ICH-455.
 - Prova a vista in Kitty non ancora fatta.
+
+### Seconda sessione: ICH-536, ICH-537, ICH-538 (2026-11-18)
+
+Lavoro sul branch e nel worktree della PR #26 (opzione (a), scelta dell'utente), senza i comandi 1 e 2 del workflow.
+Commit: `519c918` (ICH-538), `eb2e126` (ICH-537), `57472d5` (ICH-536); round 1: `9505bdf`, `66a39fb`, `8e3d1b7`,
+`edeaaeb`; round 2: `bf9523e`, `1c894a9`, `e3f40bc`, `aa07948`, `92ffe55`; round 3: `e78d5cd`.
+
+#### Fix
+
+- **ICH-538.** `Context#linesigs_flag?` (`@api private`) tiene in Ruby lo stato del flag privato di notcurses: ISIG
+  all'init, acceso senza terminale (`termdesc.c:1400-1404`), cambiato solo da `linesigs_disable` ed `enable`. `run`
+  chiama `linesigs_disable` solo con il flag acceso; con il flag spento `run(no_linesigs: true)` spegne solo ISIG
+  (`Context#isig_disable`).
+- **ICH-537.** `Context#held_signal_keys` (`@api private`): una voce per tasto di segnale tenuto premuto, tolta dal
+  suo rilascio o da una nuova pressione dello stesso tasto. Vale per ogni `EventLoop` e `App` del contesto. Con kitty,
+  se l'utente lascia Ctrl prima di C, ripetizione e rilascio arrivano senza Ctrl e con l'id minuscolo (`1c894a9`).
+- **ICH-536, disegno B (scelta dell'utente).** Durante `run` un thread Ruby del contesto (`Notcurses::InputReader`,
+  costante privata) attende su `notcurses_inputready_fd` senza il GVL e svuota la coda di notcurses a blocchi di 256
+  con `notcurses_getvec` (permesso in parallelo al render, un thread alla volta nello stack di input). Legge solo l'id
+  (0,04 µs; un `Input` costa 2,6 µs) e passa a `line_signal` solo C, Z e \ (c e z solo mentre il tasto è tenuto,
+  `EventLoop::SignalIds`): il segnale parte alla pressione, anche con il ciclo occupato (Sonnet, round 3: 1 ms con un
+  handler che dorme, 101 ms con un blocco di `post` che tiene il GVL). Gli altri eventi restano in un buffer del
+  contesto come blocchi grezzi; `Context#get` e `#getvec` ne fanno `Input` quando li prendono. Nessun cambio a
+  `lib/notcurses/ffi/`. Il disegno A (trap che scarta i segnali delle ripetizioni) è stato scartato: SIGSTOP non si
+  intercetta.
+- **Ciclo di vita.** Il filtro nasce prima dell'avvio del thread e l'ensure di `run` lo toglie per primo; la pulizia
+  rimanda le eccezioni asincrone (`Thread.handle_interrupt(Object => :never)`) e un secondo Ctrl+C esce come
+  `Interrupt` dopo la pulizia. Su Ruby 3.1 e 3.2 l'Interrupt di un segnale non si rimanda: la pulizia, fatta di passi
+  idempotenti, ricomincia con `retry` (`aa07948`). Un cancello (`Thread::Queue`) impedisce al thread di leggere prima
+  di essere registrato (`bf9523e`). `Context#close` ferma il thread prima di `notcurses_stop`. `Key::EOF` resta nel
+  buffer per ogni lettore (`8e3d1b7`); il filtro si legge per evento, così un run annidato filtra il resto del blocco
+  (`66a39fb`).
+
+#### Decisioni
+
+- Dell'utente: lavoro sul branch della PR #26; disegno B, senza cambi FFI; testo nuovo di ICH-536 (criterio 2 «more
+  than 8192 keys» anche con un handler, un timer o un `post` occupato; vincoli tecnici riscritti; limite del GVL);
+  dopo il merge un commento su ICH-536 con i limiti misurati invece di riscrivere il criterio; ICH-539 Low in Backlog
+  per le finestre residue su Ruby 3.1 e 3.2.
+- Mie: durante `run` per attendere un tasto serve `get` con un timeout, non `inputready_fd` (YARD); scarto registrato:
+  gli eventi già filtrati da un `run(no_linesigs: true)` mantengono quel modo nel run successivo (la classificazione
+  avviene alla lettura, come ISIG nella line discipline); i 4 finding del round 3 corretti dopo il loop, senza un
+  altro round (tutti LOW dopo il triage).
+
+#### Review (3 round, GPT e Sonnet effort max)
+
+- Round 1: un Interrupt subito dopo l'avvio lasciava il thread acceso, eccezioni asincrone a metà pulizia, `close` da
+  un trap durante l'attesa del thread chiamava due volte `notcurses_stop` (`9505bdf`); filtro letto per blocco
+  (`66a39fb`); EOF consumato da un `get` in un handler (`8e3d1b7`); YARD e limiti delle raffiche (`edeaaeb`).
+- CI rossa su Ruby 3.1 e 3.2 dopo il round 1 (`EBADF` nel thread di input): un SIGINT prima della registrazione del
+  thread (`bf9523e`).
+- Round 2: pulizia di `run` non ripetibile su 3.1 e 3.2, `:immediate` in `halt` lasciava `Thread#kill` interrompere
+  la pulizia (regressione), thread di input non fermabile con `Thread#kill` (`aa07948`); Ctrl lasciato prima di C
+  (`1c894a9`); YARD (`e3f40bc`, `92ffe55`). Il revisore GPT si è fermato tre volte senza consegnare il report: un
+  agente nuovo con l'istruzione esplicita di consegnarlo ha funzionato.
+- Round 3 (Sonnet: approvabile con riserve): GPT HIGH (Interrupt prima del `begin` protetto dell'ensure, solo con un
+  `TracePoint`) e MEDIUM (`stop` azzerava i pipe prima di chiuderli; anche Sonnet, LOW); Sonnet LOW, `c` e `z` sempre
+  nel filtro perdevano il Ctrl+C dopo circa 9000 tasti, e `pending = $!` sbagliato con `run` dentro un `rescue`.
+  Tutti LOW dopo il triage, corretti in `e78d5cd` con una spec ciascuno; commento sulla PR.
+
+#### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| Raffiche oltre 8192 eventi perse dal thread | un `Input` per ogni evento | lettura a blocchi con `getvec` e blocchi grezzi nel buffer |
+| Spec del reader con struct sporche | il buffer di `getvec` non è azzerato | `s.clear` nella sorgente finta |
+| Spec instabili fra EOF e `post` | EOF in coda insieme ai tasti | sorgente finta senza EOF; nel figlio stdin su un pipe aperto |
+| Eccezione rimandata in un `:never` annidato che non arrivava al `rescue` di `halt` | rimandata fino al blocco esterno | `halt` restituisce l'eccezione, il chiamante la solleva dopo la pulizia |
+| RuboCop: lo spazio di `@stdplane =` perso dagli Edit | allineamento | corretto a mano, due volte |
+| Esempio pty di ICH-536 (10000 tasti e poi Ctrl+C) fallito 1 volta su 11 corse della suite | notcurses scarta il tasto con la coda piena (`in.c:523`), con un altro processo che occupava una CPU | limite documentato nello YARD, nel CHANGELOG e su ICH-536 |
+| Coverage 98,41 % poi 98,33 % | alcune righe dipendono dai tempi dei thread | stessa corsa su `92ffe55`: le stesse 100 righe non coperte |
+| File in `/tmp` del revisore Sonnet del round 2 (`_probe_out*.txt`, `_probe_plain.txt`, `_t22_31..36.txt`) | prove scritte su file | non cancellati (niente `rm`); segnalati all'utente |
+
+#### Stato finale
+
+- PR #26 merge `e15b40a` (fatto dall'utente); CI verde su `e78d5cd` (Ruby 3.1.7, 3.2.11, 3.3.13, 3.4.12, 4.0.9,
+  codecov). ICH-454, ICH-456, ICH-455, ICH-536, ICH-537, ICH-538 a Done. Issue nuova: ICH-539 (Low, Backlog,
+  `related` verso ICH-536).
+- Branch: 1177 esempi, 0 fallimenti (ordine normale e semi 1234, 4242, 7); coverage 98,33 %; RuboCop 0; YARD 100 %;
+  layer FFI invariato.
+- Prova a vista in Kitty: l'utente non l'ha segnalata prima del merge.

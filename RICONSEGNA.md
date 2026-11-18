@@ -635,6 +635,9 @@ comune (`Util.c_region`); la copertura FFI non cambia (477 chiamate, 154 escluse
 | notcurses divide il keycap `"1️⃣"` diversamente da Ruby e ne scrive U+20E3 come carattere di larghezza zero | `nccell_load` | il controllo del testo dei widget non lo vede; il disegno lo scrive come `"?"` invece di sollevare |
 | Nessuno stile «reverse»; senza tty `cursor_disable` e `mice_enable` sollevano `ContextError` | — | il focus si mostra con i colori; `App` ignora l'errore di `cursor_disable` |
 | Con il protocollo tastiera kitty notcurses alza SIGINT, SIGSTOP o SIGQUIT per Ctrl+C, Ctrl+Z e Ctrl+\ solo se i modificatori sono Ctrl da solo: con CapsLock o NumLock (kitty li aggiunge) non alza niente e consegna il tasto; con Ctrl da solo alza il segnale e mette anche l'evento in coda. Lo alza anche per la ripetizione e il rilascio (notcurses chiede il flag kitty 2, i tipi di evento), e lo decide da un flag privato (`ictx->linesigs`) che `stty` non cambia: lo cambiano solo `notcurses_linesigs_disable` ed `enable`, che scrivono anche ISIG, e con `ttyfd < 0` nemmeno loro | `in.c:506-516`, `in.c:2840-2918`, `termdesc.c:390` | all'avvio `EventLoop#run` spegne il flag con `notcurses_linesigs_disable` e rimette ISIG com'era con `tcsetattr` (`Context#isig_enable`); con ISIG attivo alza lui lo stesso segnale al proprio processo, una volta per pressione e dopo aver letto il tasto, e non consegna questi tasti (ICH-280, ICH-454, ICH-456, ICH-455). Dopo `run` il flag resta spento. Con `drain_input` `run` non legge i tasti e lascia i segnali a notcurses, come su `master` (con `no_linesigs` spegne il flag e lo riaccende alla fine con `linesigs_enable`); senza terminale il flag resta acceso: limiti scritti nello YARD |
+| Con la coda di input piena (8192 eventi) notcurses scarta il tasto nuovo: per l'input da terminale non frena chi scrive (`process_bulk` frena solo l'input rediretto) | `in.c:523-527`, `in.c:2370-2395` | il thread di input di `EventLoop#run` svuota la coda e legge solo l'id degli eventi che non sono tasti di segnale; con la CPU occupata anche il Ctrl+C dopo 10000 tasti si è perso, di rado: limiti nello YARD di `run` e su ICH-536 (lotto 3 delle issue in Backlog) |
+| Una sequenza CSI-u di kitty spezzata fra due letture fa fallire `assert(val > 0)` e ferma il processo | `in.c:803` (`kitty_kbd_txt`) | non aggirato; succede anche con un ciclo di `Context#get` senza `EventLoop` (riprodotto dalla review del lotto 3 delle issue in Backlog) |
+| Una sequenza escape spezzata fra due letture fa fallire `assert(ictx->amata.used <= buflen)` e ferma il processo | `in.c:2229` (`process_escape`) | non aggirato; succede anche su `master` (riprodotto dalla review del lotto 3 delle issue in Backlog) |
 | Il report SGR del movimento con un tasto premuto (bit 32) diventa una nuova pressione dello stesso tasto: `mouse_click` mette `NCTYPE_PRESS` per ogni report `M` e `id = NCKEY_BUTTON1 + mods % 4` | `in.c:610-620` | `App` tratta come drag una pressione di BUTTON1..3 con lo stesso tasto già premuto: niente focus, niente componenti, solo `on_input`; un drag non ripete il clic di un `Button` (ICH-283) |
 | Sulla console Linux il mouse viene da gpm: ogni evento (pressione, rilascio, drag, qualsiasi tasto) diventa `\e[<0;x;yM`, cioè una pressione di BUTTON1, e un rilascio non arriva mai | `mice.c:4-19`, `gpm.c:31` | `App` non applica la regola del drag quando `Context#detected_terminal` è `"FBcon"` o `"VT"`: lì ogni pressione è un clic (trovato nella review del lotto 8) |
 
@@ -1241,6 +1244,11 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
   Lotto 2c: `/trinity:workflow:3_independent-review` in due round, solo GPT (Fable senza crediti, scelta dell'utente);
   round 1 non approvabile per due finding su ICH-532 (nuovo approccio in `13294e1`), round 2 approvabile. Prima del
   primo commit, un secondo parere di design di GPT su ICH-531 ha trovato il ripristino doppio della base (`9d07656`).
+  Lotto 3: due `/trinity:workflow:4_review-fix-loop` da 3 round, con GPT e Sonnet (`trinity:reviewer` con `model:
+  sonnet` ed `effort: max` al posto di Fable, scelta dell'utente). Dopo il primo loop la PR #26 è rimasta in draft
+  (scelta dell'utente): con kitty il segnale arrivava solo quando `run` leggeva il tasto (ICH-536). ICH-536, ICH-537 e
+  ICH-538 sono state fatte sullo stesso branch con il disegno B (un thread Ruby di input del contesto, nessun cambio
+  FFI), poi il secondo loop; i 4 finding del suo round 3, tutti LOW dopo il triage, sono corretti in `e78d5cd`.
 
 ### Lotti
 
@@ -1250,10 +1258,12 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
 | 2 | [#23](https://github.com/ichelema/notcursesruby/pull/23) | `cb90c4f` | ICH-485, ICH-215, ICH-216, ICH-482, ICH-487 (ICH-485, ICH-482 e ICH-487 nate dal lotto 1); ICH-214 tolta dal lotto, di nuovo in Backlog | `ncplane_resize` con `keep_x > 0` rilascia EGC della regione conservata (`notcurses.c:995-997`, ICH-215) e lascia `logrow` (già noto); `ncplane_dup` crea la copia con `flags = 0` e copia solo `halign` (ICH-216); `ncplane_mergedown` copia gli EGC di più di 4 byte senza rilasciare i vecchi (`render.c:602-603`, ICH-482) e lascia `gcluster` 0 con la larghezza nella cella dopo una metà sinistra (`render.c:471-485`); `ncplane_at_yx` su un piano con bitmap copia la sequenza dello sprixel, già liberata con Kitty (`notcurses.c:236-243`, ICH-487); tabella "Piani" di `memory/fase2-wrapper-idiomatico.md` |
 | 2b | [#24](https://github.com/ichelema/notcursesruby/pull/24) | `6374e41` | ICH-529, ICH-530, ICH-489, ICH-493, ICH-490 (tutte nate dal lotto 2) | `ncplane_resize` che non conserva niente scarica il pool con `egcpool_dump` (`notcurses.c:953-957`) e `ncplane_rotate_cw`/`ncplane_rotate_ccw` fanno lo stesso (`fill.c:446`): la cella base con un EGC di più di 4 byte punta al pool vuoto (ICH-489); `ncplane_at_yx` su un piano con bitmap, anche sixel, legge il framebuffer come celle e va in segfault (ICH-493); `ncplane_mergedown` lascia una metà destra a width 0 e `gcluster` 0 dopo una metà sinistra orfana sull'ultima riga di `src` (`render.c:471-485`, ICH-530) |
 | 2c | [#25](https://github.com/ichelema/notcursesruby/pull/25) | `d2c5f7c` | ICH-531, ICH-532 (nate dal lotto 2b) | `rotate_2x1_cw` e `rotate_2x1_ccw` non rilasciano le copie nell'egcpool quando rifiutano un carattere (`fill.c:377-437`; non aggirato); `ncplane_mergedown` dopo una metà sinistra orfana seguita da un glifo copre il glifo e gli dà i canali della metà sinistra (`render.c:471-485`, ICH-532); tabella "Piani" di `memory/fase2-wrapper-idiomatico.md` |
+| 3 | [#26](https://github.com/ichelema/notcursesruby/pull/26) | `e15b40a` | ICH-454, ICH-456, ICH-455; ICH-536, ICH-537, ICH-538 (nate dal lotto 3, sullo stesso branch per scelta dell'utente) | con kitty notcurses alza il segnale anche per la ripetizione e il rilascio e lo decide da un flag privato che `stty` non cambia (`in.c:506-516`, `termdesc.c:390`); con la coda di input piena (8192 eventi) scarta il tasto nuovo senza frenare chi scrive (`in.c:523-527`); due assert con le sequenze escape spezzate fra due letture (`in.c:803`, `in.c:2229`), non aggirati; tabella "Bug e limiti di notcurses 3.0.17 trovati nella Fase 3" |
 
 ### Cambi dell'API pubblica
 
-Nessun metodo nuovo né rimosso, salvo `Util.free` (`Util` è `@api private`). Comportamenti nuovi:
+Nessun metodo nuovo né rimosso, salvo `Util.free` (`Util` è `@api private`) e i metodi `@api private` di `Context`
+del lotto 3. Comportamenti nuovi:
 
 - La memoria allocata da notcurses (`Plane#at`, `#name`, `#as_rgba`, `Context#stats`, `Context#at`,
   `detected_terminal`, `Notcurses.hostname` e gli altri) si libera con la `free` di notcurses (`ncpalette_free`), non
@@ -1302,6 +1312,27 @@ Nessun metodo nuovo né rimosso, salvo `Util.free` (`Util` è `@api private`). C
   lotto 2b: il glifo largo intero copriva il glifo). Durante la fusione il wrapper cambia quelle metà in `src` e le
   rimette dopo. Se il glifo non entra nell'egcpool di `dst`, `PlaneError` e `dst` non cambia. Su un piano 50x200 la
   fusione costa circa 15 ms invece di 11 (lotto 2c, ICH-532).
+- Con kitty `EventLoop#run` alza SIGINT, SIGSTOP e SIGQUIT per Ctrl+C, Ctrl+Z e Ctrl+\ una volta per pressione,
+  subito anche con il ciclo occupato in un handler, un timer o un blocco di `post`, e anche con CapsLock o NumLock; la
+  ripetizione e il rilascio non alzano niente. Durante `run` un thread di input del contesto (`InputReader`, costante
+  privata) legge la coda di notcurses con `notcurses_getvec`. Il segnale si ritarda se un handler tiene il GVL, e si
+  perde se nel frattempo arrivano più di 8192 tasti: limiti nello YARD di `run` (lotto 3, ICH-456, ICH-536).
+- `run` segue ISIG del terminale (`stty`) anche con kitty: all'avvio spegne il flag privato di notcurses, se è acceso,
+  e rimette ISIG com'era. Dopo `run` il flag resta spento: fuori da `run` un Ctrl+C di kitty non alza segnali e arriva
+  al `run` successivo; `Context#linesigs_enable` ridà il compito a notcurses. Con `drain_input` il compito resta a
+  notcurses (lotto 3, ICH-454, ICH-538).
+- La ripetizione e il rilascio di un tasto di segnale tenuto premuto non arrivano ai `run` dopo, anche di un altro
+  `EventLoop` o `App` sullo stesso contesto, anche quando l'utente lascia Ctrl prima del tasto (lotto 3, ICH-455,
+  ICH-537).
+- Durante `run` `Context#get` e `#getvec` leggono gli eventi del thread di input: per attendere un tasto serve `get`
+  con un timeout, non `Context#inputready_fd`; dopo `run`, prima di attendere sul descrittore, serve
+  `get(timeout: 0)`. `Key::EOF` resta disponibile a ogni lettura (lotto 3, ICH-536).
+- Un secondo Ctrl+C durante la pulizia di `run` arriva dopo la pulizia: `run` solleva `Interrupt` invece di
+  restituire `:interrupt`. Su Ruby 3.1 e 3.2 la pulizia ricomincia; restano due finestre strette (ICH-539).
+  `Context#close` ferma il thread di input prima di `notcurses_stop` e solleva l'`Interrupt` arrivato mentre lo
+  aspettava (lotto 3, ICH-536).
+- Nuovi metodi `@api private` di `Context`: `held_signal_keys`, `linesigs_flag?`, `isig_enable`, `isig_disable`,
+  `input_reader_start`, `input_reader_stop` (lotto 3).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
@@ -1309,6 +1340,7 @@ Nessun metodo nuovo né rimosso, salvo `Util.free` (`Util` è `@api private`). C
 - Lotto 2: nessuno.
 - Lotto 2b: nessuno.
 - Lotto 2c: nessuno.
+- Lotto 3: nessuno.
 
 ### Issue aperte nate dai lotti
 
@@ -1343,3 +1375,11 @@ Nessun metodo nuovo né rimosso, salvo `Util.free` (`Util` è `@api private`). C
 - ICH-533 — `Plane#putstr`, `#putegc` e `#puttext` sollevano `ArgumentError` invece di `PlaneError` con l'egcpool
   pieno e un EGC con segni combinanti: il controllo di `zero_width_egc!` carica l'EGC nel pool (lotto 2c, trovata
   scrivendo le spec di ICH-531; nel lotto 8 con ICH-217 e ICH-232).
+- ICH-536 — con kitty il segnale di Ctrl+C arrivava solo quando `run` leggeva il tasto: non interrompeva un handler
+  occupato e si perdeva con la coda piena (lotto 3, primo loop; scelta dell'utente; Done nel lotto 3).
+- ICH-537 — la memoria del tasto di segnale tenuto premuto, per tasto e per contesto (lotto 3, primo loop, review
+  round 3; Done nel lotto 3).
+- ICH-538 — `run` chiamava `notcurses_linesigs_disable` anche con il flag già spento (lotto 3, primo loop; Done nel
+  lotto 3).
+- ICH-539 — su Ruby 3.1 e 3.2 un secondo segnale nel `rescue` della pulizia di `run` o di `InputReader#halt` salta il
+  resto della pulizia (lotto 3, secondo loop, review; Low, in Backlog per scelta dell'utente).
