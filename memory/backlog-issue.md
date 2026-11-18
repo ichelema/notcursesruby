@@ -520,7 +520,7 @@ Commit: `519c918` (ICH-538), `eb2e126` (ICH-537), `57472d5` (ICH-536); round 1: 
 | RuboCop: lo spazio di `@stdplane =` perso dagli Edit | allineamento | corretto a mano, due volte |
 | Esempio pty di ICH-536 (10000 tasti e poi Ctrl+C) fallito 1 volta su 11 corse della suite | notcurses scarta il tasto con la coda piena (`in.c:523`), con un altro processo che occupava una CPU | limite documentato nello YARD, nel CHANGELOG e su ICH-536 |
 | Coverage 98,41 % poi 98,33 % | alcune righe dipendono dai tempi dei thread | stessa corsa su `92ffe55`: le stesse 100 righe non coperte |
-| File in `/tmp` del revisore Sonnet del round 2 (`_probe_out*.txt`, `_probe_plain.txt`, `_t22_31..36.txt`) | prove scritte su file | non cancellati (niente `rm`); segnalati all'utente |
+| File in `/tmp` del revisore Sonnet del round 2 (`_probe_out*.txt`, `_probe_plain.txt`, `_t22_31..36.txt`) | prove scritte su file | rimossi dall'utente |
 
 #### Stato finale
 

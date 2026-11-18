@@ -28,8 +28,6 @@
   98,41 % fra una corsa e l'altra: alcune righe dipendono dai tempi dei thread. Prova a vista in Kitty non segnalata
   dall'utente: `NC_GRAPHICS=1 bundle exec rspec spec/graphics/terminal_spec.rb -e 'Ctrl+C con CapsLock'` da una
   finestra di Kitty con il controllo remoto.
-- File lasciati in `/tmp` dal revisore Sonnet del lotto 3 (`/tmp/_probe_out*.txt`, `/tmp/_probe_plain.txt`,
-  `/tmp/_t22_31.txt` … `/tmp/_t22_36.txt`): nessuno li ha cancellati (niente `rm`); li rimuove l'utente, se vuole.
 - **Review con GPT e Sonnet**: `gpt-bridge:reviewer` e `trinity:reviewer` con `model: sonnet` ed `effort: max` al
   posto di Fable (scelta dell'utente del 2026-11-18; worktree di review `review+<base-name>-sonnet`). I revisori
   eseguono gli script da stdin, senza file e senza `.review-tmp` (non è in `.gitignore`), e rspec in una subshell con
