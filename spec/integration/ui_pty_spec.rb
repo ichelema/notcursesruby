@@ -360,6 +360,7 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
       session.('xterm modifyOtherKeys', "\e[27;5;99~")
       session.('dopo xterm', nil, no_linesigs: true)
       # ICH-454: ISIG cambiato fuori da notcurses
+      nc.linesigs_enable # il flag di notcurses torna acceso: lo spegne solo run, stty no
       system('stty', '-isig', in: slave)
       session.('stty -isig', "\e[99;5u", no_linesigs: true)
       system('stty', 'isig', in: slave)
