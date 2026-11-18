@@ -203,6 +203,11 @@ module Notcurses
       # tasti in un colpo, non 50000) riempie la coda anche con il thread
       # libero.
       #
+      # Un secondo Ctrl+C (o un'altra eccezione asincrona) mentre run fa
+      # pulizia arriva alla fine della pulizia: run solleva Interrupt invece di
+      # restituire :interrupt, con il terminale, i trap e il thread di input
+      # già a posto.
+      #
       # Dopo run il flag di notcurses resta spento: fuori da run un Ctrl+C di
       # kitty non alza segnali e resta in coda, e il thread di input del run
       # successivo lo tratta quando lo legge. {Context#linesigs_enable} ridà il compito a notcurses,
@@ -241,6 +246,7 @@ module Notcurses
         winch = false
         ixon = false
         linesigs = false
+        filter = nil
         begin
           ixon = @context.flow_control_disable if no_flow_control
           # senza ISIG noto linesigs? solleva: con no_linesigs come prima, senza il ciclo non alza segnali
@@ -269,7 +275,11 @@ module Notcurses
           wake_r, @wake_w = IO.pipe
           # il thread di input del contesto legge i tasti e alza i segnali appena arrivano, anche con il
           # ciclo occupato; @input diventa leggibile quando ci sono eventi da consegnare
-          @input = @context.drain_input? ? nil : @context.input_reader_start(LINE_SIGNALS) { |input| line_signal(input) }
+          unless @context.drain_input?
+            # il filtro esiste prima dell'avvio: l'ensure lo toglie anche se un Interrupt arriva prima di @input
+            filter = ->(input) { line_signal(input) }
+            @input = @context.input_reader_start(LINE_SIGNALS, &filter)
+          end
           if @context.no_winch_sighandler?
             @old_winch = Signal.trap('WINCH') { resize_signal }
             # lo stesso flag toglie anche il gestore di SIGCONT di notcurses: dopo fg serve un refresh
@@ -293,20 +303,23 @@ module Notcurses
         rescue Interrupt
           :interrupt
         ensure
-          # per primo: da qui il thread di input non alza più segnali
-          @context.input_reader_stop if @input
-          # nil vorrebbe dire IGNORE, che i processi figli erediterebbero
-          if winch
-            Signal.trap('WINCH', @old_winch || 'SYSTEM_DEFAULT')
-            Signal.trap('CONT', @old_cont || 'SYSTEM_DEFAULT')
+          # un secondo Ctrl+C (o un'altra eccezione asincrona) arriva dopo la pulizia, non a metà
+          Thread.handle_interrupt(Object => :never) do
+            # per primo: da qui il thread di input non alza più segnali
+            @context.input_reader_stop(filter) if filter
+            # nil vorrebbe dire IGNORE, che i processi figli erediterebbero
+            if winch
+              Signal.trap('WINCH', @old_winch || 'SYSTEM_DEFAULT')
+              Signal.trap('CONT', @old_cont || 'SYSTEM_DEFAULT')
+            end
+            @wake_w&.close
+            @wake_w = nil
+            wake_r&.close
+            @input = nil
+            @stop_requested = false
+            @running = false
+            restore_terminal(ixon, linesigs, $!)
           end
-          @wake_w&.close
-          @wake_w = nil
-          wake_r&.close
-          @input = nil
-          @stop_requested = false
-          @running = false
-          restore_terminal(ixon, linesigs, $!)
         end
       end
 

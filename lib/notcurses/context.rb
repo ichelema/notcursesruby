@@ -373,6 +373,9 @@ module Notcurses
 
       check_not_in_callback!('Context#close', ContextError)
       @input_reader&.halt # il thread di input di run non deve chiamare notcurses dopo lo stop
+      # un gestore trap può aver chiuso il contesto mentre halt aspettava il thread
+      return nil if @closed
+
       first_error = close_children
       # prima della chiamata: Ruby consegna un Ctrl-C al suo ritorno, quando il C ha già liberato il contesto
       @closed = true
@@ -859,14 +862,15 @@ module Notcurses
       @input_reader.start(filter, ids)
     end
 
-    # Toglie il filtro del run più interno; senza altri run ferma il thread
-    # di input. Funziona anche con il contesto chiuso ({#close} ha già fermato
-    # il thread).
+    # Toglie il filtro di un run, se {#input_reader_start} l'ha registrato;
+    # senza altri run ferma il thread di input. Funziona anche con il contesto
+    # chiuso ({#close} ha già fermato il thread).
     #
+    # @param filter [Proc] il blocco passato a {#input_reader_start}
     # @return [nil]
     # @api private
-    def input_reader_stop
-      @input_reader&.stop
+    def input_reader_stop(filter)
+      @input_reader&.stop(filter)
       nil
     end
 

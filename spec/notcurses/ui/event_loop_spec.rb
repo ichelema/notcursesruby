@@ -608,6 +608,106 @@ RSpec.describe Notcurses::UI::EventLoop do
       end
     end
 
+    it 'un Interrupt appena avviato il thread di input (un Ctrl+C già in coda) non lascia il thread acceso' do
+      NcHelpers.open_context do |c|
+        feeding_input(c) do
+          allow(c).to receive(:input_reader_start).and_wrap_original do |original, *args, &filter|
+            original.call(*args, &filter)
+            raise Interrupt # il segnale arriva al ritorno del metodo, prima che run assegni @input
+          end
+          fds = open_fds
+          ev = described_class.new(c)
+          expect(ev.run).to eq(:interrupt)
+          expect(input_threads).to be_empty
+          expect(open_fds).to eq(fds) # i pipe del thread sono chiusi
+          allow(c).to receive(:input_reader_start).and_call_original
+          ev.post { ev.stop }
+          expect(ev.run).to eq(:stop)
+          expect(input_threads).to be_empty
+        end
+      end
+    end
+
+    # In un processo figlio: sul codice di prima il secondo notcurses_stop è un double free.
+    it 'un close da un gestore trap mentre close aspetta il thread di input ferma notcurses una volta sola' do
+      script = <<~'RUBY'
+        require 'notcurses'
+        $stdout.sync = true
+        $stops = 0
+        module CountStops
+          def stop_notcurses(ptr)
+            $stops += 1
+            super
+          end
+        end
+        Notcurses::Context.prepend(CountStops)
+        module SlowExit
+          def pump(input)
+            super
+          ensure
+            sleep 0.5 # il thread di input finisce tardi: close lo aspetta nel join di halt
+          end
+        end
+        Notcurses.const_get(:InputReader).prepend(SlowExit)
+        keep_open, stdin_w = IO.pipe # stdin aperto e vuoto: niente EOF prima del blocco di post
+        STDIN.reopen(keep_open)
+        opts = { output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true, drain_input: false }
+        Notcurses::Context.open(**opts) do |nc|
+          trap('USR1') { nc.close }
+          ev = Notcurses::UI::EventLoop.new(nc)
+          ev.post do
+            Thread.new { sleep 0.2; Process.kill('USR1', Process.pid) }
+            nc.close
+          end
+          reason = ev.run
+          puts "reason #{reason} stops #{$stops} closed #{nc.closed?}"
+        end
+        puts 'fine'
+      RUBY
+      lib = File.expand_path('../../../lib', __dir__)
+      out, status = Open3.capture2e({ 'TERM' => 'xterm-256color' }, 'timeout', '-k', '5', '-s', 'KILL', '30',
+        RbConfig.ruby, '-I', lib, '-e', script, stdin_data: '')
+      expect(status.exitstatus).to eq(0), out
+      expect(out).to include("reason stop stops 1 closed true\n")
+      expect(out).to end_with("fine\n")
+    end
+
+    it 'un Interrupt durante la pulizia di run esce dopo: il contesto resta usabile da un altro ciclo' do
+      NcHelpers.open_context do |c|
+        feeding_input(c) do |type, ints|
+          ev = described_class.new(c)
+          allow(ev).to receive(:line_signal).and_wrap_original do |original, input|
+            sleep 0.4 # il thread di input resta nel filtro mentre run lo ferma
+            original.call(input)
+          end
+          main = Thread.current
+          ev.post do
+            type.call(['C', 1, ctrl, true])
+            sleep 0.05 # il thread entra nel filtro
+            Thread.new { (sleep 0.15) && main.raise(Interrupt) }
+            ev.stop
+          end
+          fds = open_fds
+          expect { ev.run }.to raise_error(Interrupt) # dopo la pulizia, non a metà
+          expect(ev).not_to be_running
+          expect(input_threads).to be_empty
+          expect(open_fds).to eq(fds)
+          other = described_class.new(c)
+          keys = []
+          other.on_input do |input|
+            keys << [input.id, input_threads.size]
+            other.stop if input.id == 'x'.ord
+          end
+          other.post { type.call(['C', 1, ctrl, true], ['x', 1, 0, false]) }
+          started = clock
+          expect(other.run).to eq(:stop)
+          expect(clock - started).to be < 1
+          expect(keys).to eq([['x'.ord, 1]]) # il thread gira durante run, il Ctrl+C è un segnale
+          expect(ints.size).to eq(2)
+        end
+      end
+    end
+
     it 'un blocco che chiude il contesto durante run ferma prima il thread di input' do
       NcHelpers.open_context do |c|
         feeding_input(c) do # niente EOF: il blocco gira di sicuro con il thread acceso

@@ -38,8 +38,7 @@ RSpec.describe "Notcurses::InputReader" do
 
   after do
     # stop chiude i pipe anche dopo un halt o un errore, che lasciano il thread fermo ma i pipe aperti
-    reader.stop
-    reader.stop while reader.active?
+    reader.stop(filter)
     pipe.each { |io| io.close unless io.closed? }
   end
 
@@ -105,6 +104,35 @@ RSpec.describe "Notcurses::InputReader" do
     expect(reader).to be_active
   end
 
+  it "un thread finito per un errore viene riavviato dal run dopo" do
+    reader.start(filter, ids)
+    feed(Notcurses::InputError.new("lettura fallita"))
+    expect(wait_until { !reader.active? }).to be(true)
+    expect { reader.take }.to raise_error(Notcurses::InputError)
+    inner = ->(_input) { false }
+    reader.start(inner, ids) # un run annidato con il thread morto lo riavvia
+    expect(reader).to be_active
+    feed("a")
+    expect(take_ids(1)).to eq(["a".ord])
+    reader.stop(inner)
+  end
+
+  it "un'eccezione asincrona durante stop arriva dopo: filtro tolto, thread fermo, pipe chiusi" do
+    reader.start(filter, ids)
+    main = Thread.current
+    slow = ->(_input) { (sleep 0.4) && false } # il thread di input resta nel filtro
+    reader.start(slow, ids)
+    reader.stop(filter) # restano solo i run annidati: il thread continua
+    feed("C")
+    sleep 0.1
+    Thread.new { (sleep 0.1) && main.raise(Interrupt) } # rubocop:disable ThreadSafety/NewThread
+    expect { reader.stop(slow) }.to raise_error(Interrupt)
+    expect(reader).not_to be_active
+    expect(reader.ready_io).to be_nil
+    reader.start(filter, ids)
+    expect(reader).to be_active
+  end
+
   it "un errore di lettura arriva dopo gli eventi letti prima e ferma il thread" do
     reader.start(filter, ids)
     feed("a", "b", Notcurses::InputError.new("lettura fallita"))
@@ -128,7 +156,7 @@ RSpec.describe "Notcurses::InputReader" do
     reader.start(filter, ids)
     feed("a", "b")
     expect(wait_until { reader.ready_io.wait_readable(0) }).to be_truthy
-    reader.stop
+    reader.stop(filter)
     expect(reader).not_to be_active
     expect(reader.ready_io).to be_nil
     expect(reader.take.id).to eq("a".ord) # fuori da run, senza pipe
@@ -139,16 +167,19 @@ RSpec.describe "Notcurses::InputReader" do
 
   it "run annidati: vale il filtro del più interno, e il thread si ferma all'ultimo stop" do
     inner = []
+    inner_filter = ->(input) { (inner << input.id) && true }
     reader.start(filter, ids)
-    reader.start(->(input) { (inner << input.id) && true }, ids)
+    reader.start(inner_filter, ids)
     feed("Z")
     expect(wait_until { inner.size == 1 }).to be(true)
-    reader.stop
+    reader.stop(->(_input) { true }) # un filtro mai registrato: niente cambia
+    expect(reader).to be_active
+    reader.stop(inner_filter)
     expect(reader).to be_active
     feed("Z")
     expect(take_ids(1)).to eq(["Z".ord])
     expect(seen).to eq(["Z".ord])
-    reader.stop
+    reader.stop(filter)
     expect(reader).not_to be_active
   end
 
@@ -163,7 +194,7 @@ RSpec.describe "Notcurses::InputReader" do
     expect { failing.start(filter, ids) }.to raise_error(Notcurses::InputError)
     expect(failing).not_to be_active
     failing.start(filter, ids)
-    failing.stop # con un filtro rimasto dal primo start il thread resterebbe acceso
+    failing.stop(filter) # con un filtro rimasto dal primo start il thread resterebbe acceso
     expect(failing).not_to be_active
   end
 
@@ -177,7 +208,7 @@ RSpec.describe "Notcurses::InputReader" do
     expect(clock - start).to be < 1
     expect(reader).not_to be_active
     expect(reader.halt).to be_nil
-    reader.stop
+    reader.stop(filter)
     expect(reader.ready_io).to be_nil
   end
 

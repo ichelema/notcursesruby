@@ -137,7 +137,7 @@ RSpec.describe Notcurses::Context do
         expect { nc.linesigs_flag? }.to raise_error(Notcurses::ClosedError)
         expect { nc.held_signal_keys }.to raise_error(Notcurses::ClosedError)
         expect { nc.input_reader_start({}) { false } }.to raise_error(Notcurses::ClosedError)
-        expect(nc.input_reader_stop).to be_nil # anche chiuso: run lo chiama nel suo ensure
+        expect(nc.input_reader_stop(-> {})).to be_nil # anche chiuso: run lo chiama nel suo ensure
       end
     end
   end

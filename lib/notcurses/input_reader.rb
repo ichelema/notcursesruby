@@ -59,38 +59,37 @@ module Notcurses
     # @param ids [Hash{Integer => Object}] id degli eventi da filtrare
     # @return [IO] il pipe {#ready_io}
     def start(filter, ids)
-      # il filtro prima del thread: il primo evento letto deve già passare dal filtro
-      @filters.push([filter, ids])
-      return @ready_r if @thread
-
-      begin
-        input = IO.for_fd(@inputready_fd.call, autoclose: false) # il descrittore è di notcurses
-        @ready_r, @ready_w = IO.pipe if @ready_r.nil?
-        @stop_r, @stop_w = IO.pipe if @stop_r.nil?
-      rescue Exception # rubocop:disable Lint/RescueException
-        @filters.pop
-        raise
+      # un'eccezione asincrona (il SIGINT di un Ctrl+C già in coda) arriva dopo: filtro e thread sono già
+      # registrati, e lo stop del chiamante li trova
+      Thread.handle_interrupt(Object => :never) do
+        # il filtro prima del thread: il primo evento letto deve già passare dal filtro
+        @filters.push([filter, ids])
+        start_thread unless @thread&.alive? # un thread morto (errore di lettura) non serve più
       end
-      drain(@stop_r)
-      @stop = false
-      @ready_w.write_nonblock("\0", exception: false) unless @pending.empty? # eventi del run precedente
-      @thread = Thread.new { pump(input) } # rubocop:disable ThreadSafety/NewThread -- è lo scopo della classe
-      @thread.name = "notcurses-input"
       @ready_r
     end
 
-    # Toglie il filtro del run più interno. Senza altri run ferma il thread e
-    # chiude i pipe; il buffer resta.
+    # Toglie il filtro di un run, se c'è (un'eccezione può arrivare prima che
+    # {#start} lo registri). Senza altri run ferma il thread e chiude i pipe;
+    # il buffer resta.
     #
+    # @param filter [Proc] il filtro passato a {#start}
     # @return [nil]
-    def stop
-      # halt prima di togliere l'ultimo filtro: il thread non deve leggere tasti senza filtro
-      halt if @filters.size == 1
-      @filters.pop
-      return nil unless @filters.empty?
+    def stop(filter)
+      # tutto o niente: un'eccezione asincrona a metà lascerebbe filtri, thread e pipe del run finito
+      Thread.handle_interrupt(Object => :never) do
+        index = @filters.rindex { |registered, _| registered.equal?(filter) }
+        next if index.nil?
 
-      [@ready_r, @ready_w, @stop_r, @stop_w].each { |io| io&.close }
-      @ready_r = @ready_w = @stop_r = @stop_w = nil
+        # halt prima di togliere l'ultimo filtro: il thread non deve leggere tasti senza filtro
+        halt if @filters.size == 1
+        @filters.delete_at(index)
+        next unless @filters.empty?
+
+        [@ready_r, @ready_w, @stop_r, @stop_w].each { |io| io&.close }
+        @ready_r = @ready_w = @stop_r = @stop_w = nil
+      end
+      nil
     end
 
     # Ferma il thread e lo aspetta: dopo il ritorno il thread non chiama più
@@ -106,10 +105,13 @@ module Notcurses
 
       @stop = true
       @stop_w.write_nonblock("\0", exception: false)
-      # un'eccezione asincrona lascerebbe il thread vivo: il contesto potrebbe chiudersi sotto di lui
-      Thread.handle_interrupt(Object => :never) { thread.join }
-      @thread = nil if @thread.equal?(thread)
-      @ready_w&.write_nonblock("\0", exception: false)
+      # un'eccezione asincrona lascerebbe il thread vivo (il contesto potrebbe chiudersi sotto di lui) o
+      # @thread impostato su un thread finito: arriva dopo
+      Thread.handle_interrupt(Object => :never) do
+        thread.join
+        @thread = nil if @thread.equal?(thread)
+        @ready_w&.write_nonblock("\0", exception: false)
+      end
       nil
     end
 
@@ -162,6 +164,22 @@ module Notcurses
     end
 
     private
+
+    def start_thread
+      begin
+        input = IO.for_fd(@inputready_fd.call, autoclose: false) # il descrittore è di notcurses
+        @ready_r, @ready_w = IO.pipe if @ready_r.nil?
+        @stop_r, @stop_w = IO.pipe if @stop_r.nil?
+      rescue Exception # rubocop:disable Lint/RescueException
+        @filters.pop
+        raise
+      end
+      drain(@stop_r)
+      @stop = false
+      @ready_w.write_nonblock("\0", exception: false) unless @pending.empty? # eventi del run precedente
+      @thread = Thread.new { pump(input) } # rubocop:disable ThreadSafety/NewThread -- è lo scopo della classe
+      @thread.name = "notcurses-input"
+    end
 
     # Corpo del thread: un errore di lettura va nel buffer, al posto
     # dell'evento, e chiude il thread. Legge la coda prima di attendere:
