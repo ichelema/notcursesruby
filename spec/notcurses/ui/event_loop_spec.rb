@@ -298,7 +298,8 @@ RSpec.describe Notcurses::UI::EventLoop do
     it "un errore del ripristino del terminale non sostituisce l'eccezione di un handler; ISIG si riattiva comunque" do
       allow(nc).to receive_messages(flow_control_disable: true, linesigs?: true, linesigs_disable: nc)
       allow(nc).to receive(:flow_control_enable).and_raise(Notcurses::ContextError, 'tcsetattr fallita')
-      expect(nc).to receive(:linesigs_enable).twice.and_return(nc)
+      expect(nc).to receive(:isig_enable).twice.and_return(nc)
+      expect(nc).not_to receive(:linesigs_enable) # il flag di notcurses resta spento: i segnali li alza run
       ev = new_loop
       ev.post { raise ArgumentError, 'boom' }
       expect { ev.run(no_flow_control: true, no_linesigs: true) }.to raise_error(ArgumentError, 'boom')
@@ -307,17 +308,38 @@ RSpec.describe Notcurses::UI::EventLoop do
       expect(ev).not_to be_running
     end
 
-    it 'con ISIG già spento prima di run, no_linesigs non lo tocca' do
+    # ICH-454: il flag di notcurses può essere acceso anche con ISIG spento (stty -isig).
+    it 'con ISIG già spento prima di run, no_linesigs non lo tocca, ma toglie i segnali dei tasti a notcurses' do
       allow(nc).to receive(:linesigs?).and_return(false)
-      expect(nc).not_to receive(:linesigs_disable)
+      expect(nc).to receive(:linesigs_disable).and_return(nc)
+      expect(nc).not_to receive(:isig_enable)
       expect(nc).not_to receive(:linesigs_enable)
       ev = new_loop
       ev.post { ev.stop }
       expect(ev.run(no_linesigs: true)).to eq(:stop)
     end
 
+    it 'senza no_linesigs run riaccende ISIG subito; se non ci riesce, ritenta alla fine' do
+      allow(nc).to receive_messages(linesigs?: true, linesigs_disable: nc)
+      calls = 0
+      allow(nc).to receive(:isig_enable) do
+        calls += 1
+        raise Notcurses::ContextError, 'tcsetattr fallita' if calls == 1
+
+        nc
+      end
+      expect(nc).not_to receive(:linesigs_enable)
+      ev = new_loop
+      expect { ev.run }.to raise_error(Notcurses::ContextError, 'tcsetattr fallita')
+      expect(calls).to eq(2)
+      ev.post { ev.stop }
+      expect(ev.run).to eq(:stop)
+      expect(calls).to eq(3) # solo all'avvio: alla fine ISIG è già com'era
+    end
+
     it 'senza ISIG noto no_linesigs solleva ContextError, e run senza opzioni gira lo stesso' do
       stub_const('Notcurses::FFI::ISIG', nil)
+      expect(nc).not_to receive(:linesigs_disable) # senza ISIG run non potrebbe rimetterlo: i segnali restano a notcurses
       ev = new_loop
       expect { ev.run(no_linesigs: true) }.to raise_error(Notcurses::ContextError, /ISIG non noto/)
       ev.post { ev.stop }

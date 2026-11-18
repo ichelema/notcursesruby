@@ -846,6 +846,24 @@ module Notcurses
       input_tty { |fd| termios(fd)[:c_lflag].anybits?(FFI::ISIG) }
     end
 
+    # Riaccende ISIG sul terminale di {#flow_control_disable}, senza
+    # riaccendere i segnali che notcurses alza per i tasti kitty e xterm
+    # ({#linesigs_enable} riaccende entrambi). Lo usa {UI::EventLoop#run}, che
+    # quei segnali li alza da sé.
+    #
+    # @return [self]
+    # @raise [ContextError] se tcgetattr o tcsetattr falliscono, o se ISIG non
+    #   è noto su questo sistema
+    # @raise [ClosedError] se il contesto è chiuso
+    # @api private
+    def isig_enable
+      to_ptr
+      raise ContextError, "segnali da tastiera: ISIG non noto su #{RUBY_PLATFORM}" unless FFI::ISIG
+
+      input_tty { |fd| tty_flag!(fd, :c_lflag, FFI::ISIG, true) }
+      self
+    end
+
     # --- capacità ---
 
     # @return [Boolean] colori RGB a 24 bit (+notcurses_cantruecolor+)
@@ -1122,11 +1140,17 @@ module Notcurses
     def ixon!(fd, on)
       raise ContextError, "controllo di flusso: IXON non noto su #{RUBY_PLATFORM}" unless FFI::IXON
 
+      tty_flag!(fd, :c_iflag, FFI::IXON, on)
+    end
+
+    # Porta il bit flag del campo field di termios a on sul terminale fd.
+    # @return [Boolean] il valore precedente
+    def tty_flag!(fd, field, flag, on)
       tios = termios(fd)
-      was = tios[:c_iflag].anybits?(FFI::IXON)
+      was = tios[field].anybits?(flag)
       return was if was == on
 
-      tios[:c_iflag] ^= FFI::IXON
+      tios[field] ^= flag
       termios_check!(FFI.tcsetattr(fd, FFI::TCSANOW, tios), 'tcsetattr')
       was
     end

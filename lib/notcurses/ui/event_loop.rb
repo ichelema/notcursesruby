@@ -164,22 +164,37 @@ module Notcurses
       # no_linesigs: true arrivano Ctrl+C, Ctrl+Z e Ctrl+\, e Ctrl-C non ferma
       # più il ciclo: serve un tasto di uscita dell'applicazione. run tocca
       # solo i flag attivi all'avvio e alla fine, anche dopo un'eccezione, li
-      # riattiva ({Context#linesigs_enable} per ISIG): il terminale torna com'era
-      # prima di run. Se un handler ha chiuso il contesto, notcurses ha già
-      # ripristinato il terminale e run non lo tocca. run legge e cambia IXON,
-      # e legge ISIG, sul terminale da cui notcurses legge i tasti (stdin se è
-      # un tty, altrimenti /dev/tty).
+      # riattiva: il terminale torna com'era prima di run. Se un handler ha
+      # chiuso il contesto, notcurses ha già ripristinato il terminale e run
+      # non lo tocca. run legge e cambia IXON e ISIG sul terminale da cui
+      # notcurses legge i tasti (stdin se è un tty, altrimenti /dev/tty).
       #
       # Con il protocollo tastiera kitty (Kitty, Ghostty) Ctrl+C arriva come
-      # sequenza e non come byte: il segnale lo alza notcurses, ma solo con Ctrl
-      # da solo. Kitty aggiunge CapsLock e NumLock ai modificatori: con ISIG
-      # attivo run alza allora lo stesso segnale (SIGINT, SIGSTOP, SIGQUIT) al
-      # proprio processo alla pressione, e non consegna questi tasti (con o senza
-      # CapsLock e NumLock, nemmeno ripetizioni e rilasci). Lo stesso vale per
-      # il Ctrl+C di xterm con modifyOtherKeys ("\e[27;5;99~"). I byte di
-      # controllo (0x03 con intr rimappato, input da una pipe) arrivano invece
-      # come tasti, anche con kitty. run legge ISIG solo all'avvio: {Context#linesigs_disable} o
-      # stty durante run non cambiano la scelta; per i tasti serve no_linesigs.
+      # sequenza e non come byte, e il terminale non alza il segnale. notcurses
+      # lo alzerebbe da un flag suo, che stty non cambia, solo con Ctrl da solo
+      # e anche per la ripetizione e il rilascio: all'avvio run gli toglie
+      # questo compito ({Context#linesigs_disable}, poi rimette ISIG com'era).
+      # Con ISIG attivo run alza lo stesso segnale (SIGINT, SIGSTOP, SIGQUIT) al
+      # proprio processo, una volta per pressione e dopo aver letto il tasto, e
+      # non consegna questi tasti (con o senza CapsLock e NumLock, nemmeno
+      # ripetizioni e rilasci). Lo stesso vale per il Ctrl+C di xterm con
+      # modifyOtherKeys ("\e[27;5;99~"). I byte di controllo (0x03 con intr
+      # rimappato, input da una pipe) arrivano invece come tasti, anche con
+      # kitty. run legge ISIG solo all'avvio: stty, {Context#linesigs_disable}
+      # o {Context#linesigs_enable} durante run non cambiano la scelta (il
+      # secondo ridà il compito a notcurses: due segnali per pressione); per i
+      # tasti serve no_linesigs.
+      #
+      # Dopo run il flag di notcurses resta spento: fuori da run un Ctrl+C di
+      # kitty non alza segnali e resta in coda, e il run successivo lo tratta
+      # quando lo legge. {Context#linesigs_enable} ridà il compito a notcurses,
+      # con le ripetizioni e i rilasci. Limiti di notcurses 3.0.17: senza un
+      # terminale (input da una pipe, niente /dev/tty) linesigs_disable non
+      # spegne il flag; con input e output su due terminali diversi notcurses
+      # cambia ISIG su quello di output, run su quello di input; al primo run
+      # un Ctrl+C arrivato prima della presa in carico lo alza ancora
+      # notcurses; all'avvio di run un byte 0x03 arrivato nell'istante in cui
+      # ISIG è spento è un tasto.
       #
       # @param no_flow_control [Boolean] disattiva IXON durante run
       # @param no_linesigs [Boolean] disattiva ISIG durante run
@@ -208,9 +223,15 @@ module Notcurses
           ixon = @context.flow_control_disable if no_flow_control
           # senza ISIG noto linesigs? solleva: con no_linesigs come prima, senza il ciclo non alza segnali
           isig = (no_linesigs || !FFI::ISIG.nil?) && @context.linesigs?
-          if no_linesigs && isig
+          if FFI::ISIG
+            # notcurses alza i segnali dei tasti kitty e xterm da un flag suo, che stty non cambia, anche per
+            # ripetizioni e rilasci (in.c:506): solo linesigs_disable lo spegne, insieme a ISIG
+            linesigs = isig # da qui ISIG può restare spento: restore_terminal lo riaccende
             @context.linesigs_disable
-            linesigs = true
+            if isig && !no_linesigs
+              @context.isig_enable
+              linesigs = false
+            end
           end
           @line_signals = isig && !no_linesigs
           wake_r, @wake_w = IO.pipe
@@ -460,8 +481,9 @@ module Notcurses
         wake
       end
 
-      # Riattiva IXON e ISIG tolti da run, tentando entrambi. Con il contesto
-      # chiuso notcurses_stop ha già ripristinato il terminale di prima dell'init.
+      # Riattiva IXON e ISIG tolti da run, tentando entrambi; il flag dei
+      # segnali di notcurses resta spento (vedi {#run}). Con il contesto chiuso
+      # notcurses_stop ha già ripristinato il terminale di prima dell'init.
       # Un errore non sostituisce pending, l'eccezione che sta uscendo da run.
       def restore_terminal(ixon, linesigs, pending)
         return if @context.closed?
@@ -473,7 +495,7 @@ module Notcurses
           error = e
         end
         begin
-          @context.linesigs_enable if linesigs
+          @context.isig_enable if linesigs
         rescue ContextError => e
           error ||= e
         end
@@ -616,11 +638,13 @@ module Notcurses
         input.id == id && mods.anybits?(MOD_SHIFT) == shift
       end
 
-      # notcurses 3.0.17 alza il segnale solo con Ctrl da solo (in.c:506): con
-      # CapsLock o NumLock (protocollo kitty) lo alza il ciclo. Con ISIG attivo
-      # questi tasti non vengono consegnati. Un byte classico non è un segnale:
-      # notcurses controlla Ctrl prima di trasformare 0x03 in 'C' (in.c:539), e
-      # il campo ctrl della struct resta falso (anche con kitty, che lo fa :press).
+      # Il segnale lo alza il ciclo, una volta per pressione, anche con CapsLock
+      # o NumLock (protocollo kitty): run ha tolto il compito a notcurses 3.0.17,
+      # che lo alzerebbe solo con Ctrl da solo e anche per ripetizioni e
+      # rilasci (in.c:506). Con ISIG attivo questi tasti non vengono consegnati.
+      # Un byte classico non è un segnale: notcurses controlla Ctrl prima di
+      # trasformare 0x03 in 'C' (in.c:539), e il campo ctrl della struct resta
+      # falso (anche con kitty, che lo fa :press).
       # @return [Boolean] true se l'evento è un tasto di segnale
       def line_signal(input)
         signal = LINE_SIGNALS[input.id]
@@ -628,7 +652,7 @@ module Notcurses
         return false unless (input.modifiers & ~MOD_LOCKS) == MOD_CTRL
 
         # raise() come notcurses: pid 0 colpirebbe anche il gruppo (i figli di Subprocess)
-        Process.kill(signal, Process.pid) if input.press? && input.modifiers != MOD_CTRL
+        Process.kill(signal, Process.pid) if input.press?
         true
       end
 

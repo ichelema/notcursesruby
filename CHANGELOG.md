@@ -22,6 +22,13 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `EventLoop#run` alza un solo segnale per ogni pressione di Ctrl+C, Ctrl+Z e Ctrl+\ di kitty (ICH-456). notcurses
+  lo alzava anche per la ripetizione e il rilascio del tasto, anche dopo la fine di `run`: un Ctrl+C interrompeva
+  due volte. Ora all'avvio `run` toglie il compito a notcurses (`Context#linesigs_disable`), rimette ISIG com'era
+  (`Context#isig_enable`, nuovo, `@api private`) e alza lui il segnale alla pressione; la ripetizione e il rilascio
+  non alzano niente. Dopo `run` il flag di notcurses resta spento: fuori da `run` un Ctrl+C di kitty non alza
+  segnali e arriva al `run` successivo; `Context#linesigs_enable` ridà il compito a notcurses. Senza terminale
+  (input da una pipe) notcurses non spegne il flag, e il limite resta.
 - `Plane#merge_down` non copre più il glifo che in `src` segue una metà sinistra orfana di un glifo largo (ICH-532).
   Il wrapper riscriveva la metà sinistra come un glifo intero, e il glifo dopo spariva da `dst`. Ora, durante la
   fusione, il wrapper cambia la metà orfana in uno spazio con gli stessi stili e colori (`src` torna com'era dopo):

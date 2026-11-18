@@ -345,18 +345,35 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
       end
       session.('numlock', "\e[99;133u")
       session.('capslock', "\e[99;69u")
-      session.('solo ctrl', "\e[99;5u") # il segnale lo alza notcurses, l'evento resta in coda
+      session.('solo ctrl', "\e[99;5u") # il segnale lo alza run, dopo aver letto l'evento
       session.('dopo solo ctrl', nil)
       session.('ripetizione e rilascio', "\e[99;133:2u\e[99;133:3u")
       session.('ctrl+\\ con numlock', "\e[92;133u")
       session.('no_linesigs', "\e[99;133u", no_linesigs: true)
-      session.('xterm modifyOtherKeys', "\e[27;5;99~") # il segnale lo alza notcurses, l'evento resta in coda
+      session.('xterm modifyOtherKeys', "\e[27;5;99~")
       session.('dopo xterm', nil)
+      # ICH-456: un segnale per pressione, niente per la ripetizione e il rilascio
+      nc.linesigs_enable # il default di notcurses: ISIG e il suo flag accesi
+      session.('solo rilascio', "\e[99;5:3u")
+      session.('solo ripetizione', "\e[99;5:2u")
+      session.('premuto', "\e[99;5u")
+      outside = begin
+        type.("\e[99;5:2u\e[99;5:3u") # ripetizione e rilascio dopo run, con il contesto aperto
+        sleep 0.3
+        'nessun Interrupt'
+      rescue Interrupt
+        'Interrupt'
+      end
+      puts "fuori da run: #{outside}"
+      ints = 0
+      Signal.trap('INT') { ints += 1 }
+      session.('premuto, ripetuto e rilasciato', "\e[99;5u\e[99;5:2u\e[99;5:3u")
+      session.('ctrl+\\ premuto, ripetuto e rilasciato', "\e[92;5u\e[92;5:2u\e[92;5:3u")
       system('stty', 'intr', 'undef', in: slave)
       session.('byte 0x03', "\x03") # ISIG resta: con kitty il byte arriva :press, ma è un tasto
       system('stty', 'intr', '^C', in: slave)
       session.('tasto classico', 'a')
-      puts "kitty #{kitty.()} quits #{quits} evtypes #{evtypes.inspect}"
+      puts "kitty #{kitty.()} quits #{quits} ints #{ints} evtypes #{evtypes.inspect}"
     end
     puts 'fine'
   RUBY
@@ -393,7 +410,7 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
         wait_for('Tab') { app.focused.equal?(button) && releases.size == 4 }
         type.("\e[13u\e[13;1:3u") # Invio
         wait_for('Invio') { pressed == 1 && releases.size == 5 }
-        type.("\e[99;5u") # Ctrl+C: il segnale lo alza notcurses
+        type.("\e[99;5u") # Ctrl+C: il segnale lo alza run
       rescue StandardError => e
         failure = e
         app.stop
@@ -524,10 +541,10 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(out).to end_with("fine\n")
   end
 
-  it 'protocollo kitty: Ctrl+C e Ctrl+\ con CapsLock o NumLock sono segnali, e non arrivano a on_key' do
+  it 'protocollo kitty: Ctrl+C e Ctrl+\ sono segnali una volta per pressione, e non arrivano a on_key' do
     skip 'pty e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
 
-    out, status, timed_out = run_child(kitty_signals_script, timeout: 30)
+    out, status, timed_out = run_child(kitty_signals_script, timeout: 60)
     expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
     expect(status.exitstatus).to eq(0), out
     expect(out).to include("numlock: interrupt []\n", "capslock: interrupt []\n", "solo ctrl: interrupt []\n")
@@ -536,8 +553,11 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(out).to include("ctrl+\\ con numlock: stop []\n")
     expect(out).to include("no_linesigs: stop [[:ctrl, :numlock]]\n")
     expect(out).to include("xterm modifyOtherKeys: interrupt []\n", "dopo xterm: stop []\n")
+    expect(out).to include("solo rilascio: stop []\n", "solo ripetizione: stop []\n", "premuto: interrupt []\n") # ICH-456
+    expect(out).to include("fuori da run: nessun Interrupt\n")
+    expect(out).to include("premuto, ripetuto e rilasciato: stop []\n", "ctrl+\\ premuto, ripetuto e rilasciato: stop []\n")
     expect(out).to include("byte 0x03: stop [[:ctrl]]\n")
-    expect(out).to include('kitty true quits 1 evtypes [:press]') # :press: notcurses ha acceso il protocollo
+    expect(out).to include('kitty true quits 2 ints 1 evtypes [:press]') # :press: notcurses ha acceso il protocollo
     expect(out).to end_with("fine\n")
   end
 
