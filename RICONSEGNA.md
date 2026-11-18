@@ -1250,6 +1250,8 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
   (scelta dell'utente): con kitty il segnale arrivava solo quando `run` leggeva il tasto (ICH-536). ICH-536, ICH-537 e
   ICH-538 sono state fatte sullo stesso branch con il disegno B (un thread Ruby di input del contesto, nessun cambio
   FFI), poi il secondo loop; i 4 finding del suo round 3, tutti LOW dopo il triage, sono corretti in `e78d5cd`.
+  Lotto 4: nessuna review, perché la PR #27 cambia solo la documentazione. La causa è in notcurses: l'utente ha scelto
+  la correzione upstream, senza workaround nel wrapper e senza aggiornare il submodule.
 
 ### Lotti
 
@@ -1260,6 +1262,7 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
 | 2b | [#24](https://github.com/ichelema/notcursesruby/pull/24) | `6374e41` | ICH-529, ICH-530, ICH-489, ICH-493, ICH-490 (tutte nate dal lotto 2) | `ncplane_resize` che non conserva niente scarica il pool con `egcpool_dump` (`notcurses.c:953-957`) e `ncplane_rotate_cw`/`ncplane_rotate_ccw` fanno lo stesso (`fill.c:446`): la cella base con un EGC di più di 4 byte punta al pool vuoto (ICH-489); `ncplane_at_yx` su un piano con bitmap, anche sixel, legge il framebuffer come celle e va in segfault (ICH-493); `ncplane_mergedown` lascia una metà destra a width 0 e `gcluster` 0 dopo una metà sinistra orfana sull'ultima riga di `src` (`render.c:471-485`, ICH-530) |
 | 2c | [#25](https://github.com/ichelema/notcursesruby/pull/25) | `d2c5f7c` | ICH-531, ICH-532 (nate dal lotto 2b) | `rotate_2x1_cw` e `rotate_2x1_ccw` non rilasciano le copie nell'egcpool quando rifiutano un carattere (`fill.c:377-437`; non aggirato); `ncplane_mergedown` dopo una metà sinistra orfana seguita da un glifo copre il glifo e gli dà i canali della metà sinistra (`render.c:471-485`, ICH-532); tabella "Piani" di `memory/fase2-wrapper-idiomatico.md` |
 | 3 | [#26](https://github.com/ichelema/notcursesruby/pull/26) | `e15b40a` | ICH-454, ICH-456, ICH-455; ICH-536, ICH-537, ICH-538 (nate dal lotto 3, sullo stesso branch per scelta dell'utente) | con kitty notcurses alza il segnale anche per la ripetizione e il rilascio e lo decide da un flag privato che `stty` non cambia (`in.c:506-516`, `termdesc.c:390`); con la coda di input piena (8192 eventi) scarta il tasto nuovo senza frenare chi scrive (`in.c:523-527`); due assert con le sequenze escape spezzate fra due letture (`in.c:803`, `in.c:2229`), non aggirati; tabella "Bug e limiti di notcurses 3.0.17 trovati nella Fase 3" |
+| 4 | [#27](https://github.com/ichelema/notcursesruby/pull/27) | `494ffe0` | ICH-463, in Blocked: la PR documenta il limite e non chiude la issue | un carattere UTF-8 di più byte spezzato fra due letture fa girare per sempre il thread di input: `process_input` restituisce 0 (servono altri byte) e `process_melange` esce dal ciclo solo con un valore negativo (`in.c:2427`); `get` non riceve più eventi e `notcurses_stop` non ritorna (`in.c:2662`). Non aggirato; correzione di una riga proposta upstream (issue [#2947](https://github.com/dankamongmen/notcurses/issues/2947), PR [#2954](https://github.com/dankamongmen/notcurses/pull/2954)); tabella "Bug e limiti di notcurses 3.0.17 trovati nella Fase 3" |
 
 ### Cambi dell'API pubblica
 
@@ -1334,6 +1337,9 @@ del lotto 3. Comportamenti nuovi:
   aspettava (lotto 3, ICH-536).
 - Nuovi metodi `@api private` di `Context`: `held_signal_keys`, `linesigs_flag?`, `isig_enable`, `isig_disable`,
   `input_reader_start`, `input_reader_stop` (lotto 3).
+- Nessun cambio di comportamento nel lotto 4: il blocco di notcurses con un carattere UTF-8 spezzato fra due letture
+  dell'input è documentato nello YARD di `Context#get`, `Direct#get` ed `EventLoop#run`, nel README e nel CHANGELOG
+  (lotto 4, ICH-463).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
@@ -1342,6 +1348,7 @@ del lotto 3. Comportamenti nuovi:
 - Lotto 2b: nessuno.
 - Lotto 2c: nessuno.
 - Lotto 3: nessuno.
+- Lotto 4: nessuno.
 
 ### Issue aperte nate dai lotti
 

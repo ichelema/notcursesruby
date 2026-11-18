@@ -531,3 +531,78 @@ Commit: `519c918` (ICH-538), `eb2e126` (ICH-537), `57472d5` (ICH-536); round 1: 
   layer FFI invariato.
 - Prova a vista in Kitty fatta dall'utente dopo il merge, su `master`: `NC_GRAPHICS=1 bundle exec rspec
   spec/graphics/terminal_spec.rb -e 'Ctrl+C con CapsLock'`, 1 esempio, 0 fallimenti.
+
+## Lotto 4 — ICH-463 (PR #27, merge `494ffe0`; issue in Blocked)
+
+Lavoro il 2026-11-18. Branch `bug/ICH-463-opus`, worktree `.claude/worktrees/bug+ICH-463-opus` ancora presente, con il
+submodule `notcurses` inizializzato. Un solo commit di documentazione: `fd9441c`. Il comando
+`/trinity:workflow:2_work-issue` si è fermato al piano: l'utente ha scelto la correzione upstream.
+
+### Causa (controllata)
+
+- `process_input` restituisce 0 quando il buffer finisce a metà di un carattere UTF-8 di più byte: servono altri
+  byte (`in.c:2335-2338`). `process_melange` esce dal ciclo solo con `consumed < 0` (`in.c:2427`): con 0 `bufused` e
+  `offset` restano fermi e il thread di input gira per sempre sugli stessi byte. Non legge più, quindi `get` non riceve
+  niente; `notcurses_stop` resta in `pthread_join` (`in.c:2662`), perché il ciclo non ha punti di cancellazione.
+- Prove: con `loglevel: :warning` circa 475.000 righe `utf8 character (3B) broken across read` in circa 3 s (con il
+  log ogni giro ha un punto di cancellazione e `close` ritorna). Da `/proc/<pid>/task`: il thread di input sempre in
+  stato R con `wchan` 0, il thread principale in `futex_do_wait`. gdb non si aggancia (`ptrace_scope` 1) e in modo
+  batch esce al SIGINT senza backtrace.
+- `process_melange` gira quando notcurses non ha un terminale separato (`termfd < 0`): stdin sul terminale, oppure
+  rediretto senza `/dev/tty`. Con stdin rediretto e `/dev/tty` notcurses usa `process_bulk`, che esce già su `<= 0`
+  (letto nel codice; la prova con `PTY.spawn` si è fermata prima, perché la lettura di `/dev/tty` dava sempre EOF).
+
+| Caso | Prima della correzione | Con la correzione upstream |
+| --- | --- | --- |
+| Repro della issue (pipe, senza `/dev/tty`), `Context#get` | 2730 su 2731, `close` bloccato (exit 137) | 2731, exit 0 |
+| Stesso input, `Direct#get` | 2730 su 2731, `close` bloccato (exit 137) | 2731, exit 0 |
+| Stesso input, `EventLoop#run` (`InputReader`) | `on_input` 2730, `run` → `:stop`, `close` bloccato | non provato |
+| 2731 × U+65E5 su un pty usato come stdin (un incolla) | 682 caratteri, poi blocco (exit 137) | 2731, exit 0 |
+
+### Decisioni
+
+- Dell'utente: correzione proposta a notcurses upstream, nessun workaround nel wrapper, nessun aggiornamento del
+  submodule; ICH-463 resta aperta in attesa di una versione corretta di notcurses (non va a Done al merge della PR
+  upstream); fork in `/mnt/data/Sviluppo/Progetti/Fork/20261118_notcurses` (l'utente ha scritto `/VPS_DATA/mnt/data/...`,
+  che su questa macchina non esiste); descrizione della PR upstream breve e in inglese, senza la sezione «Merge
+  Danger» del modello `trinity:pr`; poi il limite documentato nel wrapper, con il motivo del blocco e le alternative
+  nella PR #27.
+- Mie: lo stato Blocked del team ICH esiste già («Waiting on something outside this repo…»): niente stato nuovo;
+  PR #27 con `Refs ICH-463`; la issue upstream #2947 esisteva già senza PR, quindi la PR upstream la chiude e non è un
+  duplicato; il commit upstream usa l'identità git globale, come gli altri fork (l'email non è `noreply`).
+
+### Upstream
+
+- Fork `ichelema/notcurses`, clone con `origin` sul fork e `upstream` su `dankamongmen/notcurses`, branch
+  `fix/melange-split-utf8`, commit `9cd90df56` (stile `[input] ... #2947`). PR
+  [#2954](https://github.com/dankamongmen/notcurses/pull/2954), aperta il 2026-11-18, chiude la issue #2947; i check
+  di upstream aspettano l'approvazione del maintainer.
+- Patch: `if(consumed < 0)` → `if(consumed <= 0)` dopo `process_ncinput` (non il ramo delle escape). Test nuovo:
+  `input-utf8-split` in `CMakeLists.txt`, 4096 × U+65E5 in un pipe verso `notcurses-input`, `TIMEOUT 60`. doctest non
+  va bene: i simboli di `in.c` sono nascosti (`CMAKE_C_VISIBILITY_PRESET hidden`).
+- Build: `cmake -DUSE_PANDOC=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo`, doctest 2.4.12 installato nello scratchpad
+  (`CMAKE_PREFIX_PATH` e `-isystem` in `CMAKE_CXX_FLAGS`: CMake di notcurses non aggiunge il suo include), GCC 16.2.1.
+  `input-utf8-split`: Timeout a 60 s prima, Passed dopo; `ctest` completo 11/11 con `notcurses-tester`.
+- Stato di upstream il 2026-11-18: un solo maintainer, merge a ondate (2026-11-10 e 16, prima maggio 2026), ultimo
+  rilascio v3.0.17 del 2025-10-28, 33 PR e 305 issue aperte; altre PR sull'input aspettano da 3 a 11 mesi.
+
+### Review
+
+Nessuna: la PR #27 cambia solo la documentazione.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| Il Ruby di mise carica `/usr/lib/libnotcurses*` anche con `LD_LIBRARY_PATH` | il binario ha un `RPATH` (`/./lib`), che il loader cerca prima di `LD_LIBRARY_PATH` | `unshare --map-root-user --mount` e `mount --bind` delle librerie della build sopra quelle di sistema; inode controllati in `/proc/self/maps` |
+| `notcurses-tester` non compila | doctest non installato | doctest in un prefisso nello scratchpad |
+| ICH-463 portata in In Progress all'apertura della PR #27 e a Done al merge, anche con `Refs` | automazione GitHub → Linear (il nome del branch contiene l'ID) | rimessa in Blocked a mano tutte e due le volte |
+| La skill `trinity:linear` è partita in background senza una richiesta | forked execution | ha fatto solo letture |
+
+### Verifica finale
+
+- Branch su `fd9441c`: 1177 esempi, 0 fallimenti; coverage 98,33 %; RuboCop 0 offense (102 file); YARD 100 %;
+  `ruby -w` senza warning. CI della PR #27 verde (Ruby 3.1.7, 3.2.11, 3.3.13, 3.4.12, 4.0.9, codecov).
+- `master` su `494ffe0` (merge fatto dall'utente): semi 1234, 4242, 7 con 1177 esempi e 0 fallimenti; RuboCop 0; gem
+  costruita; `git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto; CI verde.
+- ICH-463 in Blocked, con il commento della causa e dei test; PR upstream #2954 aperta.
