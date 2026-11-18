@@ -320,6 +320,7 @@ module Notcurses
         @drain_input = drain_input
         @no_winch_sighandler = no_winch_sighandler
         @linesigs_flag = initial_linesigs_flag
+        @held_signal_keys = {}
         @stdplane = Plane.new(FFI.notcurses_stdplane(ptr), owned: false, context: self)
         @closed = false
       rescue Exception # rubocop:disable Lint/RescueException
@@ -816,6 +817,21 @@ module Notcurses
     def linesigs_flag?
       to_ptr
       @linesigs_flag
+    end
+
+    # Tasti di segnale (Ctrl+C, Ctrl+Z, Ctrl+\) per cui {UI::EventLoop#run} ha
+    # alzato il segnale e di cui non è ancora arrivato il rilascio: la loro
+    # ripetizione e il loro rilascio non arrivano a nessun ciclo. Sta nel
+    # contesto, come la coda dei tasti. Una voce per tasto, tolta dal suo
+    # rilascio o da una nuova pressione dello stesso tasto.
+    #
+    # @return [Hash{Integer => true}] id del tasto (per esempio 'C'.ord);
+    #   modificabile, solo per {UI::EventLoop}
+    # @raise [ClosedError] se il contesto è chiuso
+    # @api private
+    def held_signal_keys
+      to_ptr
+      @held_signal_keys
     end
 
     # Disattiva il controllo di flusso (IXON), che notcurses lascia attivo:

@@ -26,7 +26,9 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   (`\e[27;5;99~`), un `run(no_linesigs: true)` non consegna più quel Ctrl+C a `on_key` (ICH-455). notcurses alzava
   il segnale e metteva anche il tasto in coda, e `run` usciva prima di leggerlo. Ora `run` legge il tasto prima di
   alzare il segnale: in coda restano solo i tasti successivi, che arrivano al `run` dopo. Anche la ripetizione e il
-  rilascio di un Ctrl+C tenuto premuto restano fuori dal `run` dopo.
+  rilascio di un Ctrl+C tenuto premuto restano fuori dai `run` dopo, anche di un altro `EventLoop` o `App` sullo
+  stesso contesto e dopo la pressione di un altro tasto di segnale (ICH-537): il contesto ricorda ogni tasto di
+  segnale tenuto premuto fino al suo rilascio (`Context#held_signal_keys`, nuovo, `@api private`).
 - `EventLoop#run` segue ISIG del terminale anche per i tasti di segnale di kitty dopo uno `stty` (ICH-454).
   notcurses decide se alzare il segnale da un flag suo, che `stty` non cambia: dopo `stty -isig` un
   `run(no_linesigs: true)` usciva con `:interrupt` invece di consegnare Ctrl+C a `on_key`, e dopo

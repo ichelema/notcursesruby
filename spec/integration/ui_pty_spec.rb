@@ -431,6 +431,46 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     puts 'fine'
   RUBY
 
+  # ICH-537: la memoria del tasto di segnale tenuto premuto vale per ogni tasto
+  # e per il contesto. Stampa il motivo d'uscita, i tasti arrivati a on_key e
+  # gli eventi arrivati a on_input, come [carattere, evtype].
+  def kitty_held_keys_script = kitty_prelude + <<~'RUBY'
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      keys = []
+      inputs = []
+      new_loop = lambda do
+        ev = Notcurses::UI::EventLoop.new(nc)
+        ev.on_key('c', ctrl: true) { |input| keys << ['c', input.evtype] }
+        ev.on_key('\\', ctrl: true) { |input| keys << ['\\', input.evtype] }
+        ev.on_input { |input| inputs << [input.id.chr, input.evtype] if input.id < 0x80 }
+        ev
+      end
+      session = lambda do |name, ev, typed, **opts|
+        keys.clear
+        inputs.clear
+        user = typed && Thread.new do
+          wait_for('run') { ev.running? }
+          type.(typed)
+        end
+        timer = ev.after(1) { ev.stop }
+        reason = ev.run(**opts)
+        timer.cancel
+        user&.join
+        puts "#{name}: #{reason} #{keys.inspect} #{inputs.inspect}"
+      end
+      a = new_loop.()
+      session.('tenuto', a, "\e[99;5u")
+      # un Ctrl+\ nuovo, poi la ripetizione e il rilascio del Ctrl+C di prima
+      session.('altro tasto di segnale', a, "\e[92;5u\e[99;5:2u\e[99;5:3u", no_linesigs: true)
+      session.('premuto, ripetuto e rilasciato', a, "\e[99;5u\e[99;5:2u\e[99;5:3u")
+      b = new_loop.()
+      session.('secondo ciclo', b, nil, no_linesigs: true)
+      session.('nuova pressione', b, "\e[99;5u", no_linesigs: true)
+      puts "kitty #{kitty.()}"
+    end
+    puts 'fine'
+  RUBY
+
   # Un contesto che scarta l'input non accende il protocollo kitty, ma un
   # terminale può mandare lo stesso le sequenze (xterm con modifyOtherKeys: 2):
   # notcurses scarta il tasto e alza il segnale, run non legge niente.
@@ -648,6 +688,21 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(out).to include("primo: stop\n", "secondo: stop\n", "no_linesigs: stop\n", "terzo: stop\n")
     expect(out).to include("dopo linesigs_enable: stop\n", "ultimo: stop\n")
     expect(out).to include('kitty true ints 1') # dopo linesigs_enable run toglie di nuovo il segnale a notcurses
+    expect(out).to end_with("fine\n")
+  end
+
+  it 'ICH-537: la ripetizione e il rilascio di un tasto di segnale tenuto non arrivano a un altro run, per tasto e per contesto' do
+    skip 'pty e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
+
+    out, status, timed_out = run_child(kitty_held_keys_script, timeout: 30)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(status.exitstatus).to eq(0), out
+    expect(out).to include("tenuto: interrupt [] []\n")
+    expect(out).to include(%(altro tasto di segnale: stop [["\\\\", :press]] []\n))
+    expect(out).to include("premuto, ripetuto e rilasciato: interrupt [] []\n")
+    expect(out).to include("secondo ciclo: stop [] []\n") # un altro EventLoop sullo stesso contesto
+    expect(out).to include(%(nuova pressione: stop [["c", :press]] []\n))
+    expect(out).to include('kitty true')
     expect(out).to end_with("fine\n")
   end
 

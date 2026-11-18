@@ -145,7 +145,6 @@ module Notcurses
         @resize_handlers = []
         @running = false
         @line_signals = false
-        @signal_key = nil
         @stop_requested = false
         @resize_requested = false
         @wake_w = nil
@@ -180,8 +179,9 @@ module Notcurses
       # proprio processo, una volta per pressione e dopo aver letto il tasto, e
       # non consegna questi tasti (con o senza CapsLock e NumLock, nemmeno
       # ripetizioni e rilasci). La ripetizione e il rilascio del tasto che ha
-      # alzato il segnale non arrivano nemmeno al run successivo, anche con
-      # no_linesigs. Lo stesso vale per il Ctrl+C di xterm con modifyOtherKeys
+      # alzato il segnale non arrivano nemmeno ai run successivi, anche con
+      # no_linesigs, anche di un altro EventLoop sullo stesso contesto, anche
+      # dopo la pressione di un altro tasto di segnale. Lo stesso vale per il Ctrl+C di xterm con modifyOtherKeys
       # ("\e[27;5;99~"). I byte di controllo (0x03 con intr rimappato, input
       # da una pipe) arrivano invece come tasti, anche con kitty. run legge
       # ISIG solo all'avvio: stty, {Context#linesigs_disable} o
@@ -666,22 +666,25 @@ module Notcurses
       # Un byte classico non è un segnale: notcurses controlla Ctrl prima di
       # trasformare 0x03 in 'C' (in.c:539), e il campo ctrl della struct resta
       # falso (anche con kitty, che lo fa :press). La ripetizione e il rilascio
-      # del tasto che ha alzato il segnale non arrivano nemmeno al run dopo.
+      # del tasto che ha alzato il segnale non arrivano nemmeno ai run dopo:
+      # il tasto resta in {Context#held_signal_keys} fino al suo rilascio o a
+      # una sua nuova pressione.
       # @return [Boolean] true se l'evento è un tasto di segnale
       def line_signal(input)
         signal = LINE_SIGNALS[input.id]
         return false unless signal && input.ctrl_field? && (input.modifiers & ~MOD_LOCKS) == MOD_CTRL
 
+        held = @context.held_signal_keys
         if input.press?
-          @signal_key = nil
-        elsif @signal_key == input.id
-          @signal_key = nil if input.release?
+          held.delete(input.id)
+        elsif held.key?(input.id)
+          held.delete(input.id) if input.release?
           return true
         end
         return false unless @line_signals
 
         if input.press?
-          @signal_key = input.id # prima del segnale: Interrupt esce da qui
+          held[input.id] = true # prima del segnale: Interrupt esce da qui
           # raise() come notcurses: pid 0 colpirebbe anche il gruppo (i figli di Subprocess)
           Process.kill(signal, Process.pid)
         end
