@@ -188,13 +188,15 @@ module Notcurses
       # Dopo run il flag di notcurses resta spento: fuori da run un Ctrl+C di
       # kitty non alza segnali e resta in coda, e il run successivo lo tratta
       # quando lo legge. {Context#linesigs_enable} ridà il compito a notcurses,
-      # con le ripetizioni e i rilasci. Limiti di notcurses 3.0.17: senza un
-      # terminale (input da una pipe, niente /dev/tty) linesigs_disable non
-      # spegne il flag; con input e output su due terminali diversi notcurses
-      # cambia ISIG su quello di output, run su quello di input; al primo run
-      # un Ctrl+C arrivato prima della presa in carico lo alza ancora
-      # notcurses; all'avvio di run un byte 0x03 arrivato nell'istante in cui
-      # ISIG è spento è un tasto.
+      # con le ripetizioni e i rilasci. Con un contesto che scarta l'input
+      # ({Context#drain_input?}) run non legge i tasti e lascia il compito a
+      # notcurses, che scarta il tasto e alza il segnale. Limiti di notcurses
+      # 3.0.17: senza un terminale (input da una pipe, niente /dev/tty)
+      # linesigs_disable non spegne il flag; con input e output su due
+      # terminali diversi notcurses cambia ISIG su quello di output, run su
+      # quello di input; al primo run un Ctrl+C arrivato prima della presa in
+      # carico lo alza ancora notcurses; all'avvio di run un byte 0x03
+      # arrivato nell'istante in cui ISIG è spento è un tasto.
       #
       # @param no_flow_control [Boolean] disattiva IXON durante run
       # @param no_linesigs [Boolean] disattiva ISIG durante run
@@ -223,7 +225,7 @@ module Notcurses
           ixon = @context.flow_control_disable if no_flow_control
           # senza ISIG noto linesigs? solleva: con no_linesigs come prima, senza il ciclo non alza segnali
           isig = (no_linesigs || !FFI::ISIG.nil?) && @context.linesigs?
-          if FFI::ISIG
+          if FFI::ISIG && !@context.drain_input?
             # notcurses alza i segnali dei tasti kitty e xterm da un flag suo, che stty non cambia, anche per
             # ripetizioni e rilasci (in.c:506): solo linesigs_disable lo spegne, insieme a ISIG
             linesigs = isig # da qui ISIG può restare spento: restore_terminal lo riaccende
@@ -232,6 +234,10 @@ module Notcurses
               @context.isig_enable
               linesigs = false
             end
+          elsif no_linesigs && isig
+            # con drain_input notcurses scarta i tasti senza metterli in coda (in.c:518): il segnale resta suo
+            @context.linesigs_disable
+            linesigs = true
           end
           @line_signals = isig && !no_linesigs
           wake_r, @wake_w = IO.pipe
@@ -482,9 +488,10 @@ module Notcurses
       end
 
       # Riattiva IXON e ISIG tolti da run, tentando entrambi; il flag dei
-      # segnali di notcurses resta spento (vedi {#run}). Con il contesto chiuso
-      # notcurses_stop ha già ripristinato il terminale di prima dell'init.
-      # Un errore non sostituisce pending, l'eccezione che sta uscendo da run.
+      # segnali di notcurses resta spento (vedi {#run}), salvo con drain_input.
+      # Con il contesto chiuso notcurses_stop ha già ripristinato il terminale
+      # di prima dell'init. Un errore non sostituisce pending, l'eccezione che
+      # sta uscendo da run.
       def restore_terminal(ixon, linesigs, pending)
         return if @context.closed?
 
@@ -495,7 +502,9 @@ module Notcurses
           error = e
         end
         begin
-          @context.isig_enable if linesigs
+          if linesigs
+            @context.drain_input? ? @context.linesigs_enable : @context.isig_enable
+          end
         rescue ContextError => e
           error ||= e
         end

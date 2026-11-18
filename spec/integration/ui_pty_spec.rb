@@ -393,6 +393,25 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     puts 'fine'
   RUBY
 
+  # Un contesto che scarta l'input non accende il protocollo kitty, ma un
+  # terminale può mandare lo stesso le sequenze (xterm con modifyOtherKeys: 2):
+  # notcurses scarta il tasto e alza il segnale, run non legge niente.
+  def kitty_drain_script = kitty_prelude + <<~'RUBY'
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true, drain_input: true) do |nc|
+      ev = Notcurses::UI::EventLoop.new(nc)
+      user = Thread.new do
+        wait_for('run') { ev.running? }
+        type.("\e[99;5u")
+      end
+      timer = ev.after(1) { ev.stop }
+      reason = ev.run
+      timer.cancel
+      user.join
+      puts "drain: #{reason}"
+    end
+    puts 'fine'
+  RUBY
+
   # Una sessione kitty completa su App: ogni tasto arriva con la sua sequenza
   # CSI u, e i rilasci (evtype 3) devono raggiungere on_input e nessun componente.
   def kitty_app_script = kitty_prelude + <<~'RUBY'
@@ -576,6 +595,16 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
     expect(out).to include("premuto, ripetuto e rilasciato: stop []\n", "ctrl+\\ premuto, ripetuto e rilasciato: stop []\n")
     expect(out).to include("byte 0x03: stop [[:ctrl]]\n")
     expect(out).to include('kitty true quits 2 ints 1 evtypes [:press]') # :press: notcurses ha acceso il protocollo
+    expect(out).to end_with("fine\n")
+  end
+
+  it 'drain_input: il Ctrl+C di kitty resta un segnale di notcurses, perché run non legge i tasti' do
+    skip 'pty e /proc: solo Linux' unless RUBY_PLATFORM.include?('linux')
+
+    out, status, timed_out = run_child(kitty_drain_script, timeout: 30)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(status.exitstatus).to eq(0), out
+    expect(out).to include("drain: interrupt\n")
     expect(out).to end_with("fine\n")
   end
 
