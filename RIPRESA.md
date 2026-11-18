@@ -28,6 +28,7 @@
 - **Prossimo step: lotto 5**, ICH-475 (Medium: chiudere il contesto o il visual mentre un altro thread è dentro
   `Visual#decode` è un use-after-free) e ICH-464 (Low: finestra fra `to_ptr` e la chiamata C per un `close` da un
   trap). Prima del fix chiedi all'utente la scelta che le descrizioni lasciano aperta ("Scelte aperte", regola 14).
+  Il flusso di ogni lotto parte dalla spiegazione delle issue (passo 0 della "Procedura per ogni lotto").
   Comandi: `/trinity:workflow:1_create-worktree master ICH-475 ICH-464 opus`, poi
   `/trinity:workflow:2_work-issue ICH-475 ICH-464 opus` e gli altri della procedura.
 - Nata dal lotto 3: ICH-539 (Low), finestre dei segnali su Ruby 3.1 e 3.2 nella pulizia di `EventLoop#run`, in
@@ -263,6 +264,11 @@ ICH-224, ICH-228 e ICH-229 sono già a Done.
 /trinity:workflow:5_remove-worktree <prefisso>+<ID-numeri>-<model>
 ```
 
+0. **Prima del worktree spiega le issue del lotto** (flusso scelto dall'utente il 2026-11-18, vale per ogni lotto):
+   per ogni issue spiega in modo chiaro il problema, la causa, i dati misurati e le scelte aperte. Aggiungi un
+   esempio (codice, sequenza di eventi o figura) quando l'esempio rende la spiegazione più chiara. Poi proponi il
+   comando `/trinity:workflow:1_create-worktree master <ID...> <model>` in un blocco di codice. Le domande della
+   regola 14 vengono dopo il worktree, prima di `2_work-issue`.
 1. `1_create-worktree` crea il branch `<prefisso>/<ID-numeri>-<model>` (per esempio `bug/ICH-449-450-448-opus`) e
    il worktree in `.claude/worktrees/` del repository.
 2. `2_work-issue` porta le issue a In Progress, scrive il piano e implementa. Per ogni issue: la spec che fallisce,
