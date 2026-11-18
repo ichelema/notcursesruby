@@ -194,9 +194,10 @@ module Notcurses
       # 3.0.17: senza un terminale (input da una pipe, niente /dev/tty)
       # linesigs_disable non spegne il flag; con input e output su due
       # terminali diversi notcurses cambia ISIG su quello di output, run su
-      # quello di input; al primo run un Ctrl+C arrivato prima della presa in
-      # carico lo alza ancora notcurses; all'avvio di run un byte 0x03
-      # arrivato nell'istante in cui ISIG è spento è un tasto.
+      # quello di input; un Ctrl+C arrivato prima della presa in carico (al
+      # primo run, o dopo {Context#linesigs_enable}) lo alza notcurses, e run
+      # lo alza di nuovo quando legge il tasto rimasto in coda; all'avvio di
+      # run un byte 0x03 arrivato nell'istante in cui ISIG è spento è un tasto.
       #
       # @param no_flow_control [Boolean] disattiva IXON durante run
       # @param no_linesigs [Boolean] disattiva ISIG durante run
