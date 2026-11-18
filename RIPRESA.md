@@ -6,38 +6,44 @@
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
 > `git show ad0315b:RIPRESA.md`; quello dei lotti della revisione in `git show 8a4b5f7:RIPRESA.md`.
 
-## Stato e prossimo step (aggiornato il 2026-11-18, lotto 3 in draft)
+## Stato e prossimo step (aggiornato il 2026-11-18, lotto 3 pronto per il merge)
 
 - Lotto 1 fatto: PR #22, merge `74deb80`. Lotto 2 fatto: PR #23, merge `cb90c4f`. Lotto 2b fatto: PR #24, merge
   `6374e41`. Lotto 2c fatto: PR #25, merge `d2c5f7c` (ICH-531, ICH-532 a Done). Log in `memory/backlog-issue.md`,
   esito in `RICONSEGNA.md`. `master` su `d2c5f7c`: 1133 esempi, 0 fallimenti (ordine normale, semi 1234, 4242, 7);
   coverage 98,11 %; RuboCop 0; YARD 100 %; layer FFI invariato; CI verde.
-- **Lotto 3 in corso: PR #26 in draft** (ICH-454, ICH-456, ICH-455, tutte In Progress). Branch
-  `bug/ICH-454-456-455-opus` su `82953cb`, worktree `.claude/worktrees/bug+ICH-454-456-455-opus` ancora presente (con
-  il submodule `notcurses`). Implementazione e review-fix loop di 3 round fatti: dettagli, decisioni e finding nel
-  capitolo "Lotto 3" di `memory/backlog-issue.md` e nel commento della review sulla PR. Branch: 1138 esempi, 0
-  fallimenti.
-- La PR è in draft per una scelta dell'utente: con kitty il segnale ora lo alza `run` quando legge il tasto, quindi
-  un Ctrl+C non interrompe un handler, un timer o un `post` bloccato e si perde con la coda di notcurses piena. Su
-  `master` notcurses lo alzava subito, ma anche per ripetizioni e rilasci. L'utente non accetta il limite: ICH-536.
-- **Prossimo step: ICH-536** (High) in una sessione nuova, con ICH-537 (Medium) e ICH-538 (Low), nate dallo stesso
-  loop e sullo stesso codice (avvio di `run`, `line_signal`). All'inizio chiedi all'utente (regola 14):
-  - dove lavorarle: (a) sul branch e nel worktree della PR #26, senza i comandi 1 e 2 del workflow (cercano un branch
-    che finisce con gli ID nuovi), poi `Fixes` per le tre issue nella descrizione, PR fuori dal draft e
-    `/trinity:workflow:4_review-fix-loop ICH-454 ICH-456 ICH-455 opus`, che trova il worktree; oppure (b) un lotto 3b
-    con `/trinity:workflow:1_create-worktree bug/ICH-454-456-455-opus ICH-536 ICH-537 ICH-538 opus` e una PR
-    impilata su quella del lotto 3;
-  - il disegno dell'helper FFI: nessun cambio a `lib/notcurses/ffi/` senza la sua approvazione (regola 1). Direzione
-    da controllare, scritta in ICH-536: flag di notcurses acceso durante `run` (segnale subito) e un `trap` di `run`
-    che scarta i segnali di ripetizioni e rilasci leggendo l'evento appena accodato (notcurses accoda prima di
-    `send_synth_signal`, `in.c:530-552`) dalla struct privata `inputctx` (`in.c:52-113`: `inputs`, `ilock`), come fa
-    `Plane::Internals` (`lib/notcurses/plane.rb:91`). Coda piena e `drain_input` alzano senza accodare.
-- Prova a vista in Kitty non ancora fatta: la fa l'utente, da una finestra di Kitty con il controllo remoto, nel
-  worktree del lotto: `NC_GRAPHICS=1 bundle exec rspec spec/graphics/terminal_spec.rb -e 'Ctrl+C con CapsLock'`.
-- **Dopo i fix di ICH-536, ICH-537 e ICH-538:** review-fix loop, PR #26 fuori dal draft (`gh pr ready 26`), CI verde,
-  merge fatto dall'utente (`gh pr merge 26 --merge`, vedi sotto), poi chiusura del lotto 3 (passo 7 della procedura)
-  e `/trinity:workflow:5_remove-worktree bug+ICH-454-456-455-opus`. Con l'opzione (b) prima va la PR del lotto 3b nel
-  branch del lotto 3, poi la PR #26 su `master`.
+- **Lotto 3 pronto per il merge: PR #26 fuori dal draft**, CI verde su `e78d5cd` (Ruby 3.1.7, 3.2.11, 3.3.13,
+  3.4.12, 4.0.9, codecov). Issue: ICH-454, ICH-456, ICH-455, ICH-536, ICH-537, ICH-538, tutte In Progress, con
+  `Fixes` nella descrizione. Branch `bug/ICH-454-456-455-opus` su `e78d5cd`, worktree
+  `.claude/worktrees/bug+ICH-454-456-455-opus` ancora presente (con il submodule `notcurses`).
+- ICH-536, ICH-537 e ICH-538 sono sul branch della PR #26 (opzione (a), scelta dell'utente del 2026-11-18), con il
+  disegno B scelto dall'utente: un thread Ruby di input del `Context` (`Notcurses::InputReader`, costante privata)
+  legge la coda di notcurses durante `run` e alza il segnale alla pressione, anche con il ciclo occupato. Nessun
+  cambio a `lib/notcurses/ffi/`. Il testo nuovo di ICH-536 (criteri e vincoli tecnici, limite del GVL) l'ha
+  confermato l'utente ed è su Linear.
+- Review-fix loop di 3 round con GPT e Sonnet: finding, verify e scarti nei commenti della review sulla PR #26. I 4
+  finding del round 3 (tutti LOW dopo il triage) sono corretti in `e78d5cd`, ognuno con una spec; nessuna issue nuova.
+  Branch: 1177 esempi, 0 fallimenti (ordine normale e semi 1234, 4242, 7); coverage 98,33 % (le stesse 100 righe non
+  coperte di `92ffe55`: alcune righe dipendono dai tempi dei thread); RuboCop 0; YARD 100 %; layer FFI invariato.
+- Limite noto, documentato nello YARD di `run` e nel CHANGELOG: per l'input da terminale notcurses 3.0.17 non frena
+  chi scrive, e con la coda piena (8192 eventi) scarta il tasto nuovo (`in.c:523`). L'esempio pty di ICH-536 con
+  10000 tasti e poi Ctrl+C è fallito 1 volta su 11 corse della suite in locale, con un altro processo che occupava
+  una CPU; da solo passa 8 volte su 8.
+- **Prossimo step: il merge della PR #26, che fa l'utente** (`gh pr merge 26 --merge`). Prima del merge, se
+  l'utente vuole, la prova a vista in Kitty, da una finestra di Kitty con il controllo remoto, nel worktree del
+  lotto: `NC_GRAPHICS=1 bundle exec rspec spec/graphics/terminal_spec.rb -e 'Ctrl+C con CapsLock'`.
+- **Dopo il merge:** chiusura del lotto 3 (passo 7 della procedura). Il log del lotto in `memory/backlog-issue.md`
+  (capitolo "Lotto 3", oggi fermo al draft) deve aggiungere ICH-536, ICH-537 e ICH-538: disegno B, decisioni
+  dell'utente, i round della review (dai commenti sulla PR #26). Poi
+  `/trinity:workflow:5_remove-worktree bug+ICH-454-456-455-opus`.
+- Da chiedere all'utente alla chiusura (regola 16: nessuna issue senza la sua conferma):
+  - una issue per la pulizia di `run` contro segnali esterni su Ruby 3.1 e 3.2, dove l'Interrupt di un segnale
+    non si rimanda: restano finestre strette fuori da `Thread.handle_interrupt`;
+  - due bug di notcurses da aggiungere alle tabelle di `RICONSEGNA.md`: un assert in `kitty_kbd_txt` (`in.c:803`)
+    con le sequenze CSI-u spezzate, e un assert in `process_escape` (`in.c:2229`);
+  - se ritoccare il criterio 2 di ICH-536 («more than 8192 keys») rispetto alle soglie misurate sotto carico.
+- File lasciati in `/tmp` dal revisore Sonnet del round 2 (`/tmp/_probe_out*.txt`, `/tmp/_probe_plain.txt`,
+  `/tmp/_t22_31.txt` … `/tmp/_t22_36.txt`): nessuno li ha cancellati (niente `rm`); li rimuove l'utente, se vuole.
 - **Review con GPT e Sonnet**: `gpt-bridge:reviewer` e `trinity:reviewer` con `model: sonnet` ed `effort: max` al
   posto di Fable (scelta dell'utente del 2026-11-18; worktree di review `review+<base-name>-sonnet`). I revisori
   eseguono gli script da stdin, senza file e senza `.review-tmp` (non è in `.gitignore`), e rspec in una subshell con
@@ -197,7 +203,7 @@ Le issue nate dai lotti 1, 2, 2b, 2c e 3 sono state aggiunte dopo (lotti 2, 2b, 
 | 3 | `bug` | ICH-454 | Medium | Keep notcurses' internal line-signal flag in sync with ISIG in EventLoop#run |
 | 3 | `bug` | ICH-456 | Medium | Raise one line signal per kitty Ctrl+C press, not on its repeat and release |
 | 3 | `bug` | ICH-455 | Low | Do not deliver the queued Ctrl+C of an interrupted run to a following run(no_linesigs: true) |
-| 3 (seguito) | `bug` | ICH-536 | High | Raise the kitty Ctrl+C line signal at once, also while an EventLoop handler is busy or the input queue is full (nata dal lotto 3; la PR #26 resta in draft fino al fix) |
+| 3 (seguito) | `bug` | ICH-536 | High | Raise the kitty Ctrl+C line signal at once, also while an EventLoop handler is busy or the input queue is full (nata dal lotto 3; fatta sul branch della PR #26) |
 | 3 (seguito) | `bug` | ICH-537 | Medium | Keep the memory of a held signal key per key and per Context in EventLoop#run (nata dal lotto 3) |
 | 3 (seguito) | `bug` | ICH-538 | Low | Do not call notcurses_linesigs_disable at every EventLoop#run when the flag is already off (nata dal lotto 3) |
 | 4 | `bug` | ICH-463 | Medium | Stop notcurses from blocking when a UTF-8 character is split across the 8192-byte input read |
