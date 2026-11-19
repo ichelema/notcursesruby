@@ -22,6 +22,13 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Visual.from_palidx` ora dà ai pixel i colori della palette e `Visual#rotate` non perde più la prima riga e la
+  prima colonna di pixel (ICH-223): `ncvisual_from_palidx` di 3.0.17 ignora la palette e `ncvisual_rotate` confronta
+  con `>` invece di `>=` (visual.c:746), anche a 0 radianti. `from_palidx` costruisce i pixel RGBA in Ruby (RGB del
+  canale, alpha 0 se `:transparent` altrimenti 255, bianco per il colore di default) e crea il visual come
+  `from_rgba`; un indice >= `palette.size` solleva ancora `VisualError`. `rotate` ripete in Ruby l'algoritmo del C
+  con il confronto corretto, senza cambiare il puntatore del visual: il costo è proporzionale all'area, con una
+  chiamata C per pixel.
 - `Visual.blit_rgba`, `.blit_bgrx`, `.blit_rgb_loose`, `.blit_rgb_packed` e `Visual#blit` su un piano esistente
   sopra una metà di un glifo largo non lasciano più l'altra metà orfana (ICH-486): il C scrive ogni cella da sola, e
   una scrittura larga successiva vicino alla metà destra orfana cancellava la prima cella della riga sotto

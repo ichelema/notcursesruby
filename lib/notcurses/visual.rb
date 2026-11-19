@@ -296,14 +296,17 @@ module Notcurses
       wrap(ctx, FFI.ncvisual_from_bgra(buf, rows, cols * 4, cols), 'ncvisual_from_bgra', &block)
     end
 
-    # Visual da pixel indicizzati in una palette (+ncvisual_from_palidx+): ogni
-    # pixel occupa pstride byte e il primo è l'indice.
+    # Visual da pixel indicizzati in una palette: ogni pixel occupa pstride byte
+    # e il primo è l'indice.
     #
-    # Bug di 3.0.17 non aggirato: il C non usa i colori della palette
-    # (visual.c:969). Una voce con il colore di default ({Channel.default})
-    # diventa un colore ricavato dall'indice i (alpha 255 - i, rosso i, verde
-    # 220 - i / 2, blu i); qualsiasi altra voce diventa un pixel trasparente.
-    # Per una palette vera converti i pixel in RGBA e usa {.from_rgba}.
+    # Bug di 3.0.17 aggirato: +ncvisual_from_palidx+ ignora i colori della
+    # palette (visual.c:969): una voce con il colore di default diventa un
+    # colore ricavato dall'indice e qualsiasi altra voce un pixel trasparente.
+    # Il wrapper non lo chiama: costruisce in Ruby i pixel RGBA dalla palette e
+    # crea il visual come {.from_rgba}. Ogni voce dà RGB = colore del canale e
+    # alpha 0 se l'alpha del canale è +:transparent+, altrimenti 255 (blend e
+    # highcontrast non hanno senso per un pixel: opaco); una voce con il colore
+    # di default diventa il bianco 0xffffff. Costo proporzionale all'area.
     #
     # @param data [String] indici, almeno rows * rowstride byte
     # @param rows [Integer] righe, >= 1
@@ -315,28 +318,31 @@ module Notcurses
     # @param pstride [Integer] byte per pixel, >= 1
     # @yieldparam visual [Visual] (facoltativo) il visual, chiuso alla fine del blocco
     # @return [Visual] il visual; con un blocco, il valore del blocco
-    # @raise [VisualError] se +ncvisual_from_palidx+ restituisce NULL (un indice
-    #   >= palette.size)
+    # @raise [VisualError] se un indice di data è >= palette.size, o se
+    #   +ncvisual_from_rgba+ restituisce NULL
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se non c'è un Context attivo
     def self.from_palidx(data, rows:, cols:, palette:, rowstride: nil, pstride: 1, &block)
-      ctx = Internal.context!
+      Internal.context!
       Util.integer!(pstride, 'pstride', 1..Util::INT32.max)
       raise TypeError, "palette deve essere Array di Notcurses::Channel, non #{palette.class}" unless palette.is_a?(Array)
       unless (1..FFI::NCPALETTESIZE).cover?(palette.size)
         raise ArgumentError, "palette ha #{palette.size} voci: ne servono da 1 a #{FFI::NCPALETTESIZE}"
       end
 
-      values = palette.each_with_index.map do |channel, i|
+      colors = palette.each_with_index.map do |channel, i|
         raise TypeError, "palette[#{i}] deve essere Notcurses::Channel, non #{channel.class}" unless channel.is_a?(Channel)
 
-        channel.value
+        r, g, b = channel.default? ? [255, 255, 255] : channel.rgb
+        [r, g, b, channel.alpha == :transparent ? 0 : 255].pack('C4')
       end
-      pal = ::FFI::MemoryPointer.new(:uint32, values.size)
-      pal.put_array_of_uint32(0, values)
       buf = Internal.pixel_buffer(data, rows, cols, pstride, rowstride)
-      ptr = FFI.ncvisual_from_palidx(buf, rows, cols * pstride, cols, values.size, pstride, pal)
-      wrap(ctx, ptr, 'ncvisual_from_palidx (un indice di data è >= palette.size?)', &block)
+      indices = buf.get_bytes(0, rows * cols * pstride)
+      rgba = Array.new(rows * cols) do |i|
+        index = indices.getbyte(i * pstride)
+        colors.fetch(index) { raise VisualError, "indice #{index} di data >= palette.size (#{colors.size})" }
+      end.join
+      from_rgba(rgba, rows: rows, cols: cols, &block)
     end
 
     # Visual dal contenuto di un piano (+ncvisual_from_plane+): ogni cella
@@ -723,12 +729,19 @@ module Notcurses
 
     # --- trasformazioni ---
 
-    # Ruota il visual (+ncvisual_rotate+); le dimensioni si adattano
-    # all'immagine ruotata. notcurses garantisce solo ±π/2.
+    # Ruota il visual, come +ncvisual_rotate+; le dimensioni si adattano
+    # all'immagine ruotata (solo i pixel diversi da 0 contano: i bordi
+    # trasparenti vengono tagliati). notcurses garantisce solo ±π/2.
     #
-    # Bug di 3.0.17 non aggirato: a qualsiasi angolo, anche 0, la rotazione
-    # perde la prima riga e la prima colonna di pixel (visual.c:746); le
-    # immagini di una sola riga o colonna diventano trasparenti.
+    # Bug di 3.0.17 aggirato: +ncvisual_rotate+ perde la prima riga e la prima
+    # colonna di pixel a qualsiasi angolo, anche 0 (visual.c:746 confronta con
+    # +>+ invece di +>=+), e le immagini di una sola riga o colonna diventano
+    # trasparenti. Il wrapper non lo chiama: ripete in Ruby l'algoritmo del C
+    # (stesse dimensioni risultanti, stesso arrotondamento) con il confronto
+    # corretto, legge ogni pixel con +ncvisual_at_yx+, porta il visual alle
+    # dimensioni nuove con +ncvisual_resize_noninterpolative+ e riscrive ogni
+    # pixel con +ncvisual_set_yx+. Il costo è proporzionale all'area, con una
+    # chiamata C per pixel.
     #
     # @param radians [Numeric] angolo; positivo = senso antiorario
     # @return [self]
@@ -738,9 +751,18 @@ module Notcurses
     # @raise [ClosedError] se il visual è chiuso
     def rotate(radians)
       Guard.run do
-        rc = FFI.ncvisual_rotate(to_ptr, Util.float!(radians, 'radians'))
-        raise VisualError, 'ncvisual_rotate fallita (nessun pixel opaco?)' if rc.negative?
+        ptr = to_ptr
+        rads = Util.float!(radians, 'radians')
+        rows, cols = dims
+        pixels = Internal.read_pixels(ptr, rows, cols)
+        rotated = Internal.rotate_pixels(pixels, rows, cols, rads)
+        raise VisualError, 'ncvisual_rotate fallita (nessun pixel opaco?)' if rotated.nil?
 
+        data, new_rows, new_cols = rotated
+        Internal.dims!(new_rows, new_cols)
+        Util.check!(FFI.ncvisual_resize_noninterpolative(ptr, new_rows, new_cols), VisualError,
+                    "ncvisual_resize_noninterpolative(#{new_rows}, #{new_cols})")
+        Internal.write_pixels(ptr, data, new_cols)
         self
       end
     end
@@ -1250,6 +1272,81 @@ module Notcurses
           out.put_array_of_uint32(4 * dy * lenx, row)
         end
         Util.check_ptr!(FFI.ncvisual_from_rgba(out, leny, lenx * 4, lenx), VisualError, 'ncvisual_from_rgba')
+      end
+
+      # I pixel di ptr (rows x cols), a righe, con ncvisual_at_yx.
+      # @return [Array<Integer>] rows * cols valori a 32 bit
+      def read_pixels(ptr, rows, cols)
+        px = ::FFI::MemoryPointer.new(:uint32)
+        Array.new(rows * cols) do |i|
+          Util.check!(FFI.ncvisual_at_yx(ptr, i / cols, i % cols, px), VisualError, 'ncvisual_at_yx')
+          px.read_uint32
+        end
+      end
+
+      # Scrive ogni valore di data (a righe di cols pixel) con ncvisual_set_yx.
+      def write_pixels(ptr, data, cols)
+        data.each_with_index do |value, i|
+          Util.check!(FFI.ncvisual_set_yx(ptr, i / cols, i % cols, value), VisualError, 'ncvisual_set_yx')
+        end
+      end
+
+      # Porting di ncvisual_rotate (visual.c:731-775) con +>=+ al posto di +>+ nel
+      # ciclo sui pixel (visual.c:746). Un pixel è reale se vale diverso da 0.
+      # @param pixels [Array<Integer>] rows * cols valori a 32 bit, a righe
+      # @param rads [Float] angolo, positivo = senso antiorario
+      # @return [Array(Array<Integer>, Integer, Integer), nil] pixel, righe e colonne
+      #   del risultato; nil se non ci sono pixel reali
+      def rotate_pixels(pixels, rows, cols, rads)
+        rads = -rads # il C usa un piano cartesiano sinistrorso
+        stheta = Math.sin(rads)
+        ctheta = Math.cos(rads)
+        box = bounding_box(pixels, rows, cols)
+        return if box.nil?
+
+        # rotate_bounding_box: gli angoli del riquadro, ruotati attorno al suo centro
+        box_rows = box[1] - box[0] + 1
+        box_cols = box[3] - box[2] + 1
+        corners = [[0, 0], [0, box_cols - 1], [box_rows - 1, box_cols - 1], [box_rows - 1, 0]]
+        rotated = corners.map { |y, x| rotate_point(y, x, stheta, ctheta, (box_rows - 1) / 2, (box_cols - 1) / 2) }
+        offy = rotated.map(&:first).min
+        offx = rotated.map(&:last).min
+        out_rows = rotated.map(&:first).max - offy + 1
+        out_cols = rotated.map(&:last).max - offx + 1
+
+        data = Array.new(out_rows * out_cols, 0)
+        centy = (rows - 1) / 2
+        centx = (cols - 1) / 2
+        rows.times do |y|
+          cols.times do |x|
+            targy, targx = rotate_point(y, x, stheta, ctheta, centy, centx)
+            deconvy = targy - offy
+            deconvx = targx - offx
+            next unless deconvy >= 0 && deconvx >= 0 && deconvy < out_rows && deconvx < out_cols
+
+            data[(deconvy * out_cols) + deconvx] = pixels[(y * cols) + x]
+          end
+        end
+        [data, out_rows, out_cols]
+      end
+
+      # rotate_point di visual.c: [y, x] ruotato attorno a [centy, centx].
+      def rotate_point(y, x, stheta, ctheta, centy, centx)
+        convx = x - centx
+        convy = y - centy
+        [((convx * stheta) + (convy * ctheta)).round, ((convx * ctheta) - (convy * stheta)).round]
+      end
+
+      # Il riquadro dei pixel reali (diversi da 0), come ncvisual_bounding_box.
+      # @return [Array(Integer, Integer, Integer, Integer), nil] prima e ultima riga,
+      #   prima e ultima colonna; nil se non ce ne sono
+      def bounding_box(pixels, rows, cols)
+        real = pixels.each_index.reject { |i| pixels[i].zero? }
+        return if real.empty?
+
+        ys = real.map { |i| i / cols }
+        xs = real.map { |i| i % cols }
+        [ys.min, ys.max, xs.min, xs.max]
       end
 
       # @raise [ArgumentError] se il decoder sixel di 3.0.17 uscirebbe dai buffer

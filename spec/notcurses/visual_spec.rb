@@ -142,22 +142,41 @@ RSpec.describe Notcurses::Visual do
     describe '.from_palidx' do
       let(:palette) { [Notcurses::Channel.default, Notcurses::Channel.rgb(1, 2, 3)] }
 
-      it 'bug di 3.0.17: le voci di default diventano un colore sintetico, le altre trasparenti' do
-        described_class.from_palidx("\x00\x01".b, rows: 1, cols: 2, palette: palette) do |v|
-          expect(v.at(0, 0).to_a).to eq([0, 220, 0, 255])
-          expect(v.at(0, 1).value).to eq(0)
+      # Prima (bug di 3.0.17, il C ignorava la palette): una voce di default diventava il colore sintetico
+      # [i, 220 - i / 2, i, 255 - i] e qualsiasi altra voce un pixel trasparente (0).
+      # (la quarta voce è un default reso trasparente: per il C non è più di default, ma nero trasparente)
+      it 'i pixel hanno i colori della palette: RGB, trasparente, default = bianco' do
+        colors = [Notcurses::Channel.rgb(10, 20, 30), Notcurses::Channel.rgb(40, 50, 60).with_alpha(:transparent),
+                  Notcurses::Channel.default, Notcurses::Channel.default.with_alpha(:transparent),
+                  Notcurses::Channel.rgb(200, 100, 50).with_alpha(:blend)]
+        described_class.from_palidx([0, 1, 2, 3, 4, 2].pack('C*'), rows: 2, cols: 3, palette: colors) do |v|
+          expect(v.dims).to eq([2, 3])
+          expect((0..1).map { |y| (0..2).map { |x| v.at(y, x).to_a } }).to eq(
+            [[[10, 20, 30, 255], [40, 50, 60, 0], [255, 255, 255, 255]],
+             [[0, 0, 0, 0], [200, 100, 50, 255], [255, 255, 255, 255]]]
+          )
         end
       end
 
-      it 'legge solo il primo byte di ogni pixel con pstride > 1' do
+      it 'legge solo il primo byte di ogni pixel con pstride > 1 e salta il resto della riga con rowstride' do
         described_class.from_palidx("\x01\x00\x00\x07".b, rows: 1, cols: 2, palette: palette, pstride: 2) do |v|
-          expect(v.at(0, 0).value).to eq(0)
-          expect(v.at(0, 1).to_a).to eq([0, 220, 0, 255])
+          expect(v.at(0, 0).to_a).to eq([1, 2, 3, 255])
+          expect(v.at(0, 1).to_a).to eq([255, 255, 255, 255])
+        end
+        described_class.from_palidx("\x01\x00\x09\x09\x00\x01\x09\x09".b, rows: 2, cols: 2, palette: palette,
+                                                                              rowstride: 4) do |v|
+          expect(v.at(0, 0).to_a).to eq([1, 2, 3, 255])
+          expect(v.at(0, 1).to_a).to eq([255, 255, 255, 255])
+          expect(v.at(1, 0).to_a).to eq([255, 255, 255, 255])
+          expect(v.at(1, 1).to_a).to eq([1, 2, 3, 255])
         end
       end
 
-      it 'un indice fuori dalla palette è un errore del C' do
-        expect { described_class.from_palidx("\x05".b, rows: 1, cols: 1, palette: palette) }.to raise_error(Notcurses::VisualError)
+      it 'un indice fuori dalla palette solleva VisualError' do
+        expect { described_class.from_palidx("\x05".b, rows: 1, cols: 1, palette: palette) }
+          .to raise_error(Notcurses::VisualError, /indice 5/)
+        expect { described_class.from_palidx("\x00\x02".b, rows: 1, cols: 2, palette: palette) }
+          .to raise_error(Notcurses::VisualError, /indice 2/)
       end
 
       it 'valida la palette' do
@@ -386,6 +405,82 @@ RSpec.describe Notcurses::Visual do
       it 'un\'immagine trasparente non si ruota' do
         described_class.from_rgba("\0" * 16, rows: 2, cols: 2) do |v|
           expect { v.rotate(Math::PI / 2) }.to raise_error(Notcurses::VisualError)
+        end
+      end
+
+      # 16 pixel opachi tutti diversi
+      def distinct_visual(rows, cols)
+        data = (0...rows).flat_map { |y| (0...cols).flat_map { |x| [10 + y, 20 + x, 30, 255] } }.pack('C*')
+        described_class.from_rgba(data, rows: rows, cols: cols)
+      end
+
+      def pixels_of(visual)
+        rows, cols = visual.dims
+        (0...rows).map { |y| (0...cols).map { |x| visual.at(y, x).value } }
+      end
+
+      # Prima (bug di 3.0.17, visual.c:746): la rotazione perdeva la prima riga e la prima colonna di pixel.
+      it 'quattro rotazioni di π/2 riportano un 4x4 all\'originale, pixel per pixel' do
+        v = distinct_visual(4, 4)
+        original = pixels_of(v)
+        4.times do
+          v.rotate(Math::PI / 2)
+          expect(v.dims).to eq([4, 4])
+        end
+        expect(pixels_of(v)).to eq(original)
+      ensure
+        v&.close
+      end
+
+      it 'una rotazione di π/2 in senso antiorario sposta la prima riga nella prima colonna senza perdere pixel' do
+        v = distinct_visual(4, 4)
+        before = pixels_of(v)
+        v.rotate(Math::PI / 2)
+        expect(v.dims).to eq([4, 4])
+        expect((0..3).map { |y| (0..3).map { |x| before[x][3 - y] } }).to eq(pixels_of(v))
+        expect((0..3).map { |y| v.at(y, 0).value }).to eq(before[0].reverse)
+        expect(pixels_of(v).flatten.sort).to eq(before.flatten.sort)
+      ensure
+        v&.close
+      end
+
+      it 'conserva la prima riga e la prima colonna anche a 0 radianti e con immagini di una riga o colonna' do
+        v = distinct_visual(3, 5)
+        before = pixels_of(v)
+        v.rotate(0)
+        expect(pixels_of(v)).to eq(before)
+        v.close
+        v = distinct_visual(1, 3)
+        before = pixels_of(v)
+        v.rotate(0)
+        expect(pixels_of(v)).to eq(before)
+        v.close
+        v = distinct_visual(3, 1)
+        before = pixels_of(v)
+        v.rotate(0)
+        expect(pixels_of(v)).to eq(before)
+      ensure
+        v&.close
+      end
+
+      it '-π/2 seguito da +π/2 riporta un\'immagine non quadrata all\'originale' do
+        v = distinct_visual(3, 5)
+        before = pixels_of(v)
+        v.rotate(-Math::PI / 2)
+        expect(v.dims).to eq([5, 3])
+        v.rotate(Math::PI / 2)
+        expect(v.dims).to eq([3, 5])
+        expect(pixels_of(v)).to eq(before)
+      ensure
+        v&.close
+      end
+
+      it 'taglia i bordi trasparenti: le dimensioni seguono i soli pixel opachi' do
+        data = ([0] * 16) + ([0] * 4) + [1, 2, 3, 255] + [4, 5, 6, 255] + ([0] * 4) + ([0] * 16)
+        described_class.from_rgba(data.pack('C*'), rows: 3, cols: 4) do |v|
+          v.rotate(Math::PI / 2)
+          expect(v.dims).to eq([2, 1])
+          expect([v.at(0, 0).to_a, v.at(1, 0).to_a]).to eq([[4, 5, 6, 255], [1, 2, 3, 255]])
         end
       end
 
