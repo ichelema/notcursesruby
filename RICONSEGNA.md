@@ -1130,7 +1130,8 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
   `master`, riprodotto; causa nel C non verificata).
 - ICH-464 — `to_ptr` e la chiamata C non sono atomici per i gestori `trap`: un gestore che chiude il contesto e
   lascia proseguire il codice può dare SIGSEGV in ogni metodo del wrapper (lotto 13, review round 3; esiste già su
-  `master`, misurato solo dal reviewer: 1 caso su 40; contiene una scelta della regola 14).
+  `master`, misurato solo dal reviewer: 1 caso su 40; contiene una scelta della regola 14). Done nel lotto 5 delle
+  issue in Backlog (PR #28).
 - ICH-469 — autocorrezioni sicure di RuboCop (`rubocop -a`) e conversione alle virgolette doppie di Standard, con le
   due regex del gemspec e di `spec/gemspec_spec.rb` da correggere nello stesso commit; `Improvement` (ICH-465).
 - ICH-470 — il commento `# rubocop:disable Lint/UnusedMethodArgument` di `lib/notcurses/ui/component.rb:223` non
@@ -1143,7 +1144,8 @@ Nessun metodo nuovo né rimosso, salvo `Input#ctrl_field?` (`@api private`, lott
   17, review round 1; con Ctrl-C esisteva già su `master`).
 - ICH-475 — chiudere il contesto o il visual, anche con `at_exit`, mentre un altro thread è dentro `Visual#decode` o
   `#decode_loop` è un use-after-free; da verificare le varianti di `Direct`; lo stesso problema esiste già per
-  `Visual#stream` (lotto 17, review round 2; contiene una scelta della regola 14).
+  `Visual#stream` (lotto 17, review round 2; contiene una scelta della regola 14). Done nel lotto 5 delle issue in
+  Backlog (PR #28).
 
 ## Fase 5 — blitter su un terminale vero e macOS
 
@@ -1252,6 +1254,13 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
   FFI), poi il secondo loop; i 4 finding del suo round 3, tutti LOW dopo il triage, sono corretti in `e78d5cd`.
   Lotto 4: nessuna review, perché la PR #27 cambia solo la documentazione. La causa è in notcurses: l'utente ha scelto
   la correzione upstream, senza workaround nel wrapper e senza aggiornare il submodule.
+  Lotto 5: `/trinity:workflow:2_work-simplify` (due semplificazioni in `Context`), poi due
+  `/trinity:workflow:3_independent-review` eseguite dall'orchestratore (Opus), con il verify di un `trinity:reviewer`
+  Sonnet. Round 1 non approvabile: 6 finding, due MEDIUM (un `Interrupt` dentro `close` perdeva lo stop; `Visual#close`
+  da un gestore `trap` distruggeva un visual in uso). Round 2 non approvabile: il fix del primo MEDIUM lasciava una
+  finestra al ritorno di `Array#pop`, più tre LOW. Tutti corretti; due limiti documentati e aperti in Backlog
+  (ICH-540, ICH-541). I fix del round 1 li ha scritti l'orchestratore: la review del round 2 non era indipendente
+  dall'autore.
 
 ### Lotti
 
@@ -1263,6 +1272,7 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
 | 2c | [#25](https://github.com/ichelema/notcursesruby/pull/25) | `d2c5f7c` | ICH-531, ICH-532 (nate dal lotto 2b) | `rotate_2x1_cw` e `rotate_2x1_ccw` non rilasciano le copie nell'egcpool quando rifiutano un carattere (`fill.c:377-437`; non aggirato); `ncplane_mergedown` dopo una metà sinistra orfana seguita da un glifo copre il glifo e gli dà i canali della metà sinistra (`render.c:471-485`, ICH-532); tabella "Piani" di `memory/fase2-wrapper-idiomatico.md` |
 | 3 | [#26](https://github.com/ichelema/notcursesruby/pull/26) | `e15b40a` | ICH-454, ICH-456, ICH-455; ICH-536, ICH-537, ICH-538 (nate dal lotto 3, sullo stesso branch per scelta dell'utente) | con kitty notcurses alza il segnale anche per la ripetizione e il rilascio e lo decide da un flag privato che `stty` non cambia (`in.c:506-516`, `termdesc.c:390`); con la coda di input piena (8192 eventi) scarta il tasto nuovo senza frenare chi scrive (`in.c:523-527`); due assert con le sequenze escape spezzate fra due letture (`in.c:803`, `in.c:2229`), non aggirati; tabella "Bug e limiti di notcurses 3.0.17 trovati nella Fase 3" |
 | 4 | [#27](https://github.com/ichelema/notcursesruby/pull/27) | `494ffe0` | ICH-463, in Blocked: la PR documenta il limite e non chiude la issue | un carattere UTF-8 di più byte spezzato fra due letture fa girare per sempre il thread di input: `process_input` restituisce 0 (servono altri byte) e `process_melange` esce dal ciclo solo con un valore negativo (`in.c:2427`); `get` non riceve più eventi e `notcurses_stop` non ritorna (`in.c:2662`). Non aggirato; correzione di una riga proposta upstream (issue [#2947](https://github.com/dankamongmen/notcurses/issues/2947), PR [#2954](https://github.com/dankamongmen/notcurses/pull/2954)); tabella "Bug e limiti di notcurses 3.0.17 trovati nella Fase 3" |
+| 5 | [#28](https://github.com/ichelema/notcursesruby/pull/28) | `3d3e0e9` | ICH-475, ICH-464; ICH-540 e ICH-541 nate dalla review, in Backlog | nessuno |
 
 ### Cambi dell'API pubblica
 
@@ -1340,6 +1350,32 @@ del lotto 3. Comportamenti nuovi:
 - Nessun cambio di comportamento nel lotto 4: il blocco di notcurses con un carattere UTF-8 spezzato fra due letture
   dell'input è documentato nello YARD di `Context#get`, `Direct#get` ed `EventLoop#run`, nel README e nel CHANGELOG
   (lotto 4, ICH-463).
+- `Context#close` e `Direct#close` durante un'operazione del wrapper (in un altro thread durante una chiamata C senza
+  GVL, o interrotta da un gestore `trap` che poi torna) segnano subito l'oggetto chiuso, quindi le chiamate nuove
+  sollevano `ClosedError`, e rinviano lo stop alla fine dell'ultima operazione in corso, nel suo thread, che riceve
+  anche l'errore dello stop. Fino allo stop il registro resta occupato (un nuovo init solleva `InitError`). Costo per
+  chiamata circa 90 ns (`Notcurses::Guard.run` in 349 metodi): `can_truecolor?` da 406 a 504 ns, `Plane#dims` da 677
+  a 718 ns, `render` invariato (lotto 5, ICH-464, ICH-475).
+- `Context#close` dentro un callback chiamato dal C non solleva più `ContextError`: lo stop avviene alla fine
+  dell'operazione (lotto 5, ICH-464).
+- Un `close` durante l'attesa di `Context#get`, `#getvec` o `Direct#get` solleva `ClosedError` invece di
+  `Errno::EBADF` (lotto 5, ICH-464).
+- Un'eccezione asincrona (un secondo Ctrl+C) dentro `close` prima dello stop, anche al ritorno di un metodo C, esce da
+  `close` e lascia lo stop in attesa: un `close` successivo o l'hook `at_exit` lo eseguono una volta sola (lotto 5,
+  review).
+- `Visual#close` rinvia `ncvisual_destroy` durante `decode`, `decode_loop` o `stream` del visual e durante
+  un'operazione del wrapper interrotta da un gestore `trap` nel thread corrente; le operazioni di altri thread non lo
+  rinviano. Il controllo dei callback di `Visual#close` vale solo nel thread del callback (lotto 5, ICH-475, review).
+- `Visual.from_file` solleva `ClosedError`, e distrugge il visual appena creato, se il contesto viene chiuso durante la
+  lettura. `Visual#decode`, `#decode_loop` e `from_file` non usano il contesto nel C: un `Context#close` durante la
+  lettura ferma subito notcurses (lotto 5, ICH-475, variante C scelta dall'utente).
+- `Visual#stream` senza blocco fa in Ruby il lavoro di `ncvisual_simple_streamer` (render e attesa fino al frame);
+  con o senza blocco, un close del visual o del contesto lo ferma al frame successivo con `ClosedError`.
+  `Direct#stream` rilegge il puntatore a ogni frame e si ferma allo stesso modo (lotto 5, ICH-475).
+- Nuovi elementi `@api private`: il modulo `Notcurses::Guard`, `release_native!` di `Context`, `Direct` e `Visual`,
+  `Context#in_callback?` (lotto 5).
+- Limiti documentati nello YARD: il close di un piano o di un widget da un gestore `trap` che torna non è rinviato
+  (ICH-540); un Fiber sospeso dentro un'operazione tiene lo stop in attesa (ICH-541) (lotto 5).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
@@ -1349,6 +1385,7 @@ del lotto 3. Comportamenti nuovi:
 - Lotto 2c: nessuno.
 - Lotto 3: nessuno.
 - Lotto 4: nessuno.
+- Lotto 5: nessuno.
 
 ### Issue aperte nate dai lotti
 
@@ -1391,3 +1428,8 @@ del lotto 3. Comportamenti nuovi:
   lotto 3).
 - ICH-539 — su Ruby 3.1 e 3.2 un secondo segnale nel `rescue` della pulizia di `run` o di `InputReader#halt` salta il
   resto della pulizia (lotto 3, secondo loop, review; Low, in Backlog per scelta dell'utente).
+- ICH-540 — `Plane#close`, `#family_destroy`, `Widget#close` e `Context#drop_planes` da un gestore `trap` che torna al
+  codice interrotto non rinviano la distruzione: il C usa un piano già liberato (lotto 5, review round 1; Low, in
+  Backlog, limite nello YARD).
+- ICH-541 — un Fiber sospeso dentro un'operazione del wrapper (per esempio un Enumerator esterno su `Direct#stream`)
+  tiene lo stop in attesa per sempre, anche all'uscita (lotto 5, review round 1; Low, in Backlog, limite nello YARD).

@@ -606,3 +606,82 @@ Nessuna: la PR #27 cambia solo la documentazione.
 - `master` su `494ffe0` (merge fatto dall'utente): semi 1234, 4242, 7 con 1177 esempi e 0 fallimenti; RuboCop 0; gem
   costruita; `git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto; CI verde.
 - ICH-463 in Blocked, con il commento della causa e dei test; PR upstream #2954 aperta.
+
+## Lotto 5 — ICH-475, ICH-464 (PR #28, merge `3d3e0e9`)
+
+Implementazione il 2026-11-18 e 19 in una sessione, semplificazione e review il 2026-11-19 in un'altra. Branch
+`bug/ICH-475-464-opus`, worktree `.claude/worktrees/bug+ICH-475-464-opus` ancora presente (lo rimuove l'utente con
+`/trinity:workflow:5_remove-worktree bug+ICH-475-464-opus`). ICH-475 e ICH-464 a Done al merge.
+
+### Fix
+
+- `78dfa7a` (ICH-475): `close` rinviato mentre un altro thread è dentro una chiamata C senza GVL; `Notcurses::Guard`
+  (`lib/notcurses/guard.rb`, `@api private`) conta le operazioni in corso e tiene la coda delle chiusure fisiche;
+  `close` di `Context` e `Direct` in due tempi (`close` + `release_native!`).
+- `168f2a0`: motivo nuovo di `ncvisual_simple_streamer` in `spec/coverage_spec.rb` (`Visual#stream` ne fa il lavoro in
+  Ruby).
+- `fc09a6d` (ICH-464): `Guard.run` in 349 metodi di 16 file (codemod con Prism); controllo statico
+  (`spec/notcurses/guard_coverage_spec.rb`) e audit a runtime (`spec/support/guard_audit.rb`).
+- `1ffa2d8`: il contatore di `Guard` è un Array (`<<`/`pop`): con un intero e `+= 1` su Ruby 3.1 un aggiornamento si
+  perdeva (2 suite su 10).
+- `/trinity:workflow:2_work-simplify`: `a149ef9` (`close_thread_children` diventa `close_children(FdPlane)`),
+  `659b06e` (`closed?` con `&&`).
+- Review round 1: `b32914c` (un `Interrupt` dentro `close` non perde lo stop), `8878982` (`Visual#close` da un gestore
+  `trap` durante un'operazione qualsiasi), `50509a5` (limiti nello YARD, ICH-540 e ICH-541, CHANGELOG), `3046124`
+  (repro di ICH-475 in 20 processi figli).
+- Review round 2: `afb4cee` (lista di richieste al posto del token; `Visual#close` rinvia solo nel thread che ha
+  un'operazione in corso; spec con `:c_return`).
+
+### Decisioni
+
+- Dell'utente (regola 14): ICH-475 «rinvio anche per stream» con la variante C (`decode`, `decode_loop` e `from_file`
+  occupano solo il visual); ICH-464 «rendere sicuro», non solo documentare; `Context#close` in un callback rinviato
+  invece di `ContextError`; l'errore dello stop rinviato esce dall'operazione che lo esegue.
+- Dell'utente, review round 1: `Visual#close` rinviato per ogni operazione; il close di piani e widget da un `trap`
+  (ICH-540) e il Fiber sospeso (ICH-541) documentati e aperti in Backlog; il repro di ICH-475 ripetuto come spec di
+  regressione.
+- Dell'utente, review round 2: `Visual#close` rinvia solo se il thread corrente è dentro un'operazione.
+- Mie: niente `Thread.handle_interrupt` per il finding 1, perché prima di Ruby 3.4 non rinvia l'`Interrupt` di un
+  segnale (provato su 3.1.7, 3.2.11, 3.3.13: SIGINT verso sé stesso e da un altro processo); lo stato diventa
+  recuperabile invece. Una lista di richieste (`@claims`, oggetti unici) al posto del token: la lista, non una
+  variabile locale, dice all'`ensure` se la chiusura era sua. `Guard.running_here?` legge la pila del thread con
+  `caller_locations`: un gestore `trap` vede i frame interrotti (provato su 3.1.7, 3.3.13, 4.0.7) e il percorso caldo
+  non costa niente. Le issue nuove con il formato di ICH-539 (Problem, Acceptance criteria, Technical constraints,
+  Required tests).
+
+### Review
+
+- Round 1 (`/trinity:workflow:3_independent-review`, eseguita dall'orchestratore Opus; verify di un
+  `trinity:reviewer` Sonnet; 4 CONFIRMED e 2 PLAUSIBLE): MEDIUM, un `Interrupt` fra `@open_token.pop` e
+  `Guard.defer` faceva perdere lo stop per sempre, anche all'uscita; MEDIUM, `Visual#close` da un `trap` durante
+  `Visual#dims` distruggeva il visual prima della chiamata C, contro lo YARD; LOW, close di piani e widget da un `trap`
+  (ICH-540); LOW, Enumerator esterno su `Direct#stream` (ICH-541); LOW, contatore intero in `visual_guard`; LOW,
+  criterio 3 di ICH-475 coperto solo in modo indiretto.
+- Round 2 (stessa forma; 4 CONFIRMED; la review non era indipendente dall'autore dei fix del round 1): MEDIUM, un
+  `Interrupt` al ritorno di `Array#pop` in `taken = @native_token.pop` perdeva di nuovo lo stop; LOW, `Visual#close`
+  aspettava le operazioni di altri thread; LOW, un visual chiuso mai distrutto dopo un'eccezione al ritorno di `shift`
+  o `pop`; LOW, la spec usava solo `TracePoint(:line)`.
+- Misure del round 1: repro di ICH-464 200 su 200 con `ClosedError` (anche la baseline 200 su 200: il repro letterale
+  è debole, la prova vera è la spec con gli hook); repro di ICH-475 60 su 60 con stato 0 (baseline: 1 SIGSEGV su 60).
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| `Thread.handle_interrupt(Object => :never)` non rinvia il Ctrl+C su Ruby 3.1, 3.2 e 3.3 | l'`Interrupt` del gestore predefinito di SIGINT non passa dalla coda delle interruzioni mascherate prima di 3.4 | ogni passo di `close` lascia uno stato che un `close` ripetuto o l'hook `at_exit` completano |
+| Il fix del round 1 perdeva ancora lo stop | Ruby controlla le interruzioni al ritorno dei metodi C: `taken = @native_token.pop` poteva perdere il valore (migliaia di casi con SIGINT reali su 4.0.7 e 3.1.7; mai dopo `<<`, che è l'istruzione `opt_ltlt`) | lista di richieste condivisa; la spec solleva anche a ogni `:c_return` |
+| La spec con `TracePoint` falliva in `visual_guard` su punti non reali | con il TracePoint attivo `<<` diventa una chiamata C; l'evento `:line` della prima riga di un `ensure` non è un punto di consegna | in `visual_guard` un oggetto unico aggiunto dentro il `begin`; per quel metodo la spec usa solo `:c_return` |
+| Il commit della documentazione del round 1 conteneva la spec sbagliata | gli indici degli hunk cambiano dopo ogni commit | `git reset --soft` del commit locale, prima del push |
+| 9 spec di `direct_spec.rb` fallivano nel worktree di review | il submodule `notcurses/data` non è inizializzato nei worktree di review | ignorati: ambiente, non la PR |
+| Una prova di `ensure` doppio con `Thread#kill` non terminava su Ruby 3.1.7 e 3.2.11 | il thread non si fermava | fermata; non decideva nessun finding |
+| Ruby 3.1.7 senza `rspec` e `ffi` | installazione di mise | `GEM_HOME` nello scratchpad, come scritto in `RIPRESA.md` |
+
+### Verifica finale
+
+- Branch su `afb4cee`: 1209 esempi, 0 fallimenti (ordine normale e semi 1234, 4242, 7); coverage 98,22 %; RuboCop 0
+  offense (107 file); YARD 100 %, nessun warning; Ruby 3.1.7: spec del lotto 144 esempi, 0 fallimenti. CI della PR #28
+  verde (Ruby 3.1.7, 3.2.11, 3.3.13, 3.4.12, 4.0.9, codecov).
+- Punti provati dalla spec delle eccezioni asincrone: 49 per `Context`, 44 per `Direct`, 44 per `Visual`.
+- `master` su `3d3e0e9` (merge fatto dall'utente): 1209 esempi, 0 fallimenti, in ordine normale e con i semi 1234,
+  4242, 7; coverage 98,22 %; RuboCop 0; gem costruita; YARD senza warning; `ruby -w` senza warning;
+  `git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto; CI di `master` verde.
