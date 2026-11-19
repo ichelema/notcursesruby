@@ -239,6 +239,66 @@ RSpec.describe "Chiusura durante un'operazione in corso (integrazione)" do
       RUBY
       expect(output).to include("stops=1")
     end
+
+    # Un'eccezione asincrona (un secondo Ctrl+C) può arrivare fra due righe
+    # qualsiasi della chiusura. Il TracePoint la solleva una volta in ogni riga
+    # di close, di Guard e di release_native! fino alla chiamata dello stop
+    # esclusa: dopo, un close ripetuto ferma notcurses una sola volta e libera
+    # il registro. Le righe vengono da una prima chiusura senza eccezioni.
+    {
+      "Context" => ["Notcurses::Context.new(**CTX_OPTS)", "stop_notcurses(@ptr)"],
+      "Direct" => ["Notcurses::Direct.new(**OPTS)", "FFI.ncdirect_stop(@ptr)"]
+    }.each do |name, (create, stop_call)|
+      it "#{name}#close: un Interrupt in ogni riga prima dello stop non fa perdere lo stop" do
+        expect_exit(<<~RUBY, timeout: 60)
+          #{prelude}
+          KLASS = Notcurses::#{name}
+          file, first = KLASS.instance_method(:release_native!).source_location
+          STOP_LINE = File.readlines(file).each_with_index.find do |l, i|
+            i + 1 > first && l.include?(#{stop_call.inspect})
+          end.last + 1
+          GUARD_METHODS = %i[defer settle_if_idle settle].freeze
+          def target?(t)
+            if t.path.end_with?('/notcurses/guard.rb')
+              GUARD_METHODS.include?(t.method_id)
+            elsif t.defined_class == KLASS
+              t.method_id == :close || (t.method_id == :release_native! && t.lineno < STOP_LINE)
+            else
+              false
+            end
+          end
+          lines = []
+          root = #{create}
+          TracePoint.new(:line) { |t| lines << [t.path, t.lineno] if target?(t) }.enable { root.close }
+          lines.uniq!
+          bad = []
+          lines.each do |path, lineno|
+            root = #{create}
+            stops = $stops
+            fired = false
+            tp = TracePoint.new(:line) do |t|
+              next if fired || t.lineno != lineno || t.path != path || !target?(t)
+
+              fired = true
+              raise Interrupt
+            end
+            begin
+              tp.enable { root.close }
+            rescue Interrupt
+              nil
+            end
+            root.close
+            ok = fired && $stops == stops + 1 && Notcurses.active_context.nil?
+            bad << "\#{File.basename(path)}:\#{lineno} (stop: \#{$stops - stops})" unless ok
+          rescue Exception => e # rubocop:disable Lint/RescueException
+            bad << "\#{File.basename(path)}:\#{lineno} (\#{e.class})"
+            break
+          end
+          warn "righe: \#{lines.size}; senza stop: \#{bad.join(', ')}"
+          exit(lines.size > 10 && bad.empty? ? 0 : 4)
+        RUBY
+      end
+    end
   end
 
   describe "chiusura da un altro thread durante una chiamata C senza GVL (ICH-475)" do

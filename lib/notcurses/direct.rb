@@ -235,7 +235,7 @@ module Notcurses
         @drain_input = drain_input
         @eof_input = nil
         @input_io = nil
-        @open_token = [true]
+        @native_token = [true] # una sola chiusura fisica (release_native!)
         @closing = false
         @closed = false
       rescue Exception # rubocop:disable Lint/RescueException
@@ -298,10 +298,11 @@ module Notcurses
       # niente fclose: chiuderebbe il FILE* copiato dal padre (il suo buffer è vuoto: DirectForkFlush lo
       # svuota nel padre prima del fork)
       return mark_closed!(fclose: false) unless @pid == Process.pid
-      return Guard.settle_if_idle if @closing # già chiuso: esegue lo stop rimasto in attesa (hook at_exit)
-      return nil unless @open_token.pop # un gestore trap o un altro thread hanno già chiuso il contesto
 
-      @closing = true # prima di leggere il contatore delle operazioni in corso
+      # prima di leggere il contatore delle operazioni in corso. Anche più volte: un close ripetuto (o l'hook
+      # at_exit) rimette in coda uno stop che un'eccezione asincrona ha tolto dalla coda, e release_native! lo
+      # esegue una volta sola
+      @closing = true
       Guard.defer(self)
       Guard.settle_if_idle
     end
@@ -317,8 +318,10 @@ module Notcurses
     def release_native!
       return mark_closed!(fclose: false) unless @pid == Process.pid
 
-      stopping = false
+      taken = stopping = false
       begin
+        return nil unless (taken = @native_token.pop) # una sola volta, anche se il contesto è in coda più volte
+
         # ncdirect_stop non resetta il FILE* (solo stdout): lo fa il wrapper, prima, perché lo stop ne fa ancora
         # il flush
         FFI.ncdirect_set_fg_default(@ptr)
@@ -334,7 +337,11 @@ module Notcurses
           mark_closed!(fclose: @own_fp)
         end
       ensure
-        Guard.defer(self) unless stopping # interrotta prima dello stop (eccezione asincrona): resta in attesa
+        if taken && !stopping # interrotta prima dello stop (eccezione asincrona): resta in attesa
+          @closed = false
+          @native_token << true
+          Guard.defer(self)
+        end
       end
       # ncdirect_stop restituisce l'OR di più ritorni: qualsiasi valore diverso da 0 è un errore
       raise DirectError, "ncdirect_stop fallita (#{rc})" unless rc.zero?

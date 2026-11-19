@@ -318,7 +318,7 @@ module Notcurses
         @callback_depth = 0
         @callback_threads = {}.compare_by_identity
         @callback_errors_seen = 0
-        @open_token = [true]
+        @native_token = [true] # una sola chiusura fisica (release_native!)
         @closing = false
         @closer = nil
         @close_error = nil
@@ -398,7 +398,7 @@ module Notcurses
       return nil if @closed
       # niente fclose: svuoterebbe sul terminale del padre i dati rimasti nel buffer del FILE*
       return mark_closed!(fclose: false) unless @pid == Process.pid
-      return Guard.settle_if_idle if @closing # già chiuso: esegue lo stop rimasto in attesa (hook at_exit)
+      return settle_close if @closing # già chiuso: esegue lo stop rimasto in attesa (hook at_exit)
 
       # il thread di input di run non deve chiamare notcurses dopo lo stop; un Ctrl+C arrivato mentre halt lo
       # aspetta si solleva alla fine
@@ -406,7 +406,7 @@ module Notcurses
       # i figli con un thread Ruby (FdPlane, Subprocess) si fermano con il contesto ancora aperto: il loro
       # thread può essere dentro un'operazione sul contesto
       first_error = close_children(FdPlane)
-      unless @open_token.pop # un gestore trap o un altro thread hanno già chiuso il contesto
+      if @closing # un gestore trap o un altro thread hanno già chiuso il contesto
         raise interrupted if interrupted
         raise first_error if first_error
 
@@ -415,9 +415,8 @@ module Notcurses
 
       @close_error = first_error
       @closing = true # prima di leggere il contatore delle operazioni in corso
-      Guard.defer(self)
       begin
-        Guard.settle_if_idle
+        settle_close
       rescue Exception => e # rubocop:disable Lint/RescueException
         error = e
       end
@@ -439,9 +438,11 @@ module Notcurses
     def release_native!
       return mark_closed!(fclose: false) unless @pid == Process.pid
 
-      stopping = false
-      @closer = Thread.current # per questo thread il contesto resta aperto: il close dei figli lo usa
+      taken = stopping = false
       begin
+        return nil unless (taken = @native_token.pop) # una sola volta, anche se il contesto è in coda più volte
+
+        @closer = Thread.current # per questo thread il contesto resta aperto: il close dei figli lo usa
         first_error = @close_error
         children_error = close_children
         first_error ||= children_error
@@ -455,8 +456,10 @@ module Notcurses
           mark_closed!(fclose: @own_fp)
         end
       ensure
-        unless stopping # interrotta prima dello stop (eccezione asincrona): resta in attesa
+        if taken && !stopping # interrotta prima dello stop (eccezione asincrona): resta in attesa
+          @closed = false
           @closer = nil
+          @native_token << true
           Guard.defer(self)
         end
       end
@@ -1359,6 +1362,16 @@ module Notcurses
         first_error ||= e
       end
       first_error
+    end
+
+    # Mette in coda lo stop ed esegue la coda se nessuna operazione è in corso.
+    # Anche più volte: un close ripetuto (o l'hook at_exit) rimette in coda uno
+    # stop che un'eccezione asincrona ha tolto dalla coda, e {#release_native!}
+    # lo esegue una volta sola.
+    # @return [nil]
+    def settle_close
+      Guard.defer(self)
+      Guard.settle_if_idle
     end
 
     # +notcurses_stop+. Su macOS la chiamata rilascia il GVL (functions.rb):
