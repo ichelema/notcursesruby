@@ -22,6 +22,23 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Direct#stream` con il blitter `:pixel` ridisegna ogni frame sulle righe del primo anche in fondo allo schermo
+  (ICH-458). Prima un frame più basso dello schermo poteva finire sull'ultima riga (per esempio con il cursore in
+  fondo: il C sposta in alto un frame che non entra sotto il cursore, `direct.c:442-448`); il C mandava poi una CUP
+  alla riga sotto lo schermo (`direct.c:607-613`), e su un terminale che non fa scorrere lo schermo dopo un bitmap
+  sull'ultima riga i frame dopo il primo partivano una riga più in alto: l'ultima riga del primo frame restava
+  visibile. Ora, sui terminali con la grafica a pixel, prima di ogni frame `stream` fa posto sotto il cursore: il
+  cursore scende di tante righe quante ne ha il frame (lo schermo scorre se serve) e risale. Il frame parte dalla
+  riga del cursore e non finisce sull'ultima riga: sotto resta una riga libera, e l'esito è lo stesso sui terminali
+  che fanno scorrere lo schermo dopo un bitmap sull'ultima riga e su quelli che non lo fanno (la posizione del
+  cursore non li distingue: per questo `stream` non può lasciare un frame sull'ultima riga). `Direct#render_image` e
+  `Frame#raster` non cambiano: lì un frame che non entra sotto il cursore finisce ancora sull'ultima riga.
+  Il costo è di pochi byte per frame (un carattere VT per riga e una CUU), senza altre query al terminale.
+  Un frame alto quanto lo schermo parte dalla riga 0 come prima, e sui terminali che scorrono dopo un bitmap
+  sull'ultima riga lo schermo scorre ancora di una riga a ogni frame. Con i blitter a celle, e con `:pixel` su un
+  terminale senza grafica a pixel, l'output non cambia. Lo stream va avviato con il cursore a inizio riga: con
+  `align: :left` il primo frame parte dalla colonna del cursore e i successivi dalla colonna 0; in fondo allo schermo
+  prima il C, spostando in alto il primo frame, lo riportava alla colonna 0.
 - `Direct#close` (e `#stop`) con `output:` su un file o su un `FILE*` non scrive più il reset di `ncdirect_stop`
   (`\e[39;49m\e(B\e[m`) sullo stdout del processo (ICH-222, `direct.c:841`): durante lo stop il fd 1 punta a
   `/dev/null`, poi torna com'era. Un altro thread che scrive sullo stdout durante lo stop perde quell'output.
@@ -258,11 +275,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   Sulla console Linux (gpm, senza rilasci) ogni pressione resta un clic (ICH-283).
 - `Direct#stream` disegna ogni frame sopra il precedente: con i frame più stretti del terminale prima saliva di una
   riga in meno, ogni frame scendeva di una riga, la prima riga dei frame precedenti restava sullo schermo e in fondo
-  al terminale lo schermo scorreva a ogni frame. Con il blitter `:pixel`, per un frame più basso dello schermo che
-  finisce sull'ultima riga (per esempio con il cursore in fondo) l'esito dipende dal terminale. Se il terminale ferma
-  il cursore sull'ultima riga del frame, prima i frame più stretti del terminale si sovrapponevano, ora i frame dopo
-  il primo partono una riga più in alto e l'ultima riga del primo frame resta visibile. Se un sixel sull'ultima riga
-  fa scorrere lo schermo, prima lo schermo scorreva a ogni frame, ora i frame si sovrappongono (ICH-284).
+  al terminale lo schermo scorreva a ogni frame (ICH-284). Con il blitter `:pixel` e un frame più basso dello schermo
+  in fondo al terminale l'esito non dipende più dal terminale: vedi la voce di ICH-458.
 - `Notcurses.strwidth` misura anche il testo dopo una sequenza ZWJ (U+200D): `"👩‍🚀abc"` vale 5 colonne, non 2. Il
   workaround del bug di notcurses 3.0.17, prima solo in `Plane#putstr`, ora vale per `Direct#putegc` (scrive solo il
   primo EGC, non anche il resto del testo), `Direct#print_aligned` (colonna e valore restituito giusti; `ArgumentError`

@@ -225,6 +225,174 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(status.exitstatus).to eq(0), out
   end
 
+  # ICH-458. Terminale sixel finto che segue il cursore (quello di pixel_script risponde sempre \e[5;1R): CUP, CUU,
+  # CUD, HPA e VPA si fermano ai bordi, LF e VT sull'ultima riga e SU fanno scorrere lo schermo, \e[6n riceve la
+  # posizione vera. Di ogni sixel registra la riga dello schermo, le righe già scorse e l'altezza: riga + righe
+  # scorse è la riga del contenuto, che resta la stessa quando lo schermo scorre. Due frame sono uno sopra l'altro se
+  # hanno la stessa riga del contenuto.
+  # SCROLL = false: un sixel non fa scorrere lo schermo e lascia il cursore sulla sua ultima riga.
+  # SCROLL = true: un sixel lascia il cursore sulla riga sotto; se finisce sull'ultima riga lo schermo scorre di una
+  # riga (termdesc.h:165-166).
+  # MAX_GEOMETRY = false: il terminale non risponde a XTSMGRAPHICS, notcurses non limita l'altezza di un sixel a
+  # rows - 1 (notcurses.c:430-441) e :stretch dà un frame alto quanto lo schermo.
+  def sixel_stream_script(row:, scroll:, scale: :scale, max_geometry: true)
+    video = File.expand_path('../fixtures/visual/frames.mkv', __dir__)
+    "VIDEO = #{video.dump}\nROW = #{row}\nSCROLL = #{scroll}\nSCALE = #{scale.inspect}\n" \
+      "MAX_GEOMETRY = #{max_geometry}\n" + <<~'RUBY'
+        require 'notcurses'
+        require 'io/console'
+        require 'pty'
+        $stdout.sync = true
+
+        class SixelTerminal
+          ROWS = 24
+          COLS = 80
+          CELL_HEIGHT = 16
+          TOKEN = /\A(?:\e[P_].*?\e\\|\e\].*?(?:\a|\e\\)|\e\[[0-?]*[ -\/]*[@-~]|\e[^\[\]P_]|[^\e])/mn
+          REPLIES = {
+            "\e[c" => "\e[?62;4;22c", "\e[14t" => "\e[4;384;640t", "\e[18t" => "\e[8;24;80t",
+            "\e[?2;1;0S" => (MAX_GEOMETRY ? "\e[?2;0;640;384S" : nil), "\e[?1;1;0S" => "\e[?1;0;256S"
+          }.compact.freeze
+
+          attr_reader :frames, :done
+
+          def initialize(master)
+            @master = master
+            @buffer = String.new(encoding: Encoding::BINARY)
+            @row = ROW
+            @col = @scrolled = 0
+            @frames = []
+            @done = Queue.new
+          end
+
+          # Una sequenza spezzata fra due letture resta nel buffer fino alla lettura successiva.
+          def feed(data)
+            @buffer << data
+            while (token = @buffer.slice!(TOKEN))
+              handle(token)
+            end
+          end
+
+          def handle(token)
+            if token == "\e[6n" then @master.write("\e[#{@row + 1};#{@col + 1}R")
+            elsif token == "\e[5n" then @done.push(true) # lo manda lo script dopo la chiusura di Direct
+            elsif REPLIES.key?(token) then @master.write(REPLIES[token])
+            elsif token.start_with?("\eP") then sixel(token)
+            elsif (m = token.match(/\A\e\[(\d*);?(\d*)([ABGHSd])\z/n)) then csi(m[3], m[1].to_i, m[2].to_i)
+            elsif ["\n", "\v", "\f"].include?(token) then line_feed
+            elsif token == "\r" then @col = 0
+            end
+          end
+
+          # Un parametro assente o 0 vale 1.
+          def csi(final, first, second)
+            first = 1 if first.zero?
+            second = 1 if second.zero?
+            case final
+            when 'A' then @row = [@row - first, 0].max
+            when 'B' then @row = [@row + first, ROWS - 1].min
+            when 'G' then @col = [first, COLS].min - 1
+            when 'd' then @row = [first, ROWS].min - 1
+            when 'S' then @scrolled += first
+            when 'H'
+              @row = [first, ROWS].min - 1
+              @col = [second, COLS].min - 1
+            end
+          end
+
+          def line_feed
+            if @row == ROWS - 1 then @scrolled += 1
+            else @row += 1
+            end
+          end
+
+          # Le query DCS (XTGETTCAP) non hanno gli attributi raster: i frame sono solo i sixel.
+          def sixel(token)
+            height = token[/\A\eP[\d;]*q"\d+;\d+;\d+;(\d+)/n, 1] or return
+            rows = (height.to_i + CELL_HEIGHT - 1) / CELL_HEIGHT
+            @frames << [@row, @scrolled, rows]
+            @row += SCROLL ? rows : rows - 1
+            return if @row < ROWS
+
+            @scrolled += @row - (ROWS - 1) if SCROLL
+            @row = ROWS - 1
+          end
+        end
+
+        master, slave = PTY.open
+        slave.winsize = [24, 80, 640, 384]
+        STDIN.reopen(slave)
+        terminal = SixelTerminal.new(master)
+        Thread.new do
+          loop { terminal.feed(master.readpartial(65_536)) }
+        rescue IOError, Errno::EIO
+        end
+        Notcurses::Direct.open(output: slave.path, termtype: 'xterm-256color') do |d|
+          puts "can_pixel #{d.can_pixel?}"
+          d.stream(VIDEO, blitter: :pixel, scale: SCALE)
+        end
+        slave.write("\e[5n") # il terminale ha letto tutto l'output di Direct quando arriva qui
+        terminal.done.pop
+        puts "frames #{terminal.frames.map { |frame| frame.join('/') }.join(' ')}"
+        puts 'fine'
+      RUBY
+  end
+
+  # @return [Array<Array(Integer, Integer, Integer)>] di ogni sixel: riga dello schermo, righe già scorse, altezza
+  def sixel_frames(**opts)
+    out, status, timed_out = run_child(sixel_stream_script(**opts), timeout: 30)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(out).to include('can_pixel true', 'fine')
+    expect(status.exitstatus).to eq(0), out
+    out[/^frames (.*)$/, 1].split.map { |frame| frame.split('/').map(&:to_i) }
+  end
+
+  # Il video ha 4 frame. Con :scale un frame è alto 23 righe (rows - 1, il massimo di un sixel) e largo 46 colonne.
+  # Controlla che lo stream partito dalla riga row disegni ogni frame sulle righe del primo.
+  def expect_frames_in_place(row:, scroll:)
+    frames = sixel_frames(row: row, scroll: scroll)
+    expect(frames.map(&:last)).to eq([23, 23, 23, 23])
+    content_rows = frames.map { |screen_row, scrolled, _| screen_row + scrolled }
+    expect(content_rows.uniq.size).to eq(1), "dalla riga #{row}: #{frames.inspect}"
+  end
+
+  # Dalla riga 23 il frame non entra sotto il cursore, e il C lo sposterebbe in alto fino a farlo finire sull'ultima
+  # riga (direct.c:442-448); dalla riga 1 finirebbe sull'ultima riga senza spostamenti. Dopo un frame che finisce
+  # sull'ultima riga il C manda una CUP alla riga sotto lo schermo (direct.c:607-613). Prima del fix i frame dopo il
+  # primo partivano una riga più in alto.
+  it 'stream con :pixel in fondo allo schermo disegna ogni frame sulle righe del primo: terminale che ferma la CUP' do
+    aggregate_failures do
+      expect_frames_in_place(row: 23, scroll: false)
+      expect_frames_in_place(row: 1, scroll: false)
+    end
+  end
+
+  # Passa anche prima del fix: lo scorrimento dopo il primo frame compensava la riga in meno. Fallisce se stream
+  # rimette ogni frame sulla riga di schermo del primo, come suggeriva la issue: lo schermo scorre a ogni frame.
+  it "stream con :pixel in fondo allo schermo: terminale che scorre dopo un sixel sull'ultima riga" do
+    aggregate_failures do
+      expect_frames_in_place(row: 23, scroll: true)
+      expect_frames_in_place(row: 1, scroll: true)
+    end
+  end
+
+  it 'stream con :pixel e spazio sotto il cursore non sposta i frame e non fa scorrere lo schermo' do
+    tall = [[0, 0, 23]] * 4
+    small = [[2, 0, 1]] * 4
+    expect(sixel_frames(row: 0, scroll: false)).to eq(tall)
+    expect(sixel_frames(row: 0, scroll: true)).to eq(tall)
+    expect(sixel_frames(row: 2, scroll: false, scale: :none)).to eq(small)
+    expect(sixel_frames(row: 2, scroll: true, scale: :none)).to eq(small)
+  end
+
+  # Il C porta il frame alla riga 0 e fa scorrere lo schermo di y - 1 = 4 righe (direct.c:442-455). Se un sixel
+  # sull'ultima riga fa scorrere lo schermo, lo schermo scorre a ogni frame: non c'è una riga libera da lasciare.
+  it 'stream con :pixel di un frame alto quanto lo schermo parte dalla riga 0 a ogni frame, come prima' do
+    full = { row: 5, scale: :stretch, max_geometry: false }
+    expect(sixel_frames(**full, scroll: false)).to eq([[0, 4, 24]] * 4)
+    expect(sixel_frames(**full, scroll: true)).to eq([[0, 4, 24], [0, 5, 24], [0, 6, 24], [0, 7, 24]])
+  end
+
   # Context#close: notcurses_stop chiama tcsetattr(TCSAFLUSH) (notcurses.c:147),
   # che su macOS aspetta che il master del pty legga l'output in coda. Il thread
   # del terminale finto resta fuori da read(2) per 0,3 s dopo l'inizio della

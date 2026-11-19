@@ -1178,15 +1178,28 @@ module Notcurses
     # di una riga in meno e ogni frame scende di una riga. Con il blitter
     # :pixel i frame precedenti non vengono tolti dal terminale (il C usa una
     # funzione interna) e ogni frame attende la posizione del cursore come
-    # {Frame#raster}. Con :pixel, quando un frame più basso dello schermo
-    # finisce sull'ultima riga (per esempio con il cursore in fondo; il C
-    # sposta in alto un frame che non entra sotto il cursore, direct.c:442-448),
-    # il C porta il cursore con una CUP alla riga sotto lo schermo
-    # (direct.c:607-613) e l'esito dipende dal terminale. Se il terminale ferma
-    # il cursore sull'ultima riga del frame, il frame successivo parte una riga
-    # più in alto e da lì resta fermo: l'ultima riga del primo frame rimane
-    # visibile. Se un sixel sull'ultima riga fa scorrere lo schermo di una riga
-    # (termdesc.h:165-166), i frame si sovrappongono.
+    # {Frame#raster}.
+    #
+    # Con il blitter :pixel, su un terminale con la grafica a pixel
+    # ({#can_pixel?}), prima di ogni frame stream fa posto sotto il cursore: il
+    # cursore scende di tante righe quante ne ha il frame (lo schermo scorre se
+    # serve) e risale. Così il frame parte dalla riga del cursore e non finisce
+    # sull'ultima riga dello schermo: sotto resta una riga libera, dove il C
+    # lascia il cursore, e ogni frame occupa le righe del primo. Senza questo
+    # passo un frame che non entra sotto il cursore finirebbe sull'ultima riga
+    # (direct.c:442-448), il C manderebbe una CUP alla riga sotto lo schermo
+    # (direct.c:607-613) e la riga del frame successivo dipenderebbe dal
+    # terminale: alcuni fanno scorrere lo schermo dopo un bitmap sull'ultima
+    # riga (termdesc.h:165-166), altri no, e la posizione del cursore è la
+    # stessa nei due casi. {#render_image} e {Frame#raster} non fanno posto: lì
+    # un frame che non entra sotto il cursore finisce sull'ultima riga. Il
+    # costo è di pochi byte per frame (un carattere VT per riga e una CUU),
+    # senza altre query al terminale. Un frame alto quanto lo schermo non
+    # lascia una riga libera: parte dalla riga 0 come prima (direct.c:444), e
+    # sui terminali che scorrono dopo un bitmap sull'ultima riga lo schermo
+    # scorre di una riga a ogni frame. Avvia lo stream con il cursore a inizio
+    # riga: con align :left il primo frame parte dalla colonna del cursore, i
+    # successivi dalla colonna 0.
     #
     # Thread: l'apertura del file e la decodifica di ogni frame avvengono senza
     # il GVL, come in {#load_image}: gli altri thread Ruby girano, ma non devono
@@ -1206,9 +1219,12 @@ module Notcurses
     # @raise [ClosedError] se il contesto è chiuso
     def stream(path, align: :left, blitter: :default, scale: :scale)
       Guard.run do
-        to_ptr
+        ptr = to_ptr
         Args.align(align)
-        Args.visual_options(blitter, scale)
+        vopts = Args.visual_options(blitter, scale)
+        # il C disegna un bitmap con queste due condizioni (lookup_blitset, blit.c:1320-1328); senza la grafica a
+        # pixel :pixel degrada a un blitter di celle, e lo stream resta quello delle celle
+        bitmap = vopts[:blitter] == FFI::NCBLIT_PIXEL && FFI.ncdirect_check_pixel_support(ptr).positive?
         load_image(path) do |image|
           rows = index = rc = 0
           while rc.zero?
@@ -1219,6 +1235,15 @@ module Notcurses
             FFI.ncdirect_cursor_up(ptr, rows) if rows.positive?
             frame = image.render(self, blitter: blitter, scale: scale)
             rows, = frame.dims
+            # dopo un bitmap che finisce sull'ultima riga il C manda una CUP sotto lo schermo (direct.c:607-613): lo
+            # schermo scorre o no secondo il terminale, e il cursore è nello stesso punto nei due casi. Quindi il
+            # bitmap non deve finire lì: il cursore scende di rows righe (VT: lo schermo scorre se serve, la colonna
+            # resta) e risale, e sotto il frame resta una riga libera. Un frame alto quanto lo schermo non ha una riga
+            # libera: parte dalla riga 0 come prima (direct.c:444). Ritorni ignorati come sopra
+            if bitmap && rows < FFI.ncdirect_dim_y(ptr)
+              FFI.ncdirect_cursor_down(ptr, rows)
+              FFI.ncdirect_cursor_up(ptr, rows)
+            end
             frame.raster(align: align)
             yield index if block_given?
             index += 1

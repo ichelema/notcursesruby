@@ -649,6 +649,15 @@ RSpec.describe Notcurses::Direct do
         expect(ffi).to have_received(:ncdirect_cursor_up).once.with(anything, sizes.first[0])
       end
 
+      # ICH-458: stream fa posto sotto il cursore (VT e CUU in più) solo per i bitmap. Qui il terminale non ha la
+      # grafica a pixel e il C degrada :pixel a un blitter di celle.
+      it 'stream con blitter: :pixel senza grafica a pixel sale come con le celle, senza fare posto' do
+        expect(d.can_pixel?).to be(false)
+        out = written { d.stream(write_tall_two_frame_gif(File.join(@dir, 'alta.gif')), blitter: :pixel, scale: :none) }
+        expect(out.scan(/\e\[\d+A/).size).to eq(1)
+        expect(out).not_to include("\v")
+      end
+
       it 'stream si ferma con break e chiude l\'immagine' do
         allow(ffi).to receive(:ncdirect_raster_frame).and_call_original
         allow(ffi).to receive(:ncdirectf_free).and_call_original
