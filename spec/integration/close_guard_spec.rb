@@ -164,6 +164,35 @@ RSpec.describe "Chiusura durante un'operazione in corso (integrazione)" do
       RUBY
     end
 
+    it "Visual#dims: un Visual#close fra to_ptr e la chiamata C rinvia ncvisual_destroy" do
+      expect_exit(<<~RUBY)
+        #{prelude}
+        $armed = false
+        Notcurses::FFI.singleton_class.prepend(Module.new do
+          def ncvisual_geom(nc, v, *rest)
+            Process.kill('USR1', Process.pid) if $armed
+            $armed = false
+            use!(v, :ncvisual_geom)
+            super
+          end
+        end)
+        nc = Notcurses::Context.new(**CTX_OPTS)
+        v = Notcurses::Visual.from_file(MKV)
+        addr = v.to_ptr.address
+        trap('USR1') { v.close }
+        $armed = true
+        begin
+          dims = v.dims
+          v.dims
+          exit 3
+        rescue Notcurses::ClosedError
+          exit(dims.all?(&:positive?) && v.closed? && $freed.key?(addr) ? 0 : 4)
+        ensure
+          nc.close
+        end
+      RUBY
+    end
+
     %w[get getvec direct_get].each do |mode|
       it "#{mode}: un close durante l'attesa di un tasto dà ClosedError" do
         expect_exit(<<~RUBY)

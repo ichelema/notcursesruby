@@ -9,8 +9,13 @@ module Notcurses
   # wrapper usa i puntatori C (da un gestore +trap+ che poi torna al codice
   # interrotto, o da un altro thread durante una chiamata C senza GVL) segna
   # subito la radice chiusa per le chiamate nuove, ma rinvia lo stop: lo
-  # esegue l'ultima operazione che esce, nel suo thread. Il contatore è unico
-  # per il processo perché notcurses ammette un solo contesto.
+  # esegue l'ultima operazione che esce, nel suo thread. Lo stesso vale per
+  # +ncvisual_destroy+ di un {Visual#close}. Il contatore è unico per il
+  # processo perché notcurses ammette un solo contesto.
+  #
+  # Un oggetto può essere in coda più volte (un close ripetuto, o l'hook
+  # at_exit, rimette in coda una chiusura che un'eccezione asincrona ha tolto
+  # dalla coda): +release_native!+ esegue la chiusura una volta sola.
   #
   # Nessun lock. Ogni aggiornamento è una sola chiamata C (+<<+ e +pop+ di un
   # Array per le operazioni in corso, +<<+ e +shift+ per la coda), che né un
@@ -59,7 +64,7 @@ module Notcurses
       # Mette in coda la chiusura fisica di obj (+release_native!+). Il
       # chiamante ha già segnato obj chiuso per le chiamate nuove.
       #
-      # @param obj [Context, Direct]
+      # @param obj [Context, Direct, Visual]
       # @return [nil]
       def defer(obj)
         @pending << obj

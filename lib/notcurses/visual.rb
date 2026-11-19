@@ -143,7 +143,7 @@ module Notcurses
       @owner = context
       @closed = false
       @file = file
-      @in_use = 0 # operazioni in corso sul visual: rinviano ncvisual_destroy
+      @in_use = [] # un elemento per decode, decode_loop o stream in corso: rinviano ncvisual_destroy
       @native_token = [true]
       context.adopt(self)
     end
@@ -558,9 +558,10 @@ module Notcurses
     # stato disegnato non cambiano.
     #
     # Durante un'operazione in corso sul visual ({#decode}, {#decode_loop} o
-    # {#stream} in un altro thread, o un'operazione interrotta da un gestore
-    # +trap+) il visual risulta subito chiuso, e +ncvisual_destroy+ avviene
-    # alla fine dell'operazione, nel suo thread.
+    # {#stream} in un altro thread, o un'operazione del wrapper interrotta da
+    # un gestore +trap+, per esempio {#dims} o {#blit}) il visual risulta
+    # subito chiuso, e +ncvisual_destroy+ avviene alla fine dell'operazione,
+    # nel suo thread.
     #
     # @return [nil]
     # @raise [VisualError] dentro un callback chiamato da notcurses nel thread
@@ -570,18 +571,21 @@ module Notcurses
 
       ctx = @context
       ctx.check_not_in_callback!('Visual#close', VisualError) if ctx.in_callback?
-      @closed = true # prima di leggere @in_use
-      release_native! if @in_use.zero?
+      @closed = true # prima di leggere le operazioni in corso
+      settle_destroy if @in_use.empty? # altrimenti lo esegue visual_guard all'uscita
       nil
     end
     alias destroy close
 
-    # +ncvisual_destroy+, una sola volta: da {#close}, o all'uscita
-    # dell'ultima operazione in corso sul visual.
+    # +ncvisual_destroy+, una sola volta: da {#close} o all'uscita
+    # dell'ultima operazione in corso sul visual, attraverso {Guard}. Non fa
+    # niente durante {#decode}, {#decode_loop} o {#stream}: lo ripete
+    # visual_guard alla loro uscita.
     #
     # @api private
     # @return [nil]
     def release_native!
+      return nil unless @in_use.empty?
       return nil unless @native_token.pop
 
       FFI.ncvisual_destroy(@ptr)
@@ -1035,13 +1039,21 @@ module Notcurses
     # arrivato durante il blocco (da un gestore trap o da un altro thread)
     # distrugge il visual all'uscita.
     def visual_guard
-      @in_use += 1
+      @in_use << true # come Guard.run: una sola chiamata C, senza punti di interruzione
       begin
         yield
       ensure
-        @in_use -= 1
-        release_native! if @closed && @in_use.zero?
+        @in_use.pop
+        settle_destroy if @closed && @in_use.empty?
       end
+    end
+
+    # Mette il visual nella coda di {Guard}: +ncvisual_destroy+ avviene subito
+    # se nessuna operazione del wrapper è in corso, altrimenti all'uscita
+    # dell'ultima.
+    def settle_destroy
+      Guard.defer(self)
+      Guard.settle_if_idle
     end
 
     # Trampolino C → Ruby per ncstreamcb: 0 = continua, 1 = fermati, -1 =
