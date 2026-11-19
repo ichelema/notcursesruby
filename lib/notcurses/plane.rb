@@ -1694,6 +1694,11 @@ module Notcurses
     # cella vuota, come {Visual.blit_rgba}. Il controllo legge tutto il piano:
     # il costo è proporzionale alla sua area.
     #
+    # Bug di 3.0.17 non aggirato: con il cursore fuori da (0, 0) il C scrive
+    # fuori dal proprio buffer di pixel (fill.c:612-616) e corrompe la heap.
+    # Muovi il cursore in (0, 0) prima della chiamata, e per un codice in
+    # un'altra posizione usa un piano figlio.
+    #
     # @param data [String] byte da codificare, non vuoto
     # @param rows [Integer] righe disponibili, >= 1
     # @param cols [Integer] colonne disponibili, >= 1
