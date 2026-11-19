@@ -532,5 +532,20 @@ RSpec.describe "Chiusura durante un'operazione in corso (integrazione)" do
         RUBY
       end
     end
+
+    # Il repro della issue, con i tempi veri della chiamata C senza GVL: prima
+    # del fix 1 uscita su 60 era un SIGSEGV, quindi è una spec di regressione;
+    # le spec qui sopra aprono la finestra in modo deterministico.
+    it "il repro della issue (exit con un thread dentro decode_loop) esce con 0 in 20 corse su 20" do
+      script = <<~RUBY
+        require 'notcurses'
+        nc = Notcurses::Context.new(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true, drain_input: true)
+        v = Notcurses::Visual.from_file(#{mkv_path.inspect})
+        Thread.new { loop { v.decode_loop } rescue nil }
+        sleep 0.15
+        exit 0
+      RUBY
+      20.times { expect_exit(script) }
+    end
   end
 end
