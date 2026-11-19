@@ -318,7 +318,7 @@ module Notcurses
         @callback_depth = 0
         @callback_threads = {}.compare_by_identity
         @callback_errors_seen = 0
-        @native_token = [true] # una sola chiusura fisica (release_native!)
+        @claims = [] # richieste di chiusura fisica: la esegue solo la prima (release_native!)
         @closing = false
         @closer = nil
         @close_error = nil
@@ -445,9 +445,16 @@ module Notcurses
     def release_native!
       return mark_closed!(fclose: false) unless @pid == Process.pid
 
-      taken = stopping = false
+      return nil if @closed
+
+      claim = Object.new
+      stopping = false
       begin
-        return nil unless (taken = @native_token.pop) # una sola volta, anche se il contesto è in coda più volte
+        # una sola esecuzione, anche se il contesto è in coda più volte: la esegue la prima richiesta della
+        # lista. La lista, non una variabile locale, dice all'ensure se la chiusura era di questa esecuzione:
+        # un'eccezione asincrona può arrivare al ritorno di ogni metodo C
+        @claims << claim
+        return nil unless @claims.first.equal?(claim)
 
         @closer = Thread.current # per questo thread il contesto resta aperto: il close dei figli lo usa
         first_error = @close_error
@@ -463,10 +470,11 @@ module Notcurses
           mark_closed!(fclose: @own_fp)
         end
       ensure
-        if taken && !stopping # interrotta prima dello stop (eccezione asincrona): resta in attesa
+        if !stopping && @claims.first.equal?(claim) # interrotta prima dello stop (eccezione asincrona)
+          # resta in attesa: lo stato prima della lista, la lista prima della coda
           @closed = false
           @closer = nil
-          @native_token << true
+          @claims.clear
           Guard.defer(self)
         end
       end

@@ -235,7 +235,7 @@ module Notcurses
         @drain_input = drain_input
         @eof_input = nil
         @input_io = nil
-        @native_token = [true] # una sola chiusura fisica (release_native!)
+        @claims = [] # richieste di chiusura fisica: la esegue solo la prima (release_native!)
         @closing = false
         @closed = false
       rescue Exception # rubocop:disable Lint/RescueException
@@ -325,9 +325,14 @@ module Notcurses
     def release_native!
       return mark_closed!(fclose: false) unless @pid == Process.pid
 
-      taken = stopping = false
+      return nil if @closed
+
+      claim = Object.new
+      stopping = false
       begin
-        return nil unless (taken = @native_token.pop) # una sola volta, anche se il contesto è in coda più volte
+        # una sola esecuzione, anche se il contesto è in coda più volte: come in Context#release_native!
+        @claims << claim
+        return nil unless @claims.first.equal?(claim)
 
         # ncdirect_stop non resetta il FILE* (solo stdout): lo fa il wrapper, prima, perché lo stop ne fa ancora
         # il flush
@@ -344,9 +349,10 @@ module Notcurses
           mark_closed!(fclose: @own_fp)
         end
       ensure
-        if taken && !stopping # interrotta prima dello stop (eccezione asincrona): resta in attesa
+        if !stopping && @claims.first.equal?(claim) # interrotta prima dello stop (eccezione asincrona)
+          # resta in attesa: lo stato prima della lista, la lista prima della coda
           @closed = false
-          @native_token << true
+          @claims.clear
           Guard.defer(self)
         end
       end

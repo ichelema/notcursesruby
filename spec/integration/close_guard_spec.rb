@@ -76,6 +76,57 @@ RSpec.describe "Chiusura durante un'operazione in corso (integrazione)" do
     MKV = #{mkv_path.inspect}
   RUBY
 
+  # Punti in cui un'eccezione asincrona può arrivare: le righe (:line) dei
+  # metodi scelti da target e il ritorno dei metodi C chiamati da quelle righe
+  # (:c_return, dove Ruby consegna le interruzioni). Con target che
+  # restituisce :c_return, di quel metodo solo i ritorni dei metodi C.
+  # record_points li conta in una prima esecuzione senza eccezioni;
+  # interrupt_at solleva Interrupt una volta, la n-esima volta che il punto
+  # viene raggiunto.
+  def interrupt_points = <<~RUBY
+    def line_of(klass, meth, text)
+      file, first = klass.instance_method(meth).source_location
+      File.readlines(file).each_with_index.find { |l, i| i + 1 > first && l.include?(text) }.last + 1
+    end
+    def point_key(t) = t.event == :line ? [:line, t.path, t.lineno] : [:c_return, t.path, t.lineno, t.method_id]
+    def point_name((key, n)) = "\#{File.basename(key[1])}:\#{key[2]}\#{" \#{key[3]}" if key[3]} #\#{n}"
+    def record_points(target)
+      lines = {}
+      seen = Hash.new(0)
+      points = []
+      tp = TracePoint.new(:line, :c_return) do |t|
+        if t.event == :line
+          next unless (mode = target.call(t))
+
+          lines[[t.path, t.lineno]] = true
+          next if mode == :c_return
+        elsif !lines[[t.path, t.lineno]]
+          next
+        end
+        key = point_key(t)
+        points << [key, seen[key] += 1]
+      end
+      tp.enable { yield }
+      points
+    end
+    def interrupt_at((key, n))
+      seen = 0
+      fired = false
+      tp = TracePoint.new(:line, :c_return) do |t|
+        next if fired || point_key(t) != key || (seen += 1) != n
+
+        fired = true
+        raise Interrupt
+      end
+      begin
+        tp.enable { yield }
+      rescue Interrupt
+        nil
+      end
+      fired
+    end
+  RUBY
+
   describe "gestore trap che chiude e torna al codice interrotto (ICH-464)" do
     it "Context#render: 200 chiusure in tre finestre, sempre ClosedError e nessun uso del contesto liberato" do
       expect_exit(<<~RUBY, timeout: 60)
@@ -269,64 +320,92 @@ RSpec.describe "Chiusura durante un'operazione in corso (integrazione)" do
       expect(output).to include("stops=1")
     end
 
-    # Un'eccezione asincrona (un secondo Ctrl+C) può arrivare fra due righe
-    # qualsiasi della chiusura. Il TracePoint la solleva una volta in ogni riga
-    # di close, di Guard e di release_native! fino alla chiamata dello stop
-    # esclusa: dopo, un close ripetuto ferma notcurses una sola volta e libera
-    # il registro. Le righe vengono da una prima chiusura senza eccezioni.
+    # Un'eccezione asincrona (un secondo Ctrl+C) può arrivare a ogni riga e al
+    # ritorno di ogni metodo C. interrupt_points la solleva una volta in ognuno
+    # di questi punti di close, di Guard e di release_native! fino alla
+    # chiamata dello stop esclusa: dopo, un close ripetuto ferma notcurses una
+    # sola volta e libera il registro.
     {
       "Context" => ["Notcurses::Context.new(**CTX_OPTS)", "stop_notcurses(@ptr)"],
       "Direct" => ["Notcurses::Direct.new(**OPTS)", "FFI.ncdirect_stop(@ptr)"]
     }.each do |name, (create, stop_call)|
-      it "#{name}#close: un Interrupt in ogni riga prima dello stop non fa perdere lo stop" do
-        expect_exit(<<~RUBY, timeout: 60)
+      it "#{name}#close: un Interrupt in ogni punto prima dello stop non fa perdere lo stop" do
+        expect_exit(<<~RUBY, timeout: 120)
           #{prelude}
+          #{interrupt_points}
           KLASS = Notcurses::#{name}
-          file, first = KLASS.instance_method(:release_native!).source_location
-          STOP_LINE = File.readlines(file).each_with_index.find do |l, i|
-            i + 1 > first && l.include?(#{stop_call.inspect})
-          end.last + 1
-          GUARD_METHODS = %i[defer settle_if_idle settle].freeze
-          def target?(t)
+          STOP_LINE = line_of(KLASS, :release_native!, #{stop_call.inspect})
+          TARGET = lambda do |t|
             if t.path.end_with?('/notcurses/guard.rb')
-              GUARD_METHODS.include?(t.method_id)
+              %i[defer settle_if_idle settle].include?(t.method_id)
             elsif t.defined_class == KLASS
               t.method_id == :close || (t.method_id == :release_native! && t.lineno < STOP_LINE)
-            else
-              false
             end
           end
-          lines = []
           root = #{create}
-          TracePoint.new(:line) { |t| lines << [t.path, t.lineno] if target?(t) }.enable { root.close }
-          lines.uniq!
+          points = record_points(TARGET) { root.close }
           bad = []
-          lines.each do |path, lineno|
+          points.each do |point|
             root = #{create}
             stops = $stops
-            fired = false
-            tp = TracePoint.new(:line) do |t|
-              next if fired || t.lineno != lineno || t.path != path || !target?(t)
-
-              fired = true
-              raise Interrupt
-            end
-            begin
-              tp.enable { root.close }
-            rescue Interrupt
-              nil
-            end
+            fired = interrupt_at(point) { root.close }
             root.close
-            ok = fired && $stops == stops + 1 && Notcurses.active_context.nil?
-            bad << "\#{File.basename(path)}:\#{lineno} (stop: \#{$stops - stops})" unless ok
+            bad << point_name(point) unless fired && $stops == stops + 1 && Notcurses.active_context.nil?
           rescue Exception => e # rubocop:disable Lint/RescueException
-            bad << "\#{File.basename(path)}:\#{lineno} (\#{e.class})"
+            bad << "\#{point_name(point)} (\#{e.class})"
             break
           end
-          warn "righe: \#{lines.size}; senza stop: \#{bad.join(', ')}"
-          exit(lines.size > 10 && bad.empty? ? 0 : 4)
+          warn "punti: \#{points.size}; senza stop: \#{bad.join(', ')}"
+          exit(points.size > 20 && bad.empty? ? 0 : 4)
         RUBY
       end
+    end
+
+    it "Visual#close: un Interrupt in ogni punto prima di ncvisual_destroy non fa perdere il destroy" do
+      expect_exit(<<~RUBY, timeout: 120)
+        #{prelude}
+        #{interrupt_points}
+        $destroys = Hash.new(0)
+        Notcurses::FFI.singleton_class.prepend(Module.new do
+          def ncvisual_destroy(v) = ($destroys[v.address] += 1; super)
+          def ncvisual_decode(v) = ($close_inside&.call; $close_inside = nil; super)
+        end)
+        DESTROY_LINE = line_of(Notcurses::Visual, :release_native!, 'FFI.ncvisual_destroy(@ptr)')
+        TARGET = lambda do |t|
+          if t.path.end_with?('/notcurses/guard.rb')
+            %i[defer settle_if_idle settle running_here?].include?(t.method_id)
+          elsif t.defined_class == Notcurses::Visual
+            # di visual_guard solo i ritorni dei metodi C: Ruby consegna un'interruzione all'uscita del blocco,
+            # prima dell'ensure, non all'inizio della sua prima riga
+            next :c_return if t.method_id == :visual_guard
+
+            t.method_id == :close || (t.method_id == :release_native! && t.lineno < DESTROY_LINE)
+          end
+        end
+        nc = Notcurses::Context.new(**CTX_OPTS)
+        actions = {
+          'close' => ->(v) { v.close },
+          'close dentro decode' => ->(v) { $close_inside = -> { v.close }; v.decode }
+        }
+        bad = []
+        total = 0
+        actions.each do |label, action|
+          points = record_points(TARGET) { action.call(Notcurses::Visual.from_file(MKV)) }
+          total += points.size
+          points.each do |point|
+            v = Notcurses::Visual.from_file(MKV)
+            addr = v.to_ptr.address
+            before = $destroys[addr]
+            fired = interrupt_at(point) { action.call(v) }
+            $close_inside = nil
+            v.close
+            bad << "\#{label}: \#{point_name(point)}" unless fired && $destroys[addr] == before + 1
+          end
+        end
+        nc.close
+        warn "punti: \#{total}; senza destroy: \#{bad.join(', ')}"
+        exit(total > 20 && bad.empty? ? 0 : 4)
+      RUBY
     end
   end
 
@@ -531,6 +610,29 @@ RSpec.describe "Chiusura durante un'operazione in corso (integrazione)" do
           exit 0
         RUBY
       end
+    end
+
+    it "Visual#close durante un'operazione di un altro thread distrugge subito il visual" do
+      expect_exit(<<~RUBY)
+        #{prelude}
+        nc = Notcurses::Context.new(**CTX_OPTS)
+        streaming = Notcurses::Visual.from_file(MKV)
+        t = Thread.new do
+          streaming.stream(blitter: :ascii) { sleep 0.05; nil }
+        rescue Notcurses::ClosedError
+          :closed
+        end
+        sleep 0.01 until Notcurses::Guard.busy.positive?
+        v = Notcurses::Visual.from_file(MKV)
+        addr = v.to_ptr.address
+        v.close
+        destroyed_now = $freed.key?(addr)
+        streaming.close
+        r = t.value
+        nc.close
+        warn "destroyed_now=\#{destroyed_now} r=\#{r.inspect}"
+        exit(destroyed_now && r == :closed ? 0 : 4)
+      RUBY
     end
 
     # Il repro della issue, con i tempi veri della chiamata C senza GVL: prima

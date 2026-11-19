@@ -143,8 +143,9 @@ module Notcurses
       @owner = context
       @closed = false
       @file = file
-      @in_use = [] # un elemento per decode, decode_loop o stream in corso: rinviano ncvisual_destroy
-      @native_token = [true]
+      @in_use = [] # un oggetto per decode, decode_loop o stream in corso: rinviano ncvisual_destroy
+      @claims = [] # richieste di ncvisual_destroy: la esegue solo la prima (release_native!)
+      @destroyed = false
       context.adopt(self)
     end
 
@@ -557,38 +558,55 @@ module Notcurses
     # Distrugge il visual (+ncvisual_destroy+). Idempotente. I piani su cui è
     # stato disegnato non cambiano.
     #
-    # Durante un'operazione in corso sul visual ({#decode}, {#decode_loop} o
-    # {#stream} in un altro thread, o un'operazione del wrapper interrotta da
-    # un gestore +trap+, per esempio {#dims} o {#blit}) il visual risulta
-    # subito chiuso, e +ncvisual_destroy+ avviene alla fine dell'operazione,
-    # nel suo thread.
+    # Durante {#decode}, {#decode_loop} o {#stream} sul visual in un altro
+    # thread, o durante un'operazione del wrapper che un gestore +trap+ ha
+    # interrotto nel thread corrente (per esempio {#dims} o {#blit}), il
+    # visual risulta subito chiuso, e +ncvisual_destroy+ avviene alla fine
+    # dell'operazione, nel suo thread. Le operazioni in corso in altri thread
+    # su altri oggetti non rinviano la distruzione. Dopo un'eccezione
+    # asincrona arrivata prima della distruzione, un close successivo (o il
+    # close del contesto) la esegue.
     #
     # @return [nil]
     # @raise [VisualError] dentro un callback chiamato da notcurses nel thread
     #   corrente (per esempio il blocco di {#stream}, mentre il C usa il visual)
     def close
-      return nil if @closed
+      return nil if @destroyed
 
-      ctx = @context
-      ctx.check_not_in_callback!('Visual#close', VisualError) if ctx.in_callback?
-      @closed = true # prima di leggere le operazioni in corso
-      settle_destroy if @in_use.empty? # altrimenti lo esegue visual_guard all'uscita
+      unless @closed
+        ctx = @context
+        ctx.check_not_in_callback!('Visual#close', VisualError) if ctx.in_callback?
+        @closed = true # prima di leggere le operazioni in corso
+      end
+      return nil unless @in_use.empty? # lo distrugge visual_guard all'uscita
+
+      Guard.running_here? ? Guard.defer(self) : release_native!
       nil
     end
     alias destroy close
 
-    # +ncvisual_destroy+, una sola volta: da {#close} o all'uscita
-    # dell'ultima operazione in corso sul visual, attraverso {Guard}. Non fa
-    # niente durante {#decode}, {#decode_loop} o {#stream}: lo ripete
-    # visual_guard alla loro uscita.
+    # +ncvisual_destroy+, una sola volta: da {#close}, all'uscita di
+    # visual_guard o dalla coda di {Guard}. Non fa niente durante {#decode},
+    # {#decode_loop} o {#stream}: lo ripete visual_guard alla loro uscita.
     #
     # @api private
     # @return [nil]
     def release_native!
-      return nil unless @in_use.empty?
-      return nil unless @native_token.pop
+      return nil if @destroyed || !@in_use.empty?
 
-      FFI.ncvisual_destroy(@ptr)
+      claim = Object.new
+      destroying = false
+      begin
+        # una sola esecuzione: come in Context#release_native!
+        @claims << claim
+        return nil unless @claims.first.equal?(claim)
+
+        # prima della chiamata: Ruby consegna un'eccezione asincrona al suo ritorno, a visual già liberato
+        @destroyed = destroying = true
+        FFI.ncvisual_destroy(@ptr)
+      ensure
+        @claims.clear if !destroying && @claims.first.equal?(claim) # interrotta prima: un close la ripete
+      end
       @context.disown(self)
       nil
     end
@@ -1039,21 +1057,14 @@ module Notcurses
     # arrivato durante il blocco (da un gestore trap o da un altro thread)
     # distrugge il visual all'uscita.
     def visual_guard
-      @in_use << true # come Guard.run: una sola chiamata C, senza punti di interruzione
+      op = Object.new
       begin
+        @in_use << op # dentro il begin, con un oggetto unico: l'ensure toglie solo questa operazione
         yield
       ensure
-        @in_use.pop
-        settle_destroy if @closed && @in_use.empty?
+        @in_use.delete(op)
+        release_native! if @closed # un close arrivato durante il blocco
       end
-    end
-
-    # Mette il visual nella coda di {Guard}: +ncvisual_destroy+ avviene subito
-    # se nessuna operazione del wrapper è in corso, altrimenti all'uscita
-    # dell'ultima.
-    def settle_destroy
-      Guard.defer(self)
-      Guard.settle_if_idle
     end
 
     # Trampolino C → Ruby per ncstreamcb: 0 = continua, 1 = fermati, -1 =

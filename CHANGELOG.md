@@ -31,8 +31,10 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   solleva `ClosedError` invece di `Errno::EBADF`. `Context#close` dentro un callback chiamato dal C (per esempio
   da un gestore `trap` durante il blocco di `Visual#stream` o un callback di resize) non solleva più `ContextError`:
   lo stop avviene alla fine dell'operazione. Anche `Visual#close` da un gestore `trap` rinvia `ncvisual_destroy` alla
-  fine dell'operazione interrotta (per esempio `Visual#dims`). Un'eccezione asincrona (un secondo Ctrl+C) dentro
-  `close` prima dello stop non lo fa più perdere: un `close` successivo o l'hook `at_exit` lo eseguono una volta sola.
+  fine dell'operazione interrotta (per esempio `Visual#dims`); le operazioni in corso in altri thread non lo
+  rinviano. Un'eccezione asincrona (un secondo Ctrl+C) dentro `close` prima dello stop, anche al ritorno di un metodo
+  C, non lo fa più perdere: un `close` successivo o l'hook `at_exit` lo eseguono una volta sola. Lo stesso vale per
+  `ncvisual_destroy`: un `Visual#close` successivo o il close del contesto la eseguono.
   Un controllo statico e un audit nella suite (`to_ptr` fuori dalla guardia) tengono la copertura completa. Restano
   documentati due limiti: il close di un piano o di un widget da un gestore `trap` non è rinviato (ICH-540), e un
   Fiber sospeso dentro un'operazione tiene lo stop in attesa (ICH-541).

@@ -10,8 +10,9 @@ module Notcurses
   # interrotto, o da un altro thread durante una chiamata C senza GVL) segna
   # subito la radice chiusa per le chiamate nuove, ma rinvia lo stop: lo
   # esegue l'ultima operazione che esce, nel suo thread. Lo stesso vale per
-  # +ncvisual_destroy+ di un {Visual#close}. Il contatore è unico per il
-  # processo perché notcurses ammette un solo contesto.
+  # +ncvisual_destroy+ di un {Visual#close} chiamato dentro un'operazione del
+  # thread corrente (un gestore +trap+, vedi {running_here?}). Il contatore è
+  # unico per il processo perché notcurses ammette un solo contesto.
   #
   # Un oggetto può essere in coda più volte (un close ripetuto, o l'hook
   # at_exit, rimette in coda una chiusura che un'eccezione asincrona ha tolto
@@ -69,6 +70,15 @@ module Notcurses
       def defer(obj)
         @pending << obj
         nil
+      end
+
+      # true se il thread corrente è dentro un'operazione del wrapper: per
+      # esempio un gestore +trap+ che ha interrotto {run}. Legge la pila del
+      # thread, quindi costa solo a chi lo chiama ({Visual#close}).
+      #
+      # @return [Boolean]
+      def running_here?
+        !@ops.empty? && caller_locations.any? { |l| l.path == __FILE__ && l.base_label == "run" }
       end
 
       # Esegue le chiusure in coda se nessuna operazione è in corso.
