@@ -42,7 +42,8 @@ RSpec.describe 'Copertura delle funzioni FFI' do
     direct_printf: 'scrive su stdout e aggiunge "\n", varargs: Direct#print_aligned',
     direct_stream: 'ignora il ritorno del callback, SIGSEGV con vopts NULL, GVL per tutto il video: Direct#stream è scritto in Ruby',
     direct_get: 'chiamata attraverso l\'inline ncdirect_get_nblock',
-    simple_streamer: 'va in crash con vopts->n NULL; è già lo streamer predefinito di Visual#stream senza blocco',
+    simple_streamer: 'va in crash con vopts->n NULL; Visual#stream senza blocco ne fa il lavoro in Ruby (render e attesa) per ' \
+                     'controllare a ogni frame se il visual o il contesto sono stati chiusi',
     blit_rgb_packed: 'bug di 3.0.17 (passo di 1 byte invece di 3): Visual.blit_rgb_packed usa ncvisual_from_rgb_packed e ncvisual_blit',
     byte_order: 'macro di byte order: in Ruby i pixel si leggono e scrivono con pack/unpack',
     printf_format: 'macro di larghezza per i formati printf: Notcurses.metric e i *_prefix restituiscono String (si allineano con String#rjust)',

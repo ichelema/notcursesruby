@@ -34,11 +34,18 @@ module Notcurses
     # @return [Plane]
     # @raise [ClosedError] se il widget è chiuso
     def plane
-      to_ptr
-      @plane
+      Guard.run do
+        to_ptr
+        @plane
+      end
     end
 
     # Distrugge il widget e, se è suo, il piano. Idempotente.
+    #
+    # Da un gestore +trap+ che poi torna al codice interrotto, la distruzione
+    # non è rinviata come in {Context#close}: se il segnale ha interrotto
+    # un'operazione sul widget o sul suo piano, il C usa memoria già liberata.
+    # Da un gestore +trap+ non chiudere un widget in uso (ICH-540).
     #
     # @return [nil]
     # @raise [WidgetError] dentro un callback chiamato da notcurses (il C sta
@@ -71,14 +78,16 @@ module Notcurses
     #   wrapper (piano preso in prestito)
     # @raise [ClosedError] se il piano è chiuso
     def claim_plane!(plane)
-      raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
+      Guard.run do
+        raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
 
-      plane.to_ptr
-      raise WidgetError, 'lo stdplane non si può dare a un widget' if plane.stdplane?
-      raise WidgetError, 'il piano appartiene già a un widget' if plane.widget_plane?
-      raise WidgetError, 'il piano non è posseduto dal wrapper (preso in prestito?)' unless plane.owned?
+        plane.to_ptr
+        raise WidgetError, 'lo stdplane non si può dare a un widget' if plane.stdplane?
+        raise WidgetError, 'il piano appartiene già a un widget' if plane.widget_plane?
+        raise WidgetError, 'il piano non è posseduto dal wrapper (preso in prestito?)' unless plane.owned?
 
-      plane
+        plane
+      end
     end
 
     # Completa una creazione riuscita.

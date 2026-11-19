@@ -109,15 +109,17 @@ module Notcurses
     # @raise [ContextError] se +notcurses_stats_alloc+ restituisce NULL
     # @raise [ClosedError] se il contesto è chiuso
     def self.collect(context, reset:)
-      ptr = context.to_ptr
-      st = FFI.notcurses_stats_alloc(ptr)
-      raise ContextError, 'notcurses_stats_alloc ha restituito NULL' if st.null?
+      Guard.run do
+        ptr = context.to_ptr
+        st = FFI.notcurses_stats_alloc(ptr)
+        raise ContextError, 'notcurses_stats_alloc ha restituito NULL' if st.null?
 
-      begin
-        reset ? FFI.notcurses_stats_reset(ptr, st) : FFI.notcurses_stats(ptr, st)
-        new(st)
-      ensure
-        Util.free(st.to_ptr)
+        begin
+          reset ? FFI.notcurses_stats_reset(ptr, st) : FFI.notcurses_stats(ptr, st)
+          new(st)
+        ensure
+          Util.free(st.to_ptr)
+        end
       end
     end
 

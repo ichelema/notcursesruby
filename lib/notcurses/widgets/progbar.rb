@@ -57,22 +57,24 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un'opzione non è valida
     # @raise [ClosedError] se il piano è chiuso
     def initialize(plane, ul_channel: 0, ur_channel: 0, bl_channel: 0, br_channel: 0, retrograde: false)
-      claim_plane!(plane)
-      ctx = plane.context
-      ctx.check_not_in_callback!('ProgBar.new', WidgetError)
-      opts = FFI::NcProgbarOptions.new
-      opts[:ulchannel] = Util.channel_value(ul_channel, 'ul_channel')
-      opts[:urchannel] = Util.channel_value(ur_channel, 'ur_channel')
-      opts[:blchannel] = Util.channel_value(bl_channel, 'bl_channel')
-      opts[:brchannel] = Util.channel_value(br_channel, 'br_channel')
-      opts[:flags] = Util.flag(retrograde, FFI::NCPROGBAR_OPTION_RETROGRADE, 'retrograde')
-      ptr = FFI.ncprogbar_create(plane.to_ptr, opts)
-      if ptr.null?
-        plane_destroyed_on_failure!(plane)
-        raise WidgetError, 'ncprogbar_create ha restituito NULL (il piano è stato distrutto)'
+      Guard.run do
+        claim_plane!(plane)
+        ctx = plane.context
+        ctx.check_not_in_callback!('ProgBar.new', WidgetError)
+        opts = FFI::NcProgbarOptions.new
+        opts[:ulchannel] = Util.channel_value(ul_channel, 'ul_channel')
+        opts[:urchannel] = Util.channel_value(ur_channel, 'ur_channel')
+        opts[:blchannel] = Util.channel_value(bl_channel, 'bl_channel')
+        opts[:brchannel] = Util.channel_value(br_channel, 'br_channel')
+        opts[:flags] = Util.flag(retrograde, FFI::NCPROGBAR_OPTION_RETROGRADE, 'retrograde')
+        ptr = FFI.ncprogbar_create(plane.to_ptr, opts)
+        if ptr.null?
+          plane_destroyed_on_failure!(plane)
+          raise WidgetError, 'ncprogbar_create ha restituito NULL (il piano è stato distrutto)'
+        end
+        attach!(ptr, plane)
+        @progress_set = false
       end
-      attach!(ptr, plane)
-      @progress_set = false
     end
 
     # Piano della barra (+ncprogbar_plane+): lo stesso Plane passato a
@@ -80,7 +82,7 @@ module Notcurses
     #
     # @return [Plane]
     # @raise [ClosedError] se la barra è chiusa
-    def plane = @context.plane_for(FFI.ncprogbar_plane(to_ptr))
+    def plane = Guard.run { @context.plane_for(FFI.ncprogbar_plane(to_ptr)) }
 
     # Avanzamento corrente (+ncprogbar_progress+).
     #
@@ -91,8 +93,10 @@ module Notcurses
     #   impostato, vedi {#progress=})
     # @raise [ClosedError] se la barra è chiusa
     def progress
-      ptr = to_ptr
-      @progress_set ? FFI.ncprogbar_progress(ptr) : 0.0
+      Guard.run do
+        ptr = to_ptr
+        @progress_set ? FFI.ncprogbar_progress(ptr) : 0.0
+      end
     end
 
     # Imposta l'avanzamento e ridisegna la barra (+ncprogbar_set_progress+),
@@ -115,16 +119,18 @@ module Notcurses
     #   in 0..1
     # @raise [ClosedError] se la barra è chiusa
     def progress=(value)
-      ptr = to_ptr
-      p = edge_safe(Util.float!(value, 'progress', 0.0..1.0))
-      rc = FFI.ncprogbar_set_progress(ptr, p)
-      @progress_set = true # il C memorizza p anche se poi il disegno fallisce
-      Util.check!(rc, WidgetError, 'ncprogbar_set_progress')
+      Guard.run do
+        ptr = to_ptr
+        p = edge_safe(Util.float!(value, 'progress', 0.0..1.0))
+        rc = FFI.ncprogbar_set_progress(ptr, p)
+        @progress_set = true # il C memorizza p anche se poi il disegno fallisce
+        Util.check!(rc, WidgetError, 'ncprogbar_set_progress')
+      end
     end
 
     private
 
-    def destroy_native = FFI.ncprogbar_destroy(to_ptr)
+    def destroy_native = Guard.run { FFI.ncprogbar_destroy(to_ptr) }
 
     # Aritmetica di progbar_redraw nella build di 3.0.17 (disassemblata:
     # notcurses compila con -freciprocal-math, quindi range * p invece di
@@ -132,15 +138,17 @@ module Notcurses
     # trunc((p - (1 / range) * chunks) * (range * 8)). Con chunks >= range il
     # C non disegna il bordo. Abbassa p finché l'indice è < 8.
     def edge_safe(p)
-      view = @plane.to_ptr
-      rows = FFI.ncplane_dim_y(view)
-      cols = FFI.ncplane_dim_x(view)
-      range = cols > rows ? cols : rows
-      loop do
-        chunks = (range * p).to_i
-        return p if chunks >= range || ((p - ((1.0 / range) * chunks)) * (range * 8.0)).to_i < 8
+      Guard.run do
+        view = @plane.to_ptr
+        rows = FFI.ncplane_dim_y(view)
+        cols = FFI.ncplane_dim_x(view)
+        range = cols > rows ? cols : rows
+        loop do
+          chunks = (range * p).to_i
+          return p if chunks >= range || ((p - ((1.0 / range) * chunks)) * (range * 8.0)).to_i < 8
 
-        p = p.prev_float
+          p = p.prev_float
+        end
       end
     end
   end

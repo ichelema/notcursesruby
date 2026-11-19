@@ -114,23 +114,25 @@ module Notcurses
     # @raise [ClosedError] se il piano è chiuso
     def initialize(plane, border_mask: 0, border_channels: 0, tablet_mask: 0, tablet_channels: 0,
                    focused_channels: 0, infinite_scroll: false, circular: false)
-      claim_plane!(plane)
-      plane.context.check_not_in_callback!('Reel.new', WidgetError)
-      @border_mask = mask!(border_mask, 'border_mask')
-      @tablet_mask = mask!(tablet_mask, 'tablet_mask')
-      @border_channels = Util.channels_value(border_channels, 'border_channels')
-      @tablet_channels = Util.channels_value(tablet_channels, 'tablet_channels')
-      @focused_channels = Util.channels_value(focused_channels, 'focused_channels')
-      @infinite_scroll = Util.bool!(infinite_scroll, 'infinite_scroll')
-      @circular = Util.bool!(circular, 'circular')
-      raise ArgumentError, 'circular: true richiede infinite_scroll: true' if @circular && !@infinite_scroll
+      Guard.run do
+        claim_plane!(plane)
+        plane.context.check_not_in_callback!('Reel.new', WidgetError)
+        @border_mask = mask!(border_mask, 'border_mask')
+        @tablet_mask = mask!(tablet_mask, 'tablet_mask')
+        @border_channels = Util.channels_value(border_channels, 'border_channels')
+        @tablet_channels = Util.channels_value(tablet_channels, 'tablet_channels')
+        @focused_channels = Util.channels_value(focused_channels, 'focused_channels')
+        @infinite_scroll = Util.bool!(infinite_scroll, 'infinite_scroll')
+        @circular = Util.bool!(circular, 'circular')
+        raise ArgumentError, 'circular: true richiede infinite_scroll: true' if @circular && !@infinite_scroll
 
-      @tablets = []
-      @focused = nil
-      @direction = :down
-      @drawing = false
-      attach!(plane.to_ptr, plane, owns_plane: true)
-      layout_redraw
+        @tablets = []
+        @focused = nil
+        @direction = :down
+        @drawing = false
+        attach!(plane.to_ptr, plane, owns_plane: true)
+        layout_redraw
+      end
     end
 
     # Distrugge i piani dei tablet e il piano del reel (i figli creati
@@ -285,22 +287,28 @@ module Notcurses
     # @return [Tablet, nil] tablet con il fuoco, nil se il reel è vuoto
     # @raise [ClosedError] se il reel è chiuso
     def focused
-      to_ptr
-      @focused
+      Guard.run do
+        to_ptr
+        @focused
+      end
     end
 
     # @return [Array<Tablet>] tablet in ordine
     # @raise [ClosedError] se il reel è chiuso
     def tablets
-      to_ptr
-      @tablets.dup
+      Guard.run do
+        to_ptr
+        @tablets.dup
+      end
     end
 
     # @return [Integer] numero di tablet
     # @raise [ClosedError] se il reel è chiuso
     def tablet_count
-      to_ptr
-      @tablets.size
+      Guard.run do
+        to_ptr
+        @tablets.size
+      end
     end
     alias size tablet_count
 
@@ -311,15 +319,19 @@ module Notcurses
     private
 
     def destroy_native
-      @tablets.each { |tablet| wipe(tablet) }
-      FFI.ncplane_destroy(@ptr)
+      Guard.run do
+        @tablets.each { |tablet| wipe(tablet) }
+        FFI.ncplane_destroy(@ptr)
+      end
     end
 
     # Puntatore del piano del reel, fuori dai blocchi dei tablet.
     def idle!
-      raise WidgetError, 'Notcurses::Reel: metodo non permesso dentro il blocco di un tablet' if @drawing
+      Guard.run do
+        raise WidgetError, 'Notcurses::Reel: metodo non permesso dentro il blocco di un tablet' if @drawing
 
-      to_ptr
+        to_ptr
+      end
     end
 
     # @return [Integer] maschera 0..15

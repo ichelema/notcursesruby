@@ -91,32 +91,34 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un'opzione non è valida
     # @raise [ClosedError] se parent è chiuso
     def initialize(parent, sections:, bottom: false, header_channels: 0, section_channels: 0)
-      raise TypeError, "parent deve essere Notcurses::Plane, non #{parent.class}" unless parent.is_a?(Plane)
+      Guard.run do
+        raise TypeError, "parent deve essere Notcurses::Plane, non #{parent.class}" unless parent.is_a?(Plane)
 
-      parent_ptr = parent.to_ptr
-      ctx = parent.context
-      ctx.check_not_in_callback!('Menu.new', WidgetError)
-      @sections = mirror_sections(sections)
-      keep = [] # MemoryPointer di stringhe e vettori: il C li copia durante la chiamata
-      secs = ::FFI::MemoryPointer.new(FFI::NcMenuSection, @sections.size)
-      @sections.each_with_index do |sec, si|
-        next if sec.nil? # divisore: struct azzerata (name NULL)
+        parent_ptr = parent.to_ptr
+        ctx = parent.context
+        ctx.check_not_in_callback!('Menu.new', WidgetError)
+        @sections = mirror_sections(sections)
+        keep = [] # MemoryPointer di stringhe e vettori: il C li copia durante la chiamata
+        secs = ::FFI::MemoryPointer.new(FFI::NcMenuSection, @sections.size)
+        @sections.each_with_index do |sec, si|
+          next if sec.nil? # divisore: struct azzerata (name NULL)
 
-        s = FFI::NcMenuSection.new(secs + (si * FFI::NcMenuSection.size))
-        s[:name] = c_text(sec[:name], keep)
-        s[:itemcount] = sec[:items].size
-        s[:items] = c_items(sec[:items], si, keep)
-        put_input(s[:shortcut], sec[:shortcut]) if sec[:shortcut]
+          s = FFI::NcMenuSection.new(secs + (si * FFI::NcMenuSection.size))
+          s[:name] = c_text(sec[:name], keep)
+          s[:itemcount] = sec[:items].size
+          s[:items] = c_items(sec[:items], si, keep)
+          put_input(s[:shortcut], sec[:shortcut]) if sec[:shortcut]
+        end
+        opts = FFI::NcMenuOptions.new
+        opts[:sections] = secs
+        opts[:sectioncount] = @sections.size
+        opts[:headerchannels] = Util.channels_value(header_channels, 'header_channels')
+        opts[:sectionchannels] = Util.channels_value(section_channels, 'section_channels')
+        opts[:flags] = Util.flag(bottom, FFI::NCMENU_OPTION_BOTTOM, 'bottom')
+        ptr = Util.check_ptr!(FFI.ncmenu_create(parent_ptr, opts), WidgetError, 'ncmenu_create')
+        # il piano del menu lo crea il C e lo distrugge ncmenu_destroy
+        attach!(ptr, Plane.new(FFI.ncmenu_plane(ptr), owned: false, context: ctx))
       end
-      opts = FFI::NcMenuOptions.new
-      opts[:sections] = secs
-      opts[:sectioncount] = @sections.size
-      opts[:headerchannels] = Util.channels_value(header_channels, 'header_channels')
-      opts[:sectionchannels] = Util.channels_value(section_channels, 'section_channels')
-      opts[:flags] = Util.flag(bottom, FFI::NCMENU_OPTION_BOTTOM, 'bottom')
-      ptr = Util.check_ptr!(FFI.ncmenu_create(parent_ptr, opts), WidgetError, 'ncmenu_create')
-      # il piano del menu lo crea il C e lo distrugge ncmenu_destroy
-      attach!(ptr, Plane.new(FFI.ncmenu_plane(ptr), owned: false, context: ctx))
     end
 
     # Piano del menu (+ncmenu_plane+): figlio di parent, creato dal menu. Non
@@ -124,7 +126,7 @@ module Notcurses
     #
     # @return [Plane]
     # @raise [ClosedError] se il menu è chiuso
-    def plane = @context.plane_for(FFI.ncmenu_plane(to_ptr))
+    def plane = Guard.run { @context.plane_for(FFI.ncmenu_plane(to_ptr)) }
 
     # Srotola una sezione (+ncmenu_unroll+), chiudendo quella aperta, e
     # seleziona la sua prima voce abilitata se non ne aveva una selezionata.
@@ -137,12 +139,14 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se index non è un indice valido
     # @raise [ClosedError] se il menu è chiuso
     def unroll(index)
-      ptr = to_ptr
-      Util.integer!(index, 'index', 0...@sections.size)
-      return false unless unrollable?(index)
+      Guard.run do
+        ptr = to_ptr
+        Util.integer!(index, 'index', 0...@sections.size)
+        return false unless unrollable?(index)
 
-      Util.check!(FFI.ncmenu_unroll(ptr, index), WidgetError, 'ncmenu_unroll')
-      true
+        Util.check!(FFI.ncmenu_unroll(ptr, index), WidgetError, 'ncmenu_unroll')
+        true
+      end
     end
 
     # Chiude la sezione aperta (+ncmenu_rollup+); senza sezioni aperte non fa
@@ -152,8 +156,10 @@ module Notcurses
     # @raise [WidgetError] se il disegno dell'intestazione fallisce
     # @raise [ClosedError] se il menu è chiuso
     def rollup
-      Util.check!(FFI.ncmenu_rollup(to_ptr), WidgetError, 'ncmenu_rollup')
-      self
+      Guard.run do
+        Util.check!(FFI.ncmenu_rollup(to_ptr), WidgetError, 'ncmenu_rollup')
+        self
+      end
     end
 
     # Srotola la sezione successiva che si può aprire, dopo l'ultima la prima
@@ -165,11 +171,13 @@ module Notcurses
     # @raise [WidgetError] se il disegno fallisce
     # @raise [ClosedError] se il menu è chiuso
     def next_section
-      ptr = to_ptr
-      return false unless any_unrollable?
+      Guard.run do
+        ptr = to_ptr
+        return false unless any_unrollable?
 
-      Util.check!(FFI.ncmenu_nextsection(ptr), WidgetError, 'ncmenu_nextsection')
-      true
+        Util.check!(FFI.ncmenu_nextsection(ptr), WidgetError, 'ncmenu_nextsection')
+        true
+      end
     end
 
     # Srotola la sezione precedente che si può aprire, prima della prima
@@ -181,11 +189,13 @@ module Notcurses
     # @raise [WidgetError] se il disegno fallisce
     # @raise [ClosedError] se il menu è chiuso
     def prev_section
-      ptr = to_ptr
-      return false unless any_unrollable?
+      Guard.run do
+        ptr = to_ptr
+        return false unless any_unrollable?
 
-      Util.check!(FFI.ncmenu_prevsection(ptr), WidgetError, 'ncmenu_prevsection')
-      true
+        Util.check!(FFI.ncmenu_prevsection(ptr), WidgetError, 'ncmenu_prevsection')
+        true
+      end
     end
 
     # Seleziona la voce abilitata successiva della sezione aperta, dopo
@@ -197,11 +207,13 @@ module Notcurses
     # @raise [WidgetError] se il disegno fallisce
     # @raise [ClosedError] se il menu è chiuso
     def next_item
-      ptr = to_ptr
-      return nil unless item_move_ready?(ptr)
+      Guard.run do
+        ptr = to_ptr
+        return nil unless item_move_ready?(ptr)
 
-      Util.check!(FFI.ncmenu_nextitem(ptr), WidgetError, 'ncmenu_nextitem')
-      selected
+        Util.check!(FFI.ncmenu_nextitem(ptr), WidgetError, 'ncmenu_nextitem')
+        selected
+      end
     end
 
     # Seleziona la voce abilitata precedente della sezione aperta, prima della
@@ -213,11 +225,13 @@ module Notcurses
     # @raise [WidgetError] se il disegno fallisce
     # @raise [ClosedError] se il menu è chiuso
     def prev_item
-      ptr = to_ptr
-      return nil unless item_move_ready?(ptr)
+      Guard.run do
+        ptr = to_ptr
+        return nil unless item_move_ready?(ptr)
 
-      Util.check!(FFI.ncmenu_previtem(ptr), WidgetError, 'ncmenu_previtem')
-      selected
+        Util.check!(FFI.ncmenu_previtem(ptr), WidgetError, 'ncmenu_previtem')
+        selected
+      end
     end
 
     # Voce selezionata nella sezione aperta (+ncmenu_selected+).
@@ -227,8 +241,10 @@ module Notcurses
     #   3.0.17 disabilitare una voce non sposta la selezione)
     # @raise [ClosedError] se il menu è chiuso
     def selected
-      ni = FFI::NcInput.new
-      item_at(FFI.ncmenu_selected(to_ptr, ni), ni)
+      Guard.run do
+        ni = FFI::NcInput.new
+        item_at(FFI.ncmenu_selected(to_ptr, ni), ni)
+      end
     end
 
     # Voce sotto un clic (+ncmenu_mouse_selected+), senza cambiare la
@@ -244,12 +260,14 @@ module Notcurses
     # @raise [TypeError] se click non è un Input
     # @raise [ClosedError] se il menu è chiuso
     def mouse_selected(click)
-      ptr = to_ptr
-      ni = input_struct(click)
-      return nil if ni.nil?
+      Guard.run do
+        ptr = to_ptr
+        ni = input_struct(click)
+        return nil if ni.nil?
 
-      out = FFI::NcInput.new
-      item_at(FFI.ncmenu_mouse_selected(ptr, ni, out), out)
+        out = FFI::NcInput.new
+        item_at(FFI.ncmenu_mouse_selected(ptr, ni, out), out)
+      end
     end
 
     # Passa un evento al menu (+ncmenu_offer_input+). Consuma:
@@ -274,13 +292,15 @@ module Notcurses
     # @raise [TypeError] se input non è un Input
     # @raise [ClosedError] se il menu è chiuso
     def offer_input(input)
-      ptr = to_ptr
-      ni = input_struct(input)
-      return false if ni.nil?
-      return true if FFI.ncmenu_offer_input(ptr, ni)
+      Guard.run do
+        ptr = to_ptr
+        ni = input_struct(input)
+        return false if ni.nil?
+        return true if FFI.ncmenu_offer_input(ptr, ni)
 
-      # menu.c:721-726: il clic su una voce abilitata la seleziona ma restituisce false
-      input.id == Key::BUTTON1 && input.release? && !FFI.ncmenu_mouse_selected(ptr, ni, nil).nil?
+        # menu.c:721-726: il clic su una voce abilitata la seleziona ma restituisce false
+        input.id == Key::BUTTON1 && input.release? && !FFI.ncmenu_mouse_selected(ptr, ni, nil).nil?
+      end
     end
 
     # Abilita o disabilita una voce (+ncmenu_item_set_status+) e ridisegna.
@@ -305,27 +325,29 @@ module Notcurses
     # @raise [TypeError] se un argomento non ha il tipo giusto
     # @raise [ClosedError] se il menu è chiuso
     def set_item_enabled(section, item, enabled)
-      ptr = to_ptr
-      Util.bool!(enabled, 'enabled')
-      si, ii = locate!(section, item)
-      divider = @sections.index(nil)
-      if divider && si > divider
-        raise WidgetError, "set_item_enabled: la sezione #{section.inspect} viene dopo il divisore " \
-                           '(notcurses 3.0.17 andrebbe in segfault)'
-      end
-      sec = @sections[si]
-      if sec[:items].first(ii).include?(nil)
-        raise WidgetError, "set_item_enabled: la voce #{item.inspect} viene dopo un separatore " \
-                           '(notcurses 3.0.17 andrebbe in segfault)'
-      end
-      return self if sec[:enabled][ii] == enabled
+      Guard.run do
+        ptr = to_ptr
+        Util.bool!(enabled, 'enabled')
+        si, ii = locate!(section, item)
+        divider = @sections.index(nil)
+        if divider && si > divider
+          raise WidgetError, "set_item_enabled: la sezione #{section.inspect} viene dopo il divisore " \
+                             '(notcurses 3.0.17 andrebbe in segfault)'
+        end
+        sec = @sections[si]
+        if sec[:items].first(ii).include?(nil)
+          raise WidgetError, "set_item_enabled: la voce #{item.inspect} viene dopo un separatore " \
+                             '(notcurses 3.0.17 andrebbe in segfault)'
+        end
+        return self if sec[:enabled][ii] == enabled
 
-      2.times do
-        rc = FFI.ncmenu_item_set_status(ptr, sec[:name], sec[:items][ii].desc, enabled)
-        Util.check!(rc, WidgetError, 'ncmenu_item_set_status')
+        2.times do
+          rc = FFI.ncmenu_item_set_status(ptr, sec[:name], sec[:items][ii].desc, enabled)
+          Util.check!(rc, WidgetError, 'ncmenu_item_set_status')
+        end
+        sec[:enabled][ii] = enabled
+        self
       end
-      sec[:enabled][ii] = enabled
-      self
     end
 
     # @param section [String] nome della sezione (con nomi ripetuti, la prima)
@@ -335,14 +357,16 @@ module Notcurses
     # @raise [TypeError] se un argomento non è una String
     # @raise [ClosedError] se il menu è chiuso
     def item_enabled?(section, item)
-      to_ptr
-      si, ii = locate!(section, item)
-      @sections[si][:enabled][ii]
+      Guard.run do
+        to_ptr
+        si, ii = locate!(section, item)
+        @sections[si][:enabled][ii]
+      end
     end
 
     private
 
-    def destroy_native = FFI.ncmenu_destroy(to_ptr)
+    def destroy_native = Guard.run { FFI.ncmenu_destroy(to_ptr) }
 
     # Specchio Ruby delle sezioni: nil per il divisore; per le altre
     # { name:, shortcut:, items: [Item o nil], enabled: [Boolean o nil] }.
@@ -425,7 +449,9 @@ module Notcurses
 
     # Copia l'evento nella struct ncinput annidata dst.
     def put_input(dst, input)
-      dst.to_ptr.put_bytes(0, input.to_ffi.to_ptr.get_bytes(0, FFI::NcInput.size))
+      Guard.run do
+        dst.to_ptr.put_bytes(0, input.to_ffi.to_ptr.get_bytes(0, FFI::NcInput.size))
+      end
     end
 
     # @return [Item, nil] voce con la posizione copiata dal C in ni; nil se

@@ -143,6 +143,9 @@ module Notcurses
       @owner = context
       @closed = false
       @file = file
+      @in_use = [] # un oggetto per decode, decode_loop o stream in corso: rinviano ncvisual_destroy
+      @claims = [] # richieste di ncvisual_destroy: la esegue solo la prima (release_native!)
+      @destroyed = false
       context.adopt(self)
     end
 
@@ -166,7 +169,10 @@ module Notcurses
     # Thread: la chiamata C apre e legge il file con ffmpeg senza il GVL (una
     # FIFO, un URL o un file system lento non hanno limite di tempo): gli altri
     # thread Ruby girano, ma non devono usare lo stesso contesto finché la
-    # chiamata non torna. Un'eccezione asincrona (Ctrl-C, Thread#raise,
+    # chiamata non torna. La chiamata C non usa il contesto: un {Context#close}
+    # durante la lettura (da un altro thread o dall'hook at_exit) ferma subito
+    # notcurses, e al ritorno from_file distrugge il visual appena creato e
+    # solleva ClosedError. Un'eccezione asincrona (Ctrl-C, Thread#raise,
     # Timeout, il kill di {FdPlane#close}) arriva al ritorno della chiamata C:
     # il visual creato dal C resta allocato, con il file aperto, fino alla fine
     # del processo.
@@ -177,18 +183,27 @@ module Notcurses
     # @raise [VisualError] se il file non esiste, non è multimediale, non ha uno
     #   stream video, o se notcurses non ha ffmpeg (contesto aperto con core: true)
     # @raise [TypeError, ArgumentError] se path non è un percorso valido
-    # @raise [ClosedError] se non c'è un Context attivo
+    # @raise [ClosedError] se non c'è un Context attivo, o se il contesto viene
+    #   chiuso durante la lettura
     def self.from_file(path, &block)
       ctx = Internal.context!
       file = Util.string!(File.path(path), 'path')
       raise ArgumentError, 'path è vuoto' if file.empty?
 
+      # la chiamata C non usa il contesto: un close durante la lettura lo ferma subito
       ptr = FFI.ncvisual_from_file(file)
       if ptr.null?
         raise VisualError, "ncvisual_from_file(#{file.inspect}) ha restituito NULL (file inesistente, non " \
                            'multimediale o senza stream video? contesto aperto con core: true?)'
       end
-      Util.with_resource(new(ptr, ctx, file: true), &block)
+      visual = Guard.run do
+        ctx.to_ptr # contesto chiuso durante la lettura: il visual non ha più un contesto a cui appartenere
+        new(ptr, ctx, file: true)
+      rescue ClosedError
+        FFI.ncvisual_destroy(ptr)
+        raise
+      end
+      Util.with_resource(visual, &block)
     end
 
     # Visual da pixel RGBA (+ncvisual_from_rgba+): 4 byte per pixel, R, G, B,
@@ -344,12 +359,14 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il piano è chiuso
     def self.from_plane(plane, blitter:, y: 0, x: 0, rows: nil, cols: nil, &block)
-      raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
+      Guard.run do
+        raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
 
-      begy, begx, leny, lenx = Util.c_region(y, x, rows, cols)
-      ptr = FFI.ncvisual_from_plane(plane.to_ptr, Util.image_blitter_value(blitter), begy, begx, leny, lenx)
-      wrap(plane.context, ptr, 'ncvisual_from_plane (blitter :default o :pixel? regione fuori dal piano? celle ' \
-                               'con glifi diversi da spazi e blocchi?)', &block)
+        begy, begx, leny, lenx = Util.c_region(y, x, rows, cols)
+        ptr = FFI.ncvisual_from_plane(plane.to_ptr, Util.image_blitter_value(blitter), begy, begx, leny, lenx)
+        wrap(plane.context, ptr, 'ncvisual_from_plane (blitter :default o :pixel? regione fuori dal piano? celle ' \
+                                 'con glifi diversi da spazi e blocchi?)', &block)
+      end
     end
 
     # Visual da una sequenza sixel (+ncvisual_from_sixel+), per esempio
@@ -404,8 +421,10 @@ module Notcurses
     # @raise [ArgumentError] se scale non è valido
     # @raise [ClosedError] se non c'è un Context attivo
     def self.media_default_blitter(scale: :none)
-      ctx = Internal.context!
-      Util.enum_symbol(Util::BLITTERS, FFI.ncvisual_media_defblitter(ctx.to_ptr, Util.scale_value(scale)))
+      Guard.run do
+        ctx = Internal.context!
+        Util.enum_symbol(Util::BLITTERS, FFI.ncvisual_media_defblitter(ctx.to_ptr, Util.scale_value(scale)))
+      end
     end
 
     # Disegna pixel RGBA su un piano senza creare un Visual (+ncblit_rgba+).
@@ -489,11 +508,13 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il piano è chiuso
     def self.blit_rgb_packed(data, plane:, rows:, cols:, rowstride: nil, alpha: 255, **options)
-      raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
+      Guard.run do
+        raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
 
-      from_rgb_packed(data, rows: rows, cols: cols, rowstride: rowstride, alpha: alpha) do |visual|
-        blit_buffer(plane, rows, cols, 'ncvisual_blit', options) do |vopts|
-          FFI.ncvisual_blit(plane.context.to_ptr, visual.to_ptr, vopts).null? ? -1 : 0
+        from_rgb_packed(data, rows: rows, cols: cols, rowstride: rowstride, alpha: alpha) do |visual|
+          blit_buffer(plane, rows, cols, 'ncvisual_blit', options) do |vopts|
+            FFI.ncvisual_blit(plane.context.to_ptr, visual.to_ptr, vopts).null? ? -1 : 0
+          end
         end
       end
     end
@@ -537,20 +558,58 @@ module Notcurses
     # Distrugge il visual (+ncvisual_destroy+). Idempotente. I piani su cui è
     # stato disegnato non cambiano.
     #
+    # Durante {#decode}, {#decode_loop} o {#stream} sul visual in un altro
+    # thread, o durante un'operazione del wrapper che un gestore +trap+ ha
+    # interrotto nel thread corrente (per esempio {#dims} o {#blit}), il
+    # visual risulta subito chiuso, e +ncvisual_destroy+ avviene alla fine
+    # dell'operazione, nel suo thread. Le operazioni in corso in altri thread
+    # su altri oggetti non rinviano la distruzione. Dopo un'eccezione
+    # asincrona arrivata prima della distruzione, un close successivo (o il
+    # close del contesto) la esegue.
+    #
     # @return [nil]
-    # @raise [VisualError] dentro un callback chiamato da notcurses (per esempio
-    #   il blocco di {#stream}, mentre il C usa il visual)
+    # @raise [VisualError] dentro un callback chiamato da notcurses nel thread
+    #   corrente (per esempio il blocco di {#stream}, mentre il C usa il visual)
     def close
-      return nil if @closed
+      return nil if @destroyed
 
-      ctx = @context
-      ctx.check_not_in_callback!('Visual#close', VisualError)
-      FFI.ncvisual_destroy(@ptr)
-      @closed = true
-      ctx.disown(self)
+      unless @closed
+        ctx = @context
+        ctx.check_not_in_callback!('Visual#close', VisualError) if ctx.in_callback?
+        @closed = true # prima di leggere le operazioni in corso
+      end
+      return nil unless @in_use.empty? # lo distrugge visual_guard all'uscita
+
+      Guard.running_here? ? Guard.defer(self) : release_native!
       nil
     end
     alias destroy close
+
+    # +ncvisual_destroy+, una sola volta: da {#close}, all'uscita di
+    # visual_guard o dalla coda di {Guard}. Non fa niente durante {#decode},
+    # {#decode_loop} o {#stream}: lo ripete visual_guard alla loro uscita.
+    #
+    # @api private
+    # @return [nil]
+    def release_native!
+      return nil if @destroyed || !@in_use.empty?
+
+      claim = Object.new
+      destroying = false
+      begin
+        # una sola esecuzione: come in Context#release_native!
+        @claims << claim
+        return nil unless @claims.first.equal?(claim)
+
+        # prima della chiamata: Ruby consegna un'eccezione asincrona al suo ritorno, a visual già liberato
+        @destroyed = destroying = true
+        FFI.ncvisual_destroy(@ptr)
+      ensure
+        @claims.clear if !destroying && @claims.first.equal?(claim) # interrotta prima: un close la ripete
+      end
+      @context.disown(self)
+      nil
+    end
 
     # --- geometria ---
 
@@ -560,9 +619,11 @@ module Notcurses
     # @raise [VisualError] se +ncvisual_geom+ fallisce
     # @raise [ClosedError] se il visual è chiuso
     def dims
-      geom = FFI::NcVgeom.new
-      Util.check!(FFI.ncvisual_geom(nil, to_ptr, nil, geom), VisualError, 'ncvisual_geom')
-      [geom[:pixy], geom[:pixx]]
+      Guard.run do
+        geom = FFI::NcVgeom.new
+        Util.check!(FFI.ncvisual_geom(nil, to_ptr, nil, geom), VisualError, 'ncvisual_geom')
+        [geom[:pixy], geom[:pixx]]
+      end
     end
 
     # Geometria che avrebbe {#blit} con le stesse opzioni (+ncvisual_geom+):
@@ -583,17 +644,19 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un'opzione non è valida
     # @raise [ClosedError] se il visual, il piano o il contesto sono chiusi
     def geometry(plane: nil, child: false, begy: 0, begx: 0, leny: 0, lenx: 0, **options)
-      ctx = @context
-      vopts = Internal.options(ctx, plane, **options)
-      Internal.child!(vopts, plane, child)
-      geom = FFI::NcVgeom.new
-      rc = with_region(begy, begx, leny, lenx) do |src, original|
-        r = FFI.ncvisual_geom(ctx.to_ptr, src, vopts, geom)
-        geom[:pixy], geom[:pixx], geom[:begy], geom[:begx] = original if original
-        r
+      Guard.run do
+        ctx = @context
+        vopts = Internal.options(ctx, plane, **options)
+        Internal.child!(vopts, plane, child)
+        geom = FFI::NcVgeom.new
+        rc = with_region(begy, begx, leny, lenx) do |src, original|
+          r = FFI.ncvisual_geom(ctx.to_ptr, src, vopts, geom)
+          geom[:pixy], geom[:pixx], geom[:begy], geom[:begx] = original if original
+          r
+        end
+        Util.check!(rc, VisualError, 'ncvisual_geom')
+        Geometry.new(geom)
       end
-      Util.check!(rc, VisualError, 'ncvisual_geom')
-      Geometry.new(geom)
     end
 
     # --- frame ---
@@ -604,11 +667,14 @@ module Notcurses
     #
     # Thread: la chiamata C legge il file senza il GVL, come in {.from_file}:
     # gli altri thread Ruby girano, ma non devono usare lo stesso contesto
-    # finché la chiamata non torna. Chiudere il visual o il contesto durante la
-    # chiamata, anche con l'hook at_exit o alla fine del blocco di
-    # {Context.open}, libera la memoria che il C sta usando (crash o blocco):
-    # prima attendi la fine del thread che decodifica (Thread#join).
-    # Thread#kill non basta: la chiamata C continua fino al suo ritorno.
+    # finché la chiamata non torna. La chiamata C usa solo il visual: un close
+    # del contesto durante la chiamata (da un altro thread, dall'hook at_exit o
+    # alla fine del blocco di {Context.open}) ferma subito notcurses; un close
+    # del contesto o del visual lascia il visual in uso fino al ritorno della
+    # chiamata, che lo distrugge. La chiamata in corso finisce, la successiva
+    # solleva ClosedError. Il close non interrompe la chiamata C: una lettura
+    # bloccata (per esempio da una FIFO) tiene il visual fino al suo ritorno,
+    # e all'uscita del processo Ruby attende il thread.
     #
     # @return [Boolean] true se c'è un nuovo frame, false a fine stream (il
     #   visual conserva l'ultimo frame; il C restituisce 1, che non è un errore)
@@ -616,18 +682,19 @@ module Notcurses
     #   decodifica fallisce
     # @raise [ClosedError] se il visual è chiuso
     def decode
-      rc = FFI.ncvisual_decode(to_ptr)
-      raise VisualError, 'ncvisual_decode fallita (il visual non viene da un file?)' if rc.negative?
+      visual_guard do
+        rc = FFI.ncvisual_decode(to_ptr)
+        raise VisualError, 'ncvisual_decode fallita (il visual non viene da un file?)' if rc.negative?
 
-      rc.zero?
+        rc.zero?
+      end
     end
 
     # Come {#decode}, ma a fine stream riparte dal primo frame
     # (+ncvisual_decode_loop+). Come {#decode}, la chiamata C legge il file
     # senza il GVL: gli altri thread Ruby girano, ma non devono usare lo stesso
-    # contesto finché la chiamata non torna, e il visual o il contesto non
-    # vanno chiusi durante la chiamata (anche con at_exit): prima attendi il
-    # thread con Thread#join, perché Thread#kill non ferma la chiamata C.
+    # contesto finché la chiamata non torna. Un close del visual o del
+    # contesto durante la chiamata si comporta come in {#decode}.
     #
     # @return [Boolean] true se c'è il frame successivo, false se è ripartito
     #   dall'inizio (il visual contiene il primo frame)
@@ -635,10 +702,12 @@ module Notcurses
     #   decodifica o il riavvolgimento falliscono
     # @raise [ClosedError] se il visual è chiuso
     def decode_loop
-      rc = FFI.ncvisual_decode_loop(to_ptr)
-      raise VisualError, 'ncvisual_decode_loop fallita (il visual non viene da un file?)' if rc.negative?
+      visual_guard do
+        rc = FFI.ncvisual_decode_loop(to_ptr)
+        raise VisualError, 'ncvisual_decode_loop fallita (il visual non viene da un file?)' if rc.negative?
 
-      rc.zero?
+        rc.zero?
+      end
     end
 
     # --- trasformazioni ---
@@ -657,10 +726,12 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se radians non è un numero finito
     # @raise [ClosedError] se il visual è chiuso
     def rotate(radians)
-      rc = FFI.ncvisual_rotate(to_ptr, Util.float!(radians, 'radians'))
-      raise VisualError, 'ncvisual_rotate fallita (nessun pixel opaco?)' if rc.negative?
+      Guard.run do
+        rc = FFI.ncvisual_rotate(to_ptr, Util.float!(radians, 'radians'))
+        raise VisualError, 'ncvisual_rotate fallita (nessun pixel opaco?)' if rc.negative?
 
-      self
+        self
+      end
     end
 
     # Ridimensiona l'immagine con interpolazione (+ncvisual_resize+; senza
@@ -673,9 +744,11 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se rows o cols non sono validi
     # @raise [ClosedError] se il visual è chiuso
     def resize(rows, cols)
-      Internal.dims!(rows, cols)
-      Util.check!(FFI.ncvisual_resize(to_ptr, rows, cols), VisualError, "ncvisual_resize(#{rows}, #{cols})")
-      self
+      Guard.run do
+        Internal.dims!(rows, cols)
+        Util.check!(FFI.ncvisual_resize(to_ptr, rows, cols), VisualError, "ncvisual_resize(#{rows}, #{cols})")
+        self
+      end
     end
 
     # Ridimensiona l'immagine senza interpolazione, senza colori nuovi
@@ -689,10 +762,12 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se rows o cols non sono validi
     # @raise [ClosedError] se il visual è chiuso
     def resize_noninterpolative(rows, cols)
-      Internal.dims!(rows, cols)
-      rc = FFI.ncvisual_resize_noninterpolative(to_ptr, rows, cols)
-      Util.check!(rc, VisualError, "ncvisual_resize_noninterpolative(#{rows}, #{cols})")
-      self
+      Guard.run do
+        Internal.dims!(rows, cols)
+        rc = FFI.ncvisual_resize_noninterpolative(to_ptr, rows, cols)
+        Util.check!(rc, VisualError, "ncvisual_resize_noninterpolative(#{rows}, #{cols})")
+        self
+      end
     end
 
     # Riempimento a macchia d'olio (+ncvisual_polyfill_yx+): il pixel (y, x) e
@@ -708,9 +783,11 @@ module Notcurses
     #   fuori dal visual
     # @raise [ClosedError] se il visual è chiuso
     def polyfill(y, x, pixel)
-      value = Internal.pixel_value(pixel)
-      point!(y, x)
-      Util.check!(FFI.ncvisual_polyfill_yx(to_ptr, y, x, value), VisualError, 'ncvisual_polyfill_yx')
+      Guard.run do
+        value = Internal.pixel_value(pixel)
+        point!(y, x)
+        Util.check!(FFI.ncvisual_polyfill_yx(to_ptr, y, x, value), VisualError, 'ncvisual_polyfill_yx')
+      end
     end
 
     # Pixel in (y, x) (+ncvisual_at_yx+).
@@ -723,10 +800,12 @@ module Notcurses
     # @raise [VisualError] se +ncvisual_at_yx+ fallisce
     # @raise [ClosedError] se il visual è chiuso
     def at(y, x)
-      point!(y, x)
-      out = ::FFI::MemoryPointer.new(:uint32)
-      Util.check!(FFI.ncvisual_at_yx(to_ptr, y, x, out), VisualError, 'ncvisual_at_yx')
-      Pixel.new(value: out.read_uint32)
+      Guard.run do
+        point!(y, x)
+        out = ::FFI::MemoryPointer.new(:uint32)
+        Util.check!(FFI.ncvisual_at_yx(to_ptr, y, x, out), VisualError, 'ncvisual_at_yx')
+        Pixel.new(value: out.read_uint32)
+      end
     end
 
     # Cambia il pixel in (y, x) (+ncvisual_set_yx+).
@@ -740,10 +819,12 @@ module Notcurses
     # @raise [VisualError] se +ncvisual_set_yx+ fallisce
     # @raise [ClosedError] se il visual è chiuso
     def set(y, x, pixel)
-      value = Internal.pixel_value(pixel)
-      point!(y, x)
-      Util.check!(FFI.ncvisual_set_yx(to_ptr, y, x, value), VisualError, 'ncvisual_set_yx')
-      self
+      Guard.run do
+        value = Internal.pixel_value(pixel)
+        point!(y, x)
+        Util.check!(FFI.ncvisual_set_yx(to_ptr, y, x, value), VisualError, 'ncvisual_set_yx')
+        self
+      end
     end
 
     # --- disegno ---
@@ -800,20 +881,22 @@ module Notcurses
     #   regione fuori dal visual, child: true o y:/x: simbolici senza plane:)
     # @raise [ClosedError] se il visual, il piano o il contesto sono chiusi
     def blit(plane: nil, child: false, begy: 0, begx: 0, leny: 0, lenx: 0, **options)
-      ctx = @context
-      vopts = Internal.options(ctx, plane, **options)
-      Internal.child!(vopts, plane, child)
-      ptr = with_region(begy, begx, leny, lenx) { |src, _| FFI.ncvisual_blit(ctx.to_ptr, src, vopts) }
-      created = plane.nil? || child
-      if ptr.null?
-        ctx.planes_destroyed! if created # il C distrugge il piano che aveva creato
+      Guard.run do
+        ctx = @context
+        vopts = Internal.options(ctx, plane, **options)
+        Internal.child!(vopts, plane, child)
+        ptr = with_region(begy, begx, leny, lenx) { |src, _| FFI.ncvisual_blit(ctx.to_ptr, src, vopts) }
+        created = plane.nil? || child
+        if ptr.null?
+          ctx.planes_destroyed! if created # il C distrugge il piano che aveva creato
+          ctx.raise_callback_errors!
+          raise VisualError, 'ncvisual_blit ha restituito NULL (blitter non disponibile con no_degrade? :pixel ' \
+                             'sullo stdplane? pxoffy/pxoffx con un blitter di celle?)'
+        end
+        result = created ? Plane.new(ptr, owned: true, context: ctx) : plane
         ctx.raise_callback_errors!
-        raise VisualError, 'ncvisual_blit ha restituito NULL (blitter non disponibile con no_degrade? :pixel ' \
-                           'sullo stdplane? pxoffy/pxoffx con un blitter di celle?)'
+        result
       end
-      result = created ? Plane.new(ptr, owned: true, context: ctx) : plane
-      ctx.raise_callback_errors!
-      result
     end
 
     # Crea un piano e ci disegna il visual (+ncvisualplane_create+): come
@@ -848,26 +931,29 @@ module Notcurses
     def create_plane(rows: nil, cols: nil, parent: nil, y: 0, x: 0, margins: nil, name: nil, fixed: false,
                      autogrow: false, vscroll: false, resize: nil, begy: 0, begx: 0, leny: 0, lenx: 0,
                      **options, &block)
-      ctx = @context
-      vopts = Internal.options(ctx, parent, **options)
-      if parent.nil? && (y.is_a?(Symbol) || x.is_a?(Symbol))
-        raise ArgumentError, 'create_plane: y: e x: simbolici richiedono parent: (una pila non ha un genitore)'
-      end
+      created = Guard.run do
+        ctx = @context
+        vopts = Internal.options(ctx, parent, **options)
+        if parent.nil? && (y.is_a?(Symbol) || x.is_a?(Symbol))
+          raise ArgumentError, 'create_plane: y: e x: simbolici richiedono parent: (una pila non ha un genitore)'
+        end
 
-      area = parent ? parent.dims : ctx.dims
-      opts, keep = Plane.build_options(context: ctx, parent_dims: area, rows: rows, cols: cols, y: y, x: x,
-                                       margins: margins, name: name, fixed: fixed, autogrow: autogrow,
-                                       vscroll: vscroll, resize: resize)
-      ptr = with_region(begy, begx, leny, lenx) { |src, _| FFI.ncvisualplane_create(ctx.to_ptr, opts, src, vopts) }
-      if ptr.null?
-        ctx.planes_destroyed!
+        area = parent ? parent.dims : ctx.dims
+        opts, keep = Plane.build_options(context: ctx, parent_dims: area, rows: rows, cols: cols, y: y, x: x,
+                                         margins: margins, name: name, fixed: fixed, autogrow: autogrow,
+                                         vscroll: vscroll, resize: resize)
+        ptr = with_region(begy, begx, leny, lenx) { |src, _| FFI.ncvisualplane_create(ctx.to_ptr, opts, src, vopts) }
+        if ptr.null?
+          ctx.planes_destroyed!
+          ctx.raise_callback_errors!
+          raise VisualError, 'ncvisualplane_create ha restituito NULL (piano non creato o blit fallito)'
+        end
+        plane = Plane.new(ptr, owned: true, context: ctx)
+        plane.adopt_options!(keep)
         ctx.raise_callback_errors!
-        raise VisualError, 'ncvisualplane_create ha restituito NULL (piano non creato o blit fallito)'
+        plane
       end
-      plane = Plane.new(ptr, owned: true, context: ctx)
-      plane.adopt_options!(keep)
-      ctx.raise_callback_errors!
-      Util.with_resource(plane, &block)
+      Util.with_resource(created, &block)
     end
 
     # Piano con il sottotitolo del frame corrente (+ncvisual_subtitle_plane+),
@@ -879,20 +965,23 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se parent non è un Plane del contesto
     # @raise [ClosedError] se il visual o parent sono chiusi
     def subtitle_plane(parent)
-      raise TypeError, "parent deve essere Notcurses::Plane, non #{parent.class}" unless parent.is_a?(Plane)
-      raise ArgumentError, 'parent appartiene a un altro contesto' unless parent.context.equal?(@context)
+      Guard.run do
+        raise TypeError, "parent deve essere Notcurses::Plane, non #{parent.class}" unless parent.is_a?(Plane)
+        raise ArgumentError, 'parent appartiene a un altro contesto' unless parent.context.equal?(@context)
 
-      ptr = FFI.ncvisual_subtitle_plane(parent.to_ptr, to_ptr)
-      ptr.null? ? nil : Plane.new(ptr, owned: true, context: @context)
+        ptr = FFI.ncvisual_subtitle_plane(parent.to_ptr, to_ptr)
+        ptr.null? ? nil : Plane.new(ptr, owned: true, context: @context)
+      end
     end
 
     # Riproduce il video dal frame corrente alla fine (+ncvisual_stream+):
     # disegna ogni frame come {#blit} e poi chiama il blocco. Bloccante.
     #
-    # Senza blocco usa lo streamer di notcurses: render del contesto dopo ogni
-    # frame e attesa fino all'istante del frame successivo; il render mostra
-    # solo la pila dello stdplane, quindi passa un piano di quella pila. Con il
-    # blocco, render e attesa sono compito del blocco.
+    # Senza blocco fa il lavoro dello streamer di notcurses
+    # (+ncvisual_simple_streamer+): render del contesto dopo ogni frame e
+    # attesa fino all'istante del frame successivo; il render mostra solo la
+    # pila dello stdplane, quindi passa un piano di quella pila. Con il blocco,
+    # render e attesa sono compito del blocco.
     #
     # Piano: con plane: nil notcurses crea al primo frame una nuova pila e la
     # distrugge alla fine; con plane: p disegna in p, cancellandolo prima di
@@ -909,9 +998,15 @@ module Notcurses
     # stream ed esce da questo metodo.
     #
     # Thread: il blocco gira sul thread chiamante. La chiamata C rilascia il
-    # GVL (decodifica, disegno e attese dello streamer di notcurses) e lo
+    # GVL (decodifica e disegno; senza blocco anche l'attesa fra i frame) e lo
     # riprende per il blocco: durante lo stream gli altri thread Ruby girano,
-    # ma non devono usare lo stesso contesto finché lo stream non torna.
+    # ma non devono usare lo stesso contesto finché lo stream non torna. Un
+    # close del visual o del contesto durante lo stream (da un altro thread,
+    # dall'hook at_exit o da un gestore +trap+) ferma lo stream al frame
+    # successivo, che non viene disegnato, e stream solleva ClosedError; la
+    # chiusura fisica avviene al ritorno, nel thread dello stream. Se il
+    # processo esce prima di quel frame, il terminale può restare non
+    # ripristinato.
     #
     # @param plane [Plane, nil] piano di destinazione
     # @param timescale [Numeric] moltiplicatore delle durate dei frame, > 0
@@ -928,42 +1023,82 @@ module Notcurses
     #   andrebbe in crash) o se +ncvisual_stream+ fallisce
     # @raise [Exception] l'eccezione sollevata dal blocco o da un callback di resize
     # @raise [TypeError, ArgumentError] se un'opzione non è valida
-    # @raise [ClosedError] se il visual, il piano o il contesto sono chiusi
+    # @raise [ClosedError] se il visual, il piano o il contesto sono chiusi,
+    #   anche durante lo stream
     def stream(plane: nil, timescale: 1.0, **options, &block)
-      ptr = to_ptr
-      raise VisualError, 'stream: il visual non viene da un file (from_file/open)' unless @file
+      Guard.run do
+        visual_guard do
+          ptr = to_ptr
+          raise VisualError, 'stream: il visual non viene da un file (from_file/open)' unless @file
 
-      scale = Util.float!(timescale, 'timescale')
-      raise ArgumentError, "timescale = #{timescale} deve essere > 0" unless scale.positive?
+          scale = Util.float!(timescale, 'timescale')
+          raise ArgumentError, "timescale = #{timescale} deve essere > 0" unless scale.positive?
 
-      ctx = @context
-      vopts = Internal.options(ctx, plane, **options)
-      fn = block && stream_function(ctx, block)
-      begin
-        rc = FFI.ncvisual_stream(ctx.to_ptr, ptr, scale, fn, vopts, nil)
-      ensure
-        ctx.planes_destroyed! # il piano creato da notcurses non esiste più
+          ctx = @context
+          vopts = Internal.options(ctx, plane, **options)
+          fn = stream_function(ctx, block)
+          begin
+            rc = FFI.ncvisual_stream(ctx.to_ptr, ptr, scale, fn, vopts, nil)
+          ensure
+            ctx.planes_destroyed! # il piano creato da notcurses non esiste più
+          end
+          ctx.raise_callback_errors!
+          to_ptr # un close arrivato durante lo stream lo ha fermato al frame successivo: ClosedError
+          raise VisualError, "ncvisual_stream fallita (#{rc})" if rc.negative?
+
+          rc.zero?
+        end
       end
-      ctx.raise_callback_errors!
-      raise VisualError, "ncvisual_stream fallita (#{rc})" if rc.negative?
-
-      rc.zero?
     end
 
     private
 
+    # Esegue il blocco come operazione in corso sul visual: un {#close}
+    # arrivato durante il blocco (da un gestore trap o da un altro thread)
+    # distrugge il visual all'uscita.
+    def visual_guard
+      op = Object.new
+      begin
+        @in_use << op # dentro il begin, con un oggetto unico: l'ensure toglie solo questa operazione
+        yield
+      ensure
+        @in_use.delete(op)
+        release_native! if @closed # un close arrivato durante il blocco
+      end
+    end
+
     # Trampolino C → Ruby per ncstreamcb: 0 = continua, 1 = fermati, -1 =
-    # eccezione (salvata nel contesto e rilanciata da {#stream}).
+    # eccezione (salvata nel contesto e rilanciata da {#stream}). Anche senza
+    # blocco: a ogni frame controlla se il visual o il contesto sono stati
+    # chiusi durante lo stream, e in quel caso lo ferma.
     def stream_function(ctx, block)
       box = ctx.callback_errors
       ::FFI::Function.new(:int, %i[pointer pointer pointer pointer]) do |_ncv, vopts, tspec, _curry|
         Util.guard(box, -1) do
           ctx.callback_scope do
-            plane = ctx.plane_for(FFI::NcVisualOptions.new(vopts)[:n])
+            next 1 if closed?
+
             deadline = FFI::Timespec.new(tspec)
-            block.call(plane, deadline[:tv_sec] + (deadline[:tv_nsec] / 1e9)) == :stop ? 1 : 0
+            at = deadline[:tv_sec] + (deadline[:tv_nsec] / 1e9)
+            next default_stream_frame(ctx, at) unless block
+
+            block.call(ctx.plane_for(FFI::NcVisualOptions.new(vopts)[:n]), at) == :stop ? 1 : 0
           end
         end
+      end
+    end
+
+    # Il lavoro di ncvisual_simple_streamer (visual.c:1244-1263) senza
+    # sottotitoli: render del contesto, poi attesa fino all'istante del frame
+    # (secondi di CLOCK_MONOTONIC), senza il GVL.
+    # @return [Integer] 0, o -1 se il render fallisce
+    def default_stream_frame(ctx, at)
+      Guard.run do
+        return -1 unless FFI.notcurses_render(ctx.to_ptr).zero?
+
+        pause = at - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        sleep(pause) if pause.positive?
+        0
       end
     end
 
@@ -971,26 +1106,28 @@ module Notcurses
     # l'immagine intera, [righe, colonne, begy, begx] del visual: il ncvisual*
     # è allora una copia temporanea della regione.
     def with_region(begy, begx, leny, lenx)
-      ptr = to_ptr
-      rows, cols = dims
-      Util.uint!(begy, 'begy')
-      Util.uint!(begx, 'begx')
-      Util.uint!(leny, 'leny')
-      Util.uint!(lenx, 'lenx')
-      raise ArgumentError, "regione da (#{begy}, #{begx}) fuori dal visual #{rows}x#{cols}" if begy >= rows || begx >= cols
+      Guard.run do
+        ptr = to_ptr
+        rows, cols = dims
+        Util.uint!(begy, 'begy')
+        Util.uint!(begx, 'begx')
+        Util.uint!(leny, 'leny')
+        Util.uint!(lenx, 'lenx')
+        raise ArgumentError, "regione da (#{begy}, #{begx}) fuori dal visual #{rows}x#{cols}" if begy >= rows || begx >= cols
 
-      leny = rows - begy if leny.zero?
-      lenx = cols - begx if lenx.zero?
-      if begy + leny > rows || begx + lenx > cols
-        raise ArgumentError, "regione (#{begy}, #{begx}) #{leny}x#{lenx} fuori dal visual #{rows}x#{cols}"
-      end
-      return yield(ptr, nil) if leny == rows && lenx == cols
+        leny = rows - begy if leny.zero?
+        lenx = cols - begx if lenx.zero?
+        if begy + leny > rows || begx + lenx > cols
+          raise ArgumentError, "regione (#{begy}, #{begx}) #{leny}x#{lenx} fuori dal visual #{rows}x#{cols}"
+        end
+        return yield(ptr, nil) if leny == rows && lenx == cols
 
-      copy = Internal.crop(ptr, begy, begx, leny, lenx)
-      begin
-        yield copy, [rows, cols, begy, begx]
-      ensure
-        FFI.ncvisual_destroy(copy)
+        copy = Internal.crop(ptr, begy, begx, leny, lenx)
+        begin
+          yield copy, [rows, cols, begy, begx]
+        ensure
+          FFI.ncvisual_destroy(copy)
+        end
       end
     end
 
@@ -1019,31 +1156,33 @@ module Notcurses
       # ncvisual_options da opzioni Ruby; plane resta referenziato dal chiamante.
       def options(ctx, plane, y: 0, x: 0, scale: :none, blitter: :default, pxoffy: 0, pxoffx: 0,
                   no_degrade: false, blend: false, no_interpolate: false, transcolor: nil)
-        vopts = FFI::NcVisualOptions.new
-        unless plane.nil?
-          raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
-          raise ArgumentError, 'plane appartiene a un altro contesto' unless plane.context.equal?(ctx)
+        Guard.run do
+          vopts = FFI::NcVisualOptions.new
+          unless plane.nil?
+            raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
+            raise ArgumentError, 'plane appartiene a un altro contesto' unless plane.context.equal?(ctx)
 
-          vopts[:n] = plane.to_ptr
-        end
-        vopts[:y], vflag = Plane.position(y, 'y', %i[top center bottom], FFI::NCVISUAL_OPTION_VERALIGNED)
-        vopts[:x], hflag = Plane.position(x, 'x', %i[left center right], FFI::NCVISUAL_OPTION_HORALIGNED)
-        raise ArgumentError, 'y: e x: simbolici richiedono plane:' if plane.nil? && (vflag | hflag).positive?
+            vopts[:n] = plane.to_ptr
+          end
+          vopts[:y], vflag = Plane.position(y, 'y', %i[top center bottom], FFI::NCVISUAL_OPTION_VERALIGNED)
+          vopts[:x], hflag = Plane.position(x, 'x', %i[left center right], FFI::NCVISUAL_OPTION_HORALIGNED)
+          raise ArgumentError, 'y: e x: simbolici richiedono plane:' if plane.nil? && (vflag | hflag).positive?
 
-        vopts[:scaling] = Util.scale_value(scale)
-        vopts[:blitter] = Util.image_blitter_value(blitter)
-        vopts[:pxoffy] = Util.uint!(pxoffy, 'pxoffy')
-        vopts[:pxoffx] = Util.uint!(pxoffx, 'pxoffx')
-        flags = vflag | hflag |
-                Util.flag(no_degrade, FFI::NCVISUAL_OPTION_NODEGRADE, 'no_degrade') |
-                Util.flag(blend, FFI::NCVISUAL_OPTION_BLEND, 'blend') |
-                Util.flag(no_interpolate, FFI::NCVISUAL_OPTION_NOINTERPOLATE, 'no_interpolate')
-        unless transcolor.nil?
-          vopts[:transcolor] = Util.integer!(transcolor, 'transcolor', 0..0xffffff)
-          flags |= FFI::NCVISUAL_OPTION_ADDALPHA
+          vopts[:scaling] = Util.scale_value(scale)
+          vopts[:blitter] = Util.image_blitter_value(blitter)
+          vopts[:pxoffy] = Util.uint!(pxoffy, 'pxoffy')
+          vopts[:pxoffx] = Util.uint!(pxoffx, 'pxoffx')
+          flags = vflag | hflag |
+                  Util.flag(no_degrade, FFI::NCVISUAL_OPTION_NODEGRADE, 'no_degrade') |
+                  Util.flag(blend, FFI::NCVISUAL_OPTION_BLEND, 'blend') |
+                  Util.flag(no_interpolate, FFI::NCVISUAL_OPTION_NOINTERPOLATE, 'no_interpolate')
+          unless transcolor.nil?
+            vopts[:transcolor] = Util.integer!(transcolor, 'transcolor', 0..0xffffff)
+            flags |= FFI::NCVISUAL_OPTION_ADDALPHA
+          end
+          vopts[:flags] = flags
+          vopts
         end
-        vopts[:flags] = flags
-        vopts
       end
 
       def child!(vopts, plane, child)

@@ -168,20 +168,27 @@ module Notcurses
     # suo genitore (o diventano radici di nuove pile, se il piano era una
     # radice). No-op se il piano è già chiuso o non è posseduto.
     #
+    # Da un gestore +trap+ che poi torna al codice interrotto, la distruzione
+    # non è rinviata come in {Context#close}: se il segnale ha interrotto
+    # un'operazione sullo stesso piano, il C usa un piano già liberato. Da un
+    # gestore +trap+ non chiudere un piano in uso (ICH-540).
+    #
     # @return [nil]
     # @raise [PlaneError] dentro un callback chiamato da notcurses, o se
     #   notcurses segnala un errore nel riaggancio dei figli (in questo caso il
     #   piano risulta comunque distrutto)
     def close
-      return nil if closed? || !@owned
+      Guard.run do
+        return nil if closed? || !@owned
 
-      ctx = @context
-      ctx.check_not_in_callback!('Plane#close', PlaneError)
-      rc = FFI.ncplane_destroy(@ptr)
-      invalidate!
-      ctx.planes_destroyed!
-      Util.check!(rc, PlaneError, 'ncplane_destroy')
-      nil
+        ctx = @context
+        ctx.check_not_in_callback!('Plane#close', PlaneError)
+        rc = FFI.ncplane_destroy(@ptr)
+        invalidate!
+        ctx.planes_destroyed!
+        Util.check!(rc, PlaneError, 'ncplane_destroy')
+        nil
+      end
     end
     alias destroy close
 
@@ -194,24 +201,26 @@ module Notcurses
     #   callback chiamato da notcurses, o se notcurses segnala un errore
     # @raise [ClosedError] se il piano è chiuso
     def family_destroy
-      ptr = to_ptr
-      raise PlaneError, 'family_destroy: il piano non è posseduto dal wrapper' unless @owned
+      Guard.run do
+        ptr = to_ptr
+        raise PlaneError, 'family_destroy: il piano non è posseduto dal wrapper' unless @owned
 
-      @context.check_not_in_callback!('Plane#family_destroy', PlaneError)
-      victims = @context.tracked_planes.select do |plane|
-        !plane.equal?(self) && FFI.ncplane_descendant_p(plane.address_ptr, ptr) != 0
-      end
-      if victims.any?(&:widget_plane?)
-        raise PlaneError, 'family_destroy: un discendente è il piano di un widget aperto (chiudi prima il widget)'
-      end
+        @context.check_not_in_callback!('Plane#family_destroy', PlaneError)
+        victims = @context.tracked_planes.select do |plane|
+          !plane.equal?(self) && FFI.ncplane_descendant_p(plane.address_ptr, ptr) != 0
+        end
+        if victims.any?(&:widget_plane?)
+          raise PlaneError, 'family_destroy: un discendente è il piano di un widget aperto (chiudi prima il widget)'
+        end
 
-      ctx = @context
-      rc = FFI.ncplane_family_destroy(ptr)
-      victims.each(&:invalidate!)
-      invalidate!
-      ctx.planes_destroyed!
-      Util.check!(rc, PlaneError, 'ncplane_family_destroy')
-      nil
+        ctx = @context
+        rc = FFI.ncplane_family_destroy(ptr)
+        victims.each(&:invalidate!)
+        invalidate!
+        ctx.planes_destroyed!
+        Util.check!(rc, PlaneError, 'ncplane_family_destroy')
+        nil
+      end
     end
 
     # --- creazione ---
@@ -245,14 +254,17 @@ module Notcurses
     # @raise [ClosedError] se il piano è chiuso
     def create_child(rows: nil, cols: nil, y: 0, x: 0, margins: nil, name: nil, fixed: false,
                      autogrow: false, vscroll: false, resize: nil, &block)
-      opts, keep = Plane.build_options(context: @context, parent_dims: dims, rows: rows, cols: cols, y: y, x: x,
-                                       margins: margins, name: name, fixed: fixed, autogrow: autogrow,
-                                       vscroll: vscroll, resize: resize)
-      ptr = FFI.ncplane_create(to_ptr, opts)
-      Util.check_ptr!(ptr, PlaneError, 'ncplane_create')
-      child = Plane.new(ptr, owned: true, context: @context)
-      child.adopt_options!(keep)
-      Util.with_resource(child, &block)
+      created = Guard.run do
+        opts, keep = Plane.build_options(context: @context, parent_dims: dims, rows: rows, cols: cols, y: y, x: x,
+                                         margins: margins, name: name, fixed: fixed, autogrow: autogrow,
+                                         vscroll: vscroll, resize: resize)
+        ptr = FFI.ncplane_create(to_ptr, opts)
+        Util.check_ptr!(ptr, PlaneError, 'ncplane_create')
+        child = Plane.new(ptr, owned: true, context: @context)
+        child.adopt_options!(keep)
+        child
+      end
+      Util.with_resource(created, &block)
     end
 
     # Opzioni C di un nuovo piano (+ncplane_options+).
@@ -393,24 +405,27 @@ module Notcurses
     # @raise [PlaneError] se +ncplane_dup+ fallisce
     # @raise [ClosedError] se il piano è chiuso
     def duplicate(&block)
-      src = to_ptr
-      ptr = FFI.ncplane_dup(src, ::FFI::Pointer::NULL)
-      Util.check_ptr!(ptr, PlaneError, 'ncplane_dup')
-      copy = Plane.new(ptr, owned: true, context: @context)
-      # il resizecb copiato dal C: un trampolino Ruby deve restare vivo anche per la copia
-      copy.adopt_options!(margins: @margins, resizecb: @resize_fn, resize: @resize)
-      fn = FFI.ncplane_resizecb(src)
-      FFI.ncplane_set_resizecb(ptr, ::FFI::Pointer::NULL) unless fn.null? || own_resize_function?(fn) || native_resize_symbol(fn)
-      root? ? copy.move(0, 0) : copy.move(*yx)
-      copy.move_above(self)
-      copy.scrolling = true if scrolling?
-      copy.autogrow = true if autogrow?
-      # ncplane_dup crea la copia con flags = 0 e copia solo halign (notcurses.c:776, 793) (ICH-216)
-      if (from = internals(src)) && (to = internals(ptr))
-        to[:fixedbound] = from[:fixedbound]
-        to[:valign] = from[:valign]
+      created = Guard.run do
+        src = to_ptr
+        ptr = FFI.ncplane_dup(src, ::FFI::Pointer::NULL)
+        Util.check_ptr!(ptr, PlaneError, 'ncplane_dup')
+        copy = Plane.new(ptr, owned: true, context: @context)
+        # il resizecb copiato dal C: un trampolino Ruby deve restare vivo anche per la copia
+        copy.adopt_options!(margins: @margins, resizecb: @resize_fn, resize: @resize)
+        fn = FFI.ncplane_resizecb(src)
+        FFI.ncplane_set_resizecb(ptr, ::FFI::Pointer::NULL) unless fn.null? || own_resize_function?(fn) || native_resize_symbol(fn)
+        root? ? copy.move(0, 0) : copy.move(*yx)
+        copy.move_above(self)
+        copy.scrolling = true if scrolling?
+        copy.autogrow = true if autogrow?
+        # ncplane_dup crea la copia con flags = 0 e copia solo halign (notcurses.c:776, 793) (ICH-216)
+        if (from = internals(src)) && (to = internals(ptr))
+          to[:fixedbound] = from[:fixedbound]
+          to[:valign] = from[:valign]
+        end
+        copy
       end
-      Util.with_resource(copy, &block)
+      Util.with_resource(created, &block)
     end
 
     # --- resize ---
@@ -447,14 +462,16 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se rows o cols non sono validi
     # @raise [ClosedError] se il piano è chiuso
     def resize(rows, cols)
-      Util.integer!(rows, 'rows', 1..Util::UINT32.max)
-      Util.integer!(cols, 'cols', 1..Util::UINT32.max)
-      ptr = to_ptr
-      rc = FFI.ncplane_resize_simple(ptr, rows, cols)
-      clear_cut_glyphs!(ptr, force: true)
-      @context.raise_callback_errors!
-      Util.check!(rc, PlaneError, 'ncplane_resize_simple')
-      self
+      Guard.run do
+        Util.integer!(rows, 'rows', 1..Util::UINT32.max)
+        Util.integer!(cols, 'cols', 1..Util::UINT32.max)
+        ptr = to_ptr
+        rc = FFI.ncplane_resize_simple(ptr, rows, cols)
+        clear_cut_glyphs!(ptr, force: true)
+        @context.raise_callback_errors!
+        Util.check!(rc, PlaneError, 'ncplane_resize_simple')
+        self
+      end
     end
 
     # Ridimensiona il piano conservando una regione (+ncplane_resize+). La
@@ -515,62 +532,64 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il piano è chiuso
     def resize_region(rows:, cols:, keep_y: 0, keep_x: 0, keep_rows: 0, keep_cols: 0, y_off: 0, x_off: 0)
-      cur_rows, cur_cols = dims
-      Util.integer!(rows, 'rows', 1..Util::UINT32.max)
-      Util.integer!(cols, 'cols', 1..Util::UINT32.max)
-      Util.integer!(keep_y, 'keep_y', Util::NONNEG_INT)
-      Util.integer!(keep_x, 'keep_x', Util::NONNEG_INT)
-      Util.integer!(keep_rows, 'keep_rows', Util::NONNEG_INT)
-      Util.integer!(keep_cols, 'keep_cols', Util::NONNEG_INT)
-      Util.integer!(y_off, 'y_off', Util::INT32.min..0)
-      Util.integer!(x_off, 'x_off', Util::INT32.min..0)
-      if keep_rows.zero? != keep_cols.zero?
-        raise ArgumentError, 'keep_rows e keep_cols devono essere entrambi 0 o entrambi > 0'
-      end
-      if keep_rows - y_off > rows || keep_cols - x_off > cols
-        raise ArgumentError, 'la regione conservata non entra nel nuovo piano (serve keep_rows - y_off <= rows ' \
-                             'e keep_cols - x_off <= cols)'
-      end
-      if keep_y.zero? && keep_x.zero? && [rows, cols] == [cur_rows, cur_cols] && [keep_rows, keep_cols] != [rows, cols]
-        raise ArgumentError, 'notcurses 3.0.17 ignora un resize con le stesse dimensioni e la regione in (0, 0)'
-      end
-      if keep_rows.positive? && keep_y.zero? && keep_cols == cur_cols && cols == cur_cols && !y_off.zero?
-        raise ArgumentError, 'con la larghezza intera conservata da (0, 0) notcurses 3.0.17 non sposta il contenuto: ' \
-                             'y_off deve essere 0'
-      end
+      Guard.run do
+        cur_rows, cur_cols = dims
+        Util.integer!(rows, 'rows', 1..Util::UINT32.max)
+        Util.integer!(cols, 'cols', 1..Util::UINT32.max)
+        Util.integer!(keep_y, 'keep_y', Util::NONNEG_INT)
+        Util.integer!(keep_x, 'keep_x', Util::NONNEG_INT)
+        Util.integer!(keep_rows, 'keep_rows', Util::NONNEG_INT)
+        Util.integer!(keep_cols, 'keep_cols', Util::NONNEG_INT)
+        Util.integer!(y_off, 'y_off', Util::INT32.min..0)
+        Util.integer!(x_off, 'x_off', Util::INT32.min..0)
+        if keep_rows.zero? != keep_cols.zero?
+          raise ArgumentError, 'keep_rows e keep_cols devono essere entrambi 0 o entrambi > 0'
+        end
+        if keep_rows - y_off > rows || keep_cols - x_off > cols
+          raise ArgumentError, 'la regione conservata non entra nel nuovo piano (serve keep_rows - y_off <= rows ' \
+                               'e keep_cols - x_off <= cols)'
+        end
+        if keep_y.zero? && keep_x.zero? && [rows, cols] == [cur_rows, cur_cols] && [keep_rows, keep_cols] != [rows, cols]
+          raise ArgumentError, 'notcurses 3.0.17 ignora un resize con le stesse dimensioni e la regione in (0, 0)'
+        end
+        if keep_rows.positive? && keep_y.zero? && keep_cols == cur_cols && cols == cur_cols && !y_off.zero?
+          raise ArgumentError, 'con la larghezza intera conservata da (0, 0) notcurses 3.0.17 non sposta il contenuto: ' \
+                               'y_off deve essere 0'
+        end
 
-      ptr = to_ptr
-      # Il ciclo che rilascia gli EGC delle celle perse (notcurses.c:995-997) parte dall'indice nel
-      # framebuffer nuovo, riga di destinazione * cols - x_off + keep_cols, usato come colonna di quello
-      # vecchio: finché è minore di keep_x + keep_cols rilascia EGC della regione conservata (ICH-215).
-      # extra righe vuote in più in alto portano la prima riga copiata oltre quel punto; il secondo resize
-      # le toglie (con keep_x == 0 il ciclo non tocca la regione).
-      extra = keep_rows.zero? ? 0 : [((keep_x + x_off + cols - 1) / cols) + y_off, 0].max
-      # il C rifiuta senza toccare il piano lo stdplane e una regione fuori dal piano (notcurses.c:842-849,
-      # 1013), controllati qui, e una malloc fallita (notcurses.c:918), controllata dopo il primo passo: negli
-      # altri casi il primo resize è applicato e va completato, anche quando ha restituito il -1 del callback di
-      # un figlio (che può anche aver spostato il piano)
-      two_steps = extra.positive? && address != @context.stdplane.address &&
-                  keep_y + keep_rows <= cur_rows && keep_x + keep_cols <= cur_cols
-      st = two_steps && internals(ptr)
-      old = st && fb_bytes(st)
-      fb = st && st[:fb].address
-      rc = keeping_base_cell(keep_rows.zero?) do
-        FFI.ncplane_resize(ptr, keep_y, keep_x, keep_rows, keep_cols, y_off - extra, x_off, rows + extra, cols)
+        ptr = to_ptr
+        # Il ciclo che rilascia gli EGC delle celle perse (notcurses.c:995-997) parte dall'indice nel
+        # framebuffer nuovo, riga di destinazione * cols - x_off + keep_cols, usato come colonna di quello
+        # vecchio: finché è minore di keep_x + keep_cols rilascia EGC della regione conservata (ICH-215).
+        # extra righe vuote in più in alto portano la prima riga copiata oltre quel punto; il secondo resize
+        # le toglie (con keep_x == 0 il ciclo non tocca la regione).
+        extra = keep_rows.zero? ? 0 : [((keep_x + x_off + cols - 1) / cols) + y_off, 0].max
+        # il C rifiuta senza toccare il piano lo stdplane e una regione fuori dal piano (notcurses.c:842-849,
+        # 1013), controllati qui, e una malloc fallita (notcurses.c:918), controllata dopo il primo passo: negli
+        # altri casi il primo resize è applicato e va completato, anche quando ha restituito il -1 del callback di
+        # un figlio (che può anche aver spostato il piano)
+        two_steps = extra.positive? && address != @context.stdplane.address &&
+                    keep_y + keep_rows <= cur_rows && keep_x + keep_cols <= cur_cols
+        st = two_steps && internals(ptr)
+        old = st && fb_bytes(st)
+        fb = st && st[:fb].address
+        rc = keeping_base_cell(keep_rows.zero?) do
+          FFI.ncplane_resize(ptr, keep_y, keep_x, keep_rows, keep_cols, y_off - extra, x_off, rows + extra, cols)
+        end
+        st = two_steps && internals(ptr)
+        # con la malloc fallita (notcurses.c:918) il primo passo non ha toccato il piano (fb uguale): niente secondo
+        if two_steps && !(fb && st && st[:fb].address == fb)
+          # il C scrive il framebuffer nuovo in ordine logico ma lascia logrow (bug di ICH-214): su un piano che
+          # ha già fatto scroll il secondo passo leggerebbe le righe sbagliate e ne perderebbe una
+          st[:logrow] = 0 if st
+          rc |= FFI.ncplane_resize(ptr, extra, 0, rows, cols, 0, 0, rows, cols)
+        end
+        release_unused!(ptr, pooled(old)) if old
+        clear_cut_glyphs!(ptr, force: true) # con keep_x > 0 il contenuto si sposta anche a dimensioni invariate
+        @context.raise_callback_errors!
+        Util.check!(rc, PlaneError, 'ncplane_resize')
+        self
       end
-      st = two_steps && internals(ptr)
-      # con la malloc fallita (notcurses.c:918) il primo passo non ha toccato il piano (fb uguale): niente secondo
-      if two_steps && !(fb && st && st[:fb].address == fb)
-        # il C scrive il framebuffer nuovo in ordine logico ma lascia logrow (bug di ICH-214): su un piano che
-        # ha già fatto scroll il secondo passo leggerebbe le righe sbagliate e ne perderebbe una
-        st[:logrow] = 0 if st
-        rc |= FFI.ncplane_resize(ptr, extra, 0, rows, cols, 0, 0, rows, cols)
-      end
-      release_unused!(ptr, pooled(old)) if old
-      clear_cut_glyphs!(ptr, force: true) # con keep_x > 0 il contenuto si sposta anche a dimensioni invariate
-      @context.raise_callback_errors!
-      Util.check!(rc, PlaneError, 'ncplane_resize')
-      self
     end
 
     # Ridimensiona il piano alle dimensioni della pila, cioè del terminale
@@ -583,12 +602,14 @@ module Notcurses
     #   nativo di un figlio
     # @raise [ClosedError] se il piano è chiuso
     def resize_maximize
-      ptr = to_ptr
-      rc = FFI.ncplane_resize_maximize(ptr)
-      clear_cut_glyphs!(ptr, force: true)
-      @context.raise_callback_errors!
-      Util.check!(rc, PlaneError, 'ncplane_resize_maximize')
-      self
+      Guard.run do
+        ptr = to_ptr
+        rc = FFI.ncplane_resize_maximize(ptr)
+        clear_cut_glyphs!(ptr, force: true)
+        @context.raise_callback_errors!
+        Util.check!(rc, PlaneError, 'ncplane_resize_maximize')
+        self
+      end
     end
 
     # Ridimensiona e riposiziona il piano secondo i margini dati alla creazione
@@ -601,14 +622,16 @@ module Notcurses
     #   resize fallisce
     # @raise [ClosedError] se il piano è chiuso
     def resize_marginalized
-      ptr = to_ptr
-      raise PlaneError, 'resize_marginalized: il piano non è stato creato con margins:' unless @margins
+      Guard.run do
+        ptr = to_ptr
+        raise PlaneError, 'resize_marginalized: il piano non è stato creato con margins:' unless @margins
 
-      parent_ptr = FFI.ncplane_parent(ptr)
-      area = parent_ptr.address == address ? @context.dims : [FFI.ncplane_dim_y(parent_ptr), FFI.ncplane_dim_x(parent_ptr)]
-      rows, cols = Plane.marginalized_dims(area, @margins)
-      resize(rows, cols) unless [rows, cols] == dims
-      move(@margins[0], @margins[3])
+        parent_ptr = FFI.ncplane_parent(ptr)
+        area = parent_ptr.address == address ? @context.dims : [FFI.ncplane_dim_y(parent_ptr), FFI.ncplane_dim_x(parent_ptr)]
+        rows, cols = Plane.marginalized_dims(area, @margins)
+        resize(rows, cols) unless [rows, cols] == dims
+        move(@margins[0], @margins[3])
+      end
     end
 
     # Riallinea il piano al genitore secondo gli allineamenti di creazione
@@ -618,11 +641,13 @@ module Notcurses
     # @raise [PlaneError] se il piano è una radice o non è allineato
     # @raise [ClosedError] se il piano è chiuso
     def resize_realign
-      ptr = to_ptr
-      raise PlaneError, 'resize_realign: una radice non ha un genitore a cui allinearsi' if root?
+      Guard.run do
+        ptr = to_ptr
+        raise PlaneError, 'resize_realign: una radice non ha un genitore a cui allinearsi' if root?
 
-      Util.check!(FFI.ncplane_resize_realign(ptr), PlaneError, 'ncplane_resize_realign')
-      self
+        Util.check!(FFI.ncplane_resize_realign(ptr), PlaneError, 'ncplane_resize_realign')
+        self
+      end
     end
 
     # Sposta il piano, senza ridimensionarlo, in modo che stia dentro il
@@ -634,17 +659,19 @@ module Notcurses
     # @return [self]
     # @raise [ClosedError] se il piano è chiuso
     def resize_placewithin
-      ptr = to_ptr
-      parent_ptr = FFI.ncplane_parent(ptr)
-      return self if parent_ptr.address == address
+      Guard.run do
+        ptr = to_ptr
+        parent_ptr = FFI.ncplane_parent(ptr)
+        return self if parent_ptr.address == address
 
-      prows = FFI.ncplane_dim_y(parent_ptr)
-      pcols = FFI.ncplane_dim_x(parent_ptr)
-      rows, cols = dims
-      y, x = yx
-      ny = (y + rows > prows ? prows - rows : y).clamp(0..)
-      nx = (x + cols > pcols ? pcols - cols : x).clamp(0..)
-      [ny, nx] == [y, x] ? self : move(ny, nx)
+        prows = FFI.ncplane_dim_y(parent_ptr)
+        pcols = FFI.ncplane_dim_x(parent_ptr)
+        rows, cols = dims
+        y, x = yx
+        ny = (y + rows > prows ? prows - rows : y).clamp(0..)
+        nx = (x + cols > pcols ? pcols - cols : x).clamp(0..)
+        [ny, nx] == [y, x] ? self : move(ny, nx)
+      end
     end
 
     # Callback di resize corrente (+ncplane_resizecb+).
@@ -654,11 +681,13 @@ module Notcurses
     #   il wrapper non conosce (per esempio di un widget), o nil
     # @raise [ClosedError] se il piano è chiuso
     def resize_callback
-      fn = FFI.ncplane_resizecb(to_ptr)
-      return nil if fn.null?
-      return @resize if own_resize_function?(fn)
+      Guard.run do
+        fn = FFI.ncplane_resizecb(to_ptr)
+        return nil if fn.null?
+        return @resize if own_resize_function?(fn)
 
-      native_resize_symbol(fn) || fn
+        native_resize_symbol(fn) || fn
+      end
     end
 
     # Imposta il callback chiamato quando il genitore cambia dimensione
@@ -682,26 +711,28 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se callback non è valido
     # @raise [ClosedError] se il piano è chiuso
     def set_resize_callback(callback: nil, &block)
-      ptr = to_ptr
-      raise ArgumentError, 'passa un callback o un blocco, non entrambi' if callback && block
-      raise PlaneError, 'il resizecb dello stdplane non si può cambiare' if stdplane?
-      # alcuni widget (ncmenu) usano il resizecb del loro piano
-      raise PlaneError, 'il resizecb del piano di un widget non si può cambiare' if widget_plane?
+      Guard.run do
+        ptr = to_ptr
+        raise ArgumentError, 'passa un callback o un blocco, non entrambi' if callback && block
+        raise PlaneError, 'il resizecb dello stdplane non si può cambiare' if stdplane?
+        # alcuni widget (ncmenu) usano il resizecb del loro piano
+        raise PlaneError, 'il resizecb del piano di un widget non si può cambiare' if widget_plane?
 
-      callback ||= block
-      raise PlaneError, 'resize :marginalized: il piano non è stato creato con margins:' if callback == :marginalized && @margins.nil?
+        callback ||= block
+        raise PlaneError, 'resize :marginalized: il piano non è stato creato con margins:' if callback == :marginalized && @margins.nil?
 
-      fn, value = Plane.resize_function(@context, callback)
-      if fn.is_a?(::FFI::Function) && !@generation.nil?
-        raise PlaneError, 'callback scritto in Ruby su un piano preso in prestito: ottieni il piano dal suo creatore'
+        fn, value = Plane.resize_function(@context, callback)
+        if fn.is_a?(::FFI::Function) && !@generation.nil?
+          raise PlaneError, 'callback scritto in Ruby su un piano preso in prestito: ottieni il piano dal suo creatore'
+        end
+
+        FFI.ncplane_set_resizecb(ptr, fn || ::FFI::Pointer::NULL)
+        @callbacks.delete(@resize_fn) if @resize_fn
+        @resize_fn = fn.is_a?(::FFI::Function) ? fn : nil
+        @callbacks << @resize_fn if @resize_fn
+        @resize = value
+        self
       end
-
-      FFI.ncplane_set_resizecb(ptr, fn || ::FFI::Pointer::NULL)
-      @callbacks.delete(@resize_fn) if @resize_fn
-      @resize_fn = fn.is_a?(::FFI::Function) ? fn : nil
-      @callbacks << @resize_fn if @resize_fn
-      @resize = value
-      self
     end
 
     # --- nome, genitore, contesto ---
@@ -709,7 +740,7 @@ module Notcurses
     # Nome del piano (+ncplane_name+).
     # @return [String, nil]
     # @raise [ClosedError] se il piano è chiuso
-    def name = Util.take_string(FFI.ncplane_name(to_ptr))
+    def name = Guard.run { Util.take_string(FFI.ncplane_name(to_ptr)) }
 
     # Cambia il nome del piano (+ncplane_set_name+).
     #
@@ -718,20 +749,24 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se name non è una String valida
     # @raise [ClosedError] se il piano è chiuso
     def name=(name)
-      Util.check!(FFI.ncplane_set_name(to_ptr, Util.string_or_nil!(name, 'name')), PlaneError, 'ncplane_set_name')
+      Guard.run do
+        Util.check!(FFI.ncplane_set_name(to_ptr, Util.string_or_nil!(name, 'name')), PlaneError, 'ncplane_set_name')
+      end
     end
 
     # Piano a cui questo è legato (+ncplane_parent+).
     # @return [Plane, nil] nil se il piano è la radice di una pila
     # @raise [ClosedError] se il piano è chiuso
     def parent
-      ptr = FFI.ncplane_parent(to_ptr)
-      ptr.address == address ? nil : @context.plane_for(ptr)
+      Guard.run do
+        ptr = FFI.ncplane_parent(to_ptr)
+        ptr.address == address ? nil : @context.plane_for(ptr)
+      end
     end
 
     # @return [Boolean] true se il piano è la radice di una pila
     # @raise [ClosedError] se il piano è chiuso
-    def root? = FFI.ncplane_parent(to_ptr).address == address
+    def root? = Guard.run { FFI.ncplane_parent(to_ptr).address == address }
 
     # Lega il piano a un nuovo genitore (+ncplane_reparent+). I figli del piano
     # passano al vecchio genitore. Con new_parent uguale al piano stesso, il
@@ -748,10 +783,12 @@ module Notcurses
     # @raise [TypeError] se new_parent non è un Plane
     # @raise [ClosedError] se uno dei piani è chiuso
     def reparent(new_parent)
-      target = same_context_plane!(new_parent, 'new_parent')
-      @context.check_not_in_callback!('Plane#reparent', PlaneError)
-      Util.check_ptr!(FFI.ncplane_reparent(to_ptr, target), PlaneError, 'ncplane_reparent')
-      self
+      Guard.run do
+        target = same_context_plane!(new_parent, 'new_parent')
+        @context.check_not_in_callback!('Plane#reparent', PlaneError)
+        Util.check_ptr!(FFI.ncplane_reparent(to_ptr, target), PlaneError, 'ncplane_reparent')
+        self
+      end
     end
 
     # Come {#reparent}, ma i figli seguono il piano (+ncplane_reparent_family+).
@@ -766,10 +803,12 @@ module Notcurses
     # @raise [TypeError] se new_parent non è un Plane
     # @raise [ClosedError] se uno dei piani è chiuso
     def reparent_family(new_parent)
-      target = same_context_plane!(new_parent, 'new_parent')
-      @context.check_not_in_callback!('Plane#reparent_family', PlaneError)
-      Util.check_ptr!(FFI.ncplane_reparent_family(to_ptr, target), PlaneError, 'ncplane_reparent_family')
-      self
+      Guard.run do
+        target = same_context_plane!(new_parent, 'new_parent')
+        @context.check_not_in_callback!('Plane#reparent_family', PlaneError)
+        Util.check_ptr!(FFI.ncplane_reparent_family(to_ptr, target), PlaneError, 'ncplane_reparent_family')
+        self
+      end
     end
 
     # @param ancestor [Plane]
@@ -777,18 +816,20 @@ module Notcurses
     # @raise [TypeError] se ancestor non è un Plane
     # @raise [ClosedError] se uno dei piani è chiuso
     def descendant_of?(ancestor)
-      FFI.ncplane_descendant_p(to_ptr, same_context_plane!(ancestor, 'ancestor')) != 0
+      Guard.run do
+        FFI.ncplane_descendant_p(to_ptr, same_context_plane!(ancestor, 'ancestor')) != 0
+      end
     end
 
     # --- pila e render ---
 
     # @return [Plane] piano in cima alla pila di questo piano (+ncpile_top+)
     # @raise [ClosedError] se il piano è chiuso
-    def pile_top = @context.plane_for(FFI.ncpile_top(to_ptr))
+    def pile_top = Guard.run { @context.plane_for(FFI.ncpile_top(to_ptr)) }
 
     # @return [Plane] piano in fondo alla pila di questo piano (+ncpile_bottom+)
     # @raise [ClosedError] se il piano è chiuso
-    def pile_bottom = @context.plane_for(FFI.ncpile_bottom(to_ptr))
+    def pile_bottom = Guard.run { @context.plane_for(FFI.ncpile_bottom(to_ptr)) }
 
     # Disegna la pila di questo piano (+ncpile_render+) e, con rasterize: true,
     # la scrive sul terminale (+ncpile_rasterize+). Serve per le pile diverse
@@ -805,36 +846,40 @@ module Notcurses
     # @raise [TypeError] se rasterize non è true o false
     # @raise [ClosedError] se il piano è chiuso
     def render_pile(rasterize: true)
-      ptr = to_ptr
-      Util.bool!(rasterize, 'rasterize')
-      rc = FFI.ncpile_render(ptr)
-      @context.raise_callback_errors!
-      Util.check!(rc, RenderError, 'ncpile_render')
-      return self unless rasterize
+      Guard.run do
+        ptr = to_ptr
+        Util.bool!(rasterize, 'rasterize')
+        rc = FFI.ncpile_render(ptr)
+        @context.raise_callback_errors!
+        Util.check!(rc, RenderError, 'ncpile_render')
+        return self unless rasterize
 
-      rc = FFI.ncpile_rasterize(ptr)
-      @context.raise_callback_errors!
-      Util.check!(rc, RenderError, 'ncpile_rasterize')
-      self
+        rc = FFI.ncpile_rasterize(ptr)
+        @context.raise_callback_errors!
+        Util.check!(rc, RenderError, 'ncpile_rasterize')
+        self
+      end
     end
 
     # --- geometria ---
 
     # @return [Integer] righe (+ncplane_dim_y+)
     # @raise [ClosedError] se il piano è chiuso
-    def dim_y = FFI.ncplane_dim_y(to_ptr)
+    def dim_y = Guard.run { FFI.ncplane_dim_y(to_ptr) }
 
     # @return [Integer] colonne (+ncplane_dim_x+)
     # @raise [ClosedError] se il piano è chiuso
-    def dim_x = FFI.ncplane_dim_x(to_ptr)
+    def dim_x = Guard.run { FFI.ncplane_dim_x(to_ptr) }
 
     # @return [Array(Integer, Integer)] [righe, colonne] (+ncplane_dim_yx+)
     # @raise [ClosedError] se il piano è chiuso
     def dims
-      rows = ::FFI::MemoryPointer.new(:uint)
-      cols = ::FFI::MemoryPointer.new(:uint)
-      FFI.ncplane_dim_yx(to_ptr, rows, cols)
-      [rows.read_uint, cols.read_uint]
+      Guard.run do
+        rows = ::FFI::MemoryPointer.new(:uint)
+        cols = ::FFI::MemoryPointer.new(:uint)
+        FFI.ncplane_dim_yx(to_ptr, rows, cols)
+        [rows.read_uint, cols.read_uint]
+      end
     end
 
     # Geometria in pixel (+ncplane_pixel_geom+).
@@ -845,56 +890,64 @@ module Notcurses
     #   bitmap non supportate)
     # @raise [ClosedError] se il piano è chiuso
     def pixel_geom
-      ptrs = Array.new(6) { ::FFI::MemoryPointer.new(:uint) }
-      FFI.ncplane_pixel_geom(to_ptr, *ptrs)
-      y, x, cy, cx, my, mx = ptrs.map(&:read_uint)
-      { pixel_y: y, pixel_x: x, cell_pixel_y: cy, cell_pixel_x: cx, max_bitmap_y: my, max_bitmap_x: mx }.freeze
+      Guard.run do
+        ptrs = Array.new(6) { ::FFI::MemoryPointer.new(:uint) }
+        FFI.ncplane_pixel_geom(to_ptr, *ptrs)
+        y, x, cy, cx, my, mx = ptrs.map(&:read_uint)
+        { pixel_y: y, pixel_x: x, cell_pixel_y: cy, cell_pixel_x: cx, max_bitmap_y: my, max_bitmap_x: mx }.freeze
+      end
     end
 
     # @return [Array(Integer, Integer)] origine rispetto al genitore (o alla
     #   pila, per una radice) (+ncplane_yx+)
     # @raise [ClosedError] se il piano è chiuso
     def yx
-      y = ::FFI::MemoryPointer.new(:int)
-      x = ::FFI::MemoryPointer.new(:int)
-      FFI.ncplane_yx(to_ptr, y, x)
-      [y.read_int, x.read_int]
+      Guard.run do
+        y = ::FFI::MemoryPointer.new(:int)
+        x = ::FFI::MemoryPointer.new(:int)
+        FFI.ncplane_yx(to_ptr, y, x)
+        [y.read_int, x.read_int]
+      end
     end
 
     # @return [Integer] riga dell'origine rispetto al genitore (+ncplane_y+)
     # @raise [ClosedError] se il piano è chiuso
-    def y = FFI.ncplane_y(to_ptr)
+    def y = Guard.run { FFI.ncplane_y(to_ptr) }
 
     # @return [Integer] colonna dell'origine rispetto al genitore (+ncplane_x+)
     # @raise [ClosedError] se il piano è chiuso
-    def x = FFI.ncplane_x(to_ptr)
+    def x = Guard.run { FFI.ncplane_x(to_ptr) }
 
     # @return [Array(Integer, Integer)] origine rispetto alla pila (+ncplane_abs_yx+)
     # @raise [ClosedError] se il piano è chiuso
     def abs_yx
-      y = ::FFI::MemoryPointer.new(:int)
-      x = ::FFI::MemoryPointer.new(:int)
-      FFI.ncplane_abs_yx(to_ptr, y, x)
-      [y.read_int, x.read_int]
+      Guard.run do
+        y = ::FFI::MemoryPointer.new(:int)
+        x = ::FFI::MemoryPointer.new(:int)
+        FFI.ncplane_abs_yx(to_ptr, y, x)
+        [y.read_int, x.read_int]
+      end
     end
 
     # @return [Integer] riga dell'origine rispetto alla pila (+ncplane_abs_y+)
     # @raise [ClosedError] se il piano è chiuso
-    def abs_y = FFI.ncplane_abs_y(to_ptr)
+    def abs_y = Guard.run { FFI.ncplane_abs_y(to_ptr) }
 
     # @return [Integer] colonna dell'origine rispetto alla pila (+ncplane_abs_x+)
     # @raise [ClosedError] se il piano è chiuso
-    def abs_x = FFI.ncplane_abs_x(to_ptr)
+    def abs_x = Guard.run { FFI.ncplane_abs_x(to_ptr) }
 
     # Centro del piano, in coordinate assolute (+ncplane_center_abs+); con un
     # numero pari di righe o colonne preferisce l'alto/sinistra.
     # @return [Array(Integer, Integer)] [y, x]
     # @raise [ClosedError] se il piano è chiuso
     def center_abs
-      y = ::FFI::MemoryPointer.new(:int)
-      x = ::FFI::MemoryPointer.new(:int)
-      FFI.ncplane_center_abs(to_ptr, y, x)
-      [y.read_int, x.read_int]
+      Guard.run do
+        y = ::FFI::MemoryPointer.new(:int)
+        x = ::FFI::MemoryPointer.new(:int)
+        FFI.ncplane_center_abs(to_ptr, y, x)
+        [y.read_int, x.read_int]
+      end
     end
 
     # Converte una coordinata relativa a questo piano in una relativa a dst
@@ -907,13 +960,15 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se uno dei piani è chiuso
     def translate(y, x, dst: nil)
-      target = dst.nil? ? ::FFI::Pointer::NULL : same_context_plane!(dst, 'dst')
-      yp = ::FFI::MemoryPointer.new(:int)
-      xp = ::FFI::MemoryPointer.new(:int)
-      yp.write_int(Util.int!(y, 'y'))
-      xp.write_int(Util.int!(x, 'x'))
-      FFI.ncplane_translate(to_ptr, target, yp, xp)
-      [yp.read_int, xp.read_int]
+      Guard.run do
+        target = dst.nil? ? ::FFI::Pointer::NULL : same_context_plane!(dst, 'dst')
+        yp = ::FFI::MemoryPointer.new(:int)
+        xp = ::FFI::MemoryPointer.new(:int)
+        yp.write_int(Util.int!(y, 'y'))
+        xp.write_int(Util.int!(x, 'x'))
+        FFI.ncplane_translate(to_ptr, target, yp, xp)
+        [yp.read_int, xp.read_int]
+      end
     end
 
     # Converte coordinate assolute in coordinate relative al piano
@@ -925,12 +980,14 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il piano è chiuso
     def translate_abs(y, x)
-      yp = ::FFI::MemoryPointer.new(:int)
-      xp = ::FFI::MemoryPointer.new(:int)
-      yp.write_int(Util.int!(y, 'y'))
-      xp.write_int(Util.int!(x, 'x'))
-      inside = FFI.ncplane_translate_abs(to_ptr, yp, xp)
-      [yp.read_int, xp.read_int, inside]
+      Guard.run do
+        yp = ::FFI::MemoryPointer.new(:int)
+        xp = ::FFI::MemoryPointer.new(:int)
+        yp.write_int(Util.int!(y, 'y'))
+        xp.write_int(Util.int!(x, 'x'))
+        inside = FFI.ncplane_translate_abs(to_ptr, yp, xp)
+        [yp.read_int, xp.read_int, inside]
+      end
     end
 
     # Colonna a cui deve iniziare un oggetto largo cols per essere allineato
@@ -942,8 +999,10 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il piano è chiuso
     def halign(align, cols)
-      Util.integer!(cols, 'cols', Util::NONNEG_INT)
-      FFI.ncplane_halign(to_ptr, Util.placement_align_value(align), cols)
+      Guard.run do
+        Util.integer!(cols, 'cols', Util::NONNEG_INT)
+        FFI.ncplane_halign(to_ptr, Util.placement_align_value(align), cols)
+      end
     end
 
     # Riga a cui deve iniziare un oggetto alto rows per essere allineato nel
@@ -955,8 +1014,10 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il piano è chiuso
     def valign(align, rows)
-      Util.integer!(rows, 'rows', Util::NONNEG_INT)
-      FFI.ncplane_valign(to_ptr, Util.placement_align_value(align), rows)
+      Guard.run do
+        Util.integer!(rows, 'rows', Util::NONNEG_INT)
+        FFI.ncplane_valign(to_ptr, Util.placement_align_value(align), rows)
+      end
     end
 
     # --- posizione e z-order ---
@@ -970,8 +1031,10 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è un int del C
     # @raise [ClosedError] se il piano è chiuso
     def move(y, x)
-      Util.check!(FFI.ncplane_move_yx(to_ptr, Util.int!(y, 'y'), Util.int!(x, 'x')), PlaneError, 'ncplane_move_yx')
-      self
+      Guard.run do
+        Util.check!(FFI.ncplane_move_yx(to_ptr, Util.int!(y, 'y'), Util.int!(x, 'x')), PlaneError, 'ncplane_move_yx')
+        self
+      end
     end
 
     # Sposta il piano rispetto alla posizione attuale (+ncplane_move_rel+).
@@ -983,40 +1046,50 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è un int del C
     # @raise [ClosedError] se il piano è chiuso
     def move_rel(dy, dx)
-      Util.check!(FFI.ncplane_move_rel(to_ptr, Util.int!(dy, 'dy'), Util.int!(dx, 'dx')), PlaneError, 'ncplane_move_rel')
-      self
+      Guard.run do
+        Util.check!(FFI.ncplane_move_rel(to_ptr, Util.int!(dy, 'dy'), Util.int!(dx, 'dx')), PlaneError, 'ncplane_move_rel')
+        self
+      end
     end
 
     # Porta il piano in cima alla pila (+ncplane_move_top+).
     # @return [self]
     # @raise [ClosedError] se il piano è chiuso
     def move_top
-      FFI.ncplane_move_top(to_ptr)
-      self
+      Guard.run do
+        FFI.ncplane_move_top(to_ptr)
+        self
+      end
     end
 
     # Porta il piano in fondo alla pila (+ncplane_move_bottom+).
     # @return [self]
     # @raise [ClosedError] se il piano è chiuso
     def move_bottom
-      FFI.ncplane_move_bottom(to_ptr)
-      self
+      Guard.run do
+        FFI.ncplane_move_bottom(to_ptr)
+        self
+      end
     end
 
     # Porta il piano e i suoi figli in cima alla pila (+ncplane_move_family_top+).
     # @return [self]
     # @raise [ClosedError] se il piano è chiuso
     def move_family_top
-      FFI.ncplane_move_family_top(to_ptr)
-      self
+      Guard.run do
+        FFI.ncplane_move_family_top(to_ptr)
+        self
+      end
     end
 
     # Porta il piano e i suoi figli in fondo alla pila (+ncplane_move_family_bottom+).
     # @return [self]
     # @raise [ClosedError] se il piano è chiuso
     def move_family_bottom
-      FFI.ncplane_move_family_bottom(to_ptr)
-      self
+      Guard.run do
+        FFI.ncplane_move_family_bottom(to_ptr)
+        self
+      end
     end
 
     # Mette il piano subito sopra other (+ncplane_move_above+).
@@ -1027,9 +1100,11 @@ module Notcurses
     # @raise [TypeError] se other non è un Plane
     # @raise [ClosedError] se uno dei piani è chiuso
     def move_above(other)
-      target = other.nil? ? ::FFI::Pointer::NULL : same_context_plane!(other, 'other')
-      Util.check!(FFI.ncplane_move_above(to_ptr, target), PlaneError, 'ncplane_move_above')
-      self
+      Guard.run do
+        target = other.nil? ? ::FFI::Pointer::NULL : same_context_plane!(other, 'other')
+        Util.check!(FFI.ncplane_move_above(to_ptr, target), PlaneError, 'ncplane_move_above')
+        self
+      end
     end
 
     # Mette il piano subito sotto other (+ncplane_move_below+).
@@ -1040,9 +1115,11 @@ module Notcurses
     # @raise [TypeError] se other non è un Plane
     # @raise [ClosedError] se uno dei piani è chiuso
     def move_below(other)
-      target = other.nil? ? ::FFI::Pointer::NULL : same_context_plane!(other, 'other')
-      Util.check!(FFI.ncplane_move_below(to_ptr, target), PlaneError, 'ncplane_move_below')
-      self
+      Guard.run do
+        target = other.nil? ? ::FFI::Pointer::NULL : same_context_plane!(other, 'other')
+        Util.check!(FFI.ncplane_move_below(to_ptr, target), PlaneError, 'ncplane_move_below')
+        self
+      end
     end
 
     # Come {#move_above}, con i figli del piano (+ncplane_move_family_above+).
@@ -1053,9 +1130,11 @@ module Notcurses
     # @raise [TypeError] se other non è un Plane
     # @raise [ClosedError] se uno dei piani è chiuso
     def move_family_above(other)
-      target = other.nil? ? ::FFI::Pointer::NULL : same_context_plane!(other, 'other')
-      Util.check!(FFI.ncplane_move_family_above(to_ptr, target), PlaneError, 'ncplane_move_family_above')
-      self
+      Guard.run do
+        target = other.nil? ? ::FFI::Pointer::NULL : same_context_plane!(other, 'other')
+        Util.check!(FFI.ncplane_move_family_above(to_ptr, target), PlaneError, 'ncplane_move_family_above')
+        self
+      end
     end
 
     # Come {#move_below}, con i figli del piano (+ncplane_move_family_below+).
@@ -1066,18 +1145,20 @@ module Notcurses
     # @raise [TypeError] se other non è un Plane
     # @raise [ClosedError] se uno dei piani è chiuso
     def move_family_below(other)
-      target = other.nil? ? ::FFI::Pointer::NULL : same_context_plane!(other, 'other')
-      Util.check!(FFI.ncplane_move_family_below(to_ptr, target), PlaneError, 'ncplane_move_family_below')
-      self
+      Guard.run do
+        target = other.nil? ? ::FFI::Pointer::NULL : same_context_plane!(other, 'other')
+        Util.check!(FFI.ncplane_move_family_below(to_ptr, target), PlaneError, 'ncplane_move_family_below')
+        self
+      end
     end
 
     # @return [Plane, nil] piano subito sotto nello z-order (+ncplane_below+)
     # @raise [ClosedError] se il piano è chiuso
-    def below = @context.plane_for(FFI.ncplane_below(to_ptr))
+    def below = Guard.run { @context.plane_for(FFI.ncplane_below(to_ptr)) }
 
     # @return [Plane, nil] piano subito sopra nello z-order (+ncplane_above+)
     # @raise [ClosedError] se il piano è chiuso
-    def above = @context.plane_for(FFI.ncplane_above(to_ptr))
+    def above = Guard.run { @context.plane_for(FFI.ncplane_above(to_ptr)) }
 
     # --- scrolling ---
 
@@ -1087,12 +1168,14 @@ module Notcurses
     # @raise [TypeError] se enabled non è true o false
     # @raise [ClosedError] se il piano è chiuso
     def scrolling=(enabled)
-      FFI.ncplane_set_scrolling(to_ptr, Util.c_bool(enabled, 'enabled'))
+      Guard.run do
+        FFI.ncplane_set_scrolling(to_ptr, Util.c_bool(enabled, 'enabled'))
+      end
     end
 
     # @return [Boolean] true se il piano scorre (+ncplane_scrolling_p+)
     # @raise [ClosedError] se il piano è chiuso
-    def scrolling? = FFI.ncplane_scrolling_p(to_ptr)
+    def scrolling? = Guard.run { FFI.ncplane_scrolling_p(to_ptr) }
 
     # Abilita o disabilita la crescita automatica (+ncplane_set_autogrow+):
     # l'output oltre il bordo fa crescere il piano (in basso se il piano
@@ -1103,16 +1186,18 @@ module Notcurses
     # @raise [TypeError] se enabled non è true o false
     # @raise [ClosedError] se il piano è chiuso
     def autogrow=(enabled)
-      ptr = to_ptr
-      value = Util.c_bool(enabled, 'enabled')
-      raise PlaneError, "l'autogrow dello stdplane non si può cambiare" if stdplane?
+      Guard.run do
+        ptr = to_ptr
+        value = Util.c_bool(enabled, 'enabled')
+        raise PlaneError, "l'autogrow dello stdplane non si può cambiare" if stdplane?
 
-      FFI.ncplane_set_autogrow(ptr, value)
+        FFI.ncplane_set_autogrow(ptr, value)
+      end
     end
 
     # @return [Boolean] true se il piano cresce da solo (+ncplane_autogrow_p+)
     # @raise [ClosedError] se il piano è chiuso
-    def autogrow? = FFI.ncplane_autogrow_p(to_ptr)
+    def autogrow? = Guard.run { FFI.ncplane_autogrow_p(to_ptr) }
 
     # Fa scorrere il contenuto del piano di lines righe verso l'alto
     # (+ncplane_scrollup+): le righe nuove in basso sono vuote, i figli non
@@ -1132,15 +1217,17 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se lines non è un intero >= 1
     # @raise [ClosedError] se il piano è chiuso
     def scrollup(lines: 1)
-      ptr = to_ptr
-      Util.integer!(lines, 'lines', 1..Util::INT32.max)
-      raise PlaneError, 'scrollup: il piano non ha lo scrolling attivo' unless scrolling?
+      Guard.run do
+        ptr = to_ptr
+        Util.integer!(lines, 'lines', 1..Util::INT32.max)
+        raise PlaneError, 'scrollup: il piano non ha lo scrolling attivo' unless scrolling?
 
-      FFI.ncplane_cursor_move_yx(ptr, dim_y - 1, 0)
-      rc = FFI.ncplane_scrollup(ptr, lines)
-      @context.raise_callback_errors!
-      Util.check!(rc, PlaneError, 'ncplane_scrollup')
-      self
+        FFI.ncplane_cursor_move_yx(ptr, dim_y - 1, 0)
+        rc = FFI.ncplane_scrollup(ptr, lines)
+        @context.raise_callback_errors!
+        Util.check!(rc, PlaneError, 'ncplane_scrollup')
+        self
+      end
     end
 
     # Fa scorrere il piano quanto basta perché il bordo inferiore di child non
@@ -1154,10 +1241,12 @@ module Notcurses
     # @raise [TypeError] se child non è un Plane
     # @raise [ClosedError] se uno dei piani è chiuso
     def scrollup_child(child)
-      rc = FFI.ncplane_scrollup_child(to_ptr, same_context_plane!(child, 'child'))
-      @context.raise_callback_errors!
-      Util.check!(rc, PlaneError, 'ncplane_scrollup_child')
-      self
+      Guard.run do
+        rc = FFI.ncplane_scrollup_child(to_ptr, same_context_plane!(child, 'child'))
+        @context.raise_callback_errors!
+        Util.check!(rc, PlaneError, 'ncplane_scrollup_child')
+        self
+      end
     end
 
     # Ruota il piano di 90° in senso orario (+ncplane_rotate_cw+): le righe
@@ -1173,10 +1262,12 @@ module Notcurses
     #   ridimensionato e vuoto)
     # @raise [ClosedError] se il piano è chiuso
     def rotate_cw
-      rc = keeping_base_cell { FFI.ncplane_rotate_cw(to_ptr) }
-      @context.raise_callback_errors!
-      Util.check!(rc, PlaneError, 'ncplane_rotate_cw')
-      self
+      Guard.run do
+        rc = keeping_base_cell { FFI.ncplane_rotate_cw(to_ptr) }
+        @context.raise_callback_errors!
+        Util.check!(rc, PlaneError, 'ncplane_rotate_cw')
+        self
+      end
     end
 
     # Ruota il piano di 90° in senso antiorario (+ncplane_rotate_ccw+), con le
@@ -1186,10 +1277,12 @@ module Notcurses
     # @raise [PlaneError] se la rotazione non è possibile
     # @raise [ClosedError] se il piano è chiuso
     def rotate_ccw
-      rc = keeping_base_cell { FFI.ncplane_rotate_ccw(to_ptr) }
-      @context.raise_callback_errors!
-      Util.check!(rc, PlaneError, 'ncplane_rotate_ccw')
-      self
+      Guard.run do
+        rc = keeping_base_cell { FFI.ncplane_rotate_ccw(to_ptr) }
+        @context.raise_callback_errors!
+        Util.check!(rc, PlaneError, 'ncplane_rotate_ccw')
+        self
+      end
     end
 
     # --- cursore ---
@@ -1205,13 +1298,15 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è un int del C né nil
     # @raise [ClosedError] se il piano è chiuso
     def move_cursor(y, x)
-      ptr = to_ptr
-      cy, cx = cursor
-      y = y.nil? ? cy : Util.int!(y, 'y')
-      x = x.nil? ? cx : Util.int!(x, 'x')
-      cursor_target!(y, x)
-      Util.check!(FFI.ncplane_cursor_move_yx(ptr, y, x), PlaneError, "ncplane_cursor_move_yx(#{y}, #{x})")
-      self
+      Guard.run do
+        ptr = to_ptr
+        cy, cx = cursor
+        y = y.nil? ? cy : Util.int!(y, 'y')
+        x = x.nil? ? cx : Util.int!(x, 'x')
+        cursor_target!(y, x)
+        Util.check!(FFI.ncplane_cursor_move_yx(ptr, y, x), PlaneError, "ncplane_cursor_move_yx(#{y}, #{x})")
+        self
+      end
     end
 
     # Sposta il cursore rispetto alla posizione attuale
@@ -1224,40 +1319,46 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è un int del C
     # @raise [ClosedError] se il piano è chiuso
     def move_cursor_rel(dy, dx)
-      ptr = to_ptr
-      Util.int!(dy, 'dy')
-      Util.int!(dx, 'dx')
-      cy, cx = cursor
-      cursor_target!(cy + dy, cx + dx)
-      Util.check!(FFI.ncplane_cursor_move_rel(ptr, dy, dx), PlaneError, "ncplane_cursor_move_rel(#{dy}, #{dx})")
-      self
+      Guard.run do
+        ptr = to_ptr
+        Util.int!(dy, 'dy')
+        Util.int!(dx, 'dx')
+        cy, cx = cursor
+        cursor_target!(cy + dy, cx + dx)
+        Util.check!(FFI.ncplane_cursor_move_rel(ptr, dy, dx), PlaneError, "ncplane_cursor_move_rel(#{dy}, #{dx})")
+        self
+      end
     end
 
     # Porta il cursore in (0, 0) (+ncplane_home+).
     # @return [self]
     # @raise [ClosedError] se il piano è chiuso
     def home
-      FFI.ncplane_home(to_ptr)
-      self
+      Guard.run do
+        FFI.ncplane_home(to_ptr)
+        self
+      end
     end
 
     # @return [Array(Integer, Integer)] posizione del cursore [y, x] (+ncplane_cursor_yx+)
     # @raise [ClosedError] se il piano è chiuso
     def cursor
-      y = ::FFI::MemoryPointer.new(:uint)
-      x = ::FFI::MemoryPointer.new(:uint)
-      FFI.ncplane_cursor_yx(to_ptr, y, x)
-      [y.read_uint, x.read_uint]
+      Guard.run do
+        y = ::FFI::MemoryPointer.new(:uint)
+        x = ::FFI::MemoryPointer.new(:uint)
+        FFI.ncplane_cursor_yx(to_ptr, y, x)
+        [y.read_uint, x.read_uint]
+      end
     end
     alias cursor_yx cursor
 
     # @return [Integer] riga del cursore (+ncplane_cursor_y+)
     # @raise [ClosedError] se il piano è chiuso
-    def cursor_y = FFI.ncplane_cursor_y(to_ptr)
+    def cursor_y = Guard.run { FFI.ncplane_cursor_y(to_ptr) }
 
     # @return [Integer] colonna del cursore (+ncplane_cursor_x+)
     # @raise [ClosedError] se il piano è chiuso
-    def cursor_x = FFI.ncplane_cursor_x(to_ptr)
+    def cursor_x = Guard.run { FFI.ncplane_cursor_x(to_ptr) }
 
     # --- contenuto ---
 
@@ -1288,19 +1389,21 @@ module Notcurses
     #   ha un bitmap o se la lettura fallisce
     # @raise [ClosedError] se il piano è chiuso
     def at(y: nil, x: nil)
-      ptr = to_ptr
-      y, x = cell_coords!(y, x)
-      st = internals(ptr)
-      raise PlaneError, "at(#{y}, #{x}): il piano ha un bitmap e notcurses non ne legge le celle" if st && !st[:sprite].null?
+      Guard.run do
+        ptr = to_ptr
+        y, x = cell_coords!(y, x)
+        st = internals(ptr)
+        raise PlaneError, "at(#{y}, #{x}): il piano ha un bitmap e notcurses non ne legge le celle" if st && !st[:sprite].null?
 
-      x -= 1 while x.positive? && wide_right?(ptr, y, x)
-      return base if wide_right?(ptr, y, x)
+        x -= 1 while x.positive? && wide_right?(ptr, y, x)
+        return base if wide_right?(ptr, y, x)
 
-      styles = ::FFI::MemoryPointer.new(:uint16)
-      channels = ::FFI::MemoryPointer.new(:uint64)
-      egc = FFI.ncplane_at_yx(ptr, y, x, styles, channels)
-      Util.check_ptr!(egc, PlaneError, "ncplane_at_yx(#{y}, #{x})")
-      Cell.from_c(Util.take_string(egc), styles.read_uint16, channels.read_uint64)
+        styles = ::FFI::MemoryPointer.new(:uint16)
+        channels = ::FFI::MemoryPointer.new(:uint64)
+        egc = FFI.ncplane_at_yx(ptr, y, x, styles, channels)
+        Util.check_ptr!(egc, PlaneError, "ncplane_at_yx(#{y}, #{x})")
+        Cell.from_c(Util.take_string(egc), styles.read_uint16, channels.read_uint64)
+      end
     end
 
     # Cella base (+ncplane_base+): il contenuto mostrato dove il piano non ha
@@ -1310,13 +1413,15 @@ module Notcurses
     # @raise [PlaneError] se la lettura fallisce
     # @raise [ClosedError] se il piano è chiuso
     def base
-      ptr = to_ptr
-      cell = FFI::NcCell.new
-      begin
-        Util.check!(FFI.ncplane_base(ptr, cell), PlaneError, 'ncplane_base')
-        cell_content(ptr, cell)
-      ensure
-        FFI.nccell_release(ptr, cell)
+      Guard.run do
+        ptr = to_ptr
+        cell = FFI::NcCell.new
+        begin
+          Util.check!(FFI.ncplane_base(ptr, cell), PlaneError, 'ncplane_base')
+          cell_content(ptr, cell)
+        ensure
+          FFI.nccell_release(ptr, cell)
+        end
       end
     end
 
@@ -1331,12 +1436,14 @@ module Notcurses
     #   grapheme cluster, caratteri di controllo, ...)
     # @raise [ClosedError] se il piano è chiuso
     def set_base(egc: ' ', styles: 0, channels: 0)
-      ptr = to_ptr
-      text = Cell.egc!(egc)
-      mask = Util.styles_value(styles)
-      chans = Util.channels_value(channels)
-      Util.check!(FFI.ncplane_set_base(ptr, text, mask, chans), PlaneError, 'ncplane_set_base')
-      self
+      Guard.run do
+        ptr = to_ptr
+        text = Cell.egc!(egc)
+        mask = Util.styles_value(styles)
+        chans = Util.channels_value(channels)
+        Util.check!(FFI.ncplane_set_base(ptr, text, mask, chans), PlaneError, 'ncplane_set_base')
+        self
+      end
     end
 
     # Testo del piano in una regione, riga dopo riga, senza separatori di riga
@@ -1361,32 +1468,34 @@ module Notcurses
     #   un bitmap)
     # @raise [ClosedError] se il piano è chiuso
     def contents(y: 0, x: 0, rows: nil, cols: nil)
-      ptr = to_ptr
-      prows, pcols = dims
-      Util.integer!(y, 'y', 0...prows)
-      Util.integer!(x, 'x', 0...pcols)
-      rows = rows.nil? ? prows - y : Util.integer!(rows, 'rows', 1..(prows - y))
-      cols = cols.nil? ? pcols - x : Util.integer!(cols, 'cols', 1..(pcols - x))
-      out = String.new(encoding: Encoding::BINARY)
-      cell = FFI::NcCell.new
-      begin
-        y.upto(y + rows - 1) do |yy|
-          x.upto(x + cols - 1) do |xx|
-            # la cella viene riusata: ncplane_at_yx_cell rilascia prima il contenuto precedente
-            len = FFI.ncplane_at_yx_cell(ptr, yy, xx, cell)
-            if len.negative?
-              out << unpooled_egc(ptr, yy, xx)
-              next
-            end
+      Guard.run do
+        ptr = to_ptr
+        prows, pcols = dims
+        Util.integer!(y, 'y', 0...prows)
+        Util.integer!(x, 'x', 0...pcols)
+        rows = rows.nil? ? prows - y : Util.integer!(rows, 'rows', 1..(prows - y))
+        cols = cols.nil? ? pcols - x : Util.integer!(cols, 'cols', 1..(pcols - x))
+        out = String.new(encoding: Encoding::BINARY)
+        cell = FFI::NcCell.new
+        begin
+          y.upto(y + rows - 1) do |yy|
+            x.upto(x + cols - 1) do |xx|
+              # la cella viene riusata: ncplane_at_yx_cell rilascia prima il contenuto precedente
+              len = FFI.ncplane_at_yx_cell(ptr, yy, xx, cell)
+              if len.negative?
+                out << unpooled_egc(ptr, yy, xx)
+                next
+              end
 
-            egc = FFI.nccell_extended_gcluster(ptr, cell)
-            out << egc if len.positive? && egc != "\n" # la cella che ncplane_put lascia dopo un a capo
+              egc = FFI.nccell_extended_gcluster(ptr, cell)
+              out << egc if len.positive? && egc != "\n" # la cella che ncplane_put lascia dopo un a capo
+            end
           end
+        ensure
+          FFI.nccell_release(ptr, cell)
         end
-      ensure
-        FFI.nccell_release(ptr, cell)
+        out.force_encoding(Encoding::UTF_8)
       end
-      out.force_encoding(Encoding::UTF_8)
     end
 
     # Cancella tutto il piano (+ncplane_erase+): celle vuote, cursore in
@@ -1395,8 +1504,10 @@ module Notcurses
     # @return [self]
     # @raise [ClosedError] se il piano è chiuso
     def erase
-      FFI.ncplane_erase(to_ptr)
-      self
+      Guard.run do
+        FFI.ncplane_erase(to_ptr)
+        self
+      end
     end
 
     # Cancella un rettangolo di celle (+ncplane_erase_region+), dalla cella
@@ -1413,16 +1524,18 @@ module Notcurses
     # @raise [PlaneError] se la cancellazione fallisce
     # @raise [ClosedError] se il piano è chiuso
     def erase_region(y, x, rows, cols)
-      ptr = to_ptr
-      prows, pcols = dims
-      Util.integer!(y, 'y', 0...prows)
-      Util.integer!(x, 'x', 0...pcols)
-      Util.integer!(rows, 'rows', 1..Util::INT32.max)
-      Util.integer!(cols, 'cols', 1..Util::INT32.max)
-      keep_glyphs_whole(ptr, y, x, [rows, prows - y].min, [cols, pcols - x].min) do
-        Util.check!(FFI.ncplane_erase_region(ptr, y, x, rows, cols), PlaneError, 'ncplane_erase_region')
+      Guard.run do
+        ptr = to_ptr
+        prows, pcols = dims
+        Util.integer!(y, 'y', 0...prows)
+        Util.integer!(x, 'x', 0...pcols)
+        Util.integer!(rows, 'rows', 1..Util::INT32.max)
+        Util.integer!(cols, 'cols', 1..Util::INT32.max)
+        keep_glyphs_whole(ptr, y, x, [rows, prows - y].min, [cols, pcols - x].min) do
+          Util.check!(FFI.ncplane_erase_region(ptr, y, x, rows, cols), PlaneError, 'ncplane_erase_region')
+        end
+        self
       end
-      self
     end
 
     # Fonde questo piano sopra dst (+ncplane_mergedown_simple+): dst prende il
@@ -1476,38 +1589,40 @@ module Notcurses
     # @raise [TypeError] se dst non è un Plane
     # @raise [ClosedError] se uno dei piani è chiuso
     def merge_down(dst)
-      ptr = to_ptr
-      target = same_context_plane!(dst, 'dst')
-      raise PlaneError, 'merge_down: dst è il piano stesso' if target.address == ptr.address
-      raise PlaneError, "merge_down: dst è in un'altra pila" unless FFI.ncpile_top(ptr).address == FFI.ncpile_top(target).address
+      Guard.run do
+        ptr = to_ptr
+        target = same_context_plane!(dst, 'dst')
+        raise PlaneError, 'merge_down: dst è il piano stesso' if target.address == ptr.address
+        raise PlaneError, "merge_down: dst è in un'altra pila" unless FFI.ncpile_top(ptr).address == FFI.ncpile_top(target).address
 
-      # un'eccezione asincrona fra il rilascio e il ripristino lascerebbe celle con EGC già rilasciati; i gestori
-      # trap girano comunque: i controlli di release_unused! e undo_merge! rileggono dst prima di toccarlo
-      lost = Thread.handle_interrupt(Object => :never) do
-        old = (st = internals(target)) && fb_bytes(st)
-        blanked = blank_orphan_lefts!(ptr)
-        begin
-          Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
-        ensure
-          blanked.each { |cell, bytes| cell.write_bytes(bytes) }
+        # un'eccezione asincrona fra il rilascio e il ripristino lascerebbe celle con EGC già rilasciati; i gestori
+        # trap girano comunque: i controlli di release_unused! e undo_merge! rileggono dst prima di toccarlo
+        lost = Thread.handle_interrupt(Object => :never) do
+          old = (st = internals(target)) && fb_bytes(st)
+          blanked = blank_orphan_lefts!(ptr)
+          begin
+            Util.check!(FFI.ncplane_mergedown_simple(ptr, target), PlaneError, 'ncplane_mergedown_simple')
+          ensure
+            blanked.each { |cell, bytes| cell.write_bytes(bytes) }
+          end
+          # il C ha copiato ogni EGC nel framebuffer nuovo e ha liberato quello vecchio senza rilasciarli (ICH-482)
+          st = old && internals(target)
+          fresh = st && fb_bytes(st)
+          if fresh && lost_egc?(fresh, st[:lenx])
+            undo_merge!(target, st, old, fresh) ? :undone : :lost
+          else
+            release_unused!(target, pooled(old)) if fresh
+            nil
+          end
         end
-        # il C ha copiato ogni EGC nel framebuffer nuovo e ha liberato quello vecchio senza rilasciarli (ICH-482)
-        st = old && internals(target)
-        fresh = st && fb_bytes(st)
-        if fresh && lost_egc?(fresh, st[:lenx])
-          undo_merge!(target, st, old, fresh) ? :undone : :lost
-        else
-          release_unused!(target, pooled(old)) if fresh
-          nil
-        end
+        raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (dst non è cambiato)" if lost == :undone
+
+        restore_wide_glyphs!(target)
+        # glifi larghi nuovi senza le scritture: un resize del C li può tagliare a dimensioni già controllate
+        @context.tracked_plane(target.address)&.cut_glyphs_cols = nil
+        raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (celle di dst vuote)" if lost
+        self
       end
-      raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (dst non è cambiato)" if lost == :undone
-
-      restore_wide_glyphs!(target)
-      # glifi larghi nuovi senza le scritture: un resize del C li può tagliare a dimensioni già controllate
-      @context.tracked_plane(target.address)&.cut_glyphs_cols = nil
-      raise PlaneError, "merge_down: l'egcpool di dst non ha spazio per copiare i suoi EGC (celle di dst vuote)" if lost
-      self
     end
 
     # Converte in grigio i colori delle celle (+ncplane_greyscale+). I colori
@@ -1517,8 +1632,10 @@ module Notcurses
     # @return [self]
     # @raise [ClosedError] se il piano è chiuso
     def greyscale
-      FFI.ncplane_greyscale(to_ptr)
-      self
+      Guard.run do
+        FFI.ncplane_greyscale(to_ptr)
+        self
+      end
     end
 
     # --- immagini ---
@@ -1542,23 +1659,25 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il piano è chiuso
     def as_rgba(blitter, y: 0, x: 0, rows: nil, cols: nil)
-      ptr = to_ptr
-      blit = Util.image_blitter_value(blitter)
-      if [FFI::NCBLIT_PIXEL, FFI::NCBLIT_DEFAULT].include?(blit)
-        raise ArgumentError, 'as_rgba: i blitter :pixel e :default non sono ammessi'
-      end
+      Guard.run do
+        ptr = to_ptr
+        blit = Util.image_blitter_value(blitter)
+        if [FFI::NCBLIT_PIXEL, FFI::NCBLIT_DEFAULT].include?(blit)
+          raise ArgumentError, 'as_rgba: i blitter :pixel e :default non sono ammessi'
+        end
 
-      begy, begx, leny, lenx = Util.c_region(y, x, rows, cols)
-      pxy = ::FFI::MemoryPointer.new(:uint)
-      pxx = ::FFI::MemoryPointer.new(:uint)
-      buf = FFI.ncplane_as_rgba(ptr, blit, begy, begx, leny, lenx, pxy, pxx)
-      Util.check_ptr!(buf, PlaneError, 'ncplane_as_rgba')
-      begin
-        height = pxy.read_uint
-        width = pxx.read_uint
-        [buf.read_bytes(height * width * 4), height, width]
-      ensure
-        Util.free(buf)
+        begy, begx, leny, lenx = Util.c_region(y, x, rows, cols)
+        pxy = ::FFI::MemoryPointer.new(:uint)
+        pxx = ::FFI::MemoryPointer.new(:uint)
+        buf = FFI.ncplane_as_rgba(ptr, blit, begy, begx, leny, lenx, pxy, pxx)
+        Util.check_ptr!(buf, PlaneError, 'ncplane_as_rgba')
+        begin
+          height = pxy.read_uint
+          width = pxx.read_uint
+          [buf.read_bytes(height * width * 4), height, width]
+        ensure
+          Util.free(buf)
+        end
       end
     end
 
@@ -1578,20 +1697,22 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il piano è chiuso
     def qrcode(data, rows:, cols:)
-      ptr = to_ptr
-      raise TypeError, "data deve essere String, non #{data.class}" unless data.is_a?(String)
-      raise ArgumentError, 'data non può essere vuoto' if data.empty?
+      Guard.run do
+        ptr = to_ptr
+        raise TypeError, "data deve essere String, non #{data.class}" unless data.is_a?(String)
+        raise ArgumentError, 'data non può essere vuoto' if data.empty?
 
-      ymax = ::FFI::MemoryPointer.new(:uint)
-      xmax = ::FFI::MemoryPointer.new(:uint)
-      ymax.write_uint(Util.integer!(rows, 'rows', 1..Util::INT32.max))
-      xmax.write_uint(Util.integer!(cols, 'cols', 1..Util::INT32.max))
-      bytes = data.b
-      buf = ::FFI::MemoryPointer.new(:uchar, bytes.bytesize)
-      buf.put_bytes(0, bytes)
-      version = FFI.ncplane_qrcode(ptr, ymax, xmax, buf, bytes.bytesize)
-      Util.check!(version, PlaneError, 'ncplane_qrcode (notcurses compilato senza qrcodegen?)')
-      [version, ymax.read_uint, xmax.read_uint]
+        ymax = ::FFI::MemoryPointer.new(:uint)
+        xmax = ::FFI::MemoryPointer.new(:uint)
+        ymax.write_uint(Util.integer!(rows, 'rows', 1..Util::INT32.max))
+        xmax.write_uint(Util.integer!(cols, 'cols', 1..Util::INT32.max))
+        bytes = data.b
+        buf = ::FFI::MemoryPointer.new(:uchar, bytes.bytesize)
+        buf.put_bytes(0, bytes)
+        version = FFI.ncplane_qrcode(ptr, ymax, xmax, buf, bytes.bytesize)
+        Util.check!(version, PlaneError, 'ncplane_qrcode (notcurses compilato senza qrcodegen?)')
+        [version, ymax.read_uint, xmax.read_uint]
+      end
     end
 
     # --- testo ---
@@ -1645,39 +1766,41 @@ module Notcurses
     #   per autogrow, render dello stdplane che scorre)
     # @raise [ClosedError] se il piano è chiuso
     def putstr(text, y: nil, x: nil, align: nil, stained: false)
-      ptr = to_ptr
-      str = output_text!(ptr, text, 'text')
-      raise ArgumentError, 'putstr: usa x: oppure align:, non entrambi' if x && align
+      Guard.run do
+        ptr = to_ptr
+        str = output_text!(ptr, text, 'text')
+        raise ArgumentError, 'putstr: usa x: oppure align:, non entrambi' if x && align
 
-      Util.bool!(stained, 'stained')
-      return 0 if str.empty?
+        Util.bool!(stained, 'stained')
+        return 0 if str.empty?
 
-      if dim_x == 1 && str.each_grapheme_cluster.any? { |g| Notcurses.strwidth(g) > 1 }
-        raise PlaneError, 'un carattere largo 2 colonne non entra in un piano largo 1'
-      end
-
-      segments = Util.zwj_segments(str).flat_map { |seg| seg.split(/(?=\n)/) }
-      widths = segments.map { |seg| Notcurses.strwidth(seg) }
-      first = Notcurses.strwidth(str.grapheme_clusters.first)
-      sync_scrolling_stdplane!(ptr, str.include?("\n") || widths.sum > dim_x - (x.is_a?(Integer) ? x : cursor_x))
-      ty, tx = text_target!(str, widths.sum, first, y: y, x: x, align: align, stained: stained)
-      written = 0
-      segments.each_with_index do |seg, i|
-        # lo scroll dello stdplane fa un render, che può restringerlo a metà testo
-        clear_cut_glyphs!(ptr) if i.positive?
-        # "\n" con il cursore oltre l'ultima colonna: due a capo nel C (vedi il YARD)
-        if seg.start_with?("\n") && (i.positive? || tx == -1) && cursor_x == dim_x
-          Util.check!(FFI.ncplane_cursor_move_yx(ptr, i.zero? ? ty : -1, dim_x - 1), PlaneError, 'ncplane_cursor_move_yx')
+        if dim_x == 1 && str.each_grapheme_cluster.any? { |g| Notcurses.strwidth(g) > 1 }
+          raise PlaneError, 'un carattere largo 2 colonne non entra in un piano largo 1'
         end
-        rc = if stained then FFI.ncplane_putstr_stained(ptr, seg)
-             elsif i.zero? then FFI.ncplane_putstr_yx(ptr, ty, tx, seg)
-             else FFI.ncplane_putstr(ptr, seg)
-             end
-        @context.raise_callback_errors!
-        written += rc.abs
-        raise PlaneError, "putstr: notcurses ha scritto #{written} colonne su #{widths.sum}" unless rc == widths[i]
+
+        segments = Util.zwj_segments(str).flat_map { |seg| seg.split(/(?=\n)/) }
+        widths = segments.map { |seg| Notcurses.strwidth(seg) }
+        first = Notcurses.strwidth(str.grapheme_clusters.first)
+        sync_scrolling_stdplane!(ptr, str.include?("\n") || widths.sum > dim_x - (x.is_a?(Integer) ? x : cursor_x))
+        ty, tx = text_target!(str, widths.sum, first, y: y, x: x, align: align, stained: stained)
+        written = 0
+        segments.each_with_index do |seg, i|
+          # lo scroll dello stdplane fa un render, che può restringerlo a metà testo
+          clear_cut_glyphs!(ptr) if i.positive?
+          # "\n" con il cursore oltre l'ultima colonna: due a capo nel C (vedi il YARD)
+          if seg.start_with?("\n") && (i.positive? || tx == -1) && cursor_x == dim_x
+            Util.check!(FFI.ncplane_cursor_move_yx(ptr, i.zero? ? ty : -1, dim_x - 1), PlaneError, 'ncplane_cursor_move_yx')
+          end
+          rc = if stained then FFI.ncplane_putstr_stained(ptr, seg)
+               elsif i.zero? then FFI.ncplane_putstr_yx(ptr, ty, tx, seg)
+               else FFI.ncplane_putstr(ptr, seg)
+               end
+          @context.raise_callback_errors!
+          written += rc.abs
+          raise PlaneError, "putstr: notcurses ha scritto #{written} colonne su #{widths.sum}" unless rc == widths[i]
+        end
+        written
       end
-      written
     end
 
     # Scrive un testo formattato con Kernel#format (il printf del C non si
@@ -1719,18 +1842,20 @@ module Notcurses
     # @raise [Exception] l'eccezione di un callback Ruby di resize
     # @raise [ClosedError] se il piano è chiuso
     def putegc(egc, y: nil, x: nil, stained: false)
-      ptr = to_ptr
-      text = Cell.egc!(egc)
-      raise ArgumentError, 'egc vuoto: serve un carattere' if text.empty?
+      Guard.run do
+        ptr = to_ptr
+        text = Cell.egc!(egc)
+        raise ArgumentError, 'egc vuoto: serve un carattere' if text.empty?
 
-      output_text!(ptr, text, 'egc')
-      Util.bool!(stained, 'stained')
-      single_egc!(ptr, text)
-      cols = Notcurses.strwidth(text)
-      ty, tx = text_target!(text, cols, cols, y: y, x: x, align: nil, stained: stained)
-      rc = stained ? FFI.ncplane_putegc_stained(ptr, text, nil) : FFI.ncplane_putegc_yx(ptr, ty, tx, text, nil)
-      @context.raise_callback_errors!
-      Util.check!(rc, PlaneError, "ncplane_putegc_yx(#{text.inspect})")
+        output_text!(ptr, text, 'egc')
+        Util.bool!(stained, 'stained')
+        single_egc!(ptr, text)
+        cols = Notcurses.strwidth(text)
+        ty, tx = text_target!(text, cols, cols, y: y, x: x, align: nil, stained: stained)
+        rc = stained ? FFI.ncplane_putegc_stained(ptr, text, nil) : FFI.ncplane_putegc_yx(ptr, ty, tx, text, nil)
+        @context.raise_callback_errors!
+        Util.check!(rc, PlaneError, "ncplane_putegc_yx(#{text.inspect})")
+      end
     end
 
     # Scrive una cella dal cursore, o da (y, x), con lo stile e i colori della
@@ -1749,14 +1874,16 @@ module Notcurses
     # @raise [Exception] l'eccezione di un callback Ruby di resize
     # @raise [ClosedError] se il piano è chiuso
     def putc(cell, y: nil, x: nil)
-      ptr = to_ptr
-      raise TypeError, "cell deve essere Notcurses::Cell, non #{cell.class}" unless cell.is_a?(Cell)
+      Guard.run do
+        ptr = to_ptr
+        raise TypeError, "cell deve essere Notcurses::Cell, non #{cell.class}" unless cell.is_a?(Cell)
 
-      cols = [cell.width, 1].max
-      ty, tx = text_target!(cell.egc, cols, cols, y: y, x: x, align: nil, stained: false)
-      rc = with_nccells(ptr, [cell]) { |nc| FFI.ncplane_putc_yx(ptr, ty, tx, nc) }
-      @context.raise_callback_errors!
-      Util.check!(rc, PlaneError, "ncplane_putc_yx(#{cell.egc.inspect})")
+        cols = [cell.width, 1].max
+        ty, tx = text_target!(cell.egc, cols, cols, y: y, x: x, align: nil, stained: false)
+        rc = with_nccells(ptr, [cell]) { |nc| FFI.ncplane_putc_yx(ptr, ty, tx, nc) }
+        @context.raise_callback_errors!
+        Util.check!(rc, PlaneError, "ncplane_putc_yx(#{cell.egc.inspect})")
+      end
     end
 
     # Scrive un testo a capo sulle parole, una riga del piano dopo l'altra,
@@ -1781,34 +1908,36 @@ module Notcurses
     # @raise [Exception] l'eccezione di un callback Ruby di resize
     # @raise [ClosedError] se il piano è chiuso
     def puttext(text, y: nil, align: :left)
-      ptr = to_ptr
-      str = output_text!(ptr, text, 'text')
-      raise ArgumentError, "align = #{align.inspect} non valido: usa :left, :center o :right" unless TEXT_ALIGNS.include?(align)
+      Guard.run do
+        ptr = to_ptr
+        str = output_text!(ptr, text, 'text')
+        raise ArgumentError, "align = #{align.inspect} non valido: usa :left, :center o :right" unless TEXT_ALIGNS.include?(align)
 
-      rows, cols = dims
-      row = y.nil? ? cursor_y : Util.integer!(y, 'y', 0...rows)
-      lines = wrap_lines(str, cols)
-      unless scrolling? || row + lines.size <= rows
-        raise PlaneError, "puttext: il testo occupa #{lines.size} righe, dalla riga #{row} ne restano #{rows - row}"
-      end
-
-      written = 0
-      lines.each do |line|
-        if row >= dim_y
-          scrollup(lines: 1)
-          row = dim_y - 1
+        rows, cols = dims
+        row = y.nil? ? cursor_y : Util.integer!(y, 'y', 0...rows)
+        lines = wrap_lines(str, cols)
+        unless scrolling? || row + lines.size <= rows
+          raise PlaneError, "puttext: il testo occupa #{lines.size} righe, dalla riga #{row} ne restano #{rows - row}"
         end
-        written += putstr(line, y: row, align: align) unless line.empty?
-        row += 1
+
+        written = 0
+        lines.each do |line|
+          if row >= dim_y
+            scrollup(lines: 1)
+            row = dim_y - 1
+          end
+          written += putstr(line, y: row, align: align) unless line.empty?
+          row += 1
+        end
+        written
       end
-      written
     end
 
     # --- stile e colori dell'output ---
 
     # @return [Array<Symbol>] stili delle scritture successive (+ncplane_styles+)
     # @raise [ClosedError] se il piano è chiuso
-    def styles = Util.styles_symbols(FFI.ncplane_styles(to_ptr))
+    def styles = Guard.run { Util.styles_symbols(FFI.ncplane_styles(to_ptr)) }
 
     # Imposta gli stili delle scritture successive (+ncplane_set_styles+). Il
     # terminale può non supportarli tutti (vedi {Context#supported_styles}).
@@ -1817,7 +1946,9 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se uno stile non è valido
     # @raise [ClosedError] se il piano è chiuso
     def styles=(styles)
-      FFI.ncplane_set_styles(to_ptr, Util.styles_value(styles))
+      Guard.run do
+        FFI.ncplane_set_styles(to_ptr, Util.styles_value(styles))
+      end
     end
 
     # Accende alcuni stili, lasciando gli altri come sono (+ncplane_on_styles+).
@@ -1827,8 +1958,10 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se uno stile non è valido
     # @raise [ClosedError] se il piano è chiuso
     def on_styles(*styles)
-      FFI.ncplane_on_styles(to_ptr, Util.styles_mask(styles))
-      self
+      Guard.run do
+        FFI.ncplane_on_styles(to_ptr, Util.styles_mask(styles))
+        self
+      end
     end
 
     # Spegne alcuni stili (+ncplane_off_styles+).
@@ -1838,13 +1971,15 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se uno stile non è valido
     # @raise [ClosedError] se il piano è chiuso
     def off_styles(*styles)
-      FFI.ncplane_off_styles(to_ptr, Util.styles_mask(styles))
-      self
+      Guard.run do
+        FFI.ncplane_off_styles(to_ptr, Util.styles_mask(styles))
+        self
+      end
     end
 
     # @return [Channels] colori delle scritture successive (+ncplane_channels+)
     # @raise [ClosedError] se il piano è chiuso
-    def channels = Channels.new(value: FFI.ncplane_channels(to_ptr))
+    def channels = Guard.run { Channels.new(value: FFI.ncplane_channels(to_ptr)) }
 
     # Imposta i colori delle scritture successive (+ncplane_set_channels+).
     #
@@ -1854,23 +1989,27 @@ module Notcurses
     # @raise [TypeError] se channels non è Channels o Integer
     # @raise [ClosedError] se il piano è chiuso
     def channels=(channels)
-      FFI.ncplane_set_channels(to_ptr, Util.plane_channels_value(channels))
+      Guard.run do
+        FFI.ncplane_set_channels(to_ptr, Util.plane_channels_value(channels))
+      end
     end
 
     # @return [Channel] colore di primo piano (+ncplane_fchannel+)
     # @raise [ClosedError] se il piano è chiuso
-    def fchannel = Channel.new(value: FFI.ncplane_fchannel(to_ptr))
+    def fchannel = Guard.run { Channel.new(value: FFI.ncplane_fchannel(to_ptr)) }
 
     # @return [Channel] colore di sfondo (+ncplane_bchannel+)
     # @raise [ClosedError] se il piano è chiuso
-    def bchannel = Channel.new(value: FFI.ncplane_bchannel(to_ptr))
+    def bchannel = Guard.run { Channel.new(value: FFI.ncplane_bchannel(to_ptr)) }
 
     # Imposta il colore di primo piano (+ncplane_set_fchannel+).
     # @param channel [Channel, Integer]
     # @raise [TypeError, ArgumentError] se channel non è valido
     # @raise [ClosedError] se il piano è chiuso
     def fchannel=(channel)
-      FFI.ncplane_set_fchannel(to_ptr, Util.channel_value(channel))
+      Guard.run do
+        FFI.ncplane_set_fchannel(to_ptr, Util.channel_value(channel))
+      end
     end
 
     # Imposta il colore di sfondo (+ncplane_set_bchannel+).
@@ -1879,10 +2018,12 @@ module Notcurses
     # @raise [TypeError] se channel non è Channel o Integer
     # @raise [ClosedError] se il piano è chiuso
     def bchannel=(channel)
-      value = Util.channel_value(channel)
-      raise ArgumentError, "l'alpha :highcontrast non è ammessa per lo sfondo" if Channel.new(value: value).alpha == :highcontrast
+      Guard.run do
+        value = Util.channel_value(channel)
+        raise ArgumentError, "l'alpha :highcontrast non è ammessa per lo sfondo" if Channel.new(value: value).alpha == :highcontrast
 
-      FFI.ncplane_set_bchannel(to_ptr, value)
+        FFI.ncplane_set_bchannel(to_ptr, value)
+      end
     end
 
     # Componenti RGB del primo piano (+ncplane_fg_rgb8+). Hanno senso solo con
@@ -1890,43 +2031,43 @@ module Notcurses
     # default restano i vecchi bit RGB.
     # @return [Array(Integer, Integer, Integer)] [r, g, b]
     # @raise [ClosedError] se il piano è chiuso
-    def fg_rgb = rgb8_of { |r, g, b| FFI.ncplane_fg_rgb8(to_ptr, r, g, b) }
+    def fg_rgb = Guard.run { rgb8_of { |r, g, b| FFI.ncplane_fg_rgb8(to_ptr, r, g, b) } }
 
     # Componenti RGB dello sfondo (+ncplane_bg_rgb8+), come {#fg_rgb}.
     # @return [Array(Integer, Integer, Integer)] [r, g, b]
     # @raise [ClosedError] se il piano è chiuso
-    def bg_rgb = rgb8_of { |r, g, b| FFI.ncplane_bg_rgb8(to_ptr, r, g, b) }
+    def bg_rgb = Guard.run { rgb8_of { |r, g, b| FFI.ncplane_bg_rgb8(to_ptr, r, g, b) } }
 
     # Colore RGB del primo piano come 0xRRGGBB (+ncplane_fg_rgb+), con i
     # limiti di {#fg_rgb}.
     # @return [Integer]
     # @raise [ClosedError] se il piano è chiuso
-    def fg_rgb24 = FFI.ncplane_fg_rgb(to_ptr)
+    def fg_rgb24 = Guard.run { FFI.ncplane_fg_rgb(to_ptr) }
 
     # Colore RGB dello sfondo come 0xRRGGBB (+ncplane_bg_rgb+), con i limiti
     # di {#fg_rgb}.
     # @return [Integer]
     # @raise [ClosedError] se il piano è chiuso
-    def bg_rgb24 = FFI.ncplane_bg_rgb(to_ptr)
+    def bg_rgb24 = Guard.run { FFI.ncplane_bg_rgb(to_ptr) }
 
     # @return [Symbol] alpha del primo piano (+ncplane_fg_alpha+): :opaque,
     #   :blend, :transparent o :highcontrast
     # @raise [ClosedError] se il piano è chiuso
-    def fg_alpha = Util.alpha_symbol(FFI.ncplane_fg_alpha(to_ptr))
+    def fg_alpha = Guard.run { Util.alpha_symbol(FFI.ncplane_fg_alpha(to_ptr)) }
 
     # @return [Symbol] alpha dello sfondo (+ncplane_bg_alpha+)
     # @raise [ClosedError] se il piano è chiuso
-    def bg_alpha = Util.alpha_symbol(FFI.ncplane_bg_alpha(to_ptr))
+    def bg_alpha = Guard.run { Util.alpha_symbol(FFI.ncplane_bg_alpha(to_ptr)) }
 
     # @return [Boolean] true se il primo piano usa il colore di default del
     #   terminale (+ncplane_fg_default_p+)
     # @raise [ClosedError] se il piano è chiuso
-    def fg_default? = FFI.ncplane_fg_default_p(to_ptr)
+    def fg_default? = Guard.run { FFI.ncplane_fg_default_p(to_ptr) }
 
     # @return [Boolean] true se lo sfondo usa il colore di default del
     #   terminale (+ncplane_bg_default_p+)
     # @raise [ClosedError] se il piano è chiuso
-    def bg_default? = FFI.ncplane_bg_default_p(to_ptr)
+    def bg_default? = Guard.run { FFI.ncplane_bg_default_p(to_ptr) }
 
     # Primo piano RGB (+ncplane_set_fg_rgb8+). L'alpha non cambia.
     #
@@ -1937,9 +2078,11 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un componente non è un Integer in 0..255
     # @raise [ClosedError] se il piano è chiuso
     def set_fg_rgb(r, g, b)
-      rc = FFI.ncplane_set_fg_rgb8(to_ptr, Util.uint8!(r, 'r'), Util.uint8!(g, 'g'), Util.uint8!(b, 'b'))
-      Util.check!(rc, PlaneError, 'ncplane_set_fg_rgb8')
-      self
+      Guard.run do
+        rc = FFI.ncplane_set_fg_rgb8(to_ptr, Util.uint8!(r, 'r'), Util.uint8!(g, 'g'), Util.uint8!(b, 'b'))
+        Util.check!(rc, PlaneError, 'ncplane_set_fg_rgb8')
+        self
+      end
     end
 
     # Sfondo RGB (+ncplane_set_bg_rgb8+). L'alpha non cambia.
@@ -1951,9 +2094,11 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un componente non è un Integer in 0..255
     # @raise [ClosedError] se il piano è chiuso
     def set_bg_rgb(r, g, b)
-      rc = FFI.ncplane_set_bg_rgb8(to_ptr, Util.uint8!(r, 'r'), Util.uint8!(g, 'g'), Util.uint8!(b, 'b'))
-      Util.check!(rc, PlaneError, 'ncplane_set_bg_rgb8')
-      self
+      Guard.run do
+        rc = FFI.ncplane_set_bg_rgb8(to_ptr, Util.uint8!(r, 'r'), Util.uint8!(g, 'g'), Util.uint8!(b, 'b'))
+        Util.check!(rc, PlaneError, 'ncplane_set_bg_rgb8')
+        self
+      end
     end
 
     # Primo piano RGB con le componenti portate in 0..255
@@ -1966,8 +2111,10 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un componente non è un int del C
     # @raise [ClosedError] se il piano è chiuso
     def set_fg_rgb_clipped(r, g, b)
-      FFI.ncplane_set_fg_rgb8_clipped(to_ptr, Util.int!(r, 'r'), Util.int!(g, 'g'), Util.int!(b, 'b'))
-      self
+      Guard.run do
+        FFI.ncplane_set_fg_rgb8_clipped(to_ptr, Util.int!(r, 'r'), Util.int!(g, 'g'), Util.int!(b, 'b'))
+        self
+      end
     end
 
     # Sfondo RGB con le componenti portate in 0..255
@@ -1980,8 +2127,10 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un componente non è un int del C
     # @raise [ClosedError] se il piano è chiuso
     def set_bg_rgb_clipped(r, g, b)
-      FFI.ncplane_set_bg_rgb8_clipped(to_ptr, Util.int!(r, 'r'), Util.int!(g, 'g'), Util.int!(b, 'b'))
-      self
+      Guard.run do
+        FFI.ncplane_set_bg_rgb8_clipped(to_ptr, Util.int!(r, 'r'), Util.int!(g, 'g'), Util.int!(b, 'b'))
+        self
+      end
     end
 
     # Primo piano RGB da 0xRRGGBB (+ncplane_set_fg_rgb+).
@@ -1990,8 +2139,10 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se rgb non è valido
     # @raise [ClosedError] se il piano è chiuso
     def set_fg_rgb24(rgb)
-      Util.check!(FFI.ncplane_set_fg_rgb(to_ptr, Util.integer!(rgb, 'rgb', 0..0xff_ffff)), PlaneError, 'ncplane_set_fg_rgb')
-      self
+      Guard.run do
+        Util.check!(FFI.ncplane_set_fg_rgb(to_ptr, Util.integer!(rgb, 'rgb', 0..0xff_ffff)), PlaneError, 'ncplane_set_fg_rgb')
+        self
+      end
     end
 
     # Sfondo RGB da 0xRRGGBB (+ncplane_set_bg_rgb+).
@@ -2000,8 +2151,10 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se rgb non è valido
     # @raise [ClosedError] se il piano è chiuso
     def set_bg_rgb24(rgb)
-      Util.check!(FFI.ncplane_set_bg_rgb(to_ptr, Util.integer!(rgb, 'rgb', 0..0xff_ffff)), PlaneError, 'ncplane_set_bg_rgb')
-      self
+      Guard.run do
+        Util.check!(FFI.ncplane_set_bg_rgb(to_ptr, Util.integer!(rgb, 'rgb', 0..0xff_ffff)), PlaneError, 'ncplane_set_bg_rgb')
+        self
+      end
     end
 
     # Primo piano da un indice della palette del terminale
@@ -2012,8 +2165,10 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se index non è valido
     # @raise [ClosedError] se il piano è chiuso
     def set_fg_palindex(index)
-      Util.check!(FFI.ncplane_set_fg_palindex(to_ptr, Util.uint8!(index, 'index')), PlaneError, 'ncplane_set_fg_palindex')
-      self
+      Guard.run do
+        Util.check!(FFI.ncplane_set_fg_palindex(to_ptr, Util.uint8!(index, 'index')), PlaneError, 'ncplane_set_fg_palindex')
+        self
+      end
     end
 
     # Sfondo da un indice della palette (+ncplane_set_bg_palindex+), come
@@ -2023,8 +2178,10 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se index non è valido
     # @raise [ClosedError] se il piano è chiuso
     def set_bg_palindex(index)
-      Util.check!(FFI.ncplane_set_bg_palindex(to_ptr, Util.uint8!(index, 'index')), PlaneError, 'ncplane_set_bg_palindex')
-      self
+      Guard.run do
+        Util.check!(FFI.ncplane_set_bg_palindex(to_ptr, Util.uint8!(index, 'index')), PlaneError, 'ncplane_set_bg_palindex')
+        self
+      end
     end
 
     # Alpha del primo piano (+ncplane_set_fg_alpha+). Un alpha diverso da
@@ -2036,8 +2193,10 @@ module Notcurses
     # @raise [ArgumentError] se alpha non è valido
     # @raise [ClosedError] se il piano è chiuso
     def set_fg_alpha(alpha)
-      Util.check!(FFI.ncplane_set_fg_alpha(to_ptr, Util.alpha_value(alpha)), PlaneError, 'ncplane_set_fg_alpha')
-      self
+      Guard.run do
+        Util.check!(FFI.ncplane_set_fg_alpha(to_ptr, Util.alpha_value(alpha)), PlaneError, 'ncplane_set_fg_alpha')
+        self
+      end
     end
 
     # Alpha dello sfondo (+ncplane_set_bg_alpha+), come {#set_fg_alpha}.
@@ -2046,11 +2205,13 @@ module Notcurses
     # @raise [ArgumentError] se alpha non è valido o è :highcontrast
     # @raise [ClosedError] se il piano è chiuso
     def set_bg_alpha(alpha)
-      value = Util.alpha_value(alpha)
-      raise ArgumentError, "l'alpha :highcontrast non è ammessa per lo sfondo" if value == FFI::NCALPHA_HIGHCONTRAST
+      Guard.run do
+        value = Util.alpha_value(alpha)
+        raise ArgumentError, "l'alpha :highcontrast non è ammessa per lo sfondo" if value == FFI::NCALPHA_HIGHCONTRAST
 
-      Util.check!(FFI.ncplane_set_bg_alpha(to_ptr, value), PlaneError, 'ncplane_set_bg_alpha')
-      self
+        Util.check!(FFI.ncplane_set_bg_alpha(to_ptr, value), PlaneError, 'ncplane_set_bg_alpha')
+        self
+      end
     end
 
     # Primo piano con il colore di default del terminale
@@ -2059,8 +2220,10 @@ module Notcurses
     # @return [self]
     # @raise [ClosedError] se il piano è chiuso
     def set_fg_default
-      FFI.ncplane_set_fg_default(to_ptr)
-      self
+      Guard.run do
+        FFI.ncplane_set_fg_default(to_ptr)
+        self
+      end
     end
 
     # Sfondo con il colore di default del terminale (+ncplane_set_bg_default+),
@@ -2068,8 +2231,10 @@ module Notcurses
     # @return [self]
     # @raise [ClosedError] se il piano è chiuso
     def set_bg_default
-      FFI.ncplane_set_bg_default(to_ptr)
-      self
+      Guard.run do
+        FFI.ncplane_set_bg_default(to_ptr)
+        self
+      end
     end
 
     # --- linee, box, riempimenti ---
@@ -2100,21 +2265,23 @@ module Notcurses
     # @raise [Exception] l'eccezione di un callback Ruby di resize
     # @raise [ClosedError] se il piano è chiuso
     def hline(cell, len, y: nil, x: nil, from: nil, to: nil)
-      ptr = to_ptr
-      line = line_cell!(cell)
-      top, left = line_start!(y, x)
-      rows, cols = dims
-      max = scrolling? || autogrow? ? rows * cols : cols - left
-      Util.integer!(len, 'len', 1..max)
-      c1, c2 = interp_channels!(from, to)
-      sync_scrolling_stdplane!(ptr, len > cols - left)
-      move_cursor(top, left)
-      rc = with_nccells(ptr, [line]) do |nc|
-        c1.nil? ? FFI.ncplane_hline(ptr, nc, len) : FFI.ncplane_hline_interp(ptr, nc, len, c1, c2)
+      Guard.run do
+        ptr = to_ptr
+        line = line_cell!(cell)
+        top, left = line_start!(y, x)
+        rows, cols = dims
+        max = scrolling? || autogrow? ? rows * cols : cols - left
+        Util.integer!(len, 'len', 1..max)
+        c1, c2 = interp_channels!(from, to)
+        sync_scrolling_stdplane!(ptr, len > cols - left)
+        move_cursor(top, left)
+        rc = with_nccells(ptr, [line]) do |nc|
+          c1.nil? ? FFI.ncplane_hline(ptr, nc, len) : FFI.ncplane_hline_interp(ptr, nc, len, c1, c2)
+        end
+        @context.raise_callback_errors!
+        Util.check!(rc, PlaneError, 'ncplane_hline_interp')
+        self
       end
-      @context.raise_callback_errors!
-      Util.check!(rc, PlaneError, 'ncplane_hline_interp')
-      self
     end
 
     # Linea verticale di len caratteri dal cursore, o da (y, x), verso il
@@ -2136,17 +2303,19 @@ module Notcurses
     #   rifiuta la scrittura
     # @raise [ClosedError] se il piano è chiuso
     def vline(cell, len, y: nil, x: nil, from: nil, to: nil)
-      ptr = to_ptr
-      line = line_cell!(cell)
-      top, left = line_start!(y, x)
-      Util.integer!(len, 'len', 1..(dim_y - top))
-      c1, c2 = interp_channels!(from, to)
-      move_cursor(top, left)
-      rc = with_nccells(ptr, [line]) do |nc|
-        c1.nil? ? FFI.ncplane_vline(ptr, nc, len) : FFI.ncplane_vline_interp(ptr, nc, len, c1, c2)
+      Guard.run do
+        ptr = to_ptr
+        line = line_cell!(cell)
+        top, left = line_start!(y, x)
+        Util.integer!(len, 'len', 1..(dim_y - top))
+        c1, c2 = interp_channels!(from, to)
+        move_cursor(top, left)
+        rc = with_nccells(ptr, [line]) do |nc|
+          c1.nil? ? FFI.ncplane_vline(ptr, nc, len) : FFI.ncplane_vline_interp(ptr, nc, len, c1, c2)
+        end
+        Util.check!(rc, PlaneError, 'ncplane_vline_interp')
+        self
       end
-      Util.check!(rc, PlaneError, 'ncplane_vline_interp')
-      self
     end
 
     # Disegna un box di rows x cols celle con l'angolo superiore sinistro nel
@@ -2177,20 +2346,22 @@ module Notcurses
     #   disegnato in parte)
     # @raise [ClosedError] se il piano è chiuso
     def box(rows, cols, y: nil, x: nil, set: :light, styles: 0, channels: 0, hide: [], gradient: [], corners: 0)
-      ptr = to_ptr
-      top, left = line_start!(y, x)
-      prows, pcols = dims
-      Util.integer!(rows, 'rows', 2..[prows - top, 2].max)
-      Util.integer!(cols, 'cols', 2..[pcols - left, 2].max)
-      raise ArgumentError, "il box #{rows}x#{cols} in (#{top}, #{left}) esce dal piano #{prows}x#{pcols}" if top + rows > prows || left + cols > pcols
+      Guard.run do
+        ptr = to_ptr
+        top, left = line_start!(y, x)
+        prows, pcols = dims
+        Util.integer!(rows, 'rows', 2..[prows - top, 2].max)
+        Util.integer!(cols, 'cols', 2..[pcols - left, 2].max)
+        raise ArgumentError, "il box #{rows}x#{cols} in (#{top}, #{left}) esce dal piano #{prows}x#{pcols}" if top + rows > prows || left + cols > pcols
 
-      ctl = box_ctlword(hide, gradient, corners)
-      move_cursor(top, left)
-      rc = with_box_cells(ptr, set, styles, channels) do |ul, ur, ll, lr, hl, vl|
-        FFI.ncplane_box(ptr, ul, ur, ll, lr, hl, vl, top + rows - 1, left + cols - 1, ctl)
+        ctl = box_ctlword(hide, gradient, corners)
+        move_cursor(top, left)
+        rc = with_box_cells(ptr, set, styles, channels) do |ul, ur, ll, lr, hl, vl|
+          FFI.ncplane_box(ptr, ul, ur, ll, lr, hl, vl, top + rows - 1, left + cols - 1, ctl)
+        end
+        Util.check!(rc, PlaneError, 'ncplane_box')
+        self
       end
-      Util.check!(rc, PlaneError, 'ncplane_box')
-      self
     end
 
     # Box lungo il bordo del piano: {#box} di tutto il piano da (0, 0).
@@ -2226,12 +2397,14 @@ module Notcurses
     # @raise [PlaneError] se il riempimento fallisce
     # @raise [ClosedError] se il piano è chiuso
     def polyfill(cell, y: nil, x: nil)
-      ptr = to_ptr
-      fill = line_cell!(cell)
-      top, left = line_start!(y, x)
-      keep_glyphs_whole(ptr, 0, 0, dim_y, dim_x, all: true, long_fill: fill.egc.bytesize > 4) do # regione non nota
-        rc = with_nccells(ptr, [fill]) { |nc| FFI.ncplane_polyfill_yx(ptr, top, left, nc) }
-        Util.check!(rc, PlaneError, 'ncplane_polyfill_yx')
+      Guard.run do
+        ptr = to_ptr
+        fill = line_cell!(cell)
+        top, left = line_start!(y, x)
+        keep_glyphs_whole(ptr, 0, 0, dim_y, dim_x, all: true, long_fill: fill.egc.bytesize > 4) do # regione non nota
+          rc = with_nccells(ptr, [fill]) { |nc| FFI.ncplane_polyfill_yx(ptr, top, left, nc) }
+          Util.check!(rc, PlaneError, 'ncplane_polyfill_yx')
+        end
       end
     end
 
@@ -2261,19 +2434,21 @@ module Notcurses
     # @raise [PlaneError] se il riempimento fallisce
     # @raise [ClosedError] se il piano è chiuso
     def gradient(egc, ul, ur, ll, lr, y: 0, x: 0, rows: nil, cols: nil, styles: 0)
-      ptr = to_ptr
-      text = Cell.egc!(egc)
-      unless text.empty?
-        raise ArgumentError, "gradient: egc #{text.inspect} deve essere largo 1 colonna" unless Notcurses.strwidth(text) == 1
+      Guard.run do
+        ptr = to_ptr
+        text = Cell.egc!(egc)
+        unless text.empty?
+          raise ArgumentError, "gradient: egc #{text.inspect} deve essere largo 1 colonna" unless Notcurses.strwidth(text) == 1
 
-        single_egc!(ptr, text)
-      end
-      corners = corner_values([ul, ur, ll, lr], 64)
-      top, left, height, width = region!(y, x, rows, cols)
-      corners_shape!(corners, height, width, rows_rule: true)
-      keep_glyphs_whole(ptr, top, left, height, width, long_fill: text.bytesize > 4) do
-        Util.check!(FFI.ncplane_gradient(ptr, top, left, height, width, text, Util.styles_value(styles), *corners),
-                    PlaneError, 'ncplane_gradient')
+          single_egc!(ptr, text)
+        end
+        corners = corner_values([ul, ur, ll, lr], 64)
+        top, left, height, width = region!(y, x, rows, cols)
+        corners_shape!(corners, height, width, rows_rule: true)
+        keep_glyphs_whole(ptr, top, left, height, width, long_fill: text.bytesize > 4) do
+          Util.check!(FFI.ncplane_gradient(ptr, top, left, height, width, text, Util.styles_value(styles), *corners),
+                      PlaneError, 'ncplane_gradient')
+        end
       end
     end
 
@@ -2298,15 +2473,17 @@ module Notcurses
     # @raise [PlaneError] senza UTF-8, o se il riempimento fallisce
     # @raise [ClosedError] se il piano è chiuso
     def gradient2x1(ul, ur, ll, lr, y: 0, x: 0, rows: nil, cols: nil)
-      ptr = to_ptr
-      corners = corner_values([ul, ur, ll, lr], 32)
-      top, left, height, width = region!(y, x, rows, cols)
-      corners_shape!(corners, height, width, rows_rule: false)
-      raise PlaneError, 'gradient2x1 richiede un terminale UTF-8' unless @context.can_utf8?
+      Guard.run do
+        ptr = to_ptr
+        corners = corner_values([ul, ur, ll, lr], 32)
+        top, left, height, width = region!(y, x, rows, cols)
+        corners_shape!(corners, height, width, rows_rule: false)
+        raise PlaneError, 'gradient2x1 richiede un terminale UTF-8' unless @context.can_utf8?
 
-      keep_glyphs_whole(ptr, top, left, height, width) do
-        Util.check!(FFI.ncplane_gradient2x1(ptr, top, left, height, width, *corners), PlaneError,
-                    'ncplane_gradient2x1')
+        keep_glyphs_whole(ptr, top, left, height, width) do
+          Util.check!(FFI.ncplane_gradient2x1(ptr, top, left, height, width, *corners), PlaneError,
+                      'ncplane_gradient2x1')
+        end
       end
     end
 
@@ -2329,10 +2506,12 @@ module Notcurses
     # @raise [PlaneError] se l'operazione fallisce
     # @raise [ClosedError] se il piano è chiuso
     def stain(ul, ur, ll, lr, y: 0, x: 0, rows: nil, cols: nil)
-      ptr = to_ptr
-      corners = corner_values([ul, ur, ll, lr], 64)
-      top, left, height, width = region!(y, x, rows, cols)
-      Util.check!(FFI.ncplane_stain(ptr, top, left, height, width, *corners), PlaneError, 'ncplane_stain')
+      Guard.run do
+        ptr = to_ptr
+        corners = corner_values([ul, ur, ll, lr], 64)
+        top, left, height, width = region!(y, x, rows, cols)
+        Util.check!(FFI.ncplane_stain(ptr, top, left, height, width, *corners), PlaneError, 'ncplane_stain')
+      end
     end
 
     # Imposta gli stili di un rettangolo lasciando EGC e colori
@@ -2349,10 +2528,12 @@ module Notcurses
     # @raise [PlaneError] se l'operazione fallisce
     # @raise [ClosedError] se il piano è chiuso
     def restyle(styles, y: 0, x: 0, rows: nil, cols: nil)
-      ptr = to_ptr
-      mask = Util.styles_value(styles)
-      top, left, height, width = region!(y, x, rows, cols)
-      Util.check!(FFI.ncplane_format(ptr, top, left, height, width, mask), PlaneError, 'ncplane_format')
+      Guard.run do
+        ptr = to_ptr
+        mask = Util.styles_value(styles)
+        top, left, height, width = region!(y, x, rows, cols)
+        Util.check!(FFI.ncplane_format(ptr, top, left, height, width, mask), PlaneError, 'ncplane_format')
+      end
     end
 
     # --- dissolvenze ---
@@ -2490,10 +2671,12 @@ module Notcurses
 
     # Puntatore di un altro piano dello stesso contesto.
     def same_context_plane!(plane, name)
-      raise TypeError, "#{name} deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
-      raise ArgumentError, "#{name} appartiene a un altro contesto" unless plane.context.equal?(@context)
+      Guard.run do
+        raise TypeError, "#{name} deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
+        raise ArgumentError, "#{name} appartiene a un altro contesto" unless plane.context.equal?(@context)
 
-      plane.to_ptr
+        plane.to_ptr
+      end
     end
 
     # true se fn è il trampolino Ruby impostato dal wrapper su questo piano.
@@ -2546,35 +2729,37 @@ module Notcurses
     # un callback o da un trap vince. Con active falso (un resize che conserva celle, e quindi il pool) o senza
     # internals il blocco gira senza altro.
     def keeping_base_cell(active = true)
-      ptr = to_ptr
-      st = internals(ptr) if active
-      return yield unless st && st[:basecell][:gcluster] >> 24 == 1 # EGC nel pool (cell_extended_p)
+      Guard.run do
+        ptr = to_ptr
+        st = internals(ptr) if active
+        return yield unless st && st[:basecell][:gcluster] >> 24 == 1 # EGC nel pool (cell_extended_p)
 
-      cell = st[:basecell]
-      saved = cell.to_ptr.read_bytes(CELL_BYTES)
-      egc = FFI.nccell_extended_gcluster(ptr, cell)
-      fb = st[:fb].address
-      # gcluster " " (htole), width 1, stessi stili e canali; preparato prima: una sola scrittura
-      temporary = space_bytes(saved)
-      # una volta sola: dopo il ripristino un callback può impostare una base uguale allo spazio provvisorio
-      restored = false
-      restore = lambda do |done|
-        next if restored || cell.to_ptr.read_bytes(CELL_BYTES) != temporary
+        cell = st[:basecell]
+        saved = cell.to_ptr.read_bytes(CELL_BYTES)
+        egc = FFI.nccell_extended_gcluster(ptr, cell)
+        fb = st[:fb].address
+        # gcluster " " (htole), width 1, stessi stili e canali; preparato prima: una sola scrittura
+        temporary = space_bytes(saved)
+        # una volta sola: dopo il ripristino un callback può impostare una base uguale allo spazio provvisorio
+        restored = false
+        restore = lambda do |done|
+          next if restored || cell.to_ptr.read_bytes(CELL_BYTES) != temporary
 
-        if st[:fb].address != fb
-          Util.check!(FFI.ncplane_set_base(ptr, egc, cell[:stylemask], cell[:channels]), PlaneError, 'ncplane_set_base')
-          restored = true
-        elsif done
-          cell.to_ptr.write_bytes(saved)
+          if st[:fb].address != fb
+            Util.check!(FFI.ncplane_set_base(ptr, egc, cell[:stylemask], cell[:channels]), PlaneError, 'ncplane_set_base')
+            restored = true
+          elsif done
+            cell.to_ptr.write_bytes(saved)
+          end
         end
-      end
-      begin
-        @context.base_restores << restore
-        cell.to_ptr.write_bytes(temporary)
-        yield
-      ensure
-        @context.base_restores.delete(restore)
-        restore.call(true) unless closed?
+        begin
+          @context.base_restores << restore
+          cell.to_ptr.write_bytes(temporary)
+          yield
+        ensure
+          @context.base_restores.delete(restore)
+          restore.call(true) unless closed?
+        end
       end
     end
 
@@ -2975,34 +3160,36 @@ module Notcurses
     # carattere largo first, e restituisce [y, x] per il C (-1 = cursore). Con
     # stained porta il cursore nella posizione di partenza.
     def text_target!(str, total, first, y:, x:, align:, stained:)
-      clear_cut_glyphs!(to_ptr)
-      rows, cols = dims
-      cy, cx = cursor
-      newline = str.include?("\n")
-      row = y.nil? ? cy : Util.integer!(y, 'y', 0...rows)
-      col = if align
-              raise ArgumentError, "align = #{align.inspect} non valido: usa :left, :center o :right" unless TEXT_ALIGNS.include?(align)
-              raise ArgumentError, 'align: non ammette "\n"' if newline
-              raise PlaneError, "il testo (#{total} colonne) è più largo del piano (#{cols})" if total > cols
+      Guard.run do
+        clear_cut_glyphs!(to_ptr)
+        rows, cols = dims
+        cy, cx = cursor
+        newline = str.include?("\n")
+        row = y.nil? ? cy : Util.integer!(y, 'y', 0...rows)
+        col = if align
+                raise ArgumentError, "align = #{align.inspect} non valido: usa :left, :center o :right" unless TEXT_ALIGNS.include?(align)
+                raise ArgumentError, 'align: non ammette "\n"' if newline
+                raise PlaneError, "il testo (#{total} colonne) è più largo del piano (#{cols})" if total > cols
 
-              halign(align, total)
-            else
-              x.nil? ? cx : Util.integer!(x, 'x', 0...cols)
-            end
-      raise PlaneError, '"\n" richiede un piano che scorre (scrolling = true)' if newline && !scrolling?
-      raise PlaneError, "un carattere largo #{first} non entra nel piano largo #{cols}" if first > cols
+                halign(align, total)
+              else
+                x.nil? ? cx : Util.integer!(x, 'x', 0...cols)
+              end
+        raise PlaneError, '"\n" richiede un piano che scorre (scrolling = true)' if newline && !scrolling?
+        raise PlaneError, "un carattere largo #{first} non entra nel piano largo #{cols}" if first > cols
 
-      explicit_x = !(x.nil? && align.nil?)
-      raise PlaneError, "il carattere largo #{first} non entra nella riga dalla colonna #{col}" if explicit_x && col + first > cols
-      if (stained || !(scrolling? || autogrow?)) && (col >= cols || col + total > cols)
-        raise PlaneError, "il testo (#{total} colonne) non entra nella riga dalla colonna #{col} (piano largo #{cols})"
+        explicit_x = !(x.nil? && align.nil?)
+        raise PlaneError, "il carattere largo #{first} non entra nella riga dalla colonna #{col}" if explicit_x && col + first > cols
+        if (stained || !(scrolling? || autogrow?)) && (col >= cols || col + total > cols)
+          raise PlaneError, "il testo (#{total} colonne) non entra nella riga dalla colonna #{col} (piano largo #{cols})"
+        end
+        return [y.nil? ? -1 : row, explicit_x ? col : -1] unless stained
+
+        raise ArgumentError, 'stained: non ammette "\n"' if newline
+
+        move_cursor(row, col) unless row == cy && col == cx
+        [-1, -1]
       end
-      return [y.nil? ? -1 : row, explicit_x ? col : -1] unless stained
-
-      raise ArgumentError, 'stained: non ammette "\n"' if newline
-
-      move_cursor(row, col) unless row == cy && col == cx
-      [-1, -1]
     end
 
     # Controlla che notcurses legga text come un solo EGC (+nccell_load+).
@@ -3078,8 +3265,10 @@ module Notcurses
 
     # Posizione di partenza di linee, box e riempimenti (nil = cursore).
     def line_start!(y, x)
-      clear_cut_glyphs!(to_ptr)
-      cell_coords!(y, x)
+      Guard.run do
+        clear_cut_glyphs!(to_ptr)
+        cell_coords!(y, x)
+      end
     end
 
     # Canali di una linea sfumata: entrambi o nessuno.
@@ -3289,26 +3478,30 @@ module Notcurses
     # @raise [PlaneError] se il terminale non permette le dissolvenze
     # @raise [ClosedError] se il piano è chiuso
     def initialize(plane)
-      raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
+      Guard.run do
+        raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
 
-      raw = FFI.ncfadectx_setup(plane.to_ptr)
-      raise PlaneError, 'ncfadectx_setup ha restituito NULL: il terminale non permette le dissolvenze' if raw.null?
+        raw = FFI.ncfadectx_setup(plane.to_ptr)
+        raise PlaneError, 'ncfadectx_setup ha restituito NULL: il terminale non permette le dissolvenze' if raw.null?
 
-      @ptr = ::FFI::AutoPointer.new(raw, RELEASER)
-      @plane = plane
-      @iterations = FFI.ncfadectx_iterations(@ptr)
-      @closed = false
-      @owner = nil
+        @ptr = ::FFI::AutoPointer.new(raw, RELEASER)
+        @plane = plane
+        @iterations = FFI.ncfadectx_iterations(@ptr)
+        @closed = false
+        @owner = nil
+      end
     end
 
     # Libera la fotografia (+ncfadectx_free+). Idempotente.
     # @return [nil]
     def close
-      return nil if @closed
+      Guard.run do
+        return nil if @closed
 
-      @closed = true
-      @ptr.free
-      nil
+        @closed = true
+        @ptr.free
+        nil
+      end
     end
     alias free close
 
@@ -3321,9 +3514,11 @@ module Notcurses
     # @raise [PlaneError] se notcurses segnala un errore
     # @raise [ClosedError] se la fotografia o il piano sono chiusi
     def fadeout(iteration)
-      rc = FFI.ncplane_fadeout_iteration(@plane.to_ptr, to_ptr, iteration!(iteration), NOOP_FADER, nil)
-      Util.check!(rc, PlaneError, 'ncplane_fadeout_iteration')
-      self
+      Guard.run do
+        rc = FFI.ncplane_fadeout_iteration(@plane.to_ptr, to_ptr, iteration!(iteration), NOOP_FADER, nil)
+        Util.check!(rc, PlaneError, 'ncplane_fadeout_iteration')
+        self
+      end
     end
 
     # Colori di un passo dal nero (+ncplane_fadein_iteration+): 0 = nero,
@@ -3335,9 +3530,11 @@ module Notcurses
     # @raise [PlaneError] se notcurses segnala un errore
     # @raise [ClosedError] se la fotografia o il piano sono chiusi
     def fadein(iteration)
-      rc = FFI.ncplane_fadein_iteration(@plane.to_ptr, to_ptr, iteration!(iteration), NOOP_FADER, nil)
-      Util.check!(rc, PlaneError, 'ncplane_fadein_iteration')
-      self
+      Guard.run do
+        rc = FFI.ncplane_fadein_iteration(@plane.to_ptr, to_ptr, iteration!(iteration), NOOP_FADER, nil)
+        Util.check!(rc, PlaneError, 'ncplane_fadein_iteration')
+        self
+      end
     end
 
     private

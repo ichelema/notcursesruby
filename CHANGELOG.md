@@ -22,6 +22,34 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- Un gestore `trap` che chiude il contesto o il `Direct` e poi torna al codice interrotto non fa più usare al C un
+  puntatore già liberato (ICH-464). Il segnale poteva arrivare fra `to_ptr` e la chiamata C, o fra due chiamate C con
+  lo stesso puntatore (per esempio `ncpile_render` e `ncpile_rasterize` dentro `Context#render`: 37 crash su 80
+  corse). Ora ogni metodo del wrapper che usa un puntatore C gira dentro `Notcurses::Guard.run` (349 metodi in 16
+  file): `close` segna subito il contesto chiuso e rinvia lo stop alla fine dell'operazione interrotta, e la
+  chiamata successiva solleva `ClosedError`. Un `close` durante l'attesa di `Context#get`, `#getvec` o `Direct#get`
+  solleva `ClosedError` invece di `Errno::EBADF`. `Context#close` dentro un callback chiamato dal C (per esempio
+  da un gestore `trap` durante il blocco di `Visual#stream` o un callback di resize) non solleva più `ContextError`:
+  lo stop avviene alla fine dell'operazione. Anche `Visual#close` da un gestore `trap` rinvia `ncvisual_destroy` alla
+  fine dell'operazione interrotta (per esempio `Visual#dims`); le operazioni in corso in altri thread non lo
+  rinviano. Un'eccezione asincrona (un secondo Ctrl+C) dentro `close` prima dello stop, anche al ritorno di un metodo
+  C, non lo fa più perdere: un `close` successivo o l'hook `at_exit` lo eseguono una volta sola. Lo stesso vale per
+  `ncvisual_destroy`: un `Visual#close` successivo o il close del contesto la eseguono.
+  Un controllo statico e un audit nella suite (`to_ptr` fuori dalla guardia) tengono la copertura completa. Restano
+  documentati due limiti: il close di un piano o di un widget da un gestore `trap` non è rinviato (ICH-540), e un
+  Fiber sospeso dentro un'operazione tiene lo stop in attesa (ICH-541).
+- Chiudere il contesto, il `Direct` o un `Visual` mentre un altro thread è dentro `Visual#decode`, `#decode_loop`,
+  `#stream`, `Visual.from_file`, `Direct#render_frame` o `Direct#stream` non libera più la memoria che il C sta usando
+  (ICH-475). Prima l'hook `at_exit` o un `close` da un altro thread durante la chiamata C senza GVL davano SIGSEGV,
+  SIGABRT o un blocco (`Visual#stream` all'uscita: 30 crash su 30). Ora `close` segna subito l'oggetto chiuso (le
+  chiamate nuove sollevano `ClosedError`) e rinvia la chiusura fisica alla fine dell'operazione in corso, nel suo
+  thread (`Notcurses::Guard`, `@api private`). `decode`, `decode_loop` e `from_file` non usano il contesto nel C:
+  il contesto si ferma subito e il visual viene distrutto al ritorno della lettura; `from_file` solleva
+  `ClosedError` e distrugge il visual appena creato. `Visual#stream` e `Direct#stream` si fermano al frame successivo.
+  `Visual#stream` senza blocco fa in Ruby il lavoro di `ncvisual_simple_streamer` (render e attesa fino al frame),
+  per controllare la chiusura a ogni frame. `Direct#stream` rilegge il puntatore a ogni frame. Un `Visual#close` da un
+  altro thread durante il blocco di `stream` non solleva più `VisualError`: il controllo dei callback per
+  `Visual#close` vale solo nel thread del callback.
 - Dopo un `EventLoop#run` uscito con `:interrupt` per il Ctrl+C di kitty (`\e[99;5u`) o di xterm con modifyOtherKeys
   (`\e[27;5;99~`), un `run(no_linesigs: true)` non consegna più quel Ctrl+C a `on_key` (ICH-455). notcurses alzava il
   segnale e metteva anche il tasto in coda, e `run` usciva prima di leggerlo. Ora il thread di input di `run` legge il

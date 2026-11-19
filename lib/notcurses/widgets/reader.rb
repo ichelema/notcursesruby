@@ -61,27 +61,29 @@ module Notcurses
     # @raise [TypeError] se un'opzione non è true o false
     # @raise [ClosedError] se il piano è chiuso
     def initialize(plane, no_cmd_keys: false, cursor: false)
-      claim_plane!(plane)
-      ctx = plane.context
-      ctx.check_not_in_callback!('Reader.new', WidgetError)
-      opts = FFI::NcReaderOptions.new
-      opts[:flags] = Util.flag(no_cmd_keys, FFI::NCREADER_OPTION_NOCMDKEYS, 'no_cmd_keys') |
-                     Util.flag(cursor, FFI::NCREADER_OPTION_CURSOR, 'cursor')
-      @no_cmd_keys = no_cmd_keys
-      # ncplane_put farebbe scorrere o crescere solo la vista (reader.c:90-104)
-      raise WidgetError, 'il piano di un reader non può avere lo scrolling attivo' if plane.scrolling?
-      raise WidgetError, "il piano di un reader non può avere l'autogrow attivo" if plane.autogrow?
+      Guard.run do
+        claim_plane!(plane)
+        ctx = plane.context
+        ctx.check_not_in_callback!('Reader.new', WidgetError)
+        opts = FFI::NcReaderOptions.new
+        opts[:flags] = Util.flag(no_cmd_keys, FFI::NCREADER_OPTION_NOCMDKEYS, 'no_cmd_keys') |
+                       Util.flag(cursor, FFI::NCREADER_OPTION_CURSOR, 'cursor')
+        @no_cmd_keys = no_cmd_keys
+        # ncplane_put farebbe scorrere o crescere solo la vista (reader.c:90-104)
+        raise WidgetError, 'il piano di un reader non può avere lo scrolling attivo' if plane.scrolling?
+        raise WidgetError, "il piano di un reader non può avere l'autogrow attivo" if plane.autogrow?
 
-      ptr = FFI.ncreader_create(plane.to_ptr, opts)
-      if ptr.null?
-        plane_destroyed_on_failure!(plane)
-        raise WidgetError, 'ncreader_create ha restituito NULL (il piano è stato distrutto)'
+        ptr = FFI.ncreader_create(plane.to_ptr, opts)
+        if ptr.null?
+          plane_destroyed_on_failure!(plane)
+          raise WidgetError, 'ncreader_create ha restituito NULL (il piano è stato distrutto)'
+        end
+        attach!(ptr, plane)
+        # la copia nascosta parte vuota con il cursore in (0, 0): così anche la vista
+        FFI.ncreader_clear(ptr)
+        @dims = plane.dims
+        @cursor = plane.cursor
       end
-      attach!(ptr, plane)
-      # la copia nascosta parte vuota con il cursore in (0, 0): così anche la vista
-      FFI.ncreader_clear(ptr)
-      @dims = plane.dims
-      @cursor = plane.cursor
     end
 
     # Piano del reader (+ncreader_plane+): lo stesso Plane passato a
@@ -89,7 +91,7 @@ module Notcurses
     #
     # @return [Plane]
     # @raise [ClosedError] se il reader è chiuso
-    def plane = @context.plane_for(FFI.ncreader_plane(to_ptr))
+    def plane = Guard.run { @context.plane_for(FFI.ncreader_plane(to_ptr)) }
 
     # Passa un evento al reader e ridisegna, senza render. Consuma:
     # - il testo dell'evento ({Input#eff_text}), scritto un codepoint alla
@@ -139,30 +141,32 @@ module Notcurses
     # @raise [TypeError] se input non è un Input
     # @raise [ClosedError] se il reader è chiuso
     def offer_input(input)
-      ptr = prepare!
-      ni = input_struct(input)
-      return false if ni.nil?
+      Guard.run do
+        ptr = prepare!
+        ni = input_struct(input)
+        return false if ni.nil?
 
-      plain = !input.release? && !input.modifiers.anybits?(FFI::NCKEY_MOD_CTRL | FFI::NCKEY_MOD_ALT)
-      if plain && !Key.synthesized?(input.id)
-        input.eff_text.each_char { |egc| put_egc(ptr, egc) }
-        return true
+        plain = !input.release? && !input.modifiers.anybits?(FFI::NCKEY_MOD_CTRL | FFI::NCKEY_MOD_ALT)
+        if plain && !Key.synthesized?(input.id)
+          input.eff_text.each_char { |egc| put_egc(ptr, egc) }
+          return true
+        end
+        y, x = @cursor
+        backspace = plain && input.id == Key::BACKSPACE
+        wrap = backspace && x.zero? && y.positive?
+        # Backspace, Ctrl+U e Ctrl+W cancellano solo nella copia nascosta, e il
+        # ridisegno non confronta la width (internal.h:1512-1519): una metà destra
+        # larga resterebbe nella vista. Svuotata, la vista viene ricopiata intera.
+        ctrl = !@no_cmd_keys && !input.release? && input.modifiers.anybits?(FFI::NCKEY_MOD_CTRL)
+        if backspace || (ctrl && x.positive? && [0x55, 0x57].include?(input.id)) # 'U', 'W'
+          FFI.ncplane_erase(@plane.to_ptr)
+          move_view_cursor!(y, x)
+        end
+        consumed = FFI.ncreader_offer_input(ptr, ni)
+        wrap_backspace(y - 1) if wrap
+        @cursor = @plane.cursor
+        consumed
       end
-      y, x = @cursor
-      backspace = plain && input.id == Key::BACKSPACE
-      wrap = backspace && x.zero? && y.positive?
-      # Backspace, Ctrl+U e Ctrl+W cancellano solo nella copia nascosta, e il
-      # ridisegno non confronta la width (internal.h:1512-1519): una metà destra
-      # larga resterebbe nella vista. Svuotata, la vista viene ricopiata intera.
-      ctrl = !@no_cmd_keys && !input.release? && input.modifiers.anybits?(FFI::NCKEY_MOD_CTRL)
-      if backspace || (ctrl && x.positive? && [0x55, 0x57].include?(input.id)) # 'U', 'W'
-        FFI.ncplane_erase(@plane.to_ptr)
-        move_view_cursor!(y, x)
-      end
-      consumed = FFI.ncreader_offer_input(ptr, ni)
-      wrap_backspace(y - 1) if wrap
-      @cursor = @plane.cursor
-      consumed
     end
 
     # Scrive del testo alla posizione del cursore (+ncreader_write_egc+, un
@@ -190,26 +194,28 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se text non è una String valida
     # @raise [ClosedError] se il reader è chiuso
     def write(text)
-      ptr = prepare!
-      str = Util.string!(text, 'text')
-      raise ArgumentError, "text = #{text.inspect} contiene caratteri di controllo" if str.match?(/[\p{Cc}&&[^\t]]/)
+      Guard.run do
+        ptr = prepare!
+        str = Util.string!(text, 'text')
+        raise ArgumentError, "text = #{text.inspect} contiene caratteri di controllo" if str.match?(/[\p{Cc}&&[^\t]]/)
 
-      view = @plane.to_ptr
-      cell = FFI::NcCell.new
-      str.each_grapheme_cluster do |g|
-        off = 0
-        while off < g.bytesize
-          len = FFI.nccell_load(view, cell, g.byteslice(off..))
-          FFI.nccell_release(view, cell) # serve solo la lunghezza: libera subito lo stash nel pool della vista
-          Util.check!(len, WidgetError, "nccell_load(#{g.byteslice(off..).inspect})") # -1: per esempio pool pieno
-          # un pezzo che taglia un codepoint (U+2028 dà 1 byte): il resto va al C, che lo rifiuta
-          egc = g.byteslice(off, len)
-          egc = g.byteslice(off..) if egc.empty? || !egc.valid_encoding?
-          Util.check!(put_egc(ptr, egc), WidgetError, "ncreader_write_egc(#{egc.inspect})")
-          off += egc.bytesize
+        view = @plane.to_ptr
+        cell = FFI::NcCell.new
+        str.each_grapheme_cluster do |g|
+          off = 0
+          while off < g.bytesize
+            len = FFI.nccell_load(view, cell, g.byteslice(off..))
+            FFI.nccell_release(view, cell) # serve solo la lunghezza: libera subito lo stash nel pool della vista
+            Util.check!(len, WidgetError, "nccell_load(#{g.byteslice(off..).inspect})") # -1: per esempio pool pieno
+            # un pezzo che taglia un codepoint (U+2028 dà 1 byte): il resto va al C, che lo rifiuta
+            egc = g.byteslice(off, len)
+            egc = g.byteslice(off..) if egc.empty? || !egc.valid_encoding?
+            Util.check!(put_egc(ptr, egc), WidgetError, "ncreader_write_egc(#{egc.inspect})")
+            off += egc.bytesize
+          end
         end
+        self
       end
-      self
     end
 
     # Testo del reader: le righe della vista, unite senza separatori, saltando
@@ -225,8 +231,10 @@ module Notcurses
     # @raise [PlaneError] se la lettura di una cella fallisce
     # @raise [ClosedError] se il reader è chiuso
     def contents
-      to_ptr
-      @plane.contents
+      Guard.run do
+        to_ptr
+        @plane.contents
+      end
     end
 
     # Cancella il testo e riporta il cursore in (0, 0) (+ncreader_clear+),
@@ -235,9 +243,11 @@ module Notcurses
     # @return [self]
     # @raise [ClosedError] se il reader è chiuso
     def clear
-      FFI.ncreader_clear(to_ptr)
-      @cursor = @plane.cursor
-      self
+      Guard.run do
+        FFI.ncreader_clear(to_ptr)
+        @cursor = @plane.cursor
+        self
+      end
     end
 
     # Sposta il cursore di una colonna a sinistra (+ncreader_move_left+);
@@ -282,8 +292,10 @@ module Notcurses
     # +ncreader_destroy+ con NULL al posto del char** del testo: il testo si
     # legge prima con {#contents}. Con cursor: true il C spegne il cursore.
     def destroy_native
-      FFI.ncreader_destroy(to_ptr, nil)
-      @context.cursor_state_unknown!
+      Guard.run do
+        FFI.ncreader_destroy(to_ptr, nil)
+        @context.cursor_state_unknown!
+      end
     end
 
     # Controlla la vista prima di un'operazione che il C ridisegna: stesse
@@ -293,16 +305,18 @@ module Notcurses
     #
     # @return [::FFI::Pointer] il puntatore del reader
     def prepare!
-      ptr = to_ptr
-      view = @plane.to_ptr
-      if FFI.ncplane_dim_y(view) != @dims[0] || FFI.ncplane_dim_x(view) != @dims[1] ||
-         FFI.ncplane_scrolling_p(view) || FFI.ncplane_autogrow_p(view)
-        raise WidgetError, 'il piano del reader è stato ridimensionato o ha attivato scrolling o autogrow'
-      end
+      Guard.run do
+        ptr = to_ptr
+        view = @plane.to_ptr
+        if FFI.ncplane_dim_y(view) != @dims[0] || FFI.ncplane_dim_x(view) != @dims[1] ||
+           FFI.ncplane_scrolling_p(view) || FFI.ncplane_autogrow_p(view)
+          raise WidgetError, 'il piano del reader è stato ridimensionato o ha attivato scrolling o autogrow'
+        end
 
-      move_view_cursor!(*@cursor)
-      @context.cursor_state_unknown! # il ridisegno del C accende il cursore del terminale
-      ptr
+        move_view_cursor!(*@cursor)
+        @context.cursor_state_unknown! # il ridisegno del C accende il cursore del terminale
+        ptr
+      end
     end
 
     # +ncreader_write_egc+ di un grapheme cluster. Nell'ultima colonna un TAB
@@ -326,16 +340,20 @@ module Notcurses
     # del terminale che il ridisegno del C ha lasciato in colonna 0, a fine
     # della riga y, dove il C ha portato la copia nascosta (reader.c:265).
     def wrap_backspace(y)
-      x = @dims[1] - 1
-      FFI.ncplane_cursor_move_yx(@plane.to_ptr, y, x)
-      ay, ax = @plane.abs_yx
-      FFI.notcurses_cursor_enable(@context.to_ptr, ay + y, ax + x) # come ncreader_redraw, esito ignorato
+      Guard.run do
+        x = @dims[1] - 1
+        FFI.ncplane_cursor_move_yx(@plane.to_ptr, y, x)
+        ay, ax = @plane.abs_yx
+        FFI.notcurses_cursor_enable(@context.to_ptr, ay + y, ax + x) # come ncreader_redraw, esito ignorato
+      end
     end
 
     # Riporta il cursore della vista in (y, x): se fallisce, vista e copia
     # nascosta non sono più allineate e il C non va chiamato.
     def move_view_cursor!(y, x)
-      Util.check!(FFI.ncplane_cursor_move_yx(@plane.to_ptr, y, x), WidgetError, "ncplane_cursor_move_yx(#{y}, #{x})")
+      Guard.run do
+        Util.check!(FFI.ncplane_cursor_move_yx(@plane.to_ptr, y, x), WidgetError, "ncplane_cursor_move_yx(#{y}, #{x})")
+      end
     end
 
     # Esito di uno spostamento (-1 = nessuno spostamento possibile, non un errore).

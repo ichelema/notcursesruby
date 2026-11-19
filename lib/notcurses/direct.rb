@@ -235,6 +235,8 @@ module Notcurses
         @drain_input = drain_input
         @eof_input = nil
         @input_io = nil
+        @claims = [] # richieste di chiusura fisica: la esegue solo la prima (release_native!)
+        @closing = false
         @closed = false
       rescue Exception # rubocop:disable Lint/RescueException
         ptr = init&.value
@@ -272,36 +274,99 @@ module Notcurses
     # InitError): il figlio può solo uscire o fare +exec+.
     #
     # close si può chiamare da un gestore +trap+ (per esempio
-    # <tt>trap('TERM') { d.close; exit }</tt>): il registro si libera anche
-    # lì, e un nuovo contesto si può aprire dopo.
+    # <tt>trap('TERM') { d.close; exit }</tt>), anche se il gestore poi
+    # torna al codice interrotto. Se il segnale ha interrotto un'operazione
+    # del wrapper, reset, flush e stop avvengono alla fine dell'operazione e
+    # la chiamata successiva solleva ClosedError; durante l'attesa di {#get}
+    # lo stop è immediato e l'attesa solleva ClosedError. +exit!+ non esegue
+    # gli +ensure+: lo stop rinviato non avviene. Il registro si libera allo
+    # stop, e un nuovo contesto si può aprire dopo.
+    #
+    # Durante un'operazione in corso in un altro thread (per esempio
+    # {#render_frame} o {#stream}) close segna subito il contesto chiuso: le
+    # chiamate nuove sollevano ClosedError, e {#stream} si ferma al frame
+    # successivo. Reset, flush e stop avvengono alla fine dell'operazione, nel
+    # suo thread, che riceve anche l'errore dello stop. Se il processo esce
+    # prima, il terminale può restare non ripristinato. Un'operazione sospesa
+    # in un Fiber (per esempio un Enumerator esterno lasciato a metà su
+    # {#stream}) resta in corso finché il Fiber non riprende: fino ad allora
+    # lo stop resta in attesa, anche all'uscita del processo (ICH-541).
+    #
+    # Un'eccezione asincrona (per esempio un secondo Ctrl-C) prima dello stop
+    # esce da close e lascia lo stop in attesa: un close successivo o l'hook
+    # +at_exit+ lo eseguono.
     #
     # @return [nil]
     # @raise [DirectError] se +ncdirect_stop+ restituisce un errore (il
-    #   contesto risulta comunque chiuso)
+    #   contesto risulta comunque chiuso); con lo stop rinviato l'errore esce
+    #   dall'operazione che lo esegue
     def close
       return nil if @closed
       # niente fclose: chiuderebbe il FILE* copiato dal padre (il suo buffer è vuoto: DirectForkFlush lo
       # svuota nel padre prima del fork)
       return mark_closed!(fclose: false) unless @pid == Process.pid
 
-      # ncdirect_stop non resetta il FILE* (solo stdout): lo fa il wrapper, prima, perché lo stop ne fa ancora il flush
-      FFI.ncdirect_set_fg_default(@ptr)
-      FFI.ncdirect_set_bg_default(@ptr)
-      FFI.ncdirect_set_styles(@ptr, 0)
-      FFI.ncdirect_flush(@ptr)
-      # prima della chiamata: Ruby consegna un Ctrl-C al suo ritorno, quando il C ha già liberato il contesto
-      @closed = true
+      # prima di leggere il contatore delle operazioni in corso. Anche più volte: un close ripetuto (o l'hook
+      # at_exit) rimette in coda uno stop che un'eccezione asincrona ha tolto dalla coda, e release_native! lo
+      # esegue una volta sola
+      @closing = true
+      Guard.defer(self)
+      Guard.settle_if_idle
+    end
+    alias stop close
+
+    # Chiusura fisica, senza operazioni del wrapper in corso: reset di colori
+    # e stili, flush, +ncdirect_stop+. La esegue {#close}, o l'ultima
+    # operazione in corso alla sua uscita (vedi {Guard}).
+    #
+    # @api private
+    # @return [nil]
+    # @raise [DirectError] se +ncdirect_stop+ restituisce un errore
+    def release_native!
+      return mark_closed!(fclose: false) unless @pid == Process.pid
+
+      return nil if @closed
+
+      claim = Object.new
+      stopping = false
       begin
-        rc = FFI.ncdirect_stop(@ptr)
+        # una sola esecuzione, anche se il contesto è in coda più volte: come in Context#release_native!
+        @claims << claim
+        return nil unless @claims.first.equal?(claim)
+
+        # ncdirect_stop non resetta il FILE* (solo stdout): lo fa il wrapper, prima, perché lo stop ne fa ancora
+        # il flush
+        FFI.ncdirect_set_fg_default(@ptr)
+        FFI.ncdirect_set_bg_default(@ptr)
+        FFI.ncdirect_set_styles(@ptr, 0)
+        FFI.ncdirect_flush(@ptr)
+        # prima della chiamata: Ruby consegna un Ctrl-C al suo ritorno, quando il C ha già liberato il contesto
+        @closed = true
+        stopping = true
+        begin
+          rc = FFI.ncdirect_stop(@ptr)
+        ensure
+          mark_closed!(fclose: @own_fp)
+        end
       ensure
-        mark_closed!(fclose: @own_fp)
+        if !stopping && @claims.first.equal?(claim) # interrotta prima dello stop (eccezione asincrona)
+          # resta in attesa: lo stato prima della lista, la lista prima della coda
+          @closed = false
+          @claims.clear
+          Guard.defer(self)
+        end
       end
       # ncdirect_stop restituisce l'OR di più ritorni: qualsiasi valore diverso da 0 è un errore
       raise DirectError, "ncdirect_stop fallita (#{rc})" unless rc.zero?
 
       nil
     end
-    alias stop close
+
+    # true dopo {#close}, anche con lo stop ancora in attesa della fine di
+    # un'operazione in corso.
+    #
+    # @return [Boolean]
+    def closed? = @closed || @closing
 
     # --- colori ---
 
@@ -317,9 +382,11 @@ module Notcurses
     # @raise [DirectError] se la scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def set_fg_rgb(r, g, b)
-      rgb8!(r, g, b)
-      Util.check!(FFI.ncdirect_set_fg_rgb8(to_ptr, r, g, b), DirectError, 'ncdirect_set_fg_rgb8')
-      self
+      Guard.run do
+        rgb8!(r, g, b)
+        Util.check!(FFI.ncdirect_set_fg_rgb8(to_ptr, r, g, b), DirectError, 'ncdirect_set_fg_rgb8')
+        self
+      end
     end
 
     # Colore di sfondo RGB (+ncdirect_set_bg_rgb8+).
@@ -332,9 +399,11 @@ module Notcurses
     # @raise [DirectError] se la scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def set_bg_rgb(r, g, b)
-      rgb8!(r, g, b)
-      Util.check!(FFI.ncdirect_set_bg_rgb8(to_ptr, r, g, b), DirectError, 'ncdirect_set_bg_rgb8')
-      self
+      Guard.run do
+        rgb8!(r, g, b)
+        Util.check!(FFI.ncdirect_set_bg_rgb8(to_ptr, r, g, b), DirectError, 'ncdirect_set_bg_rgb8')
+        self
+      end
     end
 
     # Colore di primo piano da un valore 0xRRGGBB (+ncdirect_set_fg_rgb+).
@@ -345,9 +414,11 @@ module Notcurses
     # @raise [DirectError] se la scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def set_fg_rgb24(rgb)
-      Util.integer!(rgb, 'rgb', 0..0xffffff)
-      Util.check!(FFI.ncdirect_set_fg_rgb(to_ptr, rgb), DirectError, 'ncdirect_set_fg_rgb')
-      self
+      Guard.run do
+        Util.integer!(rgb, 'rgb', 0..0xffffff)
+        Util.check!(FFI.ncdirect_set_fg_rgb(to_ptr, rgb), DirectError, 'ncdirect_set_fg_rgb')
+        self
+      end
     end
 
     # Colore di sfondo da un valore 0xRRGGBB (+ncdirect_set_bg_rgb+).
@@ -358,9 +429,11 @@ module Notcurses
     # @raise [DirectError] se la scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def set_bg_rgb24(rgb)
-      Util.integer!(rgb, 'rgb', 0..0xffffff)
-      Util.check!(FFI.ncdirect_set_bg_rgb(to_ptr, rgb), DirectError, 'ncdirect_set_bg_rgb')
-      self
+      Guard.run do
+        Util.integer!(rgb, 'rgb', 0..0xffffff)
+        Util.check!(FFI.ncdirect_set_bg_rgb(to_ptr, rgb), DirectError, 'ncdirect_set_bg_rgb')
+        self
+      end
     end
 
     # Colore di primo piano dalla palette (+ncdirect_set_fg_palindex+). Il C
@@ -373,9 +446,11 @@ module Notcurses
     #   scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def set_fg_palindex(index)
-      Util.integer!(index, 'index', 0...FFI::NCPALETTESIZE)
-      Util.check!(FFI.ncdirect_set_fg_palindex(to_ptr, index), DirectError, 'ncdirect_set_fg_palindex')
-      self
+      Guard.run do
+        Util.integer!(index, 'index', 0...FFI::NCPALETTESIZE)
+        Util.check!(FFI.ncdirect_set_fg_palindex(to_ptr, index), DirectError, 'ncdirect_set_fg_palindex')
+        self
+      end
     end
 
     # Colore di sfondo dalla palette (+ncdirect_set_bg_palindex+).
@@ -387,9 +462,11 @@ module Notcurses
     #   scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def set_bg_palindex(index)
-      Util.integer!(index, 'index', 0...FFI::NCPALETTESIZE)
-      Util.check!(FFI.ncdirect_set_bg_palindex(to_ptr, index), DirectError, 'ncdirect_set_bg_palindex')
-      self
+      Guard.run do
+        Util.integer!(index, 'index', 0...FFI::NCPALETTESIZE)
+        Util.check!(FFI.ncdirect_set_bg_palindex(to_ptr, index), DirectError, 'ncdirect_set_bg_palindex')
+        self
+      end
     end
 
     # Primo piano con il colore di default del terminale
@@ -399,8 +476,10 @@ module Notcurses
     # @raise [DirectError] se la scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def set_fg_default
-      Util.check!(FFI.ncdirect_set_fg_default(to_ptr), DirectError, 'ncdirect_set_fg_default')
-      self
+      Guard.run do
+        Util.check!(FFI.ncdirect_set_fg_default(to_ptr), DirectError, 'ncdirect_set_fg_default')
+        self
+      end
     end
 
     # Sfondo con il colore di default del terminale (+ncdirect_set_bg_default+).
@@ -409,26 +488,28 @@ module Notcurses
     # @raise [DirectError] se la scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def set_bg_default
-      Util.check!(FFI.ncdirect_set_bg_default(to_ptr), DirectError, 'ncdirect_set_bg_default')
-      self
+      Guard.run do
+        Util.check!(FFI.ncdirect_set_bg_default(to_ptr), DirectError, 'ncdirect_set_bg_default')
+        self
+      end
     end
 
     # @return [Integer] colori della palette dichiarati dal terminale, 1 senza
     #   colori (+ncdirect_palette_size+)
     # @raise [ClosedError] se il contesto è chiuso
-    def palette_size = FFI.ncdirect_palette_size(to_ptr)
+    def palette_size = Guard.run { FFI.ncdirect_palette_size(to_ptr) }
 
     # --- stili ---
 
     # @return [Array<Symbol>] stili che il terminale sa mostrare insieme ai
     #   colori (+ncdirect_supported_styles+)
     # @raise [ClosedError] se il contesto è chiuso
-    def supported_styles = Util.styles_symbols(FFI.ncdirect_supported_styles(to_ptr))
+    def supported_styles = Guard.run { Util.styles_symbols(FFI.ncdirect_supported_styles(to_ptr)) }
 
     # @return [Array<Symbol>] stili attivi impostati con {#styles=},
     #   {#on_styles} e {#off_styles} (+ncdirect_styles+)
     # @raise [ClosedError] se il contesto è chiuso
-    def styles = Util.styles_symbols(FFI.ncdirect_styles(to_ptr))
+    def styles = Guard.run { Util.styles_symbols(FFI.ncdirect_styles(to_ptr)) }
 
     # Imposta esattamente questi stili (+ncdirect_set_styles+). I colori non
     # cambiano.
@@ -442,9 +523,11 @@ module Notcurses
     # @raise [DirectError] se la scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def styles=(styles)
-      ptr = to_ptr
-      mask = supported_styles!(ptr, styles)
-      Util.check!(FFI.ncdirect_set_styles(ptr, mask), DirectError, 'ncdirect_set_styles')
+      Guard.run do
+        ptr = to_ptr
+        mask = supported_styles!(ptr, styles)
+        Util.check!(FFI.ncdirect_set_styles(ptr, mask), DirectError, 'ncdirect_set_styles')
+      end
     end
 
     # Aggiunge stili a quelli attivi (+ncdirect_on_styles+).
@@ -457,10 +540,12 @@ module Notcurses
     # @raise [DirectError] se la scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def on_styles(*styles)
-      ptr = to_ptr
-      mask = supported_styles!(ptr, Util.styles_mask(styles))
-      Util.check!(FFI.ncdirect_on_styles(ptr, mask), DirectError, 'ncdirect_on_styles')
-      self
+      Guard.run do
+        ptr = to_ptr
+        mask = supported_styles!(ptr, Util.styles_mask(styles))
+        Util.check!(FFI.ncdirect_on_styles(ptr, mask), DirectError, 'ncdirect_on_styles')
+        self
+      end
     end
 
     # Toglie stili da quelli attivi (+ncdirect_off_styles+). Accetta anche
@@ -473,9 +558,11 @@ module Notcurses
     # @raise [DirectError] se la scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def off_styles(*styles)
-      mask = Util.styles_mask(styles)
-      Util.check!(FFI.ncdirect_off_styles(to_ptr, mask), DirectError, 'ncdirect_off_styles')
-      self
+      Guard.run do
+        mask = Util.styles_mask(styles)
+        Util.check!(FFI.ncdirect_off_styles(to_ptr, mask), DirectError, 'ncdirect_off_styles')
+        self
+      end
     end
 
     # --- output ---
@@ -491,11 +578,13 @@ module Notcurses
     # @raise [DirectError] se la scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def putstr(text, channels: 0)
-      ptr = to_ptr
-      s = Util.string!(text, 'text')
-      # il ritorno è quello di fputs (1 con glibc): conta solo il segno
-      Util.check!(FFI.ncdirect_putstr(ptr, Args.channels(channels, 'channels'), s), DirectError, 'ncdirect_putstr')
-      self
+      Guard.run do
+        ptr = to_ptr
+        s = Util.string!(text, 'text')
+        # il ritorno è quello di fputs (1 con glibc): conta solo il segno
+        Util.check!(FFI.ncdirect_putstr(ptr, Args.channels(channels, 'channels'), s), DirectError, 'ncdirect_putstr')
+        self
+      end
     end
 
     # Scrive il primo EGC (carattere percepito, anche di più codepoint) di text
@@ -515,21 +604,23 @@ module Notcurses
     # @raise [DirectError] se la scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def putegc(text, channels: 0)
-      ptr = to_ptr
-      s = Util.zwj_segments(Util.string!(text, 'text')).first
-      chans = Args.channels(channels, 'channels')
-      sbytes = ::FFI::MemoryPointer.new(:int)
-      sbytes.write_int(-1)
-      cols = FFI.ncdirect_putegc(ptr, chans, s, sbytes)
-      if cols.negative?
-        # il C scrive sbytes solo dopo aver riconosciuto l'EGC
-        if sbytes.read_int.negative?
-          raise ArgumentError, "text = #{s.inspect} inizia con un carattere di controllo (o non valido nella locale)"
-        end
+      Guard.run do
+        ptr = to_ptr
+        s = Util.zwj_segments(Util.string!(text, 'text')).first
+        chans = Args.channels(channels, 'channels')
+        sbytes = ::FFI::MemoryPointer.new(:int)
+        sbytes.write_int(-1)
+        cols = FFI.ncdirect_putegc(ptr, chans, s, sbytes)
+        if cols.negative?
+          # il C scrive sbytes solo dopo aver riconosciuto l'EGC
+          if sbytes.read_int.negative?
+            raise ArgumentError, "text = #{s.inspect} inizia con un carattere di controllo (o non valido nella locale)"
+          end
 
-        raise DirectError, "ncdirect_putegc fallita (#{cols})"
+          raise DirectError, "ncdirect_putegc fallita (#{cols})"
+        end
+        [cols, sbytes.read_int]
       end
-      [cols, sbytes.read_int]
     end
 
     # Scrive text sulla riga y, allineato rispetto alla larghezza del
@@ -553,21 +644,23 @@ module Notcurses
     #   falliscono
     # @raise [ClosedError] se il contesto è chiuso
     def print_aligned(text, y: nil, align: :left, channels: 0)
-      ptr = to_ptr
-      s = Util.string!(text, 'text')
-      Util.nonneg_int!(y, 'y') unless y.nil?
-      a = Args.align(align)
-      chans = Args.channels(channels, 'channels')
-      width = begin
-        Notcurses.strwidth(s)
-      rescue ArgumentError
-        raise ArgumentError, "text = #{s.inspect} contiene caratteri di controllo"
-      end
+      Guard.run do
+        ptr = to_ptr
+        s = Util.string!(text, 'text')
+        Util.nonneg_int!(y, 'y') unless y.nil?
+        a = Args.align(align)
+        chans = Args.channels(channels, 'channels')
+        width = begin
+          Notcurses.strwidth(s)
+        rescue ArgumentError
+          raise ArgumentError, "text = #{s.inspect} contiene caratteri di controllo"
+        end
 
-      x = a == FFI::NCALIGN_LEFT ? 0 : aligned_x(a, width, dims[1])
-      Util.check!(FFI.ncdirect_cursor_move_yx(ptr, y || -1, x), DirectError, 'ncdirect_cursor_move_yx')
-      Util.check!(FFI.ncdirect_putstr(ptr, chans, s), DirectError, 'ncdirect_putstr')
-      width
+        x = a == FFI::NCALIGN_LEFT ? 0 : aligned_x(a, width, dims[1])
+        Util.check!(FFI.ncdirect_cursor_move_yx(ptr, y || -1, x), DirectError, 'ncdirect_cursor_move_yx')
+        Util.check!(FFI.ncdirect_putstr(ptr, chans, s), DirectError, 'ncdirect_putstr')
+        width
+      end
     end
 
     # Svuota il buffer dell'output (+ncdirect_flush+).
@@ -577,8 +670,10 @@ module Notcurses
     #   non scrive più nulla)
     # @raise [ClosedError] se il contesto è chiuso
     def flush
-      Util.check!(FFI.ncdirect_flush(to_ptr), DirectError, 'ncdirect_flush')
-      self
+      Guard.run do
+        Util.check!(FFI.ncdirect_flush(to_ptr), DirectError, 'ncdirect_flush')
+        self
+      end
     end
 
     # --- schermo ---
@@ -590,12 +685,14 @@ module Notcurses
     # @raise [DirectError] se il C non riesce a leggere le dimensioni
     # @raise [ClosedError] se il contesto è chiuso
     def dims
-      ptr = to_ptr
-      rows = FFI.ncdirect_dim_y(ptr)
-      cols = FFI.ncdirect_dim_x(ptr)
-      raise DirectError, 'ncdirect_dim_y/ncdirect_dim_x fallita (0)' if rows.zero? || cols.zero?
+      Guard.run do
+        ptr = to_ptr
+        rows = FFI.ncdirect_dim_y(ptr)
+        cols = FFI.ncdirect_dim_x(ptr)
+        raise DirectError, 'ncdirect_dim_y/ncdirect_dim_x fallita (0)' if rows.zero? || cols.zero?
 
-      [rows, cols]
+        [rows, cols]
+      end
     end
 
     # Pulisce lo schermo e porta il cursore in alto a sinistra
@@ -606,8 +703,10 @@ module Notcurses
     #   scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def clear
-      Util.check!(FFI.ncdirect_clear(to_ptr), DirectError, 'ncdirect_clear')
-      self
+      Guard.run do
+        Util.check!(FFI.ncdirect_clear(to_ptr), DirectError, 'ncdirect_clear')
+        self
+      end
     end
 
     # --- cursore ---
@@ -630,16 +729,18 @@ module Notcurses
     #   o se lo spostamento fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def move_cursor(y: nil, x: nil)
-      ptr = to_ptr
-      Util.nonneg_int!(y, 'y') unless y.nil?
-      Util.nonneg_int!(x, 'x') unless x.nil?
-      return self if y.nil? && x.nil?
-      if x.nil? && !FFI.ncdirect_canget_cursor(ptr)
-        raise DirectError, 'move_cursor(x: nil): senza un terminale che riporti il cursore la colonna non si conserva'
-      end
+      Guard.run do
+        ptr = to_ptr
+        Util.nonneg_int!(y, 'y') unless y.nil?
+        Util.nonneg_int!(x, 'x') unless x.nil?
+        return self if y.nil? && x.nil?
+        if x.nil? && !FFI.ncdirect_canget_cursor(ptr)
+          raise DirectError, 'move_cursor(x: nil): senza un terminale che riporti il cursore la colonna non si conserva'
+        end
 
-      Util.check!(FFI.ncdirect_cursor_move_yx(ptr, y || -1, x || -1), DirectError, 'ncdirect_cursor_move_yx')
-      self
+        Util.check!(FFI.ncdirect_cursor_move_yx(ptr, y || -1, x || -1), DirectError, 'ncdirect_cursor_move_yx')
+        self
+      end
     end
 
     # Rende visibile il cursore (+ncdirect_cursor_enable+). {#close} lo rende
@@ -649,8 +750,10 @@ module Notcurses
     # @raise [DirectError] se il terminale non lo permette
     # @raise [ClosedError] se il contesto è chiuso
     def cursor_enable
-      Util.check!(FFI.ncdirect_cursor_enable(to_ptr), DirectError, 'ncdirect_cursor_enable')
-      self
+      Guard.run do
+        Util.check!(FFI.ncdirect_cursor_enable(to_ptr), DirectError, 'ncdirect_cursor_enable')
+        self
+      end
     end
 
     # Nasconde il cursore (+ncdirect_cursor_disable+).
@@ -659,8 +762,10 @@ module Notcurses
     # @raise [DirectError] se il terminale non lo permette
     # @raise [ClosedError] se il contesto è chiuso
     def cursor_disable
-      Util.check!(FFI.ncdirect_cursor_disable(to_ptr), DirectError, 'ncdirect_cursor_disable')
-      self
+      Guard.run do
+        Util.check!(FFI.ncdirect_cursor_disable(to_ptr), DirectError, 'ncdirect_cursor_disable')
+        self
+      end
     end
 
     # Sposta il cursore in su, fermandosi al bordo (+ncdirect_cursor_up+).
@@ -671,9 +776,11 @@ module Notcurses
     # @raise [DirectError] se il terminale non lo permette
     # @raise [ClosedError] se il contesto è chiuso
     def cursor_up(count: 1)
-      Util.nonneg_int!(count, 'count')
-      Util.check!(FFI.ncdirect_cursor_up(to_ptr, count), DirectError, 'ncdirect_cursor_up')
-      self
+      Guard.run do
+        Util.nonneg_int!(count, 'count')
+        Util.check!(FFI.ncdirect_cursor_up(to_ptr, count), DirectError, 'ncdirect_cursor_up')
+        self
+      end
     end
 
     # Sposta il cursore in giù (+ncdirect_cursor_down+): emette count tab
@@ -685,9 +792,11 @@ module Notcurses
     # @raise [DirectError] se la scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def cursor_down(count: 1)
-      Util.nonneg_int!(count, 'count')
-      Util.check!(FFI.ncdirect_cursor_down(to_ptr, count), DirectError, 'ncdirect_cursor_down')
-      self
+      Guard.run do
+        Util.nonneg_int!(count, 'count')
+        Util.check!(FFI.ncdirect_cursor_down(to_ptr, count), DirectError, 'ncdirect_cursor_down')
+        self
+      end
     end
 
     # Sposta il cursore a sinistra (+ncdirect_cursor_left+).
@@ -698,9 +807,11 @@ module Notcurses
     # @raise [DirectError] se il terminale non lo permette
     # @raise [ClosedError] se il contesto è chiuso
     def cursor_left(count: 1)
-      Util.nonneg_int!(count, 'count')
-      Util.check!(FFI.ncdirect_cursor_left(to_ptr, count), DirectError, 'ncdirect_cursor_left')
-      self
+      Guard.run do
+        Util.nonneg_int!(count, 'count')
+        Util.check!(FFI.ncdirect_cursor_left(to_ptr, count), DirectError, 'ncdirect_cursor_left')
+        self
+      end
     end
 
     # Sposta il cursore a destra (+ncdirect_cursor_right+).
@@ -711,9 +822,11 @@ module Notcurses
     # @raise [DirectError] se il terminale non lo permette
     # @raise [ClosedError] se il contesto è chiuso
     def cursor_right(count: 1)
-      Util.nonneg_int!(count, 'count')
-      Util.check!(FFI.ncdirect_cursor_right(to_ptr, count), DirectError, 'ncdirect_cursor_right')
-      self
+      Guard.run do
+        Util.nonneg_int!(count, 'count')
+        Util.check!(FFI.ncdirect_cursor_right(to_ptr, count), DirectError, 'ncdirect_cursor_right')
+        self
+      end
     end
 
     # Posizione del cursore, letta dal terminale (+ncdirect_cursor_yx+).
@@ -728,15 +841,17 @@ module Notcurses
     #   fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def cursor_yx
-      ptr = to_ptr
-      unless FFI.ncdirect_canget_cursor(ptr)
-        raise DirectError, 'cursor_yx: il terminale non riporta la posizione del cursore'
-      end
+      Guard.run do
+        ptr = to_ptr
+        unless FFI.ncdirect_canget_cursor(ptr)
+          raise DirectError, 'cursor_yx: il terminale non riporta la posizione del cursore'
+        end
 
-      y = ::FFI::MemoryPointer.new(:uint)
-      x = ::FFI::MemoryPointer.new(:uint)
-      Util.check!(FFI.ncdirect_cursor_yx(ptr, y, x), DirectError, 'ncdirect_cursor_yx')
-      [y.read_uint, x.read_uint]
+        y = ::FFI::MemoryPointer.new(:uint)
+        x = ::FFI::MemoryPointer.new(:uint)
+        Util.check!(FFI.ncdirect_cursor_yx(ptr, y, x), DirectError, 'ncdirect_cursor_yx')
+        [y.read_uint, x.read_uint]
+      end
     end
 
     # Salva la posizione del cursore nel terminale (+ncdirect_cursor_push+).
@@ -746,8 +861,10 @@ module Notcurses
     # @raise [DirectError] se il terminale non lo permette
     # @raise [ClosedError] se il contesto è chiuso
     def cursor_push
-      Util.check!(FFI.ncdirect_cursor_push(to_ptr), DirectError, 'ncdirect_cursor_push')
-      self
+      Guard.run do
+        Util.check!(FFI.ncdirect_cursor_push(to_ptr), DirectError, 'ncdirect_cursor_push')
+        self
+      end
     end
 
     # Ripristina la posizione salvata con {#cursor_push} (+ncdirect_cursor_pop+).
@@ -756,8 +873,10 @@ module Notcurses
     # @raise [DirectError] se il terminale non lo permette
     # @raise [ClosedError] se il contesto è chiuso
     def cursor_pop
-      Util.check!(FFI.ncdirect_cursor_pop(to_ptr), DirectError, 'ncdirect_cursor_pop')
-      self
+      Guard.run do
+        Util.check!(FFI.ncdirect_cursor_pop(to_ptr), DirectError, 'ncdirect_cursor_pop')
+        self
+      end
     end
 
     # --- linee e box ---
@@ -777,13 +896,15 @@ module Notcurses
     # @raise [DirectError] se la scrittura fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def hline(egc, len, channels: 0, to: channels)
-      ptr = to_ptr
-      s = Args.line_egc(egc)
-      Util.integer!(len, 'len', 1..MAX_LINE)
-      c1 = Args.line_channels(channels, 'channels')
-      c2 = Args.line_channels(to, 'to')
-      Util.check!(FFI.ncdirect_hline_interp(ptr, s, len, c1, c2), DirectError, 'ncdirect_hline_interp')
-      self
+      Guard.run do
+        ptr = to_ptr
+        s = Args.line_egc(egc)
+        Util.integer!(len, 'len', 1..MAX_LINE)
+        c1 = Args.line_channels(channels, 'channels')
+        c2 = Args.line_channels(to, 'to')
+        Util.check!(FFI.ncdirect_hline_interp(ptr, s, len, c1, c2), DirectError, 'ncdirect_hline_interp')
+        self
+      end
     end
 
     # Linea verticale dal cursore verso il basso, con i colori interpolati da
@@ -800,13 +921,15 @@ module Notcurses
     # @raise [DirectError] se la scrittura o un movimento del cursore falliscono
     # @raise [ClosedError] se il contesto è chiuso
     def vline(egc, len, channels: 0, to: channels)
-      ptr = to_ptr
-      s = Args.line_egc(egc)
-      Util.integer!(len, 'len', 1..MAX_LINE)
-      c1 = Args.line_channels(channels, 'channels')
-      c2 = Args.line_channels(to, 'to')
-      Util.check!(FFI.ncdirect_vline_interp(ptr, s, len, c1, c2), DirectError, 'ncdirect_vline_interp')
-      self
+      Guard.run do
+        ptr = to_ptr
+        s = Args.line_egc(egc)
+        Util.integer!(len, 'len', 1..MAX_LINE)
+        c1 = Args.line_channels(channels, 'channels')
+        c2 = Args.line_channels(to, 'to')
+        Util.check!(FFI.ncdirect_vline_interp(ptr, s, len, c1, c2), DirectError, 'ncdirect_vline_interp')
+        self
+      end
     end
 
     # Box di rows x cols celle con l'angolo in alto a sinistra sul cursore
@@ -837,25 +960,27 @@ module Notcurses
     #   rappresentabili nella locale); l'output resta parziale
     # @raise [ClosedError] se il contesto è chiuso
     def box(rows, cols, set: :light, ul: 0, ur: ul, ll: ul, lr: ul, hide: [], corners: 0)
-      ptr = to_ptr
-      Util.integer!(rows, 'rows', 2..MAX_LINE)
-      Util.integer!(cols, 'cols', 2..MAX_LINE)
-      corner = [ul, ur, ll, lr].zip(%w[ul ur ll lr]).map { |v, name| Args.line_channels(v, name) }
-      ctlword = Array(hide).reduce(0) { |m, edge| m | Util.enum_value(BOX_EDGES, edge, 'hide') } |
-                (Util.integer!(corners, 'corners', 0..3) << FFI::NCBOXCORNER_SHIFT)
-      rc = case set
-           when :light then FFI.ncdirect_light_box(ptr, *corner, rows, cols, ctlword)
-           when :heavy then FFI.ncdirect_heavy_box(ptr, *corner, rows, cols, ctlword)
-           when :rounded then FFI.ncdirect_rounded_box(ptr, *corner, rows, cols, ctlword)
-           when :double then FFI.ncdirect_double_box(ptr, *corner, rows, cols, ctlword)
-           when :ascii then FFI.ncdirect_ascii_box(ptr, *corner, rows, cols, ctlword)
-           when String then FFI.ncdirect_box(ptr, *corner, box_chars(set), rows, cols, ctlword)
-           else
-             raise ArgumentError, "set = #{set.inspect} non valido: usa uno di " \
-                                  "#{BOX_STYLES.map(&:inspect).join(', ')} o 6 caratteri"
-           end
-      Util.check!(rc, DirectError, 'ncdirect_box')
-      self
+      Guard.run do
+        ptr = to_ptr
+        Util.integer!(rows, 'rows', 2..MAX_LINE)
+        Util.integer!(cols, 'cols', 2..MAX_LINE)
+        corner = [ul, ur, ll, lr].zip(%w[ul ur ll lr]).map { |v, name| Args.line_channels(v, name) }
+        ctlword = Array(hide).reduce(0) { |m, edge| m | Util.enum_value(BOX_EDGES, edge, 'hide') } |
+                  (Util.integer!(corners, 'corners', 0..3) << FFI::NCBOXCORNER_SHIFT)
+        rc = case set
+             when :light then FFI.ncdirect_light_box(ptr, *corner, rows, cols, ctlword)
+             when :heavy then FFI.ncdirect_heavy_box(ptr, *corner, rows, cols, ctlword)
+             when :rounded then FFI.ncdirect_rounded_box(ptr, *corner, rows, cols, ctlword)
+             when :double then FFI.ncdirect_double_box(ptr, *corner, rows, cols, ctlword)
+             when :ascii then FFI.ncdirect_ascii_box(ptr, *corner, rows, cols, ctlword)
+             when String then FFI.ncdirect_box(ptr, *corner, box_chars(set), rows, cols, ctlword)
+             else
+               raise ArgumentError, "set = #{set.inspect} non valido: usa uno di " \
+                                    "#{BOX_STYLES.map(&:inspect).join(', ')} o 6 caratteri"
+             end
+        Util.check!(rc, DirectError, 'ncdirect_box')
+        self
+      end
     end
 
     # --- input ---
@@ -877,27 +1002,30 @@ module Notcurses
     # @raise [InputError] se il contesto scarta l'input (drain_input: true)
     # @raise [TypeError, ArgumentError] se timeout non è un numero in
     #   0..2147483647
-    # @raise [ClosedError] se il contesto è chiuso
+    # @raise [ClosedError] se il contesto è chiuso, anche durante l'attesa
     def get(timeout: nil)
       to_ptr
       timeout = Util.float!(timeout, 'timeout', Util::TIMEOUT) unless timeout.nil?
       raise InputError, 'ncdirect_get: l\'input è scartato (drain_input: true)' if @drain_input
       return @eof_input if @eof_input
 
+      # la guardia copre la lettura C, non l'attesa: un close durante l'attesa ferma subito il contesto
       wait_input(timeout) do
-        ni = FFI::NcInput.new
-        id = FFI.ncdirect_get_nblock(to_ptr, ni)
-        # (uint32_t)-1 senza drain: EOF già consumato dal C (da readline, o una seconda volta)
-        if id == 0xffff_ffff
+        Guard.run do
           ni = FFI::NcInput.new
-          ni[:id] = FFI::NCKEY_EOF
-          id = FFI::NCKEY_EOF
-        end
-        next nil if id.zero?
+          id = FFI.ncdirect_get_nblock(to_ptr, ni)
+          # (uint32_t)-1 senza drain: EOF già consumato dal C (da readline, o una seconda volta)
+          if id == 0xffff_ffff
+            ni = FFI::NcInput.new
+            ni[:id] = FFI::NCKEY_EOF
+            id = FFI::NCKEY_EOF
+          end
+          next nil if id.zero?
 
-        input = Input.new(ni)
-        @eof_input = input if id == FFI::NCKEY_EOF
-        input
+          input = Input.new(ni)
+          @eof_input = input if id == FFI::NCKEY_EOF
+          input
+        end
       end
     end
 
@@ -909,7 +1037,9 @@ module Notcurses
     # @raise [InputError] se il descrittore non è disponibile
     # @raise [ClosedError] se il contesto è chiuso
     def inputready_fd
-      Util.check!(FFI.ncdirect_inputready_fd(to_ptr), InputError, 'ncdirect_inputready_fd')
+      Guard.run do
+        Util.check!(FFI.ncdirect_inputready_fd(to_ptr), InputError, 'ncdirect_inputready_fd')
+      end
     end
 
     # Legge una riga dopo aver scritto prompt, con un editing minimo
@@ -930,15 +1060,17 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se prompt non è una String valida
     # @raise [ClosedError] se il contesto è chiuso
     def readline(prompt: '')
-      ptr = to_ptr
-      text = Util.string!(prompt, 'prompt')
-      raise InputError, 'ncdirect_readline: l\'input è scartato (drain_input: true)' if @drain_input
-      return nil if @eof_input
-      unless FFI.ncdirect_canget_cursor(ptr)
-        raise DirectError, 'readline: il terminale non riporta la posizione del cursore'
-      end
+      Guard.run do
+        ptr = to_ptr
+        text = Util.string!(prompt, 'prompt')
+        raise InputError, 'ncdirect_readline: l\'input è scartato (drain_input: true)' if @drain_input
+        return nil if @eof_input
+        unless FFI.ncdirect_canget_cursor(ptr)
+          raise DirectError, 'readline: il terminale non riporta la posizione del cursore'
+        end
 
-      Util.take_string(FFI.ncdirect_readline(ptr, text))
+        Util.take_string(FFI.ncdirect_readline(ptr, text))
+      end
     end
 
     # --- immagini ---
@@ -962,17 +1094,21 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il contesto è chiuso
     def render_image(path, align: :left, blitter: :default, scale: :scale)
-      ptr = to_ptr
-      file = Args.path(path)
-      rc = FFI.ncdirect_render_image(ptr, file, Args.align(align), Args.blitter(blitter), Util.scale_value(scale))
-      Util.check!(rc, DirectError, "ncdirect_render_image(#{file.inspect})")
-      self
+      Guard.run do
+        ptr = to_ptr
+        file = Args.path(path)
+        rc = FFI.ncdirect_render_image(ptr, file, Args.align(align), Args.blitter(blitter), Util.scale_value(scale))
+        Util.check!(rc, DirectError, "ncdirect_render_image(#{file.inspect})")
+        self
+      end
     end
 
     # Carica e scala un'immagine senza disegnarla (+ncdirect_render_frame+):
     # la disegna {Frame#raster}. La chiamata C apre e legge il file senza il
     # GVL: gli altri thread Ruby girano, ma non devono usare lo stesso contesto
-    # finché la chiamata non torna. Un'eccezione asincrona (Ctrl-C,
+    # finché la chiamata non torna. Un {#close} durante la chiamata (da un
+    # altro thread o dall'hook at_exit) rinvia lo stop al suo ritorno: il frame
+    # restituito risulta già chiuso. Un'eccezione asincrona (Ctrl-C,
     # Thread#raise, Timeout) arriva al ritorno della chiamata C: il frame creato
     # dal C resta allocato fino alla fine del processo.
     #
@@ -988,16 +1124,18 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il contesto è chiuso
     def render_frame(path, blitter: :default, scale: :scale, max_rows: 0, max_cols: 0)
-      ptr = to_ptr
-      file = Args.path(path)
-      b = Args.blitter(blitter)
-      s = Util.scale_value(scale)
-      Util.nonneg_int!(max_rows, 'max_rows')
-      Util.nonneg_int!(max_cols, 'max_cols')
-      v = FFI.ncdirect_render_frame(ptr, file, b, s, max_rows, max_cols)
-      raise DirectError, "ncdirect_render_frame(#{file.inspect}) ha restituito NULL" if v.null?
+      Guard.run do
+        ptr = to_ptr
+        file = Args.path(path)
+        b = Args.blitter(blitter)
+        s = Util.scale_value(scale)
+        Util.nonneg_int!(max_rows, 'max_rows')
+        Util.nonneg_int!(max_cols, 'max_cols')
+        v = FFI.ncdirect_render_frame(ptr, file, b, s, max_rows, max_cols)
+        raise DirectError, "ncdirect_render_frame(#{file.inspect}) ha restituito NULL" if v.null?
 
-      Frame.new(v, self)
+        Frame.new(v, self)
+      end
     end
 
     # Carica un'immagine o un video da renderizzare più volte
@@ -1038,7 +1176,9 @@ module Notcurses
     #
     # Thread: l'apertura del file e la decodifica di ogni frame avvengono senza
     # il GVL, come in {#load_image}: gli altri thread Ruby girano, ma non devono
-    # usare lo stesso contesto finché il metodo non torna.
+    # usare lo stesso contesto finché il metodo non torna. Un {#close} durante
+    # lo stream (da un altro thread o dall'hook at_exit) lo ferma al frame
+    # successivo con ClosedError; lo stop avviene al ritorno.
     #
     # @param path [String] file video o immagine
     # @param align [Symbol] :left, :center o :right
@@ -1051,25 +1191,29 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il contesto è chiuso
     def stream(path, align: :left, blitter: :default, scale: :scale)
-      ptr = to_ptr
-      Args.align(align)
-      Args.visual_options(blitter, scale)
-      load_image(path) do |image|
-        rows = index = rc = 0
-        while rc.zero?
-          # il raster lascia il cursore sotto il frame (direct.c:558), non sull'ultima
-          # riga come presume ncdirect_stream (direct.c:1550-1559); ritorno ignorato come nel C
-          FFI.ncdirect_cursor_up(ptr, rows) if rows.positive?
-          frame = image.render(self, blitter: blitter, scale: scale)
-          rows, = frame.dims
-          frame.raster(align: align)
-          yield index if block_given?
-          index += 1
-          rc = FFI.ncvisual_decode(image.to_ptr)
+      Guard.run do
+        to_ptr
+        Args.align(align)
+        Args.visual_options(blitter, scale)
+        load_image(path) do |image|
+          rows = index = rc = 0
+          while rc.zero?
+            # a ogni frame: un close arrivato durante il frame precedente ferma qui lo stream (ClosedError)
+            ptr = to_ptr
+            # il raster lascia il cursore sotto il frame (direct.c:558), non sull'ultima
+            # riga come presume ncdirect_stream (direct.c:1550-1559); ritorno ignorato come nel C
+            FFI.ncdirect_cursor_up(ptr, rows) if rows.positive?
+            frame = image.render(self, blitter: blitter, scale: scale)
+            rows, = frame.dims
+            frame.raster(align: align)
+            yield index if block_given?
+            index += 1
+            rc = FFI.ncvisual_decode(image.to_ptr)
+          end
+          Util.check!(rc, DirectError, 'ncvisual_decode')
         end
-        Util.check!(rc, DirectError, 'ncvisual_decode')
+        flush
       end
-      flush
     end
 
     # --- capacità ---
@@ -1077,72 +1221,72 @@ module Notcurses
     # Capacità del terminale (+ncdirect_capabilities+), copiate.
     # @return [Capabilities]
     # @raise [ClosedError] se il contesto è chiuso
-    def capabilities = Capabilities.new(FFI.ncdirect_capabilities(to_ptr))
+    def capabilities = Guard.run { Capabilities.new(FFI.ncdirect_capabilities(to_ptr)) }
 
     # Nome (e versione, se nota) del terminale rilevato
     # (+ncdirect_detected_terminal+).
     # @return [String, nil] i byte che non sono UTF-8 valido (per esempio
     #   nella versione inviata dal terminale) diventano U+FFFD
     # @raise [ClosedError] se il contesto è chiuso
-    def detected_terminal = Util.take_string(FFI.ncdirect_detected_terminal(to_ptr))
+    def detected_terminal = Guard.run { Util.take_string(FFI.ncdirect_detected_terminal(to_ptr)) }
 
     # @return [Boolean] UTF-8 disponibile (+ncdirect_canutf8+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_utf8? = FFI.ncdirect_canutf8(to_ptr)
+    def can_utf8? = Guard.run { FFI.ncdirect_canutf8(to_ptr) }
 
     # @return [Boolean] colori RGB a 24 bit (+ncdirect_cantruecolor+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_truecolor? = FFI.ncdirect_cantruecolor(to_ptr)
+    def can_truecolor? = Guard.run { FFI.ncdirect_cantruecolor(to_ptr) }
 
     # @return [Boolean] palette modificabile (+ncdirect_canchangecolor+); in
     #   modalità direct non c'è un'API per cambiarla
     # @raise [ClosedError] se il contesto è chiuso
-    def can_change_color? = FFI.ncdirect_canchangecolor(to_ptr)
+    def can_change_color? = Guard.run { FFI.ncdirect_canchangecolor(to_ptr) }
 
     # @return [Boolean] dissolvenze possibili (+ncdirect_canfade+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_fade? = FFI.ncdirect_canfade(to_ptr)
+    def can_fade? = Guard.run { FFI.ncdirect_canfade(to_ptr) }
 
     # @return [Boolean] caricamento di immagini disponibile
     #   (+ncdirect_canopen_images+): dipende dal processo, non dal contesto
     # @raise [ClosedError] se il contesto è chiuso
-    def can_open_images? = FFI.ncdirect_canopen_images(to_ptr)
+    def can_open_images? = Guard.run { FFI.ncdirect_canopen_images(to_ptr) }
 
     # @return [Boolean] caricamento di video disponibile (+ncdirect_canopen_videos+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_open_videos? = FFI.ncdirect_canopen_videos(to_ptr)
+    def can_open_videos? = Guard.run { FFI.ncdirect_canopen_videos(to_ptr) }
 
     # @return [Boolean] semiblocchi disponibili (+ncdirect_canhalfblock+:
     #   in 3.0.17 equivale a {#can_utf8?})
     # @raise [ClosedError] se il contesto è chiuso
-    def can_halfblock? = FFI.ncdirect_canhalfblock(to_ptr)
+    def can_halfblock? = Guard.run { FFI.ncdirect_canhalfblock(to_ptr) }
 
     # @return [Boolean] quadranti disponibili (+ncdirect_canquadrant+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_quadrant? = FFI.ncdirect_canquadrant(to_ptr)
+    def can_quadrant? = Guard.run { FFI.ncdirect_canquadrant(to_ptr) }
 
     # @return [Boolean] sestanti disponibili (+ncdirect_cansextant+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_sextant? = FFI.ncdirect_cansextant(to_ptr)
+    def can_sextant? = Guard.run { FFI.ncdirect_cansextant(to_ptr) }
 
     # @return [Boolean] ottanti disponibili (+ncdirect_canoctant+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_octant? = FFI.ncdirect_canoctant(to_ptr)
+    def can_octant? = Guard.run { FFI.ncdirect_canoctant(to_ptr) }
 
     # @return [Boolean] Braille disponibile (+ncdirect_canbraille+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_braille? = FFI.ncdirect_canbraille(to_ptr)
+    def can_braille? = Guard.run { FFI.ncdirect_canbraille(to_ptr) }
 
     # @return [Boolean] grafica a pixel disponibile (+ncdirect_check_pixel_support+);
     #   falso senza un tty
     # @raise [ClosedError] se il contesto è chiuso
-    def can_pixel? = FFI.ncdirect_check_pixel_support(to_ptr).positive?
+    def can_pixel? = Guard.run { FFI.ncdirect_check_pixel_support(to_ptr).positive? }
 
     # @return [Boolean] il terminale può riportare la posizione del cursore:
     #   serve un tty con la capability u7 (+ncdirect_canget_cursor+). Non
     #   garantisce che il terminale risponda davvero
     # @raise [ClosedError] se il contesto è chiuso
-    def can_get_cursor? = FFI.ncdirect_canget_cursor(to_ptr)
+    def can_get_cursor? = Guard.run { FFI.ncdirect_canget_cursor(to_ptr) }
 
     # Immagine o video caricato in memoria (+ncdirectf*+, cioè un +ncvisual+),
     # da renderizzare più volte con {#render}. Non dipende dal contesto con cui
@@ -1166,28 +1310,32 @@ module Notcurses
       # @raise [TypeError, ArgumentError] se un argomento non è valido
       # @raise [ClosedError] se direct è chiuso
       def initialize(direct, path)
-        dptr = Util.ptr_of(direct, Direct, 'direct')
-        file = Args.path(path)
-        ptr = FFI.ncdirectf_from_file(dptr, file)
-        if ptr.null?
-          raise DirectError, "ncdirectf_from_file(#{file.inspect}) ha restituito NULL (file mancante o non " \
-                             'decodificabile? contesto senza multimedia?)'
-        end
+        Guard.run do
+          dptr = Util.ptr_of(direct, Direct, 'direct')
+          file = Args.path(path)
+          ptr = FFI.ncdirectf_from_file(dptr, file)
+          if ptr.null?
+            raise DirectError, "ncdirectf_from_file(#{file.inspect}) ha restituito NULL (file mancante o non " \
+                               'decodificabile? contesto senza multimedia?)'
+          end
 
-        @ptr = ptr
-        @closed = false
-        @owner = nil
+          @ptr = ptr
+          @closed = false
+          @owner = nil
+        end
       end
 
       # Libera l'immagine (+ncdirectf_free+). Idempotente; i {Frame} già
       # renderizzati restano validi.
       # @return [nil]
       def close
-        return nil if @closed
+        Guard.run do
+          return nil if @closed
 
-        @closed = true
-        FFI.ncdirectf_free(@ptr)
-        nil
+          @closed = true
+          FFI.ncdirectf_free(@ptr)
+          nil
+        end
       end
       alias free close
 
@@ -1203,12 +1351,14 @@ module Notcurses
       # @raise [TypeError, ArgumentError] se un argomento non è valido
       # @raise [ClosedError] se l'immagine o direct sono chiusi
       def render(direct, blitter: :default, scale: :scale)
-        dptr = Util.ptr_of(direct, Direct, 'direct')
-        vopts = Args.visual_options(blitter, scale)
-        v = FFI.ncdirectf_render(dptr, to_ptr, vopts)
-        raise DirectError, 'ncdirectf_render ha restituito NULL' if v.null?
+        Guard.run do
+          dptr = Util.ptr_of(direct, Direct, 'direct')
+          vopts = Args.visual_options(blitter, scale)
+          v = FFI.ncdirectf_render(dptr, to_ptr, vopts)
+          raise DirectError, 'ncdirectf_render ha restituito NULL' if v.null?
 
-        Frame.new(v, direct)
+          Frame.new(v, direct)
+        end
       end
 
       # Geometria di un render (+ncdirectf_geom+). Senza un tty usa
@@ -1226,11 +1376,13 @@ module Notcurses
       # @raise [TypeError, ArgumentError] se un argomento non è valido
       # @raise [ClosedError] se l'immagine o direct sono chiusi
       def geometry(direct, blitter: :default, scale: :scale)
-        dptr = Util.ptr_of(direct, Direct, 'direct')
-        vopts = Args.visual_options(blitter, scale)
-        g = FFI::NcVgeom.new
-        Util.check!(FFI.ncdirectf_geom(dptr, to_ptr, vopts, g), DirectError, 'ncdirectf_geom')
-        Visual::Geometry.new(g)
+        Guard.run do
+          dptr = Util.ptr_of(direct, Direct, 'direct')
+          vopts = Args.visual_options(blitter, scale)
+          g = FFI::NcVgeom.new
+          Util.check!(FFI.ncdirectf_geom(dptr, to_ptr, vopts, g), DirectError, 'ncdirectf_geom')
+          Visual::Geometry.new(g)
+        end
       end
     end
 
@@ -1258,10 +1410,12 @@ module Notcurses
       # @raise [ClosedError] se il frame è già stato disegnato o abbandonato, o
       #   se il contesto è chiuso
       def dims
-        rows = ::FFI::MemoryPointer.new(:uint)
-        cols = ::FFI::MemoryPointer.new(:uint)
-        FFI.ncplane_dim_yx(to_ptr, rows, cols)
-        [rows.read_uint, cols.read_uint]
+        Guard.run do
+          rows = ::FFI::MemoryPointer.new(:uint)
+          cols = ::FFI::MemoryPointer.new(:uint)
+          FFI.ncplane_dim_yx(to_ptr, rows, cols)
+          [rows.read_uint, cols.read_uint]
+        end
       end
 
       # Disegna il frame dalla riga del cursore e lo libera
@@ -1278,12 +1432,14 @@ module Notcurses
       # @raise [ClosedError] se il frame è già stato disegnato o abbandonato, o
       #   se il contesto è chiuso
       def raster(align: :left)
-        ptr = to_ptr
-        dptr = @owner.to_ptr
-        a = Args.align(align)
-        @closed = true # il C libera il piano su tutti i percorsi: un secondo raster sarebbe un double free
-        Util.check!(FFI.ncdirect_raster_frame(dptr, ptr, a), DirectError, 'ncdirect_raster_frame')
-        nil
+        Guard.run do
+          ptr = to_ptr
+          dptr = @owner.to_ptr
+          a = Args.align(align)
+          @closed = true # il C libera il piano su tutti i percorsi: un secondo raster sarebbe un double free
+          Util.check!(FFI.ncdirect_raster_frame(dptr, ptr, a), DirectError, 'ncdirect_raster_frame')
+          nil
+        end
       end
 
       # Abbandona il frame senza disegnarlo. La memoria C resta allocata (vedi
@@ -1379,6 +1535,9 @@ module Notcurses
         @input_io ||= IO.for_fd(inputready_fd, autoclose: false)
         @input_io.wait_readable(remaining)
       end
+    rescue SystemCallError, IOError
+      to_ptr # un close durante l'attesa (gestore trap) ha chiuso il descrittore: ClosedError
+      raise
     end
   end
 
@@ -1397,7 +1556,7 @@ module Notcurses
       # solo fflush della libc, nessuno stato di notcurses; il ritorno non conta: un fflush fallito non deve
       # impedire il fork. Un altro thread che scrive con il Direct fra il flush e il fork lascia testo nel
       # buffer copiato: come tutto notcurses, Direct va usato da un solo thread, fork compreso.
-      FFI.ncdirect_flush(ctx.to_ptr) if ctx.is_a?(Direct) && !ctx.closed?
+      Guard.run { FFI.ncdirect_flush(ctx.to_ptr) } if ctx.is_a?(Direct) && !ctx.closed?
       super
     end
   end

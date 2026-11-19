@@ -61,37 +61,39 @@ module Notcurses
     #   del piano: il resize fallito fa fallire la creazione
     def initialize(plane, items: [], title: nil, secondary: nil, footer: nil, default: 0, max_display: 0,
                    op_channels: 0, desc_channels: 0, title_channels: 0, foot_channels: 0, box_channels: 0)
-      claim_plane!(plane)
-      ctx = plane.context
-      ctx.check_not_in_callback!('Selector.new', WidgetError)
-      pairs = item_pairs(items)
-      keep = [] # MemoryPointer delle stringhe: il C le copia durante la chiamata
-      opts = FFI::NcSelectorOptions.new
-      opts[:title] = c_text(title.nil? ? nil : text!(title, 'title'), keep)
-      opts[:secondary] = c_text(secondary.nil? ? nil : text!(secondary, 'secondary'), keep)
-      opts[:footer] = c_text(footer.nil? ? nil : text!(footer, 'footer'), keep)
-      # una voce azzerata in più (option NULL) termina il vettore
-      vec = ::FFI::MemoryPointer.new(FFI::NcSelectorItem, pairs.size + 1)
-      pairs.each_with_index do |(option, desc), i|
-        item = FFI::NcSelectorItem.new(vec + (i * FFI::NcSelectorItem.size))
-        item[:option] = c_text(option, keep)
-        item[:desc] = c_text(desc, keep)
+      Guard.run do
+        claim_plane!(plane)
+        ctx = plane.context
+        ctx.check_not_in_callback!('Selector.new', WidgetError)
+        pairs = item_pairs(items)
+        keep = [] # MemoryPointer delle stringhe: il C le copia durante la chiamata
+        opts = FFI::NcSelectorOptions.new
+        opts[:title] = c_text(title.nil? ? nil : text!(title, 'title'), keep)
+        opts[:secondary] = c_text(secondary.nil? ? nil : text!(secondary, 'secondary'), keep)
+        opts[:footer] = c_text(footer.nil? ? nil : text!(footer, 'footer'), keep)
+        # una voce azzerata in più (option NULL) termina il vettore
+        vec = ::FFI::MemoryPointer.new(FFI::NcSelectorItem, pairs.size + 1)
+        pairs.each_with_index do |(option, desc), i|
+          item = FFI::NcSelectorItem.new(vec + (i * FFI::NcSelectorItem.size))
+          item[:option] = c_text(option, keep)
+          item[:desc] = c_text(desc, keep)
+        end
+        opts[:items] = vec
+        opts[:defidx] = Util.integer!(default, 'default', 0..[pairs.size - 1, 0].max)
+        opts[:maxdisplay] = Util.uint!(max_display, 'max_display')
+        opts[:opchannels] = Util.channels_value(op_channels, 'op_channels')
+        opts[:descchannels] = Util.channels_value(desc_channels, 'desc_channels')
+        opts[:titlechannels] = Util.channels_value(title_channels, 'title_channels')
+        opts[:footchannels] = Util.channels_value(foot_channels, 'foot_channels')
+        opts[:boxchannels] = Util.channels_value(box_channels, 'box_channels')
+        ptr = FFI.ncselector_create(plane.to_ptr, opts)
+        if ptr.null?
+          plane_destroyed_on_failure!(plane)
+          ctx.raise_callback_errors!
+          raise WidgetError, 'ncselector_create ha restituito NULL (il piano è stato distrutto)'
+        end
+        attach!(ptr, plane)
       end
-      opts[:items] = vec
-      opts[:defidx] = Util.integer!(default, 'default', 0..[pairs.size - 1, 0].max)
-      opts[:maxdisplay] = Util.uint!(max_display, 'max_display')
-      opts[:opchannels] = Util.channels_value(op_channels, 'op_channels')
-      opts[:descchannels] = Util.channels_value(desc_channels, 'desc_channels')
-      opts[:titlechannels] = Util.channels_value(title_channels, 'title_channels')
-      opts[:footchannels] = Util.channels_value(foot_channels, 'foot_channels')
-      opts[:boxchannels] = Util.channels_value(box_channels, 'box_channels')
-      ptr = FFI.ncselector_create(plane.to_ptr, opts)
-      if ptr.null?
-        plane_destroyed_on_failure!(plane)
-        ctx.raise_callback_errors!
-        raise WidgetError, 'ncselector_create ha restituito NULL (il piano è stato distrutto)'
-      end
-      attach!(ptr, plane)
     end
 
     # Piano del selettore (+ncselector_plane+): lo stesso Plane passato a
@@ -99,7 +101,7 @@ module Notcurses
     #
     # @return [Plane]
     # @raise [ClosedError] se il selettore è chiuso
-    def plane = @context.plane_for(FFI.ncselector_plane(to_ptr))
+    def plane = Guard.run { @context.plane_for(FFI.ncselector_plane(to_ptr)) }
 
     # Aggiunge una voce in fondo (+ncselector_additem+), fa crescere il piano
     # se serve e ridisegna. La selezione non cambia. Le opzioni uguali sono
@@ -114,36 +116,38 @@ module Notcurses
     #   del piano
     # @raise [ClosedError] se il selettore è chiuso
     def add_item(option, desc: nil)
-      ptr = to_ptr
-      keep = []
-      item = FFI::NcSelectorItem.new
-      item[:option] = c_text(text!(option, 'option'), keep)
-      item[:desc] = c_text(desc.nil? ? nil : text!(desc, 'desc'), keep)
-      rc = FFI.ncselector_additem(ptr, item)
-      @context.raise_callback_errors!
-      Util.check!(rc, WidgetError, 'ncselector_additem')
-      self
+      Guard.run do
+        ptr = to_ptr
+        keep = []
+        item = FFI::NcSelectorItem.new
+        item[:option] = c_text(text!(option, 'option'), keep)
+        item[:desc] = c_text(desc.nil? ? nil : text!(desc, 'desc'), keep)
+        rc = FFI.ncselector_additem(ptr, item)
+        @context.raise_callback_errors!
+        Util.check!(rc, WidgetError, 'ncselector_additem')
+        self
+      end
     end
 
     # Opzione selezionata (+ncselector_selected+).
     #
     # @return [String, nil] nil se il selettore non ha voci
     # @raise [ClosedError] se il selettore è chiuso
-    def selected = Util.utf8(FFI.ncselector_selected(to_ptr))
+    def selected = Guard.run { Util.utf8(FFI.ncselector_selected(to_ptr)) }
 
     # Seleziona la voce successiva, dopo l'ultima la prima
     # (+ncselector_nextitem+), e ridisegna.
     #
     # @return [String, nil] l'opzione selezionata; nil se il selettore non ha voci
     # @raise [ClosedError] se il selettore è chiuso
-    def next_item = Util.utf8(FFI.ncselector_nextitem(to_ptr))
+    def next_item = Guard.run { Util.utf8(FFI.ncselector_nextitem(to_ptr)) }
 
     # Seleziona la voce precedente, prima della prima l'ultima
     # (+ncselector_previtem+), e ridisegna.
     #
     # @return [String, nil] l'opzione selezionata; nil se il selettore non ha voci
     # @raise [ClosedError] se il selettore è chiuso
-    def prev_item = Util.utf8(FFI.ncselector_previtem(to_ptr))
+    def prev_item = Guard.run { Util.utf8(FFI.ncselector_previtem(to_ptr)) }
 
     # Passa un evento al selettore (+ncselector_offer_input+): frecce su e
     # giù e rotella spostano la selezione di una voce, PagSu e PagGiù di una
@@ -157,11 +161,13 @@ module Notcurses
     # @raise [TypeError] se input non è un Input
     # @raise [ClosedError] se il selettore è chiuso
     def offer_input(input)
-      ptr = to_ptr
-      ni = input_struct(input)
-      return false if ni.nil?
+      Guard.run do
+        ptr = to_ptr
+        ni = input_struct(input)
+        return false if ni.nil?
 
-      FFI.ncselector_offer_input(ptr, ni)
+        FFI.ncselector_offer_input(ptr, ni)
+      end
     end
 
     private
@@ -169,7 +175,7 @@ module Notcurses
     # +ncselector_destroy+ con NULL al posto del char** dell'opzione
     # selezionata: con un selettore senza voci il C la leggerebbe da un
     # vettore NULL (selector.c:273). L'opzione si legge prima con {#selected}.
-    def destroy_native = FFI.ncselector_destroy(to_ptr, nil)
+    def destroy_native = Guard.run { FFI.ncselector_destroy(to_ptr, nil) }
 
     # @return [Array<Array(String, String)>] coppie validate [opzione,
     #   descrizione o nil]

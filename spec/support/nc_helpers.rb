@@ -4,6 +4,7 @@
 
 require 'notcurses'
 require 'open3'
+require_relative 'guard_audit'
 
 # Helper delle spec del wrapper: contesti su /dev/null, mai su un TTY. Le spec
 # vanno eseguite con stdin su /dev/null (il thread di input di notcurses legge
