@@ -6,16 +6,16 @@
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
 > `git show ad0315b:RIPRESA.md`; quello dei lotti della revisione in `git show 8a4b5f7:RIPRESA.md`.
 
-## Stato e prossimo step (aggiornato il 2026-11-19, lotto 5 in review)
+## Stato e prossimo step (aggiornato il 2026-11-19, lotto 5 chiuso)
 
 - Lotto 1 fatto: PR #22, merge `74deb80`. Lotto 2 fatto: PR #23, merge `cb90c4f`. Lotto 2b fatto: PR #24, merge
   `6374e41`. Lotto 2c fatto: PR #25, merge `d2c5f7c`. Lotto 3 fatto: PR #26, merge `e15b40a` (ICH-454, ICH-456,
   ICH-455, ICH-536, ICH-537, ICH-538 a Done). Lotto 4 fatto: PR #27, merge `494ffe0`, solo documentazione (ICH-463 in
-  Blocked). Log in `memory/backlog-issue.md`, esito in `RICONSEGNA.md`. Stato di `master` su `494ffe0`: 1177 esempi, 0
-  fallimenti (semi 1234, 4242, 7); coverage 98,33 %; RuboCop 0; YARD 100 %; gem costruita; layer FFI invariato; CI
-  verde.
-- Worktree `.claude/worktrees/bug+ICH-463-opus` e branch `bug/ICH-463-opus` rimossi, anche il remoto
-  (`/trinity:workflow:5_remove-worktree`, lanciato dall'utente: il comando non si lancia dallo strumento Skill).
+  Blocked). Lotto 5 fatto: PR #28, merge `3d3e0e9` (ICH-475 e ICH-464 a Done). Log in `memory/backlog-issue.md`, esito
+  in `RICONSEGNA.md`. Stato di `master` su `3d3e0e9`: 1209 esempi, 0 fallimenti (ordine normale e semi 1234, 4242, 7);
+  coverage 98,22 %; RuboCop 0; YARD 100 %; gem costruita; layer FFI invariato; CI verde.
+- **Da fare dall'utente:** rimuovere worktree e branch del lotto 5, anche il remoto:
+  `/trinity:workflow:5_remove-worktree bug+ICH-475-464-opus` (il comando non si lancia dallo strumento Skill).
 - **ICH-463 in Blocked** (stato del team ICH «Waiting on something outside this repo»), scelta dell'utente: la
   correzione è in notcurses (`process_melange`, `in.c:2427`: `consumed < 0` → `<= 0`), proposta upstream con la PR
   [#2954](https://github.com/dankamongmen/notcurses/pull/2954) (issue #2947), dal fork
@@ -25,32 +25,23 @@
   chiudi la issue. Se upstream non mergia, le alternative sono nella PR #27. L'automazione di Linear ha portato la
   issue a In Progress e a Done anche con `Refs` (il nome del branch contiene l'ID): dopo ogni evento della PR
   controlla lo stato.
-- **Lotto 5 in corso (aggiornato il 2026-11-19): implementazione fatta, PR
-  [#28](https://github.com/ichelema/notcursesruby/pull/28) aperta, CI verde su tutta la matrice, senza review.**
-  Worktree `.claude/worktrees/bug+ICH-475-464-opus`, branch `bug/ICH-475-464-opus` (4 commit: `78dfa7a`, `168f2a0`,
-  `fc09a6d`, `1ffa2d8`). ICH-475 e ICH-464 in In Progress. Locale: 1203 esempi, 0 fallimenti (semi 1234, 4242, 7),
-  coverage 98,29 %, RuboCop 0, YARD 100 %, layer FFI invariato; Ruby 3.1.7 10 corse su 10 verdi.
-  - Scelte dell'utente (regola 14): ICH-475 «rinvio anche per stream» con la variante C (`decode`, `decode_loop` e
-    `from_file` occupano solo il visual); ICH-464 «rendere sicuro» (niente sola documentazione), design `Guard` in
-    Ruby puro (consulti di GPT astra-high e di deep-reasoner); `Context#close` in un callback rinviato invece di
-    `ContextError`; l'errore dello stop rinviato esce dall'operazione che lo esegue.
-  - Design: `Notcurses::Guard` (`lib/notcurses/guard.rb`) conta le operazioni in corso con un Array (`<<`/`pop`: con un
-    intero `+= 1` su Ruby 3.1 un aggiornamento si perdeva, commit `1ffa2d8`); `close` di `Context`/`Direct` in due tempi
-    (`close` + `release_native!`); `Guard.run` in 349 metodi (codemod Prism); controlli in `guard_coverage_spec.rb`
-    (statico) e `spec/support/guard_audit.rb` (a runtime). Dettagli nel corpo della PR.
-  - Ruby 3.1.7 locale non ha più `rspec` né `ffi`: installali in un `GEM_HOME` nello scratchpad
-    (`GEM_HOME=$S/gems31 GEM_PATH=$S/gems31 mise exec ruby@3.1.7 -- gem install --no-document rspec:3.13.2
-    ffi:1.17.4`) e lancia `mise exec ruby@3.1.7 -- ruby $S/gems31/bin/rspec` con le stesse variabili.
-- **Prossimo step: chiudere il lotto 5.** Comandi, nell'ordine:
-  1. facoltativi: `/trinity:workflow:2_work-simplify ICH-475 ICH-464 opus` e
-     `/trinity:workflow:2_work-verify ICH-475 ICH-464 opus`;
-  2. review: `/trinity:workflow:3_independent-review ICH-475 ICH-464 opus` oppure
-     `/trinity:workflow:4_review-fix-loop ICH-475 ICH-464 opus` (revisori come nella nota "Review con GPT e Sonnet");
-  3. a lavoro finito e CI verde: merge della PR #28 (lo esegue l'utente con `gh pr merge 28 --merge`, vedi l'ultima
-     nota di questa sezione), poi la chiusura del lotto (passo 7 della procedura);
-  4. rimozione di worktree e branch, anche remoto:
-     `/trinity:workflow:5_remove-worktree bug+ICH-475-464-opus` (lo lancia l'utente).
-  Il flusso di ogni lotto parte dalla spiegazione delle issue (passo 0 della "Procedura per ogni lotto").
+- **Prossimo step: lotto 6** (`bug`): ICH-458, ICH-486, ICH-222, ICH-223, ICH-488. Il flusso parte dalla spiegazione
+  delle issue (passo 0 della "Procedura per ogni lotto"), poi:
+  `/trinity:workflow:1_create-worktree master ICH-458 ICH-486 ICH-222 ICH-223 ICH-488 opus`.
+- Nate dal lotto 5, in Backlog, Low, da assegnare a un lotto (chiedi all'utente): ICH-540 (`Plane#close`,
+  `#family_destroy`, `Widget#close` e `Context#drop_planes` da un gestore `trap` che torna non rinviano la
+  distruzione) e ICH-541 (un Fiber sospeso dentro un'operazione del wrapper tiene lo stop in attesa per sempre).
+  Tutte e due hanno il limite nello YARD.
+- Note dal lotto 5: `Notcurses::Guard` (`lib/notcurses/guard.rb`) conta le operazioni del wrapper in corso; ogni
+  metodo nuovo che legge un puntatore C (`to_ptr`, `@ptr`, `Util.ptr_of`) deve iniziare con `Guard.run`, altrimenti
+  falliscono `spec/notcurses/guard_coverage_spec.rb` (statico) e l'audit `spec/support/guard_audit.rb`. Prima di Ruby
+  3.4 `Thread.handle_interrupt` non rinvia l'`Interrupt` di SIGINT, e Ruby consegna le interruzioni al ritorno dei
+  metodi C: per un'operazione che deve sopravvivere a un secondo Ctrl+C serve uno stato condiviso recuperabile, non una
+  variabile locale (schema `@claims` di `release_native!`). Le review del lotto 5 sono state
+  `/trinity:workflow:3_independent-review` eseguite dall'orchestratore, con il verify di un `trinity:reviewer` Sonnet.
+- Ruby 3.1.7 locale non ha `rspec` né `ffi`: installali in un `GEM_HOME` nello scratchpad
+  (`GEM_HOME=$S/gems31 GEM_PATH=$S/gems31 mise exec ruby@3.1.7 -- gem install --no-document rspec:3.13.2
+  ffi:1.17.4`) e lancia `mise exec ruby@3.1.7 -- ruby $S/gems31/bin/rspec` con le stesse variabili.
 - Nata dal lotto 3: ICH-539 (Low), finestre dei segnali su Ruby 3.1 e 3.2 nella pulizia di `EventLoop#run`, in
   `InputReader#halt` e in `Context#close`, nel lotto 7 con ICH-226 e ICH-474 (scelta dell'utente del 2026-11-18).
 - Note dal lotto 3: con kitty `run` spegne il flag dei segnali di notcurses e lo lascia spento dopo `run` (scelta
@@ -222,8 +213,8 @@ Le issue nate dai lotti 1, 2, 2b, 2c e 3 sono state aggiunte dopo (lotti 2, 2b, 
 | 3 (seguito) | `bug` | ICH-537 | Medium | Keep the memory of a held signal key per key and per Context in EventLoop#run (nata dal lotto 3) |
 | 3 (seguito) | `bug` | ICH-538 | Low | Do not call notcurses_linesigs_disable at every EventLoop#run when the flag is already off (nata dal lotto 3) |
 | 4 | `bug` | ICH-463 | Medium | Stop notcurses from blocking when a UTF-8 character is split across the 8192-byte input read (fatto: PR #27 solo documentazione, issue in Blocked fino alla correzione upstream) |
-| 5 | `bug` | ICH-475 | Medium | Closing the context or the visual while another thread is inside Visual#decode is a use-after-free |
-| 5 | `bug` | ICH-464 | Low | Close the window between to_ptr and the C call for a close from a trap handler |
+| 5 | `bug` | ICH-475 | Medium | Closing the context or the visual while another thread is inside Visual#decode is a use-after-free (fatto: PR #28) |
+| 5 | `bug` | ICH-464 | Low | Close the window between to_ptr and the C call for a close from a trap handler (fatto: PR #28) |
 | 6 | `bug` | ICH-458 | Medium | Make Direct#stream redraw :pixel frames in place when they end on the last screen row |
 | 6 | `bug` | ICH-486 | Medium | Keep Visual blits from leaving an orphan half of a wide glyph (nata dal lotto 1) |
 | 6 | `bug` | ICH-222 | Low | Free Direct::Frame memory on close and keep the Direct#stop reset off stdout |
