@@ -58,43 +58,45 @@ module Notcurses
     #   del piano: il resize fallito fa fallire la creazione
     def initialize(plane, items:, title: nil, secondary: nil, footer: nil, max_display: 0,
                    op_channels: 0, desc_channels: 0, title_channels: 0, foot_channels: 0, box_channels: 0)
-      claim_plane!(plane)
-      ctx = plane.context
-      ctx.check_not_in_callback!('MultiSelector.new', WidgetError)
-      entries = item_entries(items)
-      title = text!(title, 'title') unless title.nil?
-      secondary = text!(secondary, 'secondary') unless secondary.nil?
-      footer = text!(footer, 'footer') unless footer.nil?
-      keep = [] # MemoryPointer delle stringhe: il C le copia durante la chiamata
-      opts = FFI::NcMultiselectorOptions.new
-      opts[:title] = c_text(title, keep)
-      opts[:secondary] = c_text(secondary, keep)
-      opts[:footer] = c_text(footer, keep)
-      # una voce azzerata in più (option NULL) termina il vettore
-      vec = ::FFI::MemoryPointer.new(FFI::NcMselectorItem, entries.size + 1)
-      entries.each_with_index do |(option, desc, on), i|
-        item = FFI::NcMselectorItem.new(vec + (i * FFI::NcMselectorItem.size))
-        item[:option] = c_text(option, keep)
-        item[:desc] = c_text(desc, keep)
-        item[:selected] = on
+      Guard.run do
+        claim_plane!(plane)
+        ctx = plane.context
+        ctx.check_not_in_callback!('MultiSelector.new', WidgetError)
+        entries = item_entries(items)
+        title = text!(title, 'title') unless title.nil?
+        secondary = text!(secondary, 'secondary') unless secondary.nil?
+        footer = text!(footer, 'footer') unless footer.nil?
+        keep = [] # MemoryPointer delle stringhe: il C le copia durante la chiamata
+        opts = FFI::NcMultiselectorOptions.new
+        opts[:title] = c_text(title, keep)
+        opts[:secondary] = c_text(secondary, keep)
+        opts[:footer] = c_text(footer, keep)
+        # una voce azzerata in più (option NULL) termina il vettore
+        vec = ::FFI::MemoryPointer.new(FFI::NcMselectorItem, entries.size + 1)
+        entries.each_with_index do |(option, desc, on), i|
+          item = FFI::NcMselectorItem.new(vec + (i * FFI::NcMselectorItem.size))
+          item[:option] = c_text(option, keep)
+          item[:desc] = c_text(desc, keep)
+          item[:selected] = on
+        end
+        opts[:items] = vec
+        opts[:maxdisplay] = Util.uint!(max_display, 'max_display')
+        opts[:opchannels] = Util.channels_value(op_channels, 'op_channels')
+        opts[:descchannels] = Util.channels_value(desc_channels, 'desc_channels')
+        opts[:titlechannels] = Util.channels_value(title_channels, 'title_channels')
+        opts[:footchannels] = Util.channels_value(foot_channels, 'foot_channels')
+        opts[:boxchannels] = Util.channels_value(box_channels, 'box_channels')
+        check_room!(plane, entries, title, secondary, footer)
+        ptr = FFI.ncmultiselector_create(plane.to_ptr, opts)
+        if ptr.null?
+          plane_destroyed_on_failure!(plane)
+          ctx.raise_callback_errors!
+          raise WidgetError, 'ncmultiselector_create ha restituito NULL (il piano è stato distrutto)'
+        end
+        attach!(ptr, plane)
+        @count = entries.size
+        @first = entries[0][2] # stato della voce 0: il C non lo restituisce (vedi #selected)
       end
-      opts[:items] = vec
-      opts[:maxdisplay] = Util.uint!(max_display, 'max_display')
-      opts[:opchannels] = Util.channels_value(op_channels, 'op_channels')
-      opts[:descchannels] = Util.channels_value(desc_channels, 'desc_channels')
-      opts[:titlechannels] = Util.channels_value(title_channels, 'title_channels')
-      opts[:footchannels] = Util.channels_value(foot_channels, 'foot_channels')
-      opts[:boxchannels] = Util.channels_value(box_channels, 'box_channels')
-      check_room!(plane, entries, title, secondary, footer)
-      ptr = FFI.ncmultiselector_create(plane.to_ptr, opts)
-      if ptr.null?
-        plane_destroyed_on_failure!(plane)
-        ctx.raise_callback_errors!
-        raise WidgetError, 'ncmultiselector_create ha restituito NULL (il piano è stato distrutto)'
-      end
-      attach!(ptr, plane)
-      @count = entries.size
-      @first = entries[0][2] # stato della voce 0: il C non lo restituisce (vedi #selected)
     end
 
     # Piano del widget (+ncmultiselector_plane+): lo stesso Plane passato a
@@ -102,7 +104,7 @@ module Notcurses
     #
     # @return [Plane]
     # @raise [ClosedError] se il widget è chiuso
-    def plane = @context.plane_for(FFI.ncmultiselector_plane(to_ptr))
+    def plane = Guard.run { @context.plane_for(FFI.ncmultiselector_plane(to_ptr)) }
 
     # Stato delle caselle (+ncmultiselector_selected+), nell'ordine delle voci.
     #
@@ -114,7 +116,7 @@ module Notcurses
     # @return [Array<Boolean>] un elemento per voce
     # @raise [WidgetError] se +ncmultiselector_selected+ fallisce
     # @raise [ClosedError] se il widget è chiuso
-    def selected = [@first, *rest_flags(to_ptr)]
+    def selected = Guard.run { [@first, *rest_flags(to_ptr)] }
 
     # Passa un evento al widget (+ncmultiselector_offer_input+): lo spazio
     # commuta la voce corrente; frecce su e giù e rotella spostano la voce
@@ -133,22 +135,24 @@ module Notcurses
     #   dello stato fallisce
     # @raise [ClosedError] se il widget è chiuso
     def offer_input(input)
-      ptr = to_ptr
-      ni = input_struct(input)
-      rows = FFI.ncplane_dim_y(FFI.ncmultiselector_plane(ptr))
-      raise WidgetError, "il piano del MultiSelector deve avere almeno 2 righe (ne ha #{rows})" if rows < 2
-      return false if ni.nil?
+      Guard.run do
+        ptr = to_ptr
+        ni = input_struct(input)
+        rows = FFI.ncplane_dim_y(FFI.ncmultiselector_plane(ptr))
+        raise WidgetError, "il piano del MultiSelector deve avere almeno 2 righe (ne ha #{rows})" if rows < 2
+        return false if ni.nil?
 
-      toggle = input.id == 0x20 && !input.release? # il C commuta con ' ', qualunque modificatore
-      before = rest_flags(ptr) if toggle
-      consumed = FFI.ncmultiselector_offer_input(ptr, ni)
-      @first = !@first if toggle && consumed && rest_flags(ptr) == before
-      consumed
+        toggle = input.id == 0x20 && !input.release? # il C commuta con ' ', qualunque modificatore
+        before = rest_flags(ptr) if toggle
+        consumed = FFI.ncmultiselector_offer_input(ptr, ni)
+        @first = !@first if toggle && consumed && rest_flags(ptr) == before
+        consumed
+      end
     end
 
     private
 
-    def destroy_native = FFI.ncmultiselector_destroy(to_ptr)
+    def destroy_native = Guard.run { FFI.ncmultiselector_destroy(to_ptr) }
 
     # Stato delle voci 1..n-1 (l'unico che il C scrive).
     def rest_flags(ptr)
@@ -180,16 +184,18 @@ module Notcurses
     # +ncmultiselector_create+ fallisce, e distrugge il piano, se il genitore
     # non ha le righe o le colonne che servono (selector.c:865-880).
     def check_room!(plane, entries, title, secondary, footer)
-      parent = FFI.ncplane_parent(plane.to_ptr)
-      rows = FFI.ncplane_dim_y(parent)
-      cols = FFI.ncplane_dim_x(parent)
-      need_rows = title.nil? ? 5 : 7
-      longest = entries.map { |option, desc, _| width(option) + width(desc) }.max
-      need_cols = [longest + 7, width(secondary) + 2, width(footer) + 2, width(title) + 4].max
-      return if rows >= need_rows && cols >= need_cols
+      Guard.run do
+        parent = FFI.ncplane_parent(plane.to_ptr)
+        rows = FFI.ncplane_dim_y(parent)
+        cols = FFI.ncplane_dim_x(parent)
+        need_rows = title.nil? ? 5 : 7
+        longest = entries.map { |option, desc, _| width(option) + width(desc) }.max
+        need_cols = [longest + 7, width(secondary) + 2, width(footer) + 2, width(title) + 4].max
+        return if rows >= need_rows && cols >= need_cols
 
-      raise WidgetError, "il genitore del piano (#{rows}x#{cols}) è troppo piccolo per il selettore multiplo " \
-                         "(servono #{need_rows} righe e #{need_cols} colonne)"
+        raise WidgetError, "il genitore del piano (#{rows}x#{cols}) è troppo piccolo per il selettore multiplo " \
+                           "(servono #{need_rows} righe e #{need_cols} colonne)"
+      end
     end
 
     # Colonne di un testo già validato, 0 per nil.

@@ -67,30 +67,32 @@ module Notcurses
     # @raise [ClosedError] se il piano è chiuso
     def initialize(plane, selected_channels: 0, header_channels: 0, separator_channels: 0, separator: nil,
                    bottom: false)
-      claim_plane!(plane)
-      plane.context.check_not_in_callback!('Tabbed.new', WidgetError)
-      raise WidgetError, "il piano del Tabbed deve avere almeno 2 righe (ne ha #{plane.dim_y})" if plane.dim_y < 2
+      Guard.run do
+        claim_plane!(plane)
+        plane.context.check_not_in_callback!('Tabbed.new', WidgetError)
+        raise WidgetError, "il piano del Tabbed deve avere almeno 2 righe (ne ha #{plane.dim_y})" if plane.dim_y < 2
 
-      opts = FFI::NcTabbedOptions.new
-      opts[:selchan] = Util.channels_value(selected_channels, 'selected_channels')
-      opts[:hdrchan] = Util.channels_value(header_channels, 'header_channels')
-      opts[:sepchan] = Util.channels_value(separator_channels, 'separator_channels')
-      sep = Util.c_string(separator.nil? ? nil : Tabbed.label!(separator, 'separator'), 'separator')
-      opts[:separator] = sep || ::FFI::Pointer::NULL
-      opts[:flags] = Util.flag(bottom, FFI::NCTABBED_OPTION_BOTTOM, 'bottom')
-      victims = Tabbed.descendants(plane)
-      ptr = FFI.nctabbed_create(plane.to_ptr, opts)
-      if ptr.null?
-        victims.each(&:invalidate!)
-        plane_destroyed_on_failure!(plane)
-        raise WidgetError, 'nctabbed_create ha restituito NULL'
+        opts = FFI::NcTabbedOptions.new
+        opts[:selchan] = Util.channels_value(selected_channels, 'selected_channels')
+        opts[:hdrchan] = Util.channels_value(header_channels, 'header_channels')
+        opts[:sepchan] = Util.channels_value(separator_channels, 'separator_channels')
+        sep = Util.c_string(separator.nil? ? nil : Tabbed.label!(separator, 'separator'), 'separator')
+        opts[:separator] = sep || ::FFI::Pointer::NULL
+        opts[:flags] = Util.flag(bottom, FFI::NCTABBED_OPTION_BOTTOM, 'bottom')
+        victims = Tabbed.descendants(plane)
+        ptr = FFI.nctabbed_create(plane.to_ptr, opts)
+        if ptr.null?
+          victims.each(&:invalidate!)
+          plane_destroyed_on_failure!(plane)
+          raise WidgetError, 'nctabbed_create ha restituito NULL'
+        end
+
+        @tabs = {}
+        @drawing = false
+        attach!(ptr, plane, owns_plane: true)
+        @content_plane = Plane.new(FFI.nctabbed_content_plane(ptr), owned: false, context: @context)
+        @content_plane.transfer_to(self)
       end
-
-      @tabs = {}
-      @drawing = false
-      attach!(ptr, plane, owns_plane: true)
-      @content_plane = Plane.new(FFI.nctabbed_content_plane(ptr), owned: false, context: @context)
-      @content_plane.transfer_to(self)
     end
 
     # Distrugge il widget, i tab e il piano con tutti i discendenti
@@ -116,7 +118,7 @@ module Notcurses
     # Piano del widget (+nctabbed_plane+).
     # @return [Plane]
     # @raise [ClosedError] se il widget è chiuso
-    def plane = @context.plane_for(FFI.nctabbed_plane(to_ptr))
+    def plane = Guard.run { @context.plane_for(FFI.nctabbed_plane(to_ptr)) }
 
     # Piano del contenuto (+nctabbed_content_plane+), figlio del piano del
     # widget: {#redraw} lo ridimensiona e lo passa al blocco del tab
@@ -124,7 +126,7 @@ module Notcurses
     #
     # @return [Plane]
     # @raise [ClosedError] se il widget è chiuso
-    def content_plane = @context.plane_for(FFI.nctabbed_content_plane(to_ptr))
+    def content_plane = Guard.run { @context.plane_for(FFI.nctabbed_content_plane(to_ptr)) }
 
     # Ridisegna intestazione e contenuto (+nctabbed_redraw+): chiama il blocco
     # del tab selezionato con il piano del contenuto, poi scrive i nomi a
@@ -211,16 +213,16 @@ module Notcurses
 
     # @return [Tab, nil] tab selezionato (+nctabbed_selected+), nil senza tab
     # @raise [ClosedError] se il widget è chiuso
-    def selected = tab_for(FFI.nctabbed_selected(to_ptr))
+    def selected = Guard.run { tab_for(FFI.nctabbed_selected(to_ptr)) }
 
     # @return [Tab, nil] primo tab mostrato nell'intestazione
     #   (+nctabbed_leftmost+), nil senza tab
     # @raise [ClosedError] se il widget è chiuso
-    def leftmost = tab_for(FFI.nctabbed_leftmost(to_ptr))
+    def leftmost = Guard.run { tab_for(FFI.nctabbed_leftmost(to_ptr)) }
 
     # @return [Integer] numero di tab (+nctabbed_tabcount+)
     # @raise [ClosedError] se il widget è chiuso
-    def tab_count = FFI.nctabbed_tabcount(to_ptr)
+    def tab_count = Guard.run { FFI.nctabbed_tabcount(to_ptr) }
     alias size tab_count
 
     # @return [Boolean] true se il widget non ha tab
@@ -232,12 +234,14 @@ module Notcurses
     # @return [Array<Tab>]
     # @raise [ClosedError] se il widget è chiuso
     def tabs
-      ptr = to_ptr
-      tab = FFI.nctabbed_leftmost(ptr)
-      Array.new(FFI.nctabbed_tabcount(ptr)) do
-        current = tab_for(tab)
-        tab = FFI.nctab_next(tab)
-        current
+      Guard.run do
+        ptr = to_ptr
+        tab = FFI.nctabbed_leftmost(ptr)
+        Array.new(FFI.nctabbed_tabcount(ptr)) do
+          current = tab_for(tab)
+          tab = FFI.nctab_next(tab)
+          current
+        end
       end
     end
 
@@ -293,15 +297,15 @@ module Notcurses
 
     # @return [Channels] colori dei nomi non selezionati (+nctabbed_hdrchan+)
     # @raise [ClosedError] se il widget è chiuso
-    def header_channels = Channels.new(value: FFI.nctabbed_hdrchan(to_ptr))
+    def header_channels = Guard.run { Channels.new(value: FFI.nctabbed_hdrchan(to_ptr)) }
 
     # @return [Channels] colori del nome selezionato (+nctabbed_selchan+)
     # @raise [ClosedError] se il widget è chiuso
-    def selected_channels = Channels.new(value: FFI.nctabbed_selchan(to_ptr))
+    def selected_channels = Guard.run { Channels.new(value: FFI.nctabbed_selchan(to_ptr)) }
 
     # @return [Channels] colori del separatore (+nctabbed_sepchan+)
     # @raise [ClosedError] se il widget è chiuso
-    def separator_channels = Channels.new(value: FFI.nctabbed_sepchan(to_ptr))
+    def separator_channels = Guard.run { Channels.new(value: FFI.nctabbed_sepchan(to_ptr)) }
 
     # Cambia i colori dei nomi non selezionati (+nctabbed_set_hdrchan+), dal
     # prossimo {#redraw}.
@@ -336,7 +340,7 @@ module Notcurses
 
     # @return [String, nil] separatore (+nctabbed_separator+), nil se non c'è
     # @raise [ClosedError] se il widget è chiuso
-    def separator = Util.utf8(FFI.nctabbed_separator(to_ptr))
+    def separator = Guard.run { Util.utf8(FFI.nctabbed_separator(to_ptr)) }
 
     # Cambia il separatore (+nctabbed_set_separator+). "" = nessun separatore
     # visibile (notcurses non permette di tornare a NULL).
@@ -357,26 +361,30 @@ module Notcurses
 
     # @return [Integer] colonne del separatore (+nctabbed_separator_width+), 0 senza
     # @raise [ClosedError] se il widget è chiuso
-    def separator_width = FFI.nctabbed_separator_width(to_ptr)
+    def separator_width = Guard.run { FFI.nctabbed_separator_width(to_ptr) }
 
     # Puntatore del widget fuori dal blocco di un tab.
     # @api private
     # @raise [WidgetError] dentro il blocco di un tab
     def idle!
-      raise WidgetError, 'Notcurses::Tabbed: metodo non permesso dentro il blocco di un tab' if @drawing
+      Guard.run do
+        raise WidgetError, 'Notcurses::Tabbed: metodo non permesso dentro il blocco di un tab' if @drawing
 
-      to_ptr
+        to_ptr
+      end
     end
 
     # Puntatore C di un tab aperto di questo widget.
     # @api private
     # @raise [TypeError, ArgumentError] se tab non è un tab aperto di questo widget
     def member_ptr(tab, name, nil_ok: false)
-      return ::FFI::Pointer::NULL if nil_ok && tab.nil?
-      raise TypeError, "#{name} deve essere Notcurses::Tab, non #{tab.class}" unless tab.is_a?(Tab)
-      raise ArgumentError, "#{name} non è un tab aperto di questo Tabbed" if tab.closed? || !tab.tabbed.equal?(self)
+      Guard.run do
+        return ::FFI::Pointer::NULL if nil_ok && tab.nil?
+        raise TypeError, "#{name} deve essere Notcurses::Tab, non #{tab.class}" unless tab.is_a?(Tab)
+        raise ArgumentError, "#{name} non è un tab aperto di questo Tabbed" if tab.closed? || !tab.tabbed.equal?(self)
 
-      tab.to_ptr
+        tab.to_ptr
+      end
     end
 
     # Tab Ruby di un nctab* di questo widget.
@@ -402,21 +410,25 @@ module Notcurses
     # @return [Array<Plane>]
     # @raise [WidgetError] se un discendente è il piano di un altro widget
     def self.descendants(plane, except: nil)
-      ptr = plane.to_ptr
-      victims = plane.context.tracked_planes.select do |other|
-        !other.equal?(plane) && FFI.ncplane_descendant_p(other.address_ptr, ptr) != 0
-      end
-      if victims.any? { |other| other.widget_plane? && !other.equal?(except) }
-        raise WidgetError, 'un discendente del piano è il piano di un widget aperto (chiudi prima quel widget)'
-      end
+      Guard.run do
+        ptr = plane.to_ptr
+        victims = plane.context.tracked_planes.select do |other|
+          !other.equal?(plane) && FFI.ncplane_descendant_p(other.address_ptr, ptr) != 0
+        end
+        if victims.any? { |other| other.widget_plane? && !other.equal?(except) }
+          raise WidgetError, 'un discendente del piano è il piano di un widget aperto (chiudi prima quel widget)'
+        end
 
-      victims
+        victims
+      end
     end
 
     private
 
     def destroy_native
-      FFI.nctabbed_destroy(@ptr)
+      Guard.run do
+        FFI.nctabbed_destroy(@ptr)
+      end
     end
   end
 
@@ -469,7 +481,7 @@ module Notcurses
 
     # @return [String] nome (+nctab_name+)
     # @raise [ClosedError] se il tab è chiuso
-    def name = Util.utf8(FFI.nctab_name(to_ptr))
+    def name = Guard.run { Util.utf8(FFI.nctab_name(to_ptr)) }
 
     # Cambia il nome (+nctab_set_name+), dal prossimo {Tabbed#redraw}.
     #
@@ -479,23 +491,25 @@ module Notcurses
     # @raise [WidgetError] se la copia fallisce, o dentro il blocco di un tab
     # @raise [ClosedError] se il tab è chiuso
     def name=(name)
-      @tabbed.idle!
-      ptr = to_ptr
-      Util.check!(FFI.nctab_set_name(ptr, Tabbed.label!(name, 'name')), WidgetError, 'nctab_set_name')
+      Guard.run do
+        @tabbed.idle!
+        ptr = to_ptr
+        Util.check!(FFI.nctab_set_name(ptr, Tabbed.label!(name, 'name')), WidgetError, 'nctab_set_name')
+      end
     end
 
     # @return [Integer] colonne del nome (+nctab_name_width+)
     # @raise [ClosedError] se il tab è chiuso
-    def name_width = FFI.nctab_name_width(to_ptr)
+    def name_width = Guard.run { FFI.nctab_name_width(to_ptr) }
 
     # @return [Tab] tab a destra nella lista circolare (+nctab_next+); con un
     #   solo tab, il tab stesso
     # @raise [ClosedError] se il tab è chiuso
-    def next = @tabbed.tab_for(FFI.nctab_next(to_ptr))
+    def next = Guard.run { @tabbed.tab_for(FFI.nctab_next(to_ptr)) }
 
     # @return [Tab] tab a sinistra nella lista circolare (+nctab_prev+)
     # @raise [ClosedError] se il tab è chiuso
-    def prev = @tabbed.tab_for(FFI.nctab_prev(to_ptr))
+    def prev = Guard.run { @tabbed.tab_for(FFI.nctab_prev(to_ptr)) }
 
     # Cambia il blocco del tab (+nctab_set_cb+), dal prossimo {Tabbed#redraw}.
     #
@@ -505,11 +519,13 @@ module Notcurses
     # @raise [WidgetError] dentro il blocco di un tab
     # @raise [ClosedError] se il tab è chiuso
     def callback=(callback)
-      raise TypeError, "callback deve rispondere a call, o essere nil, non #{callback.class}" unless callback.nil? || callback.respond_to?(:call)
+      Guard.run do
+        raise TypeError, "callback deve rispondere a call, o essere nil, non #{callback.class}" unless callback.nil? || callback.respond_to?(:call)
 
-      @tabbed.idle!
-      FFI.nctab_set_cb(to_ptr, callback ? @function : ::FFI::Pointer::NULL)
-      @callback = callback
+        @tabbed.idle!
+        FFI.nctab_set_cb(to_ptr, callback ? @function : ::FFI::Pointer::NULL)
+        @callback = callback
+      end
     end
 
     # Sposta il tab subito dopo after, o subito prima di before
@@ -528,27 +544,29 @@ module Notcurses
     # @raise [WidgetError] se +nctab_move+ fallisce, o dentro il blocco di un tab
     # @raise [ClosedError] se il tab o il widget sono chiusi
     def move(after: nil, before: nil)
-      nt = @tabbed.idle!
-      raise ArgumentError, 'move: indica esattamente uno tra after: e before:' unless after.nil? ^ before.nil?
+      Guard.run do
+        nt = @tabbed.idle!
+        raise ArgumentError, 'move: indica esattamente uno tra after: e before:' unless after.nil? ^ before.nil?
 
-      target = after || before
-      tptr = @tabbed.member_ptr(target, after ? 'after' : 'before')
-      raise ArgumentError, 'move: un tab non si sposta accanto a se stesso' if target.equal?(self)
+        target = after || before
+        tptr = @tabbed.member_ptr(target, after ? 'after' : 'before')
+        raise ArgumentError, 'move: un tab non si sposta accanto a se stesso' if target.equal?(self)
 
-      ptr = to_ptr
-      left = FFI.nctabbed_leftmost(nt).address
-      nxt = FFI.nctab_next(ptr)
-      # prima del suo successore il tab non si muove: nctab_move lascia la lista com'era
-      follower = nxt if left == ptr.address && !(before && nxt.address == tptr.address)
-      rc = after ? FFI.nctab_move(nt, ptr, tptr, ::FFI::Pointer::NULL) : FFI.nctab_move(nt, ptr, ::FFI::Pointer::NULL, tptr)
-      Util.check!(rc, WidgetError, 'nctab_move')
-      # nctab_move non aggiorna il primo tab mostrato (tabbed.c:303-332)
-      if follower
-        FFI.nctabbed_rotate(nt, -1) until FFI.nctabbed_leftmost(nt).address == follower.address
-      elsif before && left == tptr.address
-        FFI.nctabbed_rotate(nt, 1) # il tab è ora subito prima del primo: diventa il primo
+        ptr = to_ptr
+        left = FFI.nctabbed_leftmost(nt).address
+        nxt = FFI.nctab_next(ptr)
+        # prima del suo successore il tab non si muove: nctab_move lascia la lista com'era
+        follower = nxt if left == ptr.address && !(before && nxt.address == tptr.address)
+        rc = after ? FFI.nctab_move(nt, ptr, tptr, ::FFI::Pointer::NULL) : FFI.nctab_move(nt, ptr, ::FFI::Pointer::NULL, tptr)
+        Util.check!(rc, WidgetError, 'nctab_move')
+        # nctab_move non aggiorna il primo tab mostrato (tabbed.c:303-332)
+        if follower
+          FFI.nctabbed_rotate(nt, -1) until FFI.nctabbed_leftmost(nt).address == follower.address
+        elsif before && left == tptr.address
+          FFI.nctabbed_rotate(nt, 1) # il tab è ora subito prima del primo: diventa il primo
+        end
+        self
       end
-      self
     end
 
     # Scambia il tab con quello alla sua sinistra (+nctab_move_left+); il
@@ -558,9 +576,11 @@ module Notcurses
     # @raise [WidgetError] dentro il blocco di un tab
     # @raise [ClosedError] se il tab è chiuso
     def move_left
-      nt = @tabbed.idle!
-      FFI.nctab_move_left(nt, to_ptr)
-      self
+      Guard.run do
+        nt = @tabbed.idle!
+        FFI.nctab_move_left(nt, to_ptr)
+        self
+      end
     end
 
     # Scambia il tab con quello alla sua destra (+nctab_move_right+); l'ultimo
@@ -570,9 +590,11 @@ module Notcurses
     # @raise [WidgetError] dentro il blocco di un tab
     # @raise [ClosedError] se il tab è chiuso
     def move_right
-      nt = @tabbed.idle!
-      FFI.nctab_move_right(nt, to_ptr)
-      self
+      Guard.run do
+        nt = @tabbed.idle!
+        FFI.nctab_move_right(nt, to_ptr)
+        self
+      end
     end
   end
 end

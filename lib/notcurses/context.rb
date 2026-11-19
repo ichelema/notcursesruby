@@ -376,8 +376,15 @@ module Notcurses
     # solo uscire o fare +exec+.
     #
     # close si può chiamare da un gestore +trap+ (per esempio
-    # <tt>trap('TERM') { nc.close; exit }</tt>): il registro si libera anche
-    # lì, e un nuovo contesto si può aprire dopo. Durante
+    # <tt>trap('TERM') { nc.close; exit }</tt>), anche se il gestore poi
+    # torna al codice interrotto. Se il segnale ha interrotto un'operazione
+    # del wrapper (o un callback chiamato dal C), lo stop avviene alla fine
+    # dell'operazione e la chiamata successiva solleva ClosedError; durante
+    # l'attesa di {#get} o {#getvec} lo stop è immediato e l'attesa solleva
+    # ClosedError. Con +exit+ lo stop avviene mentre l'eccezione esce
+    # dall'operazione; +exit!+ invece non esegue gli +ensure+, e lo stop
+    # rinviato non avviene (terminale non ripristinato). Il registro si libera
+    # allo stop, e un nuovo contesto si può aprire dopo. Durante
     # {UI::EventLoop#run} close ferma prima il thread di input; un Ctrl+C che
     # arriva mentre lo aspetta si solleva dopo lo stop.
     #
@@ -393,8 +400,6 @@ module Notcurses
       return mark_closed!(fclose: false) unless @pid == Process.pid
       return Guard.settle_if_idle if @closing # già chiuso: esegue lo stop rimasto in attesa (hook at_exit)
 
-      # un callback fuori da un'operazione protetta: lo stop libererebbe il contesto sotto il C
-      check_not_in_callback!('Context#close', ContextError) if in_callback? && Guard.busy.zero?
       # il thread di input di run non deve chiamare notcurses dopo lo stop; un Ctrl+C arrivato mentre halt lo
       # aspetta si solleva alla fine
       interrupted = @input_reader&.halt
@@ -478,19 +483,21 @@ module Notcurses
     # @return [Plane]
     # @raise [ClosedError] se il contesto è chiuso
     def stdplane
-      to_ptr
-      @stdplane
+      Guard.run do
+        to_ptr
+        @stdplane
+      end
     end
 
     # Piano in cima alla pila dello stdplane (+notcurses_top+).
     # @return [Plane]
     # @raise [ClosedError] se il contesto è chiuso
-    def top = plane_for(FFI.notcurses_top(to_ptr))
+    def top = Guard.run { plane_for(FFI.notcurses_top(to_ptr)) }
 
     # Piano in fondo alla pila dello stdplane (+notcurses_bottom+).
     # @return [Plane]
     # @raise [ClosedError] se il contesto è chiuso
-    def bottom = plane_for(FFI.notcurses_bottom(to_ptr))
+    def bottom = Guard.run { plane_for(FFI.notcurses_bottom(to_ptr)) }
 
     # Dimensioni dell'area di rendering (+notcurses_term_dim_yx+): il terminale
     # meno i margini, come lo stdplane. Il valore cambia solo con {#render} o
@@ -499,10 +506,12 @@ module Notcurses
     # @return [Array(Integer, Integer)] [righe, colonne]
     # @raise [ClosedError] se il contesto è chiuso
     def dims
-      rows = ::FFI::MemoryPointer.new(:uint)
-      cols = ::FFI::MemoryPointer.new(:uint)
-      FFI.notcurses_term_dim_yx(to_ptr, rows, cols)
-      [rows.read_uint, cols.read_uint]
+      Guard.run do
+        rows = ::FFI::MemoryPointer.new(:uint)
+        cols = ::FFI::MemoryPointer.new(:uint)
+        FFI.notcurses_term_dim_yx(to_ptr, rows, cols)
+        [rows.read_uint, cols.read_uint]
+      end
     end
 
     # Dimensioni dello stdplane (+notcurses_stddim_yx+): uguali a {#dims}.
@@ -510,10 +519,12 @@ module Notcurses
     # @return [Array(Integer, Integer)] [righe, colonne]
     # @raise [ClosedError] se il contesto è chiuso
     def stddim
-      rows = ::FFI::MemoryPointer.new(:uint)
-      cols = ::FFI::MemoryPointer.new(:uint)
-      FFI.notcurses_stddim_yx(to_ptr, rows, cols)
-      [rows.read_uint, cols.read_uint]
+      Guard.run do
+        rows = ::FFI::MemoryPointer.new(:uint)
+        cols = ::FFI::MemoryPointer.new(:uint)
+        FFI.notcurses_stddim_yx(to_ptr, rows, cols)
+        [rows.read_uint, cols.read_uint]
+      end
     end
 
     # Disegna la pila dello stdplane sul terminale (+notcurses_render+:
@@ -525,10 +536,12 @@ module Notcurses
     #   durante il render
     # @raise [ClosedError] se il contesto è chiuso
     def render
-      rc = FFI.notcurses_render(to_ptr)
-      raise_callback_errors!
-      Util.check!(rc, RenderError, 'notcurses_render')
-      self
+      Guard.run do
+        rc = FFI.notcurses_render(to_ptr)
+        raise_callback_errors!
+        Util.check!(rc, RenderError, 'notcurses_render')
+        self
+      end
     end
 
     # Ridisegna tutto il terminale e aggiorna le dimensioni (+notcurses_refresh+).
@@ -538,12 +551,14 @@ module Notcurses
     # @raise [RenderError] se il refresh fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def refresh
-      rows = ::FFI::MemoryPointer.new(:uint)
-      cols = ::FFI::MemoryPointer.new(:uint)
-      rc = FFI.notcurses_refresh(to_ptr, rows, cols)
-      raise_callback_errors!
-      Util.check!(rc, RenderError, 'notcurses_refresh')
-      [rows.read_uint, cols.read_uint]
+      Guard.run do
+        rows = ::FFI::MemoryPointer.new(:uint)
+        cols = ::FFI::MemoryPointer.new(:uint)
+        rc = FFI.notcurses_refresh(to_ptr, rows, cols)
+        raise_callback_errors!
+        Util.check!(rc, RenderError, 'notcurses_refresh')
+        [rows.read_uint, cols.read_uint]
+      end
     end
 
     # Contenuto dell'ultimo frame scritto sul terminale alla posizione (y, x)
@@ -558,14 +573,16 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se y o x non sono interi >= 0
     # @raise [ClosedError] se il contesto è chiuso
     def at(y, x)
-      Util.uint!(y, 'y')
-      Util.uint!(x, 'x')
-      styles = ::FFI::MemoryPointer.new(:uint16)
-      channels = ::FFI::MemoryPointer.new(:uint64)
-      egc = FFI.notcurses_at_yx(to_ptr, y, x, styles, channels)
-      return nil if egc.null?
+      Guard.run do
+        Util.uint!(y, 'y')
+        Util.uint!(x, 'x')
+        styles = ::FFI::MemoryPointer.new(:uint16)
+        channels = ::FFI::MemoryPointer.new(:uint64)
+        egc = FFI.notcurses_at_yx(to_ptr, y, x, styles, channels)
+        return nil if egc.null?
 
-      Cell.from_c(Util.take_string(egc), styles.read_uint16, channels.read_uint64)
+        Cell.from_c(Util.take_string(egc), styles.read_uint16, channels.read_uint64)
+      end
     end
 
     # Distrugge tutti i piani tranne lo stdplane, in tutte le pile
@@ -589,39 +606,41 @@ module Notcurses
     # @raise [Exception] la prima eccezione sollevata dal close di un oggetto
     #   figlio, dopo il drop
     def drop_planes
-      ptr = to_ptr
-      check_not_in_callback!('drop_planes', ContextError)
-      first_error = close_children
-      std = @stdplane.address
-      tops = {}
-      tracked_planes.each do |plane|
-        top = FFI.ncpile_top(plane.address_ptr)
-        tops[top.address] = top
-      end
-      victims = []
-      tops.each_value do |top|
-        plane = top
-        until plane.null?
-          victims << plane unless plane.address == std
-          plane = FFI.ncplane_below(plane)
+      Guard.run do
+        ptr = to_ptr
+        check_not_in_callback!('drop_planes', ContextError)
+        first_error = close_children
+        std = @stdplane.address
+        tops = {}
+        tracked_planes.each do |plane|
+          top = FFI.ncpile_top(plane.address_ptr)
+          tops[top.address] = top
         end
-      end
-      # ogni wrapper diventa invalido prima della sua distruzione: Ruby consegna un Ctrl-C al ritorno della
-      # chiamata C, e un wrapper ancora aperto su un piano liberato farebbe un double free
-      begin
-        victims.each do |plane|
-          @planes[plane.address]&.invalidate!
-          FFI.ncplane_destroy(plane)
+        victims = []
+        tops.each_value do |top|
+          plane = top
+          until plane.null?
+            victims << plane unless plane.address == std
+            plane = FFI.ncplane_below(plane)
+          end
         end
-        @planes.each_value { |plane| plane.invalidate! unless plane.equal?(@stdplane) }
-        @planes.select! { |_addr, plane| plane.equal?(@stdplane) }
-        FFI.notcurses_drop_planes(ptr)
-      ensure
-        planes_destroyed!
-      end
-      raise first_error if first_error
+        # ogni wrapper diventa invalido prima della sua distruzione: Ruby consegna un Ctrl-C al ritorno della
+        # chiamata C, e un wrapper ancora aperto su un piano liberato farebbe un double free
+        begin
+          victims.each do |plane|
+            @planes[plane.address]&.invalidate!
+            FFI.ncplane_destroy(plane)
+          end
+          @planes.each_value { |plane| plane.invalidate! unless plane.equal?(@stdplane) }
+          @planes.select! { |_addr, plane| plane.equal?(@stdplane) }
+          FFI.notcurses_drop_planes(ptr)
+        ensure
+          planes_destroyed!
+        end
+        raise first_error if first_error
 
-      self
+        self
+      end
     end
 
     # Nuova pila con un piano radice (+ncpile_create+). Il piano restituito è
@@ -651,18 +670,21 @@ module Notcurses
     # @raise [ClosedError] se il contesto è chiuso
     def create_pile(rows: nil, cols: nil, y: 0, x: 0, margins: nil, name: nil, fixed: false,
                     autogrow: false, vscroll: false, resize: nil, &block)
-      if y.is_a?(Symbol) || x.is_a?(Symbol)
-        raise ArgumentError, 'create_pile: y: e x: devono essere Integer (una pila non ha un genitore a cui allinearsi)'
-      end
+      created = Guard.run do
+        if y.is_a?(Symbol) || x.is_a?(Symbol)
+          raise ArgumentError, 'create_pile: y: e x: devono essere Integer (una pila non ha un genitore a cui allinearsi)'
+        end
 
-      opts, keep = Plane.build_options(context: self, parent_dims: dims, rows: rows, cols: cols, y: y, x: x,
-                                       margins: margins, name: name, fixed: fixed, autogrow: autogrow,
-                                       vscroll: vscroll, resize: resize)
-      ptr = FFI.ncpile_create(to_ptr, opts)
-      Util.check_ptr!(ptr, PlaneError, 'ncpile_create')
-      plane = Plane.new(ptr, owned: true, context: self)
-      plane.adopt_options!(keep)
-      Util.with_resource(plane, &block)
+        opts, keep = Plane.build_options(context: self, parent_dims: dims, rows: rows, cols: cols, y: y, x: x,
+                                         margins: margins, name: name, fixed: fixed, autogrow: autogrow,
+                                         vscroll: vscroll, resize: resize)
+        ptr = FFI.ncpile_create(to_ptr, opts)
+        Util.check_ptr!(ptr, PlaneError, 'ncpile_create')
+        plane = Plane.new(ptr, owned: true, context: self)
+        plane.adopt_options!(keep)
+        plane
+      end
+      Util.with_resource(created, &block)
     end
 
     # --- cursore ---
@@ -678,12 +700,14 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se y o x non sono interi nell'area
     # @raise [ClosedError] se il contesto è chiuso
     def cursor_enable(y: 0, x: 0)
-      rows, cols = stddim
-      Util.integer!(y, 'y', 0...rows)
-      Util.integer!(x, 'x', 0...cols)
-      Util.check!(FFI.notcurses_cursor_enable(to_ptr, y, x), ContextError, 'notcurses_cursor_enable')
-      @cursor_enabled = true
-      self
+      Guard.run do
+        rows, cols = stddim
+        Util.integer!(y, 'y', 0...rows)
+        Util.integer!(x, 'x', 0...cols)
+        Util.check!(FFI.notcurses_cursor_enable(to_ptr, y, x), ContextError, 'notcurses_cursor_enable')
+        @cursor_enabled = true
+        self
+      end
     end
 
     # Nasconde il cursore del terminale (+notcurses_cursor_disable+).
@@ -696,13 +720,15 @@ module Notcurses
     #   {#cursor_enable} (sempre, senza un tty)
     # @raise [ClosedError] se il contesto è chiuso
     def cursor_disable
-      ptr = to_ptr
-      return self if @cursor_enabled == false
+      Guard.run do
+        ptr = to_ptr
+        return self if @cursor_enabled == false
 
-      rc = FFI.notcurses_cursor_disable(ptr)
-      Util.check!(rc, ContextError, 'notcurses_cursor_disable') if @cursor_enabled
-      @cursor_enabled = false
-      self
+        rc = FFI.notcurses_cursor_disable(ptr)
+        Util.check!(rc, ContextError, 'notcurses_cursor_disable') if @cursor_enabled
+        @cursor_enabled = false
+        self
+      end
     end
 
     # Segna come sconosciuto lo stato del cursore del terminale. Lo chiama il
@@ -723,11 +749,13 @@ module Notcurses
     #   ancora scritto nulla
     # @raise [ClosedError] se il contesto è chiuso
     def cursor_yx
-      y = ::FFI::MemoryPointer.new(:int)
-      x = ::FFI::MemoryPointer.new(:int)
-      FFI.notcurses_cursor_yx(to_ptr, y, x)
-      pos = [y.read_int, x.read_int]
-      pos.include?(-1) ? nil : pos
+      Guard.run do
+        y = ::FFI::MemoryPointer.new(:int)
+        x = ::FFI::MemoryPointer.new(:int)
+        FFI.notcurses_cursor_yx(to_ptr, y, x)
+        pos = [y.read_int, x.read_int]
+        pos.include?(-1) ? nil : pos
+      end
     end
 
     # --- schermo ---
@@ -740,8 +768,10 @@ module Notcurses
     #   alternativo o se il contesto è nato con no_alternate_screen: true
     # @raise [ClosedError] se il contesto è chiuso
     def enter_alternate_screen
-      Util.check!(FFI.notcurses_enter_alternate_screen(to_ptr), ContextError, 'notcurses_enter_alternate_screen')
-      self
+      Guard.run do
+        Util.check!(FFI.notcurses_enter_alternate_screen(to_ptr), ContextError, 'notcurses_enter_alternate_screen')
+        self
+      end
     end
 
     # Esce dallo schermo alternativo (+notcurses_leave_alternate_screen+).
@@ -750,8 +780,10 @@ module Notcurses
     # @raise [ContextError] senza un tty o se l'uscita fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def leave_alternate_screen
-      Util.check!(FFI.notcurses_leave_alternate_screen(to_ptr), ContextError, 'notcurses_leave_alternate_screen')
-      self
+      Guard.run do
+        Util.check!(FFI.notcurses_leave_alternate_screen(to_ptr), ContextError, 'notcurses_leave_alternate_screen')
+        self
+      end
     end
 
     # --- input ---
@@ -785,7 +817,7 @@ module Notcurses
     #   contesto scarta l'input (drain_input: true)
     # @raise [TypeError, ArgumentError] se timeout non è un numero in
     #   0..2147483647
-    # @raise [ClosedError] se il contesto è chiuso
+    # @raise [ClosedError] se il contesto è chiuso, anche durante l'attesa
     def get(timeout: nil)
       wait_input(timeout) { next_input }
     end
@@ -804,7 +836,7 @@ module Notcurses
     # @raise [InputError] se notcurses segnala un errore di input
     # @raise [TypeError, ArgumentError] se un argomento non è valido (count
     #   fuori da 1..INT_MAX, timeout fuori da 0..2147483647)
-    # @raise [ClosedError] se il contesto è chiuso
+    # @raise [ClosedError] se il contesto è chiuso, anche durante l'attesa
     def getvec(count, timeout: nil)
       Util.integer!(count, 'count', 1..Util::INT32.max)
       result = wait_input(timeout) { queued_inputs(count) }
@@ -818,8 +850,10 @@ module Notcurses
     #   {#get} e {#getvec} sollevano InputError
     # @raise [ClosedError] se il contesto è chiuso
     def drain_input?
-      to_ptr
-      @drain_input
+      Guard.run do
+        to_ptr
+        @drain_input
+      end
     end
 
     # @return [Boolean] true se notcurses non ha installato il proprio gestore
@@ -829,8 +863,10 @@ module Notcurses
     #   dal trap (vedi "Resize del terminale" nella descrizione della classe)
     # @raise [ClosedError] se il contesto è chiuso
     def no_winch_sighandler?
-      to_ptr
-      @no_winch_sighandler
+      Guard.run do
+        to_ptr
+        @no_winch_sighandler
+      end
     end
 
     # Descrittore che diventa leggibile quando c'è input
@@ -845,7 +881,9 @@ module Notcurses
     # @raise [InputError] se il descrittore non è disponibile
     # @raise [ClosedError] se il contesto è chiuso
     def inputready_fd
-      Util.check!(FFI.notcurses_inputready_fd(to_ptr), InputError, 'notcurses_inputready_fd')
+      Guard.run do
+        Util.check!(FFI.notcurses_inputready_fd(to_ptr), InputError, 'notcurses_inputready_fd')
+      end
     end
 
     # Abilita gli eventi del mouse (+notcurses_mice_enable+). Il terminale ha
@@ -857,11 +895,13 @@ module Notcurses
     # @raise [ArgumentError] se events non è valido
     # @raise [ClosedError] se il contesto è chiuso
     def mice_enable(events: :all)
-      ptr = to_ptr
-      mask = Array(events).reduce(0) { |m, ev| m | Util.enum_value(MICE_EVENTS, ev, 'events') }
-      Util.check!(FFI.notcurses_mice_enable(ptr, mask), ContextError, 'notcurses_mice_enable')
-      @mice_enabled = !mask.zero?
-      self
+      Guard.run do
+        ptr = to_ptr
+        mask = Array(events).reduce(0) { |m, ev| m | Util.enum_value(MICE_EVENTS, ev, 'events') }
+        Util.check!(FFI.notcurses_mice_enable(ptr, mask), ContextError, 'notcurses_mice_enable')
+        @mice_enabled = !mask.zero?
+        self
+      end
     end
 
     # Disabilita gli eventi del mouse (+notcurses_mice_disable+). Idempotente:
@@ -872,12 +912,14 @@ module Notcurses
     # @raise [ContextError] se il terminale rifiuta
     # @raise [ClosedError] se il contesto è chiuso
     def mice_disable
-      ptr = to_ptr
-      return self unless @mice_enabled
+      Guard.run do
+        ptr = to_ptr
+        return self unless @mice_enabled
 
-      Util.check!(FFI.notcurses_mice_disable(ptr), ContextError, 'notcurses_mice_disable')
-      @mice_enabled = false
-      self
+        Util.check!(FFI.notcurses_mice_disable(ptr), ContextError, 'notcurses_mice_disable')
+        @mice_enabled = false
+        self
+      end
     end
 
     # Disabilita i segnali generati dalla tastiera (Ctrl-C, Ctrl-Z, ...)
@@ -887,9 +929,11 @@ module Notcurses
     # @raise [ContextError] se la modifica del terminale fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def linesigs_disable
-      Util.check!(FFI.notcurses_linesigs_disable(to_ptr), ContextError, 'notcurses_linesigs_disable')
-      @linesigs_flag = false
-      self
+      Guard.run do
+        Util.check!(FFI.notcurses_linesigs_disable(to_ptr), ContextError, 'notcurses_linesigs_disable')
+        @linesigs_flag = false
+        self
+      end
     end
 
     # Riabilita i segnali generati dalla tastiera (+notcurses_linesigs_enable+).
@@ -898,9 +942,11 @@ module Notcurses
     # @raise [ContextError] se la modifica del terminale fallisce
     # @raise [ClosedError] se il contesto è chiuso
     def linesigs_enable
-      Util.check!(FFI.notcurses_linesigs_enable(to_ptr), ContextError, 'notcurses_linesigs_enable')
-      @linesigs_flag = true
-      self
+      Guard.run do
+        Util.check!(FFI.notcurses_linesigs_enable(to_ptr), ContextError, 'notcurses_linesigs_enable')
+        @linesigs_flag = true
+        self
+      end
     end
 
     # Stato del flag privato con cui notcurses alza SIGINT, SIGSTOP e SIGQUIT
@@ -915,8 +961,10 @@ module Notcurses
     # @raise [ClosedError] se il contesto è chiuso
     # @api private
     def linesigs_flag?
-      to_ptr
-      @linesigs_flag
+      Guard.run do
+        to_ptr
+        @linesigs_flag
+      end
     end
 
     # Tasti di segnale (Ctrl+C, Ctrl+Z, Ctrl+\) per cui {UI::EventLoop#run} ha
@@ -930,8 +978,10 @@ module Notcurses
     # @raise [ClosedError] se il contesto è chiuso
     # @api private
     def held_signal_keys
-      to_ptr
-      @held_signal_keys
+      Guard.run do
+        to_ptr
+        @held_signal_keys
+      end
     end
 
     # Avvia il thread di input di {UI::EventLoop#run} (+InputReader+), o
@@ -951,9 +1001,11 @@ module Notcurses
     # @raise [ClosedError] se il contesto è chiuso
     # @api private
     def input_reader_start(ids, &filter)
-      to_ptr
-      @input_reader ||= InputReader.new(-> { inputready_fd }, ->(buf, slots) { getvec_into(buf, slots) })
-      @input_reader.start(filter, ids)
+      Guard.run do
+        to_ptr
+        @input_reader ||= InputReader.new(-> { inputready_fd }, ->(buf, slots) { getvec_into(buf, slots) })
+        @input_reader.start(filter, ids)
+      end
     end
 
     # Toglie il filtro di un run, se {#input_reader_start} l'ha registrato;
@@ -981,8 +1033,10 @@ module Notcurses
     # @raise [ClosedError] se il contesto è chiuso
     # @api private
     def flow_control_disable
-      to_ptr
-      input_tty { |fd| ixon!(fd, false) }
+      Guard.run do
+        to_ptr
+        input_tty { |fd| ixon!(fd, false) }
+      end
     end
 
     # Riattiva il controllo di flusso (IXON) sul terminale di
@@ -994,9 +1048,11 @@ module Notcurses
     # @raise [ClosedError] se il contesto è chiuso
     # @api private
     def flow_control_enable
-      to_ptr
-      input_tty { |fd| ixon!(fd, true) }
-      self
+      Guard.run do
+        to_ptr
+        input_tty { |fd| ixon!(fd, true) }
+        self
+      end
     end
 
     # Legge ISIG sul terminale di {#flow_control_disable}: false se
@@ -1009,10 +1065,12 @@ module Notcurses
     # @raise [ClosedError] se il contesto è chiuso
     # @api private
     def linesigs?
-      to_ptr
-      raise ContextError, "segnali da tastiera: ISIG non noto su #{RUBY_PLATFORM}" unless FFI::ISIG
+      Guard.run do
+        to_ptr
+        raise ContextError, "segnali da tastiera: ISIG non noto su #{RUBY_PLATFORM}" unless FFI::ISIG
 
-      input_tty { |fd| termios(fd)[:c_lflag].anybits?(FFI::ISIG) }
+        input_tty { |fd| termios(fd)[:c_lflag].anybits?(FFI::ISIG) }
+      end
     end
 
     # Riaccende ISIG sul terminale di {#flow_control_disable}, senza
@@ -1026,11 +1084,13 @@ module Notcurses
     # @raise [ClosedError] se il contesto è chiuso
     # @api private
     def isig_enable
-      to_ptr
-      raise ContextError, "segnali da tastiera: ISIG non noto su #{RUBY_PLATFORM}" unless FFI::ISIG
+      Guard.run do
+        to_ptr
+        raise ContextError, "segnali da tastiera: ISIG non noto su #{RUBY_PLATFORM}" unless FFI::ISIG
 
-      input_tty { |fd| tty_flag!(fd, :c_lflag, FFI::ISIG, true) }
-      self
+        input_tty { |fd| tty_flag!(fd, :c_lflag, FFI::ISIG, true) }
+        self
+      end
     end
 
     # Spegne ISIG sul terminale di {#flow_control_disable}, senza toccare il
@@ -1043,102 +1103,108 @@ module Notcurses
     # @raise [ClosedError] se il contesto è chiuso
     # @api private
     def isig_disable
-      to_ptr
-      raise ContextError, "segnali da tastiera: ISIG non noto su #{RUBY_PLATFORM}" unless FFI::ISIG
+      Guard.run do
+        to_ptr
+        raise ContextError, "segnali da tastiera: ISIG non noto su #{RUBY_PLATFORM}" unless FFI::ISIG
 
-      input_tty { |fd| tty_flag!(fd, :c_lflag, FFI::ISIG, false) }
-      self
+        input_tty { |fd| tty_flag!(fd, :c_lflag, FFI::ISIG, false) }
+        self
+      end
     end
 
     # --- capacità ---
 
     # @return [Boolean] colori RGB a 24 bit (+notcurses_cantruecolor+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_truecolor? = FFI.notcurses_cantruecolor(to_ptr)
+    def can_truecolor? = Guard.run { FFI.notcurses_cantruecolor(to_ptr) }
 
     # @return [Boolean] palette modificabile (+notcurses_canchangecolor+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_change_color? = FFI.notcurses_canchangecolor(to_ptr)
+    def can_change_color? = Guard.run { FFI.notcurses_canchangecolor(to_ptr) }
 
     # @return [Boolean] dissolvenze possibili (+notcurses_canfade+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_fade? = FFI.notcurses_canfade(to_ptr)
+    def can_fade? = Guard.run { FFI.notcurses_canfade(to_ptr) }
 
     # @return [Boolean] UTF-8 disponibile (+notcurses_canutf8+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_utf8? = FFI.notcurses_canutf8(to_ptr)
+    def can_utf8? = Guard.run { FFI.notcurses_canutf8(to_ptr) }
 
     # @return [Boolean] semiblocchi disponibili (+notcurses_canhalfblock+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_halfblock? = FFI.notcurses_canhalfblock(to_ptr)
+    def can_halfblock? = Guard.run { FFI.notcurses_canhalfblock(to_ptr) }
 
     # @return [Boolean] quadranti disponibili (+notcurses_canquadrant+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_quadrant? = FFI.notcurses_canquadrant(to_ptr)
+    def can_quadrant? = Guard.run { FFI.notcurses_canquadrant(to_ptr) }
 
     # @return [Boolean] sestanti disponibili (+notcurses_cansextant+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_sextant? = FFI.notcurses_cansextant(to_ptr)
+    def can_sextant? = Guard.run { FFI.notcurses_cansextant(to_ptr) }
 
     # @return [Boolean] ottanti disponibili (+notcurses_canoctant+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_octant? = FFI.notcurses_canoctant(to_ptr)
+    def can_octant? = Guard.run { FFI.notcurses_canoctant(to_ptr) }
 
     # @return [Boolean] Braille disponibile (+notcurses_canbraille+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_braille? = FFI.notcurses_canbraille(to_ptr)
+    def can_braille? = Guard.run { FFI.notcurses_canbraille(to_ptr) }
 
     # @return [Boolean] grafica a pixel disponibile (+notcurses_canpixel+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_pixel? = FFI.notcurses_canpixel(to_ptr)
+    def can_pixel? = Guard.run { FFI.notcurses_canpixel(to_ptr) }
 
     # @return [Boolean] caricamento di immagini disponibile (+notcurses_canopen_images+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_open_images? = FFI.notcurses_canopen_images(to_ptr)
+    def can_open_images? = Guard.run { FFI.notcurses_canopen_images(to_ptr) }
 
     # @return [Boolean] caricamento di video disponibile (+notcurses_canopen_videos+)
     # @raise [ClosedError] se il contesto è chiuso
-    def can_open_videos? = FFI.notcurses_canopen_videos(to_ptr)
+    def can_open_videos? = Guard.run { FFI.notcurses_canopen_videos(to_ptr) }
 
     # @return [Array<Symbol>] stili che il terminale sa mostrare (+notcurses_supported_styles+)
     # @raise [ClosedError] se il contesto è chiuso
-    def supported_styles = Util.styles_symbols(FFI.notcurses_supported_styles(to_ptr))
+    def supported_styles = Guard.run { Util.styles_symbols(FFI.notcurses_supported_styles(to_ptr)) }
 
     # @return [Integer] colori della palette (+notcurses_palette_size+)
     # @raise [ClosedError] se il contesto è chiuso
-    def palette_size = FFI.notcurses_palette_size(to_ptr)
+    def palette_size = Guard.run { FFI.notcurses_palette_size(to_ptr) }
 
     # Nome del terminale rilevato (+notcurses_detected_terminal+).
     # @return [String, nil] i byte che non sono UTF-8 valido (per esempio
     #   nella versione inviata dal terminale) diventano U+FFFD
     # @raise [ClosedError] se il contesto è chiuso
-    def detected_terminal = Util.take_string(FFI.notcurses_detected_terminal(to_ptr))
+    def detected_terminal = Guard.run { Util.take_string(FFI.notcurses_detected_terminal(to_ptr)) }
 
     # Capacità del terminale (+notcurses_capabilities+), copiate.
     # @return [Capabilities]
     # @raise [ClosedError] se il contesto è chiuso
-    def capabilities = Capabilities.new(FFI.notcurses_capabilities(to_ptr))
+    def capabilities = Guard.run { Capabilities.new(FFI.notcurses_capabilities(to_ptr)) }
 
     # Implementazione della grafica a pixel (+notcurses_check_pixel_support+).
     # @return [Symbol] :none, :sixel, :linuxfb, :iterm2, :kitty_static,
     #   :kitty_animated o :kitty_selfref
     # @raise [ClosedError] se il contesto è chiuso
-    def pixel_support = Util.enum_symbol(Util::PIXEL_IMPLS, FFI.notcurses_check_pixel_support(to_ptr))
+    def pixel_support = Guard.run { Util.enum_symbol(Util::PIXEL_IMPLS, FFI.notcurses_check_pixel_support(to_ptr)) }
 
     # Colore di primo piano di default del terminale (+notcurses_default_foreground+).
     # @return [Integer, nil] 0xRRGGBB, o nil se il terminale non lo comunica
     # @raise [ClosedError] se il contesto è chiuso
     def default_foreground
-      out = ::FFI::MemoryPointer.new(:uint32)
-      FFI.notcurses_default_foreground(to_ptr, out).negative? ? nil : out.read_uint32
+      Guard.run do
+        out = ::FFI::MemoryPointer.new(:uint32)
+        FFI.notcurses_default_foreground(to_ptr, out).negative? ? nil : out.read_uint32
+      end
     end
 
     # Colore di sfondo di default del terminale (+notcurses_default_background+).
     # @return [Integer, nil] 0xRRGGBB, o nil se il terminale non lo comunica
     # @raise [ClosedError] se il contesto è chiuso
     def default_background
-      out = ::FFI::MemoryPointer.new(:uint32)
-      FFI.notcurses_default_background(to_ptr, out).negative? ? nil : out.read_uint32
+      Guard.run do
+        out = ::FFI::MemoryPointer.new(:uint32)
+        FFI.notcurses_default_background(to_ptr, out).negative? ? nil : out.read_uint32
+      end
     end
 
     # --- palette e statistiche ---
@@ -1165,17 +1231,19 @@ module Notcurses
     # @raise [ContextError] se il file temporaneo non si apre
     # @raise [ClosedError] se il contesto è chiuso
     def debug
-      ptr = to_ptr
-      Tempfile.create('notcurses-debug') do |tmp|
-        fp = FFI.fopen(tmp.path, 'w')
-        raise ContextError, "fopen(#{tmp.path}) fallita" if fp.null?
+      Guard.run do
+        ptr = to_ptr
+        Tempfile.create('notcurses-debug') do |tmp|
+          fp = FFI.fopen(tmp.path, 'w')
+          raise ContextError, "fopen(#{tmp.path}) fallita" if fp.null?
 
-        begin
-          FFI.notcurses_debug(ptr, fp)
-        ensure
-          FFI.fclose(fp)
+          begin
+            FFI.notcurses_debug(ptr, fp)
+          ensure
+            FFI.fclose(fp)
+          end
+          File.read(tmp.path, mode: 'rb').force_encoding(Encoding::UTF_8)
         end
-        File.read(tmp.path, mode: 'rb').force_encoding(Encoding::UTF_8)
       end
     end
 
@@ -1430,39 +1498,45 @@ module Notcurses
     # notcurses.
     # @return [Input, nil]
     def next_input
-      reader = @input_reader
-      return pull_input unless reader&.active? || reader&.pending?
+      Guard.run do
+        reader = @input_reader
+        return pull_input unless reader&.active? || reader&.pending?
 
-      to_ptr # il buffer non chiama il C, che controlla da sé il contesto chiuso
-      return reader.take if reader.active?
+        to_ptr # il buffer non chiama il C, che controlla da sé il contesto chiuso
+        return reader.take if reader.active?
 
-      reader.take || pull_input
+        reader.take || pull_input
+      end
     end
 
     # Un evento dalla coda di notcurses, senza attendere (+notcurses_get_nblock+).
     # @return [Input, nil]
     def pull_input
-      ni = FFI::NcInput.new
-      id = FFI.notcurses_get_nblock(to_ptr, ni)
-      raise InputError, 'notcurses_get: errore di input (o input scartato con drain_input)' if id == 0xffff_ffff
+      Guard.run do
+        ni = FFI::NcInput.new
+        id = FFI.notcurses_get_nblock(to_ptr, ni)
+        raise InputError, 'notcurses_get: errore di input (o input scartato con drain_input)' if id == 0xffff_ffff
 
-      Input.new(ni) unless id.zero?
+        Input.new(ni) unless id.zero?
+      end
     end
 
     # Eventi già pronti, al massimo count: come {#next_input}, prima il buffer
     # del thread di input, poi (fuori da run) la coda di notcurses.
     # @return [Array<Input>, nil] nil senza eventi
     def queued_inputs(count)
-      reader = @input_reader
-      events = []
-      if reader&.active? || reader&.pending?
-        to_ptr # il buffer non chiama il C, che controlla da sé il contesto chiuso
-        events = reader.take_many(count)
-        # nel buffer resta altro solo con count raggiunto o con un errore da sollevare al giro dopo
-        done = reader.active? || reader.pending?
+      Guard.run do
+        reader = @input_reader
+        events = []
+        if reader&.active? || reader&.pending?
+          to_ptr # il buffer non chiama il C, che controlla da sé il contesto chiuso
+          events = reader.take_many(count)
+          # nel buffer resta altro solo con count raggiunto o con un errore da sollevare al giro dopo
+          done = reader.active? || reader.pending?
+        end
+        events.concat(pull_inputs(count - events.size)) unless done || events.size == count
+        events.empty? ? nil : events
       end
-      events.concat(pull_inputs(count - events.size)) unless done || events.size == count
-      events.empty? ? nil : events
     end
 
     # Eventi della coda di notcurses, al massimo count, letti a blocchi di
@@ -1492,10 +1566,12 @@ module Notcurses
     # il thread di input.
     # @return [Integer] eventi scritti
     def getvec_into(buf, slots)
-      n = FFI.notcurses_getvec(to_ptr, FFI::Timespec.new, buf, slots)
-      raise InputError, 'notcurses_getvec: errore di input' if n.negative?
+      Guard.run do
+        n = FFI.notcurses_getvec(to_ptr, FFI::Timespec.new, buf, slots)
+        raise InputError, 'notcurses_getvec: errore di input' if n.negative?
 
-      n
+        n
+      end
     end
 
     # Ripete il blocco finché restituisce un valore, attendendo l'input fuori
@@ -1519,6 +1595,9 @@ module Notcurses
         io ||= (@input_io ||= IO.for_fd(inputready_fd, autoclose: false))
         io.wait_readable(remaining)
       end
+    rescue SystemCallError, IOError
+      to_ptr # un close durante l'attesa (gestore trap) ha chiuso il descrittore: ClosedError
+      raise
     end
   end
 end

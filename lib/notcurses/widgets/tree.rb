@@ -101,43 +101,45 @@ module Notcurses
     #   quel caso l'albero viene distrutto, con il piano
     # @raise [ClosedError] se il piano è chiuso
     def initialize(plane, items: [], indent: 0, draw: nil, &block)
-      raise ArgumentError, 'passa il blocco di disegno oppure draw:, non entrambi' if draw && block
+      Guard.run do
+        raise ArgumentError, 'passa il blocco di disegno oppure draw:, non entrambi' if draw && block
 
-      draw ||= block
-      raise ArgumentError, 'Tree.new richiede un blocco che disegna le voci (oppure draw:)' if draw.nil?
-      raise TypeError, "draw: deve rispondere a call, non #{draw.class}" unless draw.respond_to?(:call)
+        draw ||= block
+        raise ArgumentError, 'Tree.new richiede un blocco che disegna le voci (oppure draw:)' if draw.nil?
+        raise TypeError, "draw: deve rispondere a call, non #{draw.class}" unless draw.respond_to?(:call)
 
-      claim_plane!(plane)
-      plane.context.check_not_in_callback!('Tree.new', WidgetError)
-      Util.integer!(indent, 'indent', Util::NONNEG_INT)
-      @context = plane.context
-      @tree_plane = plane
-      @draw = draw
-      @indent = indent
-      @drawing = false
-      @next_id = 0
-      @nodes = {}
-      @roots = build_nodes(items, 'items')
-      check_indent!(max_depth(@roots), plane.dim_x, ArgumentError)
-      fn = ::FFI::Function.new(:int, %i[pointer pointer int]) { |pl, curry, dist| draw_item(pl, curry, dist) }
-      @callbacks = [fn]
-      keep = []
-      opts = FFI::NcTreeOptions.new
-      opts[:items] = item_array(@roots, keep)
-      opts[:count] = @roots.size
-      opts[:nctreecb] = fn
-      opts[:indentcols] = indent
-      ptr = FFI.nctree_create(plane.to_ptr, opts)
-      if ptr.null?
-        plane_destroyed_on_failure!(plane)
-        raise WidgetError, 'nctree_create ha restituito NULL'
+        claim_plane!(plane)
+        plane.context.check_not_in_callback!('Tree.new', WidgetError)
+        Util.integer!(indent, 'indent', Util::NONNEG_INT)
+        @context = plane.context
+        @tree_plane = plane
+        @draw = draw
+        @indent = indent
+        @drawing = false
+        @next_id = 0
+        @nodes = {}
+        @roots = build_nodes(items, 'items')
+        check_indent!(max_depth(@roots), plane.dim_x, ArgumentError)
+        fn = ::FFI::Function.new(:int, %i[pointer pointer int]) { |pl, curry, dist| draw_item(pl, curry, dist) }
+        @callbacks = [fn]
+        keep = []
+        opts = FFI::NcTreeOptions.new
+        opts[:items] = item_array(@roots, keep)
+        opts[:count] = @roots.size
+        opts[:nctreecb] = fn
+        opts[:indentcols] = indent
+        ptr = FFI.nctree_create(plane.to_ptr, opts)
+        if ptr.null?
+          plane_destroyed_on_failure!(plane)
+          raise WidgetError, 'nctree_create ha restituito NULL'
+        end
+
+        attach!(ptr, plane, owns_plane: true)
+        return if @context.callback_errors.empty?
+
+        close
+        @context.raise_callback_errors!
       end
-
-      attach!(ptr, plane, owns_plane: true)
-      return if @context.callback_errors.empty?
-
-      close
-      @context.raise_callback_errors!
     end
 
     # Ridisegna le voci visibili (+nctree_redraw+), chiamando il blocco per
@@ -314,8 +316,10 @@ module Notcurses
     # @return [Integer] numero di voci, a tutti i livelli
     # @raise [ClosedError] se l'albero è chiuso
     def count
-      to_ptr
-      @nodes.size
+      Guard.run do
+        to_ptr
+        @nodes.size
+      end
     end
     alias size count
 
@@ -327,19 +331,23 @@ module Notcurses
     #
     # @return [Plane]
     # @raise [ClosedError] se l'albero è chiuso
-    def plane = @context.plane_for(FFI.nctree_plane(to_ptr))
+    def plane = Guard.run { @context.plane_for(FFI.nctree_plane(to_ptr)) }
 
     private
 
     def destroy_native
-      FFI.nctree_destroy(@ptr)
+      Guard.run do
+        FFI.nctree_destroy(@ptr)
+      end
     end
 
     # Puntatore dell'albero, fuori dal blocco di disegno.
     def idle!
-      raise WidgetError, 'Notcurses::Tree: metodo non permesso dentro il blocco di disegno' if @drawing
+      Guard.run do
+        raise WidgetError, 'Notcurses::Tree: metodo non permesso dentro il blocco di disegno' if @drawing
 
-      to_ptr
+        to_ptr
+      end
     end
 
     def native_redraw(ptr)

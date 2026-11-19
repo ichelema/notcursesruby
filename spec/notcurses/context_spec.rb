@@ -347,12 +347,10 @@ RSpec.describe Notcurses::Context do
       nc.render
     end
 
-    it 'un callback di resize non può chiudere il contesto né distruggere piani' do
+    # un close nel callback invece è rinviato alla fine dell'operazione (spec/integration/close_guard_spec.rb)
+    it 'un callback di resize non può distruggere piani' do
       parent = nc.stdplane.create_child(rows: 4, cols: 4)
       victim = parent.create_child(rows: 1, cols: 1)
-      parent.create_child(rows: 1, cols: 1, resize: ->(_p) { nc.close })
-      expect { parent.resize(5, 5) }.to raise_error(Notcurses::ContextError, /callback/)
-      expect(nc).not_to be_closed
       parent.create_child(rows: 1, cols: 1, resize: ->(_p) { nc.drop_planes })
       expect { parent.resize(6, 6) }.to raise_error(Notcurses::ContextError, /callback/)
       expect(victim).not_to be_closed

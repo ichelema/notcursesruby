@@ -22,6 +22,16 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- Un gestore `trap` che chiude il contesto o il `Direct` e poi torna al codice interrotto non fa più usare al C un
+  puntatore già liberato (ICH-464). Il segnale poteva arrivare fra `to_ptr` e la chiamata C, o fra due chiamate C con
+  lo stesso puntatore (per esempio `ncpile_render` e `ncpile_rasterize` dentro `Context#render`: 37 crash su 80
+  corse). Ora ogni metodo del wrapper che usa un puntatore C gira dentro `Notcurses::Guard.run` (349 metodi in 16
+  file): `close` segna subito il contesto chiuso e rinvia lo stop alla fine dell'operazione interrotta, e la
+  chiamata successiva solleva `ClosedError`. Un `close` durante l'attesa di `Context#get`, `#getvec` o `Direct#get`
+  solleva `ClosedError` invece di `Errno::EBADF`. `Context#close` dentro un callback chiamato dal C (per esempio
+  da un gestore `trap` durante il blocco di `Visual#stream` o un callback di resize) non solleva più `ContextError`:
+  lo stop avviene alla fine dell'operazione. Un controllo statico e un audit nella suite (`to_ptr` fuori dalla
+  guardia) tengono la copertura completa.
 - Chiudere il contesto, il `Direct` o un `Visual` mentre un altro thread è dentro `Visual#decode`, `#decode_loop`,
   `#stream`, `Visual.from_file`, `Direct#render_frame` o `Direct#stream` non libera più la memoria che il C sta usando
   (ICH-475). Prima l'hook `at_exit` o un `close` da un altro thread durante la chiamata C senza GVL davano SIGSEGV,

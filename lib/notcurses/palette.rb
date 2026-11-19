@@ -37,26 +37,30 @@ module Notcurses
     # @raise [ContextError] se +ncpalette_new+ restituisce NULL
     # @raise [ClosedError] se il contesto è chiuso
     def initialize(context)
-      raise TypeError, "context deve essere Notcurses::Context, non #{context.class}" unless context.is_a?(Context)
+      Guard.run do
+        raise TypeError, "context deve essere Notcurses::Context, non #{context.class}" unless context.is_a?(Context)
 
-      raw = FFI.ncpalette_new(context.to_ptr)
-      raise ContextError, 'ncpalette_new ha restituito NULL' if raw.null?
+        raw = FFI.ncpalette_new(context.to_ptr)
+        raise ContextError, 'ncpalette_new ha restituito NULL' if raw.null?
 
-      @context = context
-      @ptr = ::FFI::AutoPointer.new(raw.to_ptr, RELEASER)
-      @struct = FFI::NcPalette.new(@ptr)
-      @closed = false
-      @owner = nil
+        @context = context
+        @ptr = ::FFI::AutoPointer.new(raw.to_ptr, RELEASER)
+        @struct = FFI::NcPalette.new(@ptr)
+        @closed = false
+        @owner = nil
+      end
     end
 
     # Libera la copia (+ncpalette_free+). Idempotente.
     # @return [nil]
     def close
-      return nil if @closed
+      Guard.run do
+        return nil if @closed
 
-      @closed = true
-      @ptr.free
-      nil
+        @closed = true
+        @ptr.free
+        nil
+      end
     end
     alias free close
 
@@ -128,8 +132,10 @@ module Notcurses
     # @raise [ContextError] se il terminale non può cambiare la palette
     # @raise [ClosedError] se la palette o il contesto sono chiusi
     def use
-      Util.check!(FFI.ncpalette_use(@context.to_ptr, struct!), ContextError, 'ncpalette_use')
-      self
+      Guard.run do
+        Util.check!(FFI.ncpalette_use(@context.to_ptr, struct!), ContextError, 'ncpalette_use')
+        self
+      end
     end
 
     # @return [Array<Integer>] le 256 voci come 0xRRGGBB
@@ -139,8 +145,10 @@ module Notcurses
     private
 
     def struct!
-      to_ptr
-      @struct
+      Guard.run do
+        to_ptr
+        @struct
+      end
     end
 
     def check_index!(index) = Util.integer!(index, 'index', 0...SIZE)

@@ -34,8 +34,10 @@ module Notcurses
     # @return [Plane]
     # @raise [ClosedError] se il widget è chiuso
     def plane
-      to_ptr
-      @plane
+      Guard.run do
+        to_ptr
+        @plane
+      end
     end
 
     # Distrugge il widget e, se è suo, il piano. Idempotente.
@@ -71,14 +73,16 @@ module Notcurses
     #   wrapper (piano preso in prestito)
     # @raise [ClosedError] se il piano è chiuso
     def claim_plane!(plane)
-      raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
+      Guard.run do
+        raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
 
-      plane.to_ptr
-      raise WidgetError, 'lo stdplane non si può dare a un widget' if plane.stdplane?
-      raise WidgetError, 'il piano appartiene già a un widget' if plane.widget_plane?
-      raise WidgetError, 'il piano non è posseduto dal wrapper (preso in prestito?)' unless plane.owned?
+        plane.to_ptr
+        raise WidgetError, 'lo stdplane non si può dare a un widget' if plane.stdplane?
+        raise WidgetError, 'il piano appartiene già a un widget' if plane.widget_plane?
+        raise WidgetError, 'il piano non è posseduto dal wrapper (preso in prestito?)' unless plane.owned?
 
-      plane
+        plane
+      end
     end
 
     # Completa una creazione riuscita.

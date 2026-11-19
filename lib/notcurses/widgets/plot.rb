@@ -128,59 +128,61 @@ module Notcurses
     def initialize(plane, type: :uint64, min: 0, max: 0, blitter: :default, range_x: 0, title: nil,
                    max_channels: 0, min_channels: 0, legend_style: 0, label_ticks: false,
                    exponential: false, no_degrade: false, detect_max_only: false, print_sample: false)
-      raise ArgumentError, "type = #{type.inspect} non valido: usa :uint64 o :double" unless TYPES.include?(type)
+      Guard.run do
+        raise ArgumentError, "type = #{type.inspect} non valido: usa :uint64 o :double" unless TYPES.include?(type)
 
-      @double = type == :double
-      @min = value!(min, 'min')
-      @max = value!(max, 'max')
-      check_domain!(detect_max_only)
-      @label_ticks = Util.bool!(label_ticks, 'label_ticks')
-      opts = FFI::NcPlotOptions.new
-      opts[:maxchannels] = Util.channels_value(max_channels, 'max_channels')
-      opts[:minchannels] = Util.channels_value(min_channels, 'min_channels')
-      opts[:legendstyle] = Util.styles_value(legend_style)
-      opts[:rangex] = Util.nonneg_int!(range_x, 'range_x')
-      title_ptr = Util.c_string(title.nil? ? nil : title!(title), 'title') # il C lo copia (strdup)
-      opts[:title] = title_ptr || ::FFI::Pointer::NULL
-      flags = Util.flag(@label_ticks, FFI::NCPLOT_OPTION_LABELTICKSD, 'label_ticks') |
-              Util.flag(exponential, FFI::NCPLOT_OPTION_EXPONENTIALD, 'exponential') |
-              Util.flag(detect_max_only, FFI::NCPLOT_OPTION_DETECTMAXONLY, 'detect_max_only') |
-              Util.flag(print_sample, FFI::NCPLOT_OPTION_PRINTSAMPLE, 'print_sample')
-      requested = Util.blitter_value(blitter)
-      Util.bool!(no_degrade, 'no_degrade')
-      claim_plane!(plane)
-      ctx = plane.context
-      ctx.check_not_in_callback!('Plot.new', WidgetError)
-      cols = plane.dim_x
-      if @label_ticks && cols <= FFI::NCPREFIXCOLUMNS
-        raise WidgetError,
-              "label_ticks: richiede un piano di almeno #{FFI::NCPREFIXCOLUMNS + 1} colonne (ne ha #{cols})"
-      end
+        @double = type == :double
+        @min = value!(min, 'min')
+        @max = value!(max, 'max')
+        check_domain!(detect_max_only)
+        @label_ticks = Util.bool!(label_ticks, 'label_ticks')
+        opts = FFI::NcPlotOptions.new
+        opts[:maxchannels] = Util.channels_value(max_channels, 'max_channels')
+        opts[:minchannels] = Util.channels_value(min_channels, 'min_channels')
+        opts[:legendstyle] = Util.styles_value(legend_style)
+        opts[:rangex] = Util.nonneg_int!(range_x, 'range_x')
+        title_ptr = Util.c_string(title.nil? ? nil : title!(title), 'title') # il C lo copia (strdup)
+        opts[:title] = title_ptr || ::FFI::Pointer::NULL
+        flags = Util.flag(@label_ticks, FFI::NCPLOT_OPTION_LABELTICKSD, 'label_ticks') |
+                Util.flag(exponential, FFI::NCPLOT_OPTION_EXPONENTIALD, 'exponential') |
+                Util.flag(detect_max_only, FFI::NCPLOT_OPTION_DETECTMAXONLY, 'detect_max_only') |
+                Util.flag(print_sample, FFI::NCPLOT_OPTION_PRINTSAMPLE, 'print_sample')
+        requested = Util.blitter_value(blitter)
+        Util.bool!(no_degrade, 'no_degrade')
+        claim_plane!(plane)
+        ctx = plane.context
+        ctx.check_not_in_callback!('Plot.new', WidgetError)
+        cols = plane.dim_x
+        if @label_ticks && cols <= FFI::NCPREFIXCOLUMNS
+          raise WidgetError,
+                "label_ticks: richiede un piano di almeno #{FFI::NCPREFIXCOLUMNS + 1} colonne (ne ha #{cols})"
+        end
 
-      @blitter = resolve_blitter(ctx, plane, requested, no_degrade)
-      width = @blitter == FFI::NCBLIT_PIXEL ? plane.pixel_geom[:cell_pixel_x] : BLITTER_WIDTHS.fetch(@blitter)
-      @slot_count = slot_count_for(cols, width, opts[:rangex])
-      opts[:gridtype] = @blitter
-      # il blitter è già scelto: con NODEGRADE il C non può sceglierne un altro (e un altro numero di slot)
-      opts[:flags] = flags | FFI::NCPLOT_OPTION_NODEGRADE
-      ptr = if @double
-              FFI.ncdplot_create(plane.to_ptr, opts, @min, @max)
-            else
-              FFI.ncuplot_create(plane.to_ptr, opts, @min, @max)
-            end
-      if ptr.null?
-        plane_destroyed_on_failure!(plane) # "takes ownership of n on all paths" (plot.c:677)
+        @blitter = resolve_blitter(ctx, plane, requested, no_degrade)
+        width = @blitter == FFI::NCBLIT_PIXEL ? plane.pixel_geom[:cell_pixel_x] : BLITTER_WIDTHS.fetch(@blitter)
+        @slot_count = slot_count_for(cols, width, opts[:rangex])
+        opts[:gridtype] = @blitter
+        # il blitter è già scelto: con NODEGRADE il C non può sceglierne un altro (e un altro numero di slot)
+        opts[:flags] = flags | FFI::NCPLOT_OPTION_NODEGRADE
+        ptr = if @double
+                FFI.ncdplot_create(plane.to_ptr, opts, @min, @max)
+              else
+                FFI.ncuplot_create(plane.to_ptr, opts, @min, @max)
+              end
+        if ptr.null?
+          plane_destroyed_on_failure!(plane) # "takes ownership of n on all paths" (plot.c:677)
+          ctx.raise_callback_errors!
+          what = @double ? 'ncdplot_create' : 'ncuplot_create'
+          raise WidgetError, "#{what} ha restituito NULL (il piano è stato distrutto)"
+        end
+
+        # finestra in coordinate utente (newest) e del C (newest_c): x utente = x C + base
+        @newest = 0
+        @newest_c = 0
+        @base = 0
+        attach!(ptr, plane)
         ctx.raise_callback_errors!
-        what = @double ? 'ncdplot_create' : 'ncuplot_create'
-        raise WidgetError, "#{what} ha restituito NULL (il piano è stato distrutto)"
       end
-
-      # finestra in coordinate utente (newest) e del C (newest_c): x utente = x C + base
-      @newest = 0
-      @newest_c = 0
-      @base = 0
-      attach!(ptr, plane)
-      ctx.raise_callback_errors!
     end
 
     # Piano del grafico (+ncuplot_plane+, +ncdplot_plane+): lo stesso Plane
@@ -188,13 +190,15 @@ module Notcurses
     #
     # @return [Plane]
     # @raise [ClosedError] se il grafico è chiuso
-    def plane = @context.plane_for(@double ? FFI.ncdplot_plane(to_ptr) : FFI.ncuplot_plane(to_ptr))
+    def plane = Guard.run { @context.plane_for(@double ? FFI.ncdplot_plane(to_ptr) : FFI.ncuplot_plane(to_ptr)) }
 
     # @return [Symbol] :uint64 o :double
     # @raise [ClosedError] se il grafico è chiuso
     def type
-      to_ptr
-      @double ? :double : :uint64
+      Guard.run do
+        to_ptr
+        @double ? :double : :uint64
+      end
     end
 
     # Blitter usato davvero, dopo gli eventuali ripieghi.
@@ -202,8 +206,10 @@ module Notcurses
     # @return [Symbol] uno dei simboli di {Util::BLITTERS} (mai :default)
     # @raise [ClosedError] se il grafico è chiuso
     def blitter
-      to_ptr
-      Util.enum_symbol(Util::BLITTERS, @blitter)
+      Guard.run do
+        to_ptr
+        Util.enum_symbol(Util::BLITTERS, @blitter)
+      end
     end
 
     # Numero di campioni della finestra, fisso dalla creazione (il C non ha
@@ -212,8 +218,10 @@ module Notcurses
     # @return [Integer]
     # @raise [ClosedError] se il grafico è chiuso
     def slot_count
-      to_ptr
-      @slot_count
+      Guard.run do
+        to_ptr
+        @slot_count
+      end
     end
 
     # Valori di x accettati da {#sample} e, senza far avanzare la finestra, da
@@ -223,8 +231,10 @@ module Notcurses
     # @return [Range<Integer>]
     # @raise [ClosedError] se il grafico è chiuso
     def window
-      to_ptr
-      [@newest - @slot_count + 1, 0].max..@newest
+      Guard.run do
+        to_ptr
+        [@newest - @slot_count + 1, 0].max..@newest
+      end
     end
 
     # Somma y al campione x (+ncuplot_add_sample+, +ncdplot_add_sample+) e
@@ -247,20 +257,22 @@ module Notcurses
     # @raise [Exception] l'eccezione di un callback Ruby di resize
     # @raise [ClosedError] se il grafico è chiuso
     def add_sample(x, y)
-      ptr = to_ptr
-      check_width!
-      value = value!(y, 'y')
-      xc, base = c_coordinate(Util.uint64!(x, 'x'))
-      return false if xc.nil?
+      Guard.run do
+        ptr = to_ptr
+        check_width!
+        value = value!(y, 'y')
+        xc, base = c_coordinate(Util.uint64!(x, 'x'))
+        return false if xc.nil?
 
-      if x <= @newest
-        total = read_sample(ptr, xc) + value
-        raise ArgumentError, "add_sample: la somma #{total} esce dal tipo #{type}" unless valid_value?(total)
+        if x <= @newest
+          total = read_sample(ptr, xc) + value
+          raise ArgumentError, "add_sample: la somma #{total} esce dal tipo #{type}" unless valid_value?(total)
+        end
+        rc = @double ? FFI.ncdplot_add_sample(ptr, xc, value) : FFI.ncuplot_add_sample(ptr, xc, value)
+        advance!(x, xc, base)
+        @context.raise_callback_errors!
+        sample_result(ptr, xc, rc, 'add_sample')
       end
-      rc = @double ? FFI.ncdplot_add_sample(ptr, xc, value) : FFI.ncuplot_add_sample(ptr, xc, value)
-      advance!(x, xc, base)
-      @context.raise_callback_errors!
-      sample_result(ptr, xc, rc, 'add_sample')
     end
 
     # Sostituisce il valore del campione x (+ncuplot_set_sample+,
@@ -279,18 +291,20 @@ module Notcurses
     # @raise [Exception] l'eccezione di un callback Ruby di resize
     # @raise [ClosedError] se il grafico è chiuso
     def set_sample(x, y)
-      ptr = to_ptr
-      check_width!
-      value = value!(y, 'y')
-      xc, base = c_coordinate(Util.uint64!(x, 'x'))
-      return false if xc.nil?
+      Guard.run do
+        ptr = to_ptr
+        check_width!
+        value = value!(y, 'y')
+        xc, base = c_coordinate(Util.uint64!(x, 'x'))
+        return false if xc.nil?
 
-      # rete di sicurezza per la scrittura fuori buffer: read_sample solleva se il C vede xc fuori finestra
-      read_sample(ptr, xc) if x <= @newest
-      rc = @double ? FFI.ncdplot_set_sample(ptr, xc, value) : FFI.ncuplot_set_sample(ptr, xc, value)
-      advance!(x, xc, base)
-      @context.raise_callback_errors!
-      sample_result(ptr, xc, rc, 'set_sample')
+        # rete di sicurezza per la scrittura fuori buffer: read_sample solleva se il C vede xc fuori finestra
+        read_sample(ptr, xc) if x <= @newest
+        rc = @double ? FFI.ncdplot_set_sample(ptr, xc, value) : FFI.ncuplot_set_sample(ptr, xc, value)
+        advance!(x, xc, base)
+        @context.raise_callback_errors!
+        sample_result(ptr, xc, rc, 'set_sample')
+      end
     end
 
     # Valore del campione x (+ncuplot_sample+, +ncdplot_sample+).
@@ -301,17 +315,19 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se x non è un intero 0..2^64-1
     # @raise [ClosedError] se il grafico è chiuso
     def sample(x)
-      ptr = to_ptr
-      Util.uint64!(x, 'x')
-      return nil unless window.cover?(x)
+      Guard.run do
+        ptr = to_ptr
+        Util.uint64!(x, 'x')
+        return nil unless window.cover?(x)
 
-      read_sample(ptr, x - @base)
+        read_sample(ptr, x - @base)
+      end
     end
 
     private
 
     # +ncuplot_destroy+ / +ncdplot_destroy+: distruggono anche il piano.
-    def destroy_native = @double ? FFI.ncdplot_destroy(to_ptr) : FFI.ncuplot_destroy(to_ptr)
+    def destroy_native = Guard.run { @double ? FFI.ncdplot_destroy(to_ptr) : FFI.ncuplot_destroy(to_ptr) }
 
     # Valore del tipo del grafico (Integer uint64 o Float finito).
     def value!(value, name) = @double ? Util.float!(value, name) : Util.uint64!(value, name)

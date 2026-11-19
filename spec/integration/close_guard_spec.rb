@@ -5,7 +5,8 @@
 require "rbconfig"
 
 # Chiusura di Context, Direct e Visual mentre un'operazione del wrapper è in
-# corso: da un altro thread durante una chiamata C senza GVL (ICH-475). Ogni scenario gira
+# corso: da un gestore trap che torna al codice interrotto (ICH-464) o da un
+# altro thread durante una chiamata C senza GVL (ICH-475). Ogni scenario gira
 # in un processo figlio con un timeout. Gli hook sul modulo FFI aprono la
 # finestra esatta e controllano l'ordine: una funzione C chiamata con un
 # puntatore già passato al suo distruttore fa uscire il figlio con 6, anche
@@ -65,11 +66,180 @@ RSpec.describe "Chiusura durante un'operazione in corso (integrazione)" do
       def notcurses_stop(nc) = ($stops += 1; $freed[nc.address] = true; super)
       def ncdirect_stop(n) = ($stops += 1; $freed[n.address] = true; super)
       def ncvisual_destroy(v) = (use!(v, :ncvisual_destroy); $freed[v.address] = true; super)
+      # malloc può riusare l'indirizzo di un oggetto liberato
+      def notcurses_init(*) = super.tap { |p| $freed.delete(p.address) }
+      def ncdirect_init(*) = super.tap { |p| $freed.delete(p.address) }
+      def ncvisual_from_file(*) = super.tap { |p| $freed.delete(p.address) }
     end)
     OPTS = { output: '/dev/null', termtype: 'xterm-256color' }.freeze
     CTX_OPTS = { **OPTS, suppress_banners: true, drain_input: true }.freeze
     MKV = #{mkv_path.inspect}
   RUBY
+
+  describe "gestore trap che chiude e torna al codice interrotto (ICH-464)" do
+    it "Context#render: 200 chiusure in tre finestre, sempre ClosedError e nessun uso del contesto liberato" do
+      expect_exit(<<~RUBY, timeout: 60)
+        #{prelude}
+        $armed = nil
+        $fired = 0
+        def fire(where)
+          return unless $armed == where
+
+          $armed = nil
+          Process.kill('USR1', Process.pid) # il gestore gira prima del ritorno di kill
+        end
+        Notcurses::FFI.singleton_class.prepend(Module.new do
+          def notcurses_stdplane(nc) = (fire(:before); use!(nc, :notcurses_stdplane); super)
+          def ncpile_render(n) = super.tap { fire(:between) }
+          def ncpile_rasterize(n) = (use!($nc_ptr, :ncpile_rasterize); super.tap { fire(:after) })
+        end)
+        nc = nil
+        trap('USR1') { $fired += 1; nc.close }
+        ok = 0
+        200.times do |i|
+          nc = Notcurses::Context.new(**CTX_OPTS)
+          $nc_ptr = nc.to_ptr
+          nc.stdplane.putstr('x')
+          $armed = %i[before between after][i % 3]
+          begin
+            nc.render
+            nc.render
+          rescue Notcurses::ClosedError
+            ok += 1 if nc.closed? && Notcurses.active_context.nil?
+          end
+        end
+        warn "ok=\#{ok} fired=\#{$fired} stops=\#{$stops}"
+        exit(ok == 200 && $fired == 200 && $stops == 200 ? 0 : 4)
+      RUBY
+    end
+
+    it "Direct#putstr: un close fra to_ptr e la chiamata C rinvia lo stop" do
+      expect_exit(<<~RUBY)
+        #{prelude}
+        $armed = true
+        Notcurses::FFI.singleton_class.prepend(Module.new do
+          def ncdirect_putstr(n, *rest)
+            Process.kill('USR1', Process.pid) if $armed
+            $armed = false
+            use!(n, :ncdirect_putstr)
+            super
+          end
+        end)
+        d = Notcurses::Direct.new(**OPTS)
+        trap('USR1') { d.close }
+        begin
+          d.putstr('x')
+          d.putstr('y')
+          exit 3
+        rescue Notcurses::ClosedError
+          exit(d.closed? && Notcurses.active_context.nil? && $stops == 1 ? 0 : 4)
+        end
+      RUBY
+    end
+
+    it "Plane#dims: un close fra to_ptr e la chiamata C rinvia lo stop" do
+      expect_exit(<<~RUBY)
+        #{prelude}
+        $armed = false
+        Notcurses::FFI.singleton_class.prepend(Module.new do
+          def ncplane_dim_yx(n, *rest)
+            Process.kill('USR1', Process.pid) if $armed
+            $armed = false
+            use!($nc_ptr, :ncplane_dim_yx)
+            super
+          end
+        end)
+        nc = Notcurses::Context.new(**CTX_OPTS)
+        $nc_ptr = nc.to_ptr
+        plane = nc.stdplane.create_child(rows: 2, cols: 3)
+        trap('USR1') { nc.close }
+        $armed = true
+        begin
+          dims = plane.dims
+          plane.dims
+          exit 3
+        rescue Notcurses::ClosedError
+          exit(dims == [2, 3] && plane.closed? && Notcurses.active_context.nil? && $stops == 1 ? 0 : 4)
+        end
+      RUBY
+    end
+
+    %w[get getvec direct_get].each do |mode|
+      it "#{mode}: un close durante l'attesa di un tasto dà ClosedError" do
+        expect_exit(<<~RUBY)
+          #{prelude}
+          keep_open, _w = IO.pipe # stdin aperto e vuoto: nessun evento, nessun EOF
+          STDIN.reopen(keep_open)
+          root = #{(mode == "direct_get") ? "Notcurses::Direct.new(**OPTS)" : "Notcurses::Context.new(**OPTS, suppress_banners: true)"}
+          trap('USR1') { root.close }
+          Thread.new { sleep 0.3; Process.kill('USR1', Process.pid) }
+          begin
+            r = #{(mode == "getvec") ? "root.getvec(4, timeout: 5)" : "root.get(timeout: 5)"}
+            warn "ritorno: \#{r.inspect}"
+            exit 3
+          rescue Notcurses::ClosedError
+            exit(root.closed? && Notcurses.active_context.nil? ? 0 : 4)
+          end
+        RUBY
+      end
+    end
+
+    it "un close dentro il blocco di Visual#stream rinvia lo stop alla fine dello stream" do
+      expect_exit(<<~RUBY)
+        #{prelude}
+        nc = Notcurses::Context.new(**CTX_OPTS)
+        trap('USR1') { nc.close }
+        v = Notcurses::Visual.from_file(MKV)
+        calls = 0
+        begin
+          v.stream(blitter: :ascii) do |_plane, _at|
+            calls += 1
+            Process.kill('USR1', Process.pid) if calls == 2 # il gestore gira qui, dentro il callback
+            nil
+          end
+          exit 3
+        rescue Notcurses::ClosedError
+          warn "calls=\#{calls} stops=\#{$stops}"
+          exit(calls == 2 && nc.closed? && Notcurses.active_context.nil? && $stops == 1 ? 0 : 4)
+        end
+      RUBY
+    end
+
+    it "un close dentro un callback di resize rinvia lo stop alla fine dell'operazione" do
+      expect_exit(<<~RUBY)
+        #{prelude}
+        nc = Notcurses::Context.new(**CTX_OPTS)
+        trap('USR1') { nc.close }
+        parent = nc.stdplane.create_child(rows: 4, cols: 4)
+        parent.create_child(rows: 1, cols: 1, resize: ->(_p) { Process.kill('USR1', Process.pid) })
+        begin
+          parent.resize(5, 5)
+          nc.render
+          exit 3
+        rescue Notcurses::ClosedError
+          exit(nc.closed? && Notcurses.active_context.nil? && $stops == 1 ? 0 : 4)
+        end
+      RUBY
+    end
+
+    it "trap { close; exit } durante un'operazione esce con il proprio stato e ferma notcurses una volta" do
+      output = expect_exit(<<~RUBY, status: 7)
+        #{prelude}
+        at_exit { puts "stops=\#{$stops}" } # gira prima dell'at_exit del wrapper
+        Notcurses::FFI.singleton_class.prepend(Module.new do
+          def ncpile_render(n) = super.tap { Process.kill('USR1', Process.pid) if $armed; $armed = false }
+          def ncpile_rasterize(n) = (use!($nc_ptr, :ncpile_rasterize); super)
+        end)
+        nc = Notcurses::Context.new(**CTX_OPTS)
+        $nc_ptr = nc.to_ptr
+        trap('USR1') { nc.close; exit 7 }
+        $armed = true
+        nc.render
+        exit 3
+      RUBY
+      expect(output).to include("stops=1")
+    end
+  end
 
   describe "chiusura da un altro thread durante una chiamata C senza GVL (ICH-475)" do
     # Il thread entra nell'operazione e resta nella "chiamata C" (uno sleep con
