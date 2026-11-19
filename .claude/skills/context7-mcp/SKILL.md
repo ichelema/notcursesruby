@@ -1,56 +1,88 @@
 ---
 name: context7-mcp
-description: This skill should be used only when the user asks about Ruby, the Ruby standard library, gems, or Ruby tooling (Bundler, RubyGems, RSpec, RuboCop, YARD). Do not use it for C, the notcurses C API, Rust or other non-Ruby libraries.
+description: >-
+  Usa questa skill solo quando l'utente chiede di Ruby, della libreria standard di Ruby, di gem o di
+  strumenti Ruby (Bundler, RubyGems, RSpec, RuboCop, YARD), oppure di concetti, architettura ed
+  esempi di notcurses (dankamongmen/notcurses). Per firme, valori di ritorno, flag e costanti
+  dell'API C di notcurses usa prima la skill notcurses-man. Non usarla per altro codice C, per Rust
+  o per altre librerie.
 ---
 
-When the user asks about Ruby, a gem or Ruby tooling, use Context7 to fetch current documentation instead of relying on training data. Do not use Context7 for C, the notcurses C API, Rust or other non-Ruby libraries.
+Quando l'utente chiede di Ruby, di una gem, di uno strumento Ruby o di notcurses, usa Context7 per
+recuperare la documentazione aggiornata invece di affidarti ai dati di addestramento. Non usare
+Context7 per altro codice C, per Rust o per altre librerie.
 
-## When to Use This Skill
+Per notcurses, Context7 affianca le man page installate. Le man page restano la fonte autorevole per
+firme, valori di ritorno, flag, costanti e proprietà dei puntatori: per questi dettagli usa prima la
+skill `notcurses-man`. Se Context7 e le man page non concordano, vale la man page, perché
+corrisponde alla versione installata.
 
-Activate this skill when the user:
+## Quando usare questa skill
 
-- Asks setup or configuration questions about Ruby tooling ("How do I configure RuboCop for...?")
-- Requests code involving gems ("Write an `ffi` struct for...")
-- Needs Ruby API references ("What are the options of `Data.define`?")
-- Mentions specific Ruby gems or tools (`ffi`, RSpec, Bundler, YARD, etc.)
+Attiva questa skill quando l'utente:
 
-## How to Fetch Documentation
+- Fa domande di installazione o configurazione sugli strumenti Ruby ("Come configuro RuboCop
+  per...?")
+- Chiede codice che usa gem ("Scrivi una struct `ffi` per...")
+- Ha bisogno di riferimenti all'API Ruby ("Quali sono le opzioni di `Data.define`?")
+- Nomina gem o strumenti Ruby specifici (`ffi`, RSpec, Bundler, YARD, ecc.)
+- Chiede come funziona notcurses o come usarla ("Come interagiscono pile e piani?", "Un esempio di
+  `ncvisual` con i blitter?")
 
-### Step 1: Resolve the Library ID
+## Come recuperare la documentazione
 
-Call `resolve-library-id` with:
+### Passo 1: risolvi l'ID della libreria
 
-- `libraryName`: The library name extracted from the user's question
-- `query`: What to look up in the library's documentation (improves relevance ranking)
+Per notcurses salta questo passo e usa direttamente uno di questi ID:
 
-### Step 2: Select the Best Match
+- `/dankamongmen/notcurses` (Notcurses su GitHub): riferimento principale per implementazione,
+  funzioni, parametri ed esempi.
+- `/websites/deepwiki_dankamongmen_notcurses` (Notcurses su DeepWiki): riferimento complementare
+  quando devi esplorare l'architettura, capire le relazioni tra componenti o analizzare il
+  funzionamento interno.
 
-From the resolution results, choose based on:
+Per le altre librerie chiama `resolve-library-id` con:
 
-- Exact or closest name match to what the user asked for
-- Higher benchmark scores indicate better documentation quality
-- If the user mentioned a version (e.g., "React 19"), prefer version-specific IDs
+- `libraryName`: il nome della libreria estratto dalla domanda dell'utente
+- `query`: cosa cercare nella documentazione della libreria (migliora l'ordinamento per pertinenza)
 
-### Step 3: Fetch the Documentation
+### Passo 2: scegli la corrispondenza migliore
 
-Call `query-docs` with:
+Tra i risultati della risoluzione, scegli in base a:
 
-- `libraryId`: The selected Context7 library ID (e.g., `/vercel/next.js`)
-- `query`: What to look up in the library's documentation, scoped to a single concept
+- La corrispondenza esatta o più vicina al nome chiesto dall'utente
+- Il benchmark score: un punteggio più alto indica una documentazione di qualità migliore
+- Se l'utente ha indicato una versione (per esempio "React 19"), preferisci gli ID specifici per
+  versione
 
-If the user's question spans multiple distinct concepts (e.g. routing and auth and caching), make a separate `query-docs` call per concept with the same library ID, unless the question is about how the concepts interact — combined queries dilute ranking and return shallow results for each topic.
+### Passo 3: recupera la documentazione
 
-### Step 4: Use the Documentation
+Chiama `query-docs` con:
 
-Incorporate the fetched documentation into your response:
+- `libraryId`: l'ID Context7 della libreria scelta (per esempio `/vercel/next.js`)
+- `query`: cosa cercare nella documentazione della libreria, limitato a un solo concetto
 
-- Answer the user's question using current, accurate information
-- Include relevant code examples from the docs
-- Cite the library version when relevant
+Se la domanda dell'utente copre più concetti distinti (per esempio routing, autenticazione e
+caching), fai una chiamata `query-docs` separata per ogni concetto con lo stesso ID di libreria. Fai
+eccezione quando la domanda riguarda l'interazione tra i concetti. Le query combinate diluiscono
+l'ordinamento e restituiscono risultati superficiali per ogni argomento.
 
-## Guidelines
+### Passo 4: usa la documentazione
 
-- **Be specific**: Describe what to look up in the library's documentation, but keep each query to a single concept
-- **One topic per query**: Split multi-topic questions into separate `query-docs` calls — resolve the library ID once, then query per concept, unless the question is about how the concepts interact
-- **Version awareness**: When users mention versions ("Next.js 16", "React 19"), use version-specific library IDs if available from the resolution step
-- **Prefer official sources**: When multiple matches exist, prefer official/primary packages over community forks
+Integra la documentazione recuperata nella risposta:
+
+- Rispondi alla domanda dell'utente con informazioni aggiornate e accurate
+- Includi gli esempi di codice pertinenti presi dalla documentazione
+- Cita la versione della libreria quando è rilevante
+
+## Linee guida
+
+- **Sii specifico**: descrivi cosa cercare nella documentazione della libreria, ma limita ogni query
+  a un solo concetto
+- **Un argomento per query**: dividi le domande su più argomenti in chiamate `query-docs` separate.
+  Risolvi l'ID della libreria una sola volta, poi fai una query per concetto. Fai eccezione quando
+  la domanda riguarda l'interazione tra i concetti
+- **Attenzione alle versioni**: quando l'utente nomina una versione ("Next.js 16", "React 19"), usa
+  gli ID specifici per versione, se il passo di risoluzione li restituisce
+- **Preferisci le fonti ufficiali**: quando esistono più corrispondenze, preferisci i pacchetti
+  ufficiali o principali rispetto ai fork della comunità
