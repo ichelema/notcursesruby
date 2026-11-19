@@ -2667,6 +2667,23 @@ module Notcurses
       @resize = keep[:resize]
     end
 
+    # Esegue il blocco (un blit C che scrive celle in questo piano, in una
+    # regione che il wrapper non calcola) e poi svuota l'altra metà dei glifi
+    # larghi del piano che il blit ha coperto solo a metà, come i riempimenti
+    # (ICH-450, ICH-486). Il controllo legge tutto il piano: il costo è
+    # proporzionale alla sua area.
+    # @api private
+    # @yieldreturn [Object] il risultato del blit
+    # @return [Object] il valore del blocco
+    # @raise [ClosedError] se il piano è chiuso
+    def keeping_glyphs_whole(&block)
+      Guard.run do
+        ptr = to_ptr
+        rows, cols = dims
+        keep_glyphs_whole(ptr, 0, 0, rows, cols, all: true, &block)
+      end
+    end
+
     private
 
     # Puntatore di un altro piano dello stesso contesto.
@@ -3076,7 +3093,10 @@ module Notcurses
       done = true
       rc
     ensure
+      rows, cols = dims if glyphs # il blocco può aver ridimensionato il piano (il blitter :pixel)
       glyphs&.each do |y, x|
+        next if y >= rows || x + 1 >= cols
+
         left_half = half_at(ptr, y, x) || (long_fill ? nil : :left)
         right_half = half_at(ptr, y, x + 1)
         next if left_half == :left && right_half == :right

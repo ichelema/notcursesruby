@@ -429,6 +429,11 @@ module Notcurses
 
     # Disegna pixel RGBA su un piano senza creare un Visual (+ncblit_rgba+).
     #
+    # Glifi larghi (ICH-486): il C scrive ogni cella da sola, e un blit su una
+    # metà di un glifo largo lascerebbe l'altra metà orfana. Il wrapper svuota
+    # l'altra metà, che diventa una cella vuota, come {Plane#polyfill}. Il
+    # controllo legge tutto il piano: il costo è proporzionale alla sua area.
+    #
     # @param data [String] pixel R, G, B, A; almeno rows * rowstride byte
     # @param plane [Plane] piano su cui disegnare (non se ne crea uno nuovo)
     # @param rows [Integer] righe dell'immagine, >= 1
@@ -449,6 +454,8 @@ module Notcurses
     # Disegna pixel BGRx su un piano (+ncblit_bgrx+): 4 byte per pixel, B, G,
     # R e un byte ignorato; i pixel sono opachi.
     #
+    # Glifi larghi: come in {.blit_rgba}.
+    #
     # @param data [String] pixel, almeno rows * rowstride byte
     # @param plane [Plane] piano su cui disegnare
     # @param rows [Integer] righe, >= 1
@@ -467,6 +474,8 @@ module Notcurses
 
     # Disegna pixel RGBx su un piano (+ncblit_rgb_loose+): 4 byte per pixel,
     # R, G, B e un byte ignorato, sostituito da alpha.
+    #
+    # Glifi larghi: come in {.blit_rgba}.
     #
     # @param data [String] pixel, almeno rows * rowstride byte
     # @param plane [Plane] piano su cui disegnare
@@ -494,6 +503,8 @@ module Notcurses
     # byte invece di 3 (visual.c:494) e disegna colori sbagliati. Il wrapper non
     # la usa: crea un visual temporaneo con +ncvisual_from_rgb_packed+, che è
     # corretta, e lo disegna con +ncvisual_blit+.
+    #
+    # Glifi larghi: come in {.blit_rgba}.
     #
     # @param data [String] pixel, almeno rows * rowstride byte
     # @param plane [Plane] piano su cui disegnare
@@ -546,7 +557,7 @@ module Notcurses
       vopts = Internal.options(ctx, plane, **options)
       vopts[:leny] = rows
       vopts[:lenx] = cols
-      rc = yield vopts
+      rc = plane.keeping_glyphs_whole { yield vopts }
       ctx.raise_callback_errors!
       Util.check!(rc, VisualError, what)
       plane
@@ -837,6 +848,8 @@ module Notcurses
     #   l'immagine, con y e x posizione nel genitore.
     # Il piano nuovo è del chiamante: chiudilo con {Plane#close}.
     #
+    # Glifi larghi: con plane: p, senza child:, come in {.blit_rgba}.
+    #
     # Bug di 3.0.17 aggirato: con una regione diversa dall'immagine intera il C
     # ridimensiona dall'inizio dei dati ignorando begy/begx, poi legge oltre il
     # buffer ridimensionato (ffmpeg.c:586); con no_interpolate o senza ffmpeg la
@@ -885,8 +898,9 @@ module Notcurses
         ctx = @context
         vopts = Internal.options(ctx, plane, **options)
         Internal.child!(vopts, plane, child)
-        ptr = with_region(begy, begx, leny, lenx) { |src, _| FFI.ncvisual_blit(ctx.to_ptr, src, vopts) }
         created = plane.nil? || child
+        draw = -> { with_region(begy, begx, leny, lenx) { |src, _| FFI.ncvisual_blit(ctx.to_ptr, src, vopts) } }
+        ptr = created ? draw.call : plane.keeping_glyphs_whole(&draw)
         if ptr.null?
           ctx.planes_destroyed! if created # il C distrugge il piano che aveva creato
           ctx.raise_callback_errors!

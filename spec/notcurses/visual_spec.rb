@@ -649,6 +649,76 @@ RSpec.describe Notcurses::Visual do
       end
     end
 
+    # ICH-486: il blitter scrive ogni cella da sola, come ncplane_gradient prima di ICH-450.
+    context 'su metà di un glifo largo' do
+      red = [255, 0, 0, 255].pack('C*')
+      blits = {
+        'blit_rgba' => ->(p, x, b) { described_class.blit_rgba(red, plane: p, rows: 1, cols: 1, blitter: b, y: 0, x: x) },
+        'blit_bgrx' => ->(p, x, b) { described_class.blit_bgrx(red, plane: p, rows: 1, cols: 1, blitter: b, y: 0, x: x) },
+        'blit_rgb_loose' => lambda do |p, x, b|
+          described_class.blit_rgb_loose(red, plane: p, rows: 1, cols: 1, blitter: b, y: 0, x: x)
+        end,
+        'blit_rgb_packed' => lambda do |p, x, b|
+          described_class.blit_rgb_packed(red[0, 3], plane: p, rows: 1, cols: 1, blitter: b, y: 0, x: x)
+        end,
+        '#blit' => lambda do |p, x, b|
+          described_class.from_rgba(red, rows: 1, cols: 1) { |v| v.blit(plane: p, blitter: b, y: 0, x: x) }
+        end
+      }
+      cases = %i[ascii half quad sextant octant braille].product([2, 3])
+      blits.each do |name, blit|
+        it "#{name} lascia vuota l'altra metà con ogni blitter di celle (prima: \"XYZ\" nella riga sotto)" do
+          cases.each do |blitter, x|
+            nc.stdplane.create_child(rows: 2, cols: 4) do |p|
+              p.putstr('ab漢', y: 0, x: 0)
+              p.putstr('WXYZ', y: 1, x: 0)
+              blit.call(p, x, blitter)
+              other = x == 2 ? 3 : 2
+              expect(p.at(y: 0, x: other).egc).to eq(''), "#{blitter} x=#{x}"
+              p.putstr('中', y: 0, x: 2)
+              expect(p.contents(y: 1, rows: 1)).to eq('WXYZ'), "#{blitter} x=#{x}"
+            end
+          end
+        end
+      end
+
+      it 'lo script della issue stampa "WXYZ"' do
+        nc.stdplane.create_child(rows: 2, cols: 4) do |pl|
+          pl.putstr('ab漢', y: 0, x: 0)
+          pl.putstr('WXYZ', y: 1, x: 0)
+          described_class.blit_rgba("\xff\x00\x00\xff".b, plane: pl, rows: 1, cols: 1, blitter: :ascii, y: 0, x: 2)
+          pl.putstr('中', y: 0, x: 2)
+          expect(pl.contents(y: 1, rows: 1)).to eq('WXYZ')
+        end
+      end
+
+      it 'senza glifi larghi sotto il blit disegna come prima' do
+        nc.stdplane.create_child(rows: 1, cols: 4) do |p|
+          p.putstr('ab漢', y: 0, x: 0)
+          described_class.blit_rgba(rgba([0x11, 0x22, 0x33, 0xff]), plane: p, rows: 1, cols: 1, blitter: :ascii, y: 0, x: 1)
+          expect(p.contents).to eq('a 漢')
+          expect(cell(p, 0, 1)[1]).to eq(0x112233)
+        end
+      end
+
+      it "la scrittura larga sull'ultima riga non corrompe l'heap (prima: abort di glibc)" do
+        skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
+        script = <<~'RUBY'
+          require 'notcurses'
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            red = "\xff\x00\x00\xff".b
+            planes = Array.new(20) { nc.stdplane.create_child(rows: 1, cols: 4).tap { |q| q.putstr('ab漢', y: 0, x: 0) } }
+            planes.each { |q| Notcurses::Visual.blit_rgba(red, plane: q, rows: 1, cols: 1, blitter: :ascii, y: 0, x: 2) }
+            planes.each { |q| q.putstr('中', y: 0, x: 2) }
+            planes.each(&:close)
+          end
+          puts 'ok'
+        RUBY
+        expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
+      end
+    end
+
     describe 'i blitter dei plot (:four_by_one, :eight_by_one)' do
       # Senza quadranti il C li degrada a :half; con i quadranti taglia l'immagine.
       it 'blit, geometry, create_plane, stream e i blit_* li rifiutano prima del C' do
