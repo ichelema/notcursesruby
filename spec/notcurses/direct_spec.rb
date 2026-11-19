@@ -195,6 +195,28 @@ RSpec.describe Notcurses::Direct do
       end
     end
 
+    # ICH-222: ncdirect_stop scrive il proprio reset sullo stdout della libc anche con un altro output (direct.c:841).
+    it 'close con output: su un file non scrive niente sullo stdout del processo (prima: "\e[39;49m\e(B\e[m")' do
+      Dir.mktmpdir do |dir|
+        out = File.join(dir, 'out')
+        stdout = File.join(dir, 'stdout')
+        {
+          "output: #{out.inspect}" => "before\nafter\n",
+          "output: Notcurses::FFI.fopen(#{out.inspect}, 'w')" => "before\nafter\n",
+          'output: nil' => "before\nx\e[39;49m\e(B\e[mafter\n" # lo stdout è l'output: il reset del C resta
+        }.each do |output, expected|
+          script = "require 'notcurses'; print \"before\\n\"; " \
+                   "Notcurses::Direct.open(#{output}, termtype: 'xterm-256color', drain_input: true) { |d| d.putstr('x') }; " \
+                   "print \"after\\n\""
+          pid = spawn(RbConfig.ruby, '-I', DirectSpecHelpers::LIB_DIR, '-e', script,
+                      in: File::NULL, out: stdout, err: File::NULL)
+          _, status = Process.wait2(pid)
+          expect(status.exitstatus).to eq(0), output
+          expect(File.binread(stdout)).to eq(expected), output
+        end
+      end
+    end
+
     it 'un Direct rimasto aperto viene chiuso all\'uscita del processo (at_exit)' do
       Dir.mktmpdir do |dir|
         path = File.join(dir, 'out')

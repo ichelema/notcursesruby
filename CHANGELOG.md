@@ -22,6 +22,11 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Direct#close` (e `#stop`) con `output:` su un file o su un `FILE*` non scrive più il reset di `ncdirect_stop`
+  (`\e[39;49m\e(B\e[m`) sullo stdout del processo (ICH-222, `direct.c:841`): durante lo stop il fd 1 punta a
+  `/dev/null`, poi torna com'era. Un altro thread che scrive sullo stdout durante lo stop perde quell'output.
+  `Direct::Frame#close` continua a non liberare la memoria del frame: in 3.0.17 non esiste un free sicuro
+  (`free_plane` non è esportato, `ncplane_destroy` va in crash su un piano di `Direct`); lo YARD ne spiega il motivo.
 - `Plane#qrcode` sopra una metà di un glifo largo non lascia più l'altra metà orfana (ICH-488): il C disegna il
   codice con il blitter `:half`, che scrive ogni cella da sola, come i blit di ICH-486. Controllato su una build di
   notcurses 3.0.17 con libqrcodegen: un codice dal cursore in (0, 0) che copre la metà sinistra lasciava la metà

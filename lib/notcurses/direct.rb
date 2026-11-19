@@ -240,7 +240,14 @@ module Notcurses
         @closed = false
       rescue Exception # rubocop:disable Lint/RescueException
         ptr = init&.value
-        FFI.ncdirect_stop(ptr) if ptr && !ptr.null?
+        if ptr && !ptr.null?
+          begin
+            mute_stdout! if fp && !fp.null?
+            FFI.ncdirect_stop(ptr)
+          ensure
+            unmute_stdout!
+          end
+        end
         # il C ha già scritto termtype in TERM: un init successivo senza termtype fallirebbe
         ENV['TERM'] = old_term unless term.nil?
         Notcurses.release_context(self)
@@ -255,9 +262,14 @@ module Notcurses
     # inutilizzabili (la loro memoria C resta allocata). Le {Image} restano
     # valide.
     #
-    # Bug di 3.0.17 (direct.c:841): +ncdirect_stop+ scrive il proprio reset
-    # (+\e[39;49m\e(B\e[m+) sullo stdout del processo anche quando output è
-    # un file.
+    # Bug di 3.0.17 aggirato (direct.c:841, ICH-222): +ncdirect_stop+ scrive
+    # il proprio reset (+\e[39;49m\e(B\e[m+) sullo stdout del processo anche
+    # quando output è un file. Con output diverso da nil il wrapper, durante
+    # lo stop, fa puntare il fd 1 a /dev/null e poi lo rimette com'era (prima
+    # svuota +$stdout+). Il fd 1 è del processo: un altro thread che scrive
+    # sullo stdout durante lo stop perde quell'output. Con un FILE* passato
+    # come output che scrive sul fd 1 il reset del C si perde, ma il wrapper
+    # ha già scritto il proprio sull'output.
     #
     # Un'eccezione sollevata durante +ncdirect_stop+ (per esempio un Ctrl-C)
     # esce da close, ma lascia il contesto chiuso e il registro libero: un
@@ -340,6 +352,7 @@ module Notcurses
         FFI.ncdirect_set_bg_default(@ptr)
         FFI.ncdirect_set_styles(@ptr, 0)
         FFI.ncdirect_flush(@ptr)
+        mute_stdout! unless @fp.null?
         # prima della chiamata: Ruby consegna un Ctrl-C al suo ritorno, quando il C ha già liberato il contesto
         @closed = true
         stopping = true
@@ -349,6 +362,7 @@ module Notcurses
           mark_closed!(fclose: @own_fp)
         end
       ensure
+        unmute_stdout!
         if !stopping && @claims.first.equal?(claim) # interrotta prima dello stop (eccezione asincrona)
           # resta in attesa: lo stato prima della lista, la lista prima della coda
           @closed = false
@@ -1390,9 +1404,14 @@ module Notcurses
     # un piano senza pila). La crea {Direct#render_frame} o {Image#render}.
     #
     # Si libera solo disegnandola con {#raster}: {#close} la abbandona senza
-    # liberarla (in 3.0.17 non esiste altro modo: +ncplane_destroy+ su un
-    # ncdirectv va in crash), e lo stesso succede ai frame non disegnati quando
-    # il contesto si chiude.
+    # liberarla, e lo stesso succede ai frame non disegnati quando il contesto
+    # si chiude (ICH-222, won't fix). In 3.0.17 non esiste un free sicuro:
+    # +ncdirect_raster_frame+ la libera con +free_plane+, che la libreria non
+    # esporta; +ncplane_destroy+ legge il contesto notcurses del piano, che un
+    # ncdirectv non ha, e va in crash; +ncdirectf_free+ libera un'altra
+    # struttura (l'{Image}). Liberare a mano i campi interni del piano
+    # dipenderebbe dal layout della struct. Per non perdere memoria disegna
+    # ogni frame che crei.
     class Frame
       include Resource
 
@@ -1442,8 +1461,9 @@ module Notcurses
         end
       end
 
-      # Abbandona il frame senza disegnarlo. La memoria C resta allocata (vedi
-      # la descrizione della classe). Idempotente.
+      # Abbandona il frame senza disegnarlo. La memoria C resta allocata: in
+      # 3.0.17 non esiste un free sicuro (vedi la descrizione della classe).
+      # Idempotente.
       # @return [nil]
       def close
         @closed = true
@@ -1452,6 +1472,33 @@ module Notcurses
     end
 
     private
+
+    # +ncdirect_stop+ scrive il proprio reset sullo stdout della libc anche
+    # con un altro output (direct.c:841): fino a unmute_stdout! il fd 1 punta
+    # a /dev/null. Il fd salvato sta in @muted_stdout, non in una variabile
+    # locale: un'eccezione asincrona arrivata a metà non lascia lo stdout su
+    # /dev/null, perché unmute_stdout! gira nell'ensure. Con il fd 1 chiuso
+    # non c'è niente da proteggere.
+    def mute_stdout!
+      stdout = IO.for_fd(1, autoclose: false)
+      $stdout.flush # il testo di Ruby non ancora scritto va sullo stdout vero
+      @muted_stdout = stdout.dup
+      stdout.reopen(File::NULL, 'w')
+    rescue SystemCallError, IOError
+      nil
+    end
+
+    # Rimette il fd 1 salvato da mute_stdout!, se c'è.
+    def unmute_stdout!
+      Thread.handle_interrupt(Object => :never) do
+        saved = @muted_stdout
+        return unless saved
+
+        IO.for_fd(1, autoclose: false).reopen(saved)
+        @muted_stdout = nil
+        saved.close
+      end
+    end
 
     # Stato Ruby di un contesto chiuso: FILE* chiuso (se fclose), registro libero.
     # @return [nil]
