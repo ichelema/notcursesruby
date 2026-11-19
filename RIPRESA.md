@@ -6,7 +6,7 @@
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
 > `git show ad0315b:RIPRESA.md`; quello dei lotti della revisione in `git show 8a4b5f7:RIPRESA.md`.
 
-## Stato e prossimo step (aggiornato il 2026-11-18, dopo il lotto 4)
+## Stato e prossimo step (aggiornato il 2026-11-19, lotto 5 in review)
 
 - Lotto 1 fatto: PR #22, merge `74deb80`. Lotto 2 fatto: PR #23, merge `cb90c4f`. Lotto 2b fatto: PR #24, merge
   `6374e41`. Lotto 2c fatto: PR #25, merge `d2c5f7c`. Lotto 3 fatto: PR #26, merge `e15b40a` (ICH-454, ICH-456,
@@ -25,12 +25,32 @@
   chiudi la issue. Se upstream non mergia, le alternative sono nella PR #27. L'automazione di Linear ha portato la
   issue a In Progress e a Done anche con `Refs` (il nome del branch contiene l'ID): dopo ogni evento della PR
   controlla lo stato.
-- **Prossimo step: lotto 5**, ICH-475 (Medium: chiudere il contesto o il visual mentre un altro thread è dentro
-  `Visual#decode` è un use-after-free) e ICH-464 (Low: finestra fra `to_ptr` e la chiamata C per un `close` da un
-  trap). Prima del fix chiedi all'utente la scelta che le descrizioni lasciano aperta ("Scelte aperte", regola 14).
+- **Lotto 5 in corso (aggiornato il 2026-11-19): implementazione fatta, PR
+  [#28](https://github.com/ichelema/notcursesruby/pull/28) aperta, CI verde su tutta la matrice, senza review.**
+  Worktree `.claude/worktrees/bug+ICH-475-464-opus`, branch `bug/ICH-475-464-opus` (4 commit: `78dfa7a`, `168f2a0`,
+  `fc09a6d`, `1ffa2d8`). ICH-475 e ICH-464 in In Progress. Locale: 1203 esempi, 0 fallimenti (semi 1234, 4242, 7),
+  coverage 98,29 %, RuboCop 0, YARD 100 %, layer FFI invariato; Ruby 3.1.7 10 corse su 10 verdi.
+  - Scelte dell'utente (regola 14): ICH-475 «rinvio anche per stream» con la variante C (`decode`, `decode_loop` e
+    `from_file` occupano solo il visual); ICH-464 «rendere sicuro» (niente sola documentazione), design `Guard` in
+    Ruby puro (consulti di GPT astra-high e di deep-reasoner); `Context#close` in un callback rinviato invece di
+    `ContextError`; l'errore dello stop rinviato esce dall'operazione che lo esegue.
+  - Design: `Notcurses::Guard` (`lib/notcurses/guard.rb`) conta le operazioni in corso con un Array (`<<`/`pop`: con un
+    intero `+= 1` su Ruby 3.1 un aggiornamento si perdeva, commit `1ffa2d8`); `close` di `Context`/`Direct` in due tempi
+    (`close` + `release_native!`); `Guard.run` in 349 metodi (codemod Prism); controlli in `guard_coverage_spec.rb`
+    (statico) e `spec/support/guard_audit.rb` (a runtime). Dettagli nel corpo della PR.
+  - Ruby 3.1.7 locale non ha più `rspec` né `ffi`: installali in un `GEM_HOME` nello scratchpad
+    (`GEM_HOME=$S/gems31 GEM_PATH=$S/gems31 mise exec ruby@3.1.7 -- gem install --no-document rspec:3.13.2
+    ffi:1.17.4`) e lancia `mise exec ruby@3.1.7 -- ruby $S/gems31/bin/rspec` con le stesse variabili.
+- **Prossimo step: chiudere il lotto 5.** Comandi, nell'ordine:
+  1. facoltativi: `/trinity:workflow:2_work-simplify ICH-475 ICH-464 opus` e
+     `/trinity:workflow:2_work-verify ICH-475 ICH-464 opus`;
+  2. review: `/trinity:workflow:3_independent-review ICH-475 ICH-464 opus` oppure
+     `/trinity:workflow:4_review-fix-loop ICH-475 ICH-464 opus` (revisori come nella nota "Review con GPT e Sonnet");
+  3. a lavoro finito e CI verde: merge della PR #28 (lo esegue l'utente con `gh pr merge 28 --merge`, vedi l'ultima
+     nota di questa sezione), poi la chiusura del lotto (passo 7 della procedura);
+  4. rimozione di worktree e branch, anche remoto:
+     `/trinity:workflow:5_remove-worktree bug+ICH-475-464-opus` (lo lancia l'utente).
   Il flusso di ogni lotto parte dalla spiegazione delle issue (passo 0 della "Procedura per ogni lotto").
-  Comandi: `/trinity:workflow:1_create-worktree master ICH-475 ICH-464 opus`, poi
-  `/trinity:workflow:2_work-issue ICH-475 ICH-464 opus` e gli altri della procedura.
 - Nata dal lotto 3: ICH-539 (Low), finestre dei segnali su Ruby 3.1 e 3.2 nella pulizia di `EventLoop#run`, in
   `InputReader#halt` e in `Context#close`, nel lotto 7 con ICH-226 e ICH-474 (scelta dell'utente del 2026-11-18).
 - Note dal lotto 3: con kitty `run` spegne il flag dei segnali di notcurses e lo lascia spento dopo `run` (scelta
