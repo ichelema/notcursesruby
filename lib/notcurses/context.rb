@@ -474,7 +474,7 @@ module Notcurses
     def closed?
       return true if @closed
 
-      @closing ? !Thread.current.equal?(@closer) : false
+      @closing && !Thread.current.equal?(@closer)
     end
 
     # Piano standard (+notcurses_stdplane+): sempre presente, grande quanto il
