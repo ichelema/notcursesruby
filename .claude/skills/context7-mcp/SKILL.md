@@ -1,18 +1,18 @@
 ---
 name: context7-mcp
-description: This skill should be used when the user asks about libraries, frameworks, API references, or needs code examples. Activates for setup questions, code generation involving libraries, or mentions of specific frameworks like React, Vue, Next.js, Prisma, Supabase, etc.
+description: This skill should be used only when the user asks about Ruby, the Ruby standard library, gems, or Ruby tooling (Bundler, RubyGems, RSpec, RuboCop, YARD). Do not use it for C, the notcurses C API, Rust or other non-Ruby libraries.
 ---
 
-When the user asks about libraries, frameworks, or needs code examples, use Context7 to fetch current documentation instead of relying on training data.
+When the user asks about Ruby, a gem or Ruby tooling, use Context7 to fetch current documentation instead of relying on training data. Do not use Context7 for C, the notcurses C API, Rust or other non-Ruby libraries.
 
 ## When to Use This Skill
 
 Activate this skill when the user:
 
-- Asks setup or configuration questions ("How do I configure a Next.js proxy?")
-- Requests code involving libraries ("Write a Prisma query for...")
-- Needs API references ("What are the Supabase auth methods?")
-- Mentions specific frameworks (React, Vue, Svelte, Express, Tailwind, etc.)
+- Asks setup or configuration questions about Ruby tooling ("How do I configure RuboCop for...?")
+- Requests code involving gems ("Write an `ffi` struct for...")
+- Needs Ruby API references ("What are the options of `Data.define`?")
+- Mentions specific Ruby gems or tools (`ffi`, RSpec, Bundler, YARD, etc.)
 
 ## How to Fetch Documentation
 
