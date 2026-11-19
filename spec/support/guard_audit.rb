@@ -57,6 +57,7 @@ end
 
 RSpec.configure do |config|
   config.after do
+    raise "Notcurses::Guard.busy negativo: #{Notcurses::Guard.busy}" if Notcurses::Guard.busy.negative?
     next if GuardAudit.record? || GuardAudit.found.empty?
 
     found = GuardAudit.found.keys

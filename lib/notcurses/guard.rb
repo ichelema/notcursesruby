@@ -12,23 +12,25 @@ module Notcurses
   # esegue l'ultima operazione che esce, nel suo thread. Il contatore è unico
   # per il processo perché notcurses ammette un solo contesto.
   #
-  # Nessun lock: gli aggiornamenti del contatore e della coda non hanno punti
-  # di interruzione di Ruby fra lettura e scrittura, quindi né un gestore trap
-  # né un cambio di thread vi si inseriscono. Chi chiude scrive lo stato di
-  # chiusura e la coda prima di leggere il contatore; chi esce decrementa prima
-  # di leggere la coda: almeno uno dei due vede l'altro, e +shift+ dà la coda a
-  # uno solo.
+  # Nessun lock. Ogni aggiornamento è una sola chiamata C (+<<+ e +pop+ di un
+  # Array per le operazioni in corso, +<<+ e +shift+ per la coda), che né un
+  # gestore trap né un cambio di thread interrompono a metà: con un intero e
+  # <tt>+= 1</tt>, su Ruby 3.1 un aggiornamento si perdeva fra il thread
+  # principale e il lettore di un {Subprocess} fermato con Thread#kill. Chi
+  # chiude scrive lo stato di chiusura e la coda prima di leggere le
+  # operazioni in corso; chi esce toglie la sua prima di leggere la coda:
+  # almeno uno dei due vede l'altro, e +shift+ dà la coda a uno solo.
   #
   # @api private
   module Guard
     # rubocop:disable ThreadSafety/ClassInstanceVariable, ThreadSafety/MutableClassInstanceVariable -- stato del
     # processo, aggiornato senza punti di interruzione
-    @busy = 0
+    @ops = [] # un elemento per operazione in corso
     @pending = []
 
     class << self
       # @return [Integer] operazioni del wrapper in corso
-      attr_reader :busy
+      def busy = @ops.size
 
       # Esegue il blocco come operazione in corso: una chiusura richiesta
       # durante il blocco avviene alla sua uscita (o a quella dell'ultima
@@ -38,15 +40,19 @@ module Notcurses
       # @raise [Exception] l'eccezione del blocco, oppure l'errore della
       #   chiusura rinviata eseguita all'uscita
       def run
-        @busy += 1
+        @ops << true
+        counted = true
         begin
           yield
         rescue Exception => e # rubocop:disable Lint/RescueException
           failed = e
           raise
         ensure
-          @busy -= 1
-          settle(failed) if @busy.zero? && !@pending.empty?
+          if counted # una sola volta per chiamata, anche se l'ensure gira di nuovo
+            counted = false # rubocop:disable Lint/UselessAssignment -- letto da un ensure rieseguito
+            @ops.pop
+            settle(failed) if @ops.empty? && !@pending.empty?
+          end
         end
       end
 
@@ -65,7 +71,7 @@ module Notcurses
       # @return [nil]
       # @raise [Exception] l'errore di una chiusura
       def settle_if_idle
-        settle(nil) if @busy.zero? && !@pending.empty?
+        settle(nil) if @ops.empty? && !@pending.empty?
         nil
       end
 
@@ -74,7 +80,7 @@ module Notcurses
       # Con failed (un'eccezione già in volo dal blocco) l'errore di una
       # chiusura diventa un avviso: non sostituisce quella eccezione.
       def settle(failed)
-        while @busy.zero? && (obj = @pending.shift) # shift: una sola esecuzione per oggetto
+        while @ops.empty? && (obj = @pending.shift) # shift: una sola esecuzione per oggetto
           begin
             obj.release_native!
           rescue Exception => e # rubocop:disable Lint/RescueException
