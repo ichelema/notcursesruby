@@ -168,6 +168,11 @@ module Notcurses
     # suo genitore (o diventano radici di nuove pile, se il piano era una
     # radice). No-op se il piano è già chiuso o non è posseduto.
     #
+    # Da un gestore +trap+ che poi torna al codice interrotto, la distruzione
+    # non è rinviata come in {Context#close}: se il segnale ha interrotto
+    # un'operazione sullo stesso piano, il C usa un piano già liberato. Da un
+    # gestore +trap+ non chiudere un piano in uso (ICH-540).
+    #
     # @return [nil]
     # @raise [PlaneError] dentro un callback chiamato da notcurses, o se
     #   notcurses segnala un errore nel riaggancio dei figli (in questo caso il

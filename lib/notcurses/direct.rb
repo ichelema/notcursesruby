@@ -287,7 +287,14 @@ module Notcurses
     # chiamate nuove sollevano ClosedError, e {#stream} si ferma al frame
     # successivo. Reset, flush e stop avvengono alla fine dell'operazione, nel
     # suo thread, che riceve anche l'errore dello stop. Se il processo esce
-    # prima, il terminale può restare non ripristinato.
+    # prima, il terminale può restare non ripristinato. Un'operazione sospesa
+    # in un Fiber (per esempio un Enumerator esterno lasciato a metà su
+    # {#stream}) resta in corso finché il Fiber non riprende: fino ad allora
+    # lo stop resta in attesa, anche all'uscita del processo (ICH-541).
+    #
+    # Un'eccezione asincrona (per esempio un secondo Ctrl-C) prima dello stop
+    # esce da close e lascia lo stop in attesa: un close successivo o l'hook
+    # +at_exit+ lo eseguono.
     #
     # @return [nil]
     # @raise [DirectError] se +ncdirect_stop+ restituisce un errore (il

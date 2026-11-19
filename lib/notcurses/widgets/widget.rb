@@ -42,6 +42,11 @@ module Notcurses
 
     # Distrugge il widget e, se è suo, il piano. Idempotente.
     #
+    # Da un gestore +trap+ che poi torna al codice interrotto, la distruzione
+    # non è rinviata come in {Context#close}: se il segnale ha interrotto
+    # un'operazione sul widget o sul suo piano, il C usa memoria già liberata.
+    # Da un gestore +trap+ non chiudere un widget in uso (ICH-540).
+    #
     # @return [nil]
     # @raise [WidgetError] dentro un callback chiamato da notcurses (il C sta
     #   ancora usando il widget)

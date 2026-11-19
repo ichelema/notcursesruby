@@ -30,8 +30,12 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   chiamata successiva solleva `ClosedError`. Un `close` durante l'attesa di `Context#get`, `#getvec` o `Direct#get`
   solleva `ClosedError` invece di `Errno::EBADF`. `Context#close` dentro un callback chiamato dal C (per esempio
   da un gestore `trap` durante il blocco di `Visual#stream` o un callback di resize) non solleva più `ContextError`:
-  lo stop avviene alla fine dell'operazione. Un controllo statico e un audit nella suite (`to_ptr` fuori dalla
-  guardia) tengono la copertura completa.
+  lo stop avviene alla fine dell'operazione. Anche `Visual#close` da un gestore `trap` rinvia `ncvisual_destroy` alla
+  fine dell'operazione interrotta (per esempio `Visual#dims`). Un'eccezione asincrona (un secondo Ctrl+C) dentro
+  `close` prima dello stop non lo fa più perdere: un `close` successivo o l'hook `at_exit` lo eseguono una volta sola.
+  Un controllo statico e un audit nella suite (`to_ptr` fuori dalla guardia) tengono la copertura completa. Restano
+  documentati due limiti: il close di un piano o di un widget da un gestore `trap` non è rinviato (ICH-540), e un
+  Fiber sospeso dentro un'operazione tiene lo stop in attesa (ICH-541).
 - Chiudere il contesto, il `Direct` o un `Visual` mentre un altro thread è dentro `Visual#decode`, `#decode_loop`,
   `#stream`, `Visual.from_file`, `Direct#render_frame` o `Direct#stream` non libera più la memoria che il C sta usando
   (ICH-475). Prima l'hook `at_exit` o un `close` da un altro thread durante la chiamata C senza GVL davano SIGSEGV,

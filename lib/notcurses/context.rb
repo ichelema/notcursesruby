@@ -355,7 +355,14 @@ module Notcurses
     # init solleva InitError). Se il processo esce prima che l'operazione
     # torni, il terminale può restare non ripristinato. {Visual.from_file},
     # {Visual#decode} e {Visual#decode_loop} non usano il contesto nel C e non
-    # rinviano lo stop.
+    # rinviano lo stop. Un'operazione sospesa in un Fiber (per esempio un
+    # Enumerator esterno lasciato a metà su un metodo che passa i dati a un
+    # blocco) resta in corso finché il Fiber non riprende: fino ad allora lo
+    # stop resta in attesa, anche all'uscita del processo (ICH-541).
+    #
+    # Un'eccezione asincrona (per esempio un secondo Ctrl-C) prima dello stop
+    # esce da close e lascia lo stop in attesa: un close successivo o l'hook
+    # +at_exit+ lo eseguono.
     #
     # Un'eccezione sollevata durante la chiamata C (per esempio un Ctrl-C
     # mentre +notcurses_stop+ ripristina il terminale) esce da close, ma lascia
