@@ -143,6 +143,8 @@ module Notcurses
       @owner = context
       @closed = false
       @file = file
+      @in_use = 0 # operazioni in corso sul visual: rinviano ncvisual_destroy
+      @native_token = [true]
       context.adopt(self)
     end
 
@@ -166,7 +168,10 @@ module Notcurses
     # Thread: la chiamata C apre e legge il file con ffmpeg senza il GVL (una
     # FIFO, un URL o un file system lento non hanno limite di tempo): gli altri
     # thread Ruby girano, ma non devono usare lo stesso contesto finché la
-    # chiamata non torna. Un'eccezione asincrona (Ctrl-C, Thread#raise,
+    # chiamata non torna. La chiamata C non usa il contesto: un {Context#close}
+    # durante la lettura (da un altro thread o dall'hook at_exit) ferma subito
+    # notcurses, e al ritorno from_file distrugge il visual appena creato e
+    # solleva ClosedError. Un'eccezione asincrona (Ctrl-C, Thread#raise,
     # Timeout, il kill di {FdPlane#close}) arriva al ritorno della chiamata C:
     # il visual creato dal C resta allocato, con il file aperto, fino alla fine
     # del processo.
@@ -177,18 +182,27 @@ module Notcurses
     # @raise [VisualError] se il file non esiste, non è multimediale, non ha uno
     #   stream video, o se notcurses non ha ffmpeg (contesto aperto con core: true)
     # @raise [TypeError, ArgumentError] se path non è un percorso valido
-    # @raise [ClosedError] se non c'è un Context attivo
+    # @raise [ClosedError] se non c'è un Context attivo, o se il contesto viene
+    #   chiuso durante la lettura
     def self.from_file(path, &block)
       ctx = Internal.context!
       file = Util.string!(File.path(path), 'path')
       raise ArgumentError, 'path è vuoto' if file.empty?
 
+      # la chiamata C non usa il contesto: un close durante la lettura lo ferma subito
       ptr = FFI.ncvisual_from_file(file)
       if ptr.null?
         raise VisualError, "ncvisual_from_file(#{file.inspect}) ha restituito NULL (file inesistente, non " \
                            'multimediale o senza stream video? contesto aperto con core: true?)'
       end
-      Util.with_resource(new(ptr, ctx, file: true), &block)
+      visual = Guard.run do
+        ctx.to_ptr # contesto chiuso durante la lettura: il visual non ha più un contesto a cui appartenere
+        new(ptr, ctx, file: true)
+      rescue ClosedError
+        FFI.ncvisual_destroy(ptr)
+        raise
+      end
+      Util.with_resource(visual, &block)
     end
 
     # Visual da pixel RGBA (+ncvisual_from_rgba+): 4 byte per pixel, R, G, B,
@@ -537,20 +551,37 @@ module Notcurses
     # Distrugge il visual (+ncvisual_destroy+). Idempotente. I piani su cui è
     # stato disegnato non cambiano.
     #
+    # Durante un'operazione in corso sul visual ({#decode}, {#decode_loop} o
+    # {#stream} in un altro thread, o un'operazione interrotta da un gestore
+    # +trap+) il visual risulta subito chiuso, e +ncvisual_destroy+ avviene
+    # alla fine dell'operazione, nel suo thread.
+    #
     # @return [nil]
-    # @raise [VisualError] dentro un callback chiamato da notcurses (per esempio
-    #   il blocco di {#stream}, mentre il C usa il visual)
+    # @raise [VisualError] dentro un callback chiamato da notcurses nel thread
+    #   corrente (per esempio il blocco di {#stream}, mentre il C usa il visual)
     def close
       return nil if @closed
 
       ctx = @context
-      ctx.check_not_in_callback!('Visual#close', VisualError)
-      FFI.ncvisual_destroy(@ptr)
-      @closed = true
-      ctx.disown(self)
+      ctx.check_not_in_callback!('Visual#close', VisualError) if ctx.in_callback?
+      @closed = true # prima di leggere @in_use
+      release_native! if @in_use.zero?
       nil
     end
     alias destroy close
+
+    # +ncvisual_destroy+, una sola volta: da {#close}, o all'uscita
+    # dell'ultima operazione in corso sul visual.
+    #
+    # @api private
+    # @return [nil]
+    def release_native!
+      return nil unless @native_token.pop
+
+      FFI.ncvisual_destroy(@ptr)
+      @context.disown(self)
+      nil
+    end
 
     # --- geometria ---
 
@@ -604,11 +635,14 @@ module Notcurses
     #
     # Thread: la chiamata C legge il file senza il GVL, come in {.from_file}:
     # gli altri thread Ruby girano, ma non devono usare lo stesso contesto
-    # finché la chiamata non torna. Chiudere il visual o il contesto durante la
-    # chiamata, anche con l'hook at_exit o alla fine del blocco di
-    # {Context.open}, libera la memoria che il C sta usando (crash o blocco):
-    # prima attendi la fine del thread che decodifica (Thread#join).
-    # Thread#kill non basta: la chiamata C continua fino al suo ritorno.
+    # finché la chiamata non torna. La chiamata C usa solo il visual: un close
+    # del contesto durante la chiamata (da un altro thread, dall'hook at_exit o
+    # alla fine del blocco di {Context.open}) ferma subito notcurses; un close
+    # del contesto o del visual lascia il visual in uso fino al ritorno della
+    # chiamata, che lo distrugge. La chiamata in corso finisce, la successiva
+    # solleva ClosedError. Il close non interrompe la chiamata C: una lettura
+    # bloccata (per esempio da una FIFO) tiene il visual fino al suo ritorno,
+    # e all'uscita del processo Ruby attende il thread.
     #
     # @return [Boolean] true se c'è un nuovo frame, false a fine stream (il
     #   visual conserva l'ultimo frame; il C restituisce 1, che non è un errore)
@@ -616,18 +650,19 @@ module Notcurses
     #   decodifica fallisce
     # @raise [ClosedError] se il visual è chiuso
     def decode
-      rc = FFI.ncvisual_decode(to_ptr)
-      raise VisualError, 'ncvisual_decode fallita (il visual non viene da un file?)' if rc.negative?
+      visual_guard do
+        rc = FFI.ncvisual_decode(to_ptr)
+        raise VisualError, 'ncvisual_decode fallita (il visual non viene da un file?)' if rc.negative?
 
-      rc.zero?
+        rc.zero?
+      end
     end
 
     # Come {#decode}, ma a fine stream riparte dal primo frame
     # (+ncvisual_decode_loop+). Come {#decode}, la chiamata C legge il file
     # senza il GVL: gli altri thread Ruby girano, ma non devono usare lo stesso
-    # contesto finché la chiamata non torna, e il visual o il contesto non
-    # vanno chiusi durante la chiamata (anche con at_exit): prima attendi il
-    # thread con Thread#join, perché Thread#kill non ferma la chiamata C.
+    # contesto finché la chiamata non torna. Un close del visual o del
+    # contesto durante la chiamata si comporta come in {#decode}.
     #
     # @return [Boolean] true se c'è il frame successivo, false se è ripartito
     #   dall'inizio (il visual contiene il primo frame)
@@ -635,10 +670,12 @@ module Notcurses
     #   decodifica o il riavvolgimento falliscono
     # @raise [ClosedError] se il visual è chiuso
     def decode_loop
-      rc = FFI.ncvisual_decode_loop(to_ptr)
-      raise VisualError, 'ncvisual_decode_loop fallita (il visual non viene da un file?)' if rc.negative?
+      visual_guard do
+        rc = FFI.ncvisual_decode_loop(to_ptr)
+        raise VisualError, 'ncvisual_decode_loop fallita (il visual non viene da un file?)' if rc.negative?
 
-      rc.zero?
+        rc.zero?
+      end
     end
 
     # --- trasformazioni ---
@@ -889,10 +926,11 @@ module Notcurses
     # Riproduce il video dal frame corrente alla fine (+ncvisual_stream+):
     # disegna ogni frame come {#blit} e poi chiama il blocco. Bloccante.
     #
-    # Senza blocco usa lo streamer di notcurses: render del contesto dopo ogni
-    # frame e attesa fino all'istante del frame successivo; il render mostra
-    # solo la pila dello stdplane, quindi passa un piano di quella pila. Con il
-    # blocco, render e attesa sono compito del blocco.
+    # Senza blocco fa il lavoro dello streamer di notcurses
+    # (+ncvisual_simple_streamer+): render del contesto dopo ogni frame e
+    # attesa fino all'istante del frame successivo; il render mostra solo la
+    # pila dello stdplane, quindi passa un piano di quella pila. Con il blocco,
+    # render e attesa sono compito del blocco.
     #
     # Piano: con plane: nil notcurses crea al primo frame una nuova pila e la
     # distrugge alla fine; con plane: p disegna in p, cancellandolo prima di
@@ -909,9 +947,15 @@ module Notcurses
     # stream ed esce da questo metodo.
     #
     # Thread: il blocco gira sul thread chiamante. La chiamata C rilascia il
-    # GVL (decodifica, disegno e attese dello streamer di notcurses) e lo
+    # GVL (decodifica e disegno; senza blocco anche l'attesa fra i frame) e lo
     # riprende per il blocco: durante lo stream gli altri thread Ruby girano,
-    # ma non devono usare lo stesso contesto finché lo stream non torna.
+    # ma non devono usare lo stesso contesto finché lo stream non torna. Un
+    # close del visual o del contesto durante lo stream (da un altro thread,
+    # dall'hook at_exit o da un gestore +trap+) ferma lo stream al frame
+    # successivo, che non viene disegnato, e stream solleva ClosedError; la
+    # chiusura fisica avviene al ritorno, nel thread dello stream. Se il
+    # processo esce prima di quel frame, il terminale può restare non
+    # ripristinato.
     #
     # @param plane [Plane, nil] piano di destinazione
     # @param timescale [Numeric] moltiplicatore delle durate dei frame, > 0
@@ -928,43 +972,80 @@ module Notcurses
     #   andrebbe in crash) o se +ncvisual_stream+ fallisce
     # @raise [Exception] l'eccezione sollevata dal blocco o da un callback di resize
     # @raise [TypeError, ArgumentError] se un'opzione non è valida
-    # @raise [ClosedError] se il visual, il piano o il contesto sono chiusi
+    # @raise [ClosedError] se il visual, il piano o il contesto sono chiusi,
+    #   anche durante lo stream
     def stream(plane: nil, timescale: 1.0, **options, &block)
-      ptr = to_ptr
-      raise VisualError, 'stream: il visual non viene da un file (from_file/open)' unless @file
+      Guard.run do
+        visual_guard do
+          ptr = to_ptr
+          raise VisualError, 'stream: il visual non viene da un file (from_file/open)' unless @file
 
-      scale = Util.float!(timescale, 'timescale')
-      raise ArgumentError, "timescale = #{timescale} deve essere > 0" unless scale.positive?
+          scale = Util.float!(timescale, 'timescale')
+          raise ArgumentError, "timescale = #{timescale} deve essere > 0" unless scale.positive?
 
-      ctx = @context
-      vopts = Internal.options(ctx, plane, **options)
-      fn = block && stream_function(ctx, block)
-      begin
-        rc = FFI.ncvisual_stream(ctx.to_ptr, ptr, scale, fn, vopts, nil)
-      ensure
-        ctx.planes_destroyed! # il piano creato da notcurses non esiste più
+          ctx = @context
+          vopts = Internal.options(ctx, plane, **options)
+          fn = stream_function(ctx, block)
+          begin
+            rc = FFI.ncvisual_stream(ctx.to_ptr, ptr, scale, fn, vopts, nil)
+          ensure
+            ctx.planes_destroyed! # il piano creato da notcurses non esiste più
+          end
+          ctx.raise_callback_errors!
+          to_ptr # un close arrivato durante lo stream lo ha fermato al frame successivo: ClosedError
+          raise VisualError, "ncvisual_stream fallita (#{rc})" if rc.negative?
+
+          rc.zero?
+        end
       end
-      ctx.raise_callback_errors!
-      raise VisualError, "ncvisual_stream fallita (#{rc})" if rc.negative?
-
-      rc.zero?
     end
 
     private
 
+    # Esegue il blocco come operazione in corso sul visual: un {#close}
+    # arrivato durante il blocco (da un gestore trap o da un altro thread)
+    # distrugge il visual all'uscita.
+    def visual_guard
+      @in_use += 1
+      begin
+        yield
+      ensure
+        @in_use -= 1
+        release_native! if @closed && @in_use.zero?
+      end
+    end
+
     # Trampolino C → Ruby per ncstreamcb: 0 = continua, 1 = fermati, -1 =
-    # eccezione (salvata nel contesto e rilanciata da {#stream}).
+    # eccezione (salvata nel contesto e rilanciata da {#stream}). Anche senza
+    # blocco: a ogni frame controlla se il visual o il contesto sono stati
+    # chiusi durante lo stream, e in quel caso lo ferma.
     def stream_function(ctx, block)
       box = ctx.callback_errors
       ::FFI::Function.new(:int, %i[pointer pointer pointer pointer]) do |_ncv, vopts, tspec, _curry|
         Util.guard(box, -1) do
           ctx.callback_scope do
-            plane = ctx.plane_for(FFI::NcVisualOptions.new(vopts)[:n])
+            next 1 if closed?
+
             deadline = FFI::Timespec.new(tspec)
-            block.call(plane, deadline[:tv_sec] + (deadline[:tv_nsec] / 1e9)) == :stop ? 1 : 0
+            at = deadline[:tv_sec] + (deadline[:tv_nsec] / 1e9)
+            next default_stream_frame(ctx, at) unless block
+
+            block.call(ctx.plane_for(FFI::NcVisualOptions.new(vopts)[:n]), at) == :stop ? 1 : 0
           end
         end
       end
+    end
+
+    # Il lavoro di ncvisual_simple_streamer (visual.c:1244-1263) senza
+    # sottotitoli: render del contesto, poi attesa fino all'istante del frame
+    # (secondi di CLOCK_MONOTONIC), senza il GVL.
+    # @return [Integer] 0, o -1 se il render fallisce
+    def default_stream_frame(ctx, at)
+      return -1 unless FFI.notcurses_render(ctx.to_ptr).zero?
+
+      pause = at - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      sleep(pause) if pause.positive?
+      0
     end
 
     # Esegue il blocco con il ncvisual* da disegnare e, se la regione non è

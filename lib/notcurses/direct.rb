@@ -235,6 +235,8 @@ module Notcurses
         @drain_input = drain_input
         @eof_input = nil
         @input_io = nil
+        @open_token = [true]
+        @closing = false
         @closed = false
       rescue Exception # rubocop:disable Lint/RescueException
         ptr = init&.value
@@ -275,33 +277,71 @@ module Notcurses
     # <tt>trap('TERM') { d.close; exit }</tt>): il registro si libera anche
     # lì, e un nuovo contesto si può aprire dopo.
     #
+    # Durante un'operazione in corso in un altro thread (per esempio
+    # {#render_frame} o {#stream}) close segna subito il contesto chiuso: le
+    # chiamate nuove sollevano ClosedError, e {#stream} si ferma al frame
+    # successivo. Reset, flush e stop avvengono alla fine dell'operazione, nel
+    # suo thread, che riceve anche l'errore dello stop. Se il processo esce
+    # prima, il terminale può restare non ripristinato.
+    #
     # @return [nil]
     # @raise [DirectError] se +ncdirect_stop+ restituisce un errore (il
-    #   contesto risulta comunque chiuso)
+    #   contesto risulta comunque chiuso); con lo stop rinviato l'errore esce
+    #   dall'operazione che lo esegue
     def close
       return nil if @closed
       # niente fclose: chiuderebbe il FILE* copiato dal padre (il suo buffer è vuoto: DirectForkFlush lo
       # svuota nel padre prima del fork)
       return mark_closed!(fclose: false) unless @pid == Process.pid
+      return Guard.settle_if_idle if @closing # già chiuso: esegue lo stop rimasto in attesa (hook at_exit)
+      return nil unless @open_token.pop # un gestore trap o un altro thread hanno già chiuso il contesto
 
-      # ncdirect_stop non resetta il FILE* (solo stdout): lo fa il wrapper, prima, perché lo stop ne fa ancora il flush
-      FFI.ncdirect_set_fg_default(@ptr)
-      FFI.ncdirect_set_bg_default(@ptr)
-      FFI.ncdirect_set_styles(@ptr, 0)
-      FFI.ncdirect_flush(@ptr)
-      # prima della chiamata: Ruby consegna un Ctrl-C al suo ritorno, quando il C ha già liberato il contesto
-      @closed = true
+      @closing = true # prima di leggere il contatore delle operazioni in corso
+      Guard.defer(self)
+      Guard.settle_if_idle
+    end
+    alias stop close
+
+    # Chiusura fisica, senza operazioni del wrapper in corso: reset di colori
+    # e stili, flush, +ncdirect_stop+. La esegue {#close}, o l'ultima
+    # operazione in corso alla sua uscita (vedi {Guard}).
+    #
+    # @api private
+    # @return [nil]
+    # @raise [DirectError] se +ncdirect_stop+ restituisce un errore
+    def release_native!
+      return mark_closed!(fclose: false) unless @pid == Process.pid
+
+      stopping = false
       begin
-        rc = FFI.ncdirect_stop(@ptr)
+        # ncdirect_stop non resetta il FILE* (solo stdout): lo fa il wrapper, prima, perché lo stop ne fa ancora
+        # il flush
+        FFI.ncdirect_set_fg_default(@ptr)
+        FFI.ncdirect_set_bg_default(@ptr)
+        FFI.ncdirect_set_styles(@ptr, 0)
+        FFI.ncdirect_flush(@ptr)
+        # prima della chiamata: Ruby consegna un Ctrl-C al suo ritorno, quando il C ha già liberato il contesto
+        @closed = true
+        stopping = true
+        begin
+          rc = FFI.ncdirect_stop(@ptr)
+        ensure
+          mark_closed!(fclose: @own_fp)
+        end
       ensure
-        mark_closed!(fclose: @own_fp)
+        Guard.defer(self) unless stopping # interrotta prima dello stop (eccezione asincrona): resta in attesa
       end
       # ncdirect_stop restituisce l'OR di più ritorni: qualsiasi valore diverso da 0 è un errore
       raise DirectError, "ncdirect_stop fallita (#{rc})" unless rc.zero?
 
       nil
     end
-    alias stop close
+
+    # true dopo {#close}, anche con lo stop ancora in attesa della fine di
+    # un'operazione in corso.
+    #
+    # @return [Boolean]
+    def closed? = @closed || @closing
 
     # --- colori ---
 
@@ -972,7 +1012,9 @@ module Notcurses
     # Carica e scala un'immagine senza disegnarla (+ncdirect_render_frame+):
     # la disegna {Frame#raster}. La chiamata C apre e legge il file senza il
     # GVL: gli altri thread Ruby girano, ma non devono usare lo stesso contesto
-    # finché la chiamata non torna. Un'eccezione asincrona (Ctrl-C,
+    # finché la chiamata non torna. Un {#close} durante la chiamata (da un
+    # altro thread o dall'hook at_exit) rinvia lo stop al suo ritorno: il frame
+    # restituito risulta già chiuso. Un'eccezione asincrona (Ctrl-C,
     # Thread#raise, Timeout) arriva al ritorno della chiamata C: il frame creato
     # dal C resta allocato fino alla fine del processo.
     #
@@ -988,16 +1030,18 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il contesto è chiuso
     def render_frame(path, blitter: :default, scale: :scale, max_rows: 0, max_cols: 0)
-      ptr = to_ptr
-      file = Args.path(path)
-      b = Args.blitter(blitter)
-      s = Util.scale_value(scale)
-      Util.nonneg_int!(max_rows, 'max_rows')
-      Util.nonneg_int!(max_cols, 'max_cols')
-      v = FFI.ncdirect_render_frame(ptr, file, b, s, max_rows, max_cols)
-      raise DirectError, "ncdirect_render_frame(#{file.inspect}) ha restituito NULL" if v.null?
+      Guard.run do
+        ptr = to_ptr
+        file = Args.path(path)
+        b = Args.blitter(blitter)
+        s = Util.scale_value(scale)
+        Util.nonneg_int!(max_rows, 'max_rows')
+        Util.nonneg_int!(max_cols, 'max_cols')
+        v = FFI.ncdirect_render_frame(ptr, file, b, s, max_rows, max_cols)
+        raise DirectError, "ncdirect_render_frame(#{file.inspect}) ha restituito NULL" if v.null?
 
-      Frame.new(v, self)
+        Frame.new(v, self)
+      end
     end
 
     # Carica un'immagine o un video da renderizzare più volte
@@ -1038,7 +1082,9 @@ module Notcurses
     #
     # Thread: l'apertura del file e la decodifica di ogni frame avvengono senza
     # il GVL, come in {#load_image}: gli altri thread Ruby girano, ma non devono
-    # usare lo stesso contesto finché il metodo non torna.
+    # usare lo stesso contesto finché il metodo non torna. Un {#close} durante
+    # lo stream (da un altro thread o dall'hook at_exit) lo ferma al frame
+    # successivo con ClosedError; lo stop avviene al ritorno.
     #
     # @param path [String] file video o immagine
     # @param align [Symbol] :left, :center o :right
@@ -1051,25 +1097,29 @@ module Notcurses
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il contesto è chiuso
     def stream(path, align: :left, blitter: :default, scale: :scale)
-      ptr = to_ptr
-      Args.align(align)
-      Args.visual_options(blitter, scale)
-      load_image(path) do |image|
-        rows = index = rc = 0
-        while rc.zero?
-          # il raster lascia il cursore sotto il frame (direct.c:558), non sull'ultima
-          # riga come presume ncdirect_stream (direct.c:1550-1559); ritorno ignorato come nel C
-          FFI.ncdirect_cursor_up(ptr, rows) if rows.positive?
-          frame = image.render(self, blitter: blitter, scale: scale)
-          rows, = frame.dims
-          frame.raster(align: align)
-          yield index if block_given?
-          index += 1
-          rc = FFI.ncvisual_decode(image.to_ptr)
+      Guard.run do
+        to_ptr
+        Args.align(align)
+        Args.visual_options(blitter, scale)
+        load_image(path) do |image|
+          rows = index = rc = 0
+          while rc.zero?
+            # a ogni frame: un close arrivato durante il frame precedente ferma qui lo stream (ClosedError)
+            ptr = to_ptr
+            # il raster lascia il cursore sotto il frame (direct.c:558), non sull'ultima
+            # riga come presume ncdirect_stream (direct.c:1550-1559); ritorno ignorato come nel C
+            FFI.ncdirect_cursor_up(ptr, rows) if rows.positive?
+            frame = image.render(self, blitter: blitter, scale: scale)
+            rows, = frame.dims
+            frame.raster(align: align)
+            yield index if block_given?
+            index += 1
+            rc = FFI.ncvisual_decode(image.to_ptr)
+          end
+          Util.check!(rc, DirectError, 'ncvisual_decode')
         end
-        Util.check!(rc, DirectError, 'ncvisual_decode')
+        flush
       end
-      flush
     end
 
     # --- capacità ---

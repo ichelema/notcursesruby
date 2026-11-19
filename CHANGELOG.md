@@ -22,6 +22,18 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- Chiudere il contesto, il `Direct` o un `Visual` mentre un altro thread è dentro `Visual#decode`, `#decode_loop`,
+  `#stream`, `Visual.from_file`, `Direct#render_frame` o `Direct#stream` non libera più la memoria che il C sta usando
+  (ICH-475). Prima l'hook `at_exit` o un `close` da un altro thread durante la chiamata C senza GVL davano SIGSEGV,
+  SIGABRT o un blocco (`Visual#stream` all'uscita: 30 crash su 30). Ora `close` segna subito l'oggetto chiuso (le
+  chiamate nuove sollevano `ClosedError`) e rinvia la chiusura fisica alla fine dell'operazione in corso, nel suo
+  thread (`Notcurses::Guard`, `@api private`). `decode`, `decode_loop` e `from_file` non usano il contesto nel C:
+  il contesto si ferma subito e il visual viene distrutto al ritorno della lettura; `from_file` solleva
+  `ClosedError` e distrugge il visual appena creato. `Visual#stream` e `Direct#stream` si fermano al frame successivo.
+  `Visual#stream` senza blocco fa in Ruby il lavoro di `ncvisual_simple_streamer` (render e attesa fino al frame),
+  per controllare la chiusura a ogni frame. `Direct#stream` rilegge il puntatore a ogni frame. Un `Visual#close` da un
+  altro thread durante il blocco di `stream` non solleva più `VisualError`: il controllo dei callback per
+  `Visual#close` vale solo nel thread del callback.
 - Dopo un `EventLoop#run` uscito con `:interrupt` per il Ctrl+C di kitty (`\e[99;5u`) o di xterm con modifyOtherKeys
   (`\e[27;5;99~`), un `run(no_linesigs: true)` non consegna più quel Ctrl+C a `on_key` (ICH-455). notcurses alzava il
   segnale e metteva anche il tasto in coda, e `run` usciva prima di leggerlo. Ora il thread di input di `run` legge il

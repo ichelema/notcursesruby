@@ -66,7 +66,9 @@ module Notcurses
   # fork non deve ripristinare il terminale del padre.
   at_exit do
     ctx = Notcurses.active_context
-    ctx.close if ctx && !ctx.closed? && ctx.pid == Process.pid
+    # anche un contesto già chiuso per le chiamate nuove: close esegue lo stop rimasto in attesa, se nessuna
+    # operazione è in corso
+    ctx.close if ctx && ctx.pid == Process.pid
   rescue StandardError => e
     warn "notcurses: chiusura del contesto all'uscita fallita: #{e.message}"
   end
@@ -314,7 +316,12 @@ module Notcurses
         @callback_errors = []
         @base_restores = []
         @callback_depth = 0
+        @callback_threads = {}.compare_by_identity
         @callback_errors_seen = 0
+        @open_token = [true]
+        @closing = false
+        @closer = nil
+        @close_error = nil
         @cursor_enabled = false
         @mice_enabled = false
         @drain_input = drain_input
@@ -338,6 +345,17 @@ module Notcurses
     # Ferma notcurses e ripristina il terminale (+notcurses_stop+). Chiude prima
     # i widget e gli altri oggetti figli ancora aperti, in ordine inverso di
     # creazione; dopo la chiamata tutti i piani sono invalidi. Idempotente.
+    #
+    # Durante un'operazione del wrapper in corso in un altro thread (per
+    # esempio {Visual#stream} o una chiamata C senza GVL) close segna subito il
+    # contesto chiuso: le chiamate nuove sollevano ClosedError, anche quelle
+    # del thread dell'operazione. Lo stop avviene alla fine dell'ultima
+    # operazione in corso, nel suo thread, che riceve anche l'errore dello
+    # stop; fino ad allora il contesto resta registrato come attivo (un nuovo
+    # init solleva InitError). Se il processo esce prima che l'operazione
+    # torni, il terminale può restare non ripristinato. {Visual.from_file},
+    # {Visual#decode} e {Visual#decode_loop} non usano il contesto nel C e non
+    # rinviano lo stop.
     #
     # Un'eccezione sollevata durante la chiamata C (per esempio un Ctrl-C
     # mentre +notcurses_stop+ ripristina il terminale) esce da close, ma lascia
@@ -365,40 +383,94 @@ module Notcurses
     #
     # @return [nil]
     # @raise [ContextError] se +notcurses_stop+ restituisce un errore (il
-    #   contesto risulta comunque chiuso)
+    #   contesto risulta comunque chiuso); con lo stop rinviato l'errore esce
+    #   dall'operazione che lo esegue
     # @raise [Exception] la prima eccezione sollevata dal close di un oggetto
     #   figlio (per esempio quella del blocco di un {FdPlane}), dopo lo stop
     def close
       return nil if @closed
       # niente fclose: svuoterebbe sul terminale del padre i dati rimasti nel buffer del FILE*
       return mark_closed!(fclose: false) unless @pid == Process.pid
+      return Guard.settle_if_idle if @closing # già chiuso: esegue lo stop rimasto in attesa (hook at_exit)
 
-      check_not_in_callback!('Context#close', ContextError)
+      # un callback fuori da un'operazione protetta: lo stop libererebbe il contesto sotto il C
+      check_not_in_callback!('Context#close', ContextError) if in_callback? && Guard.busy.zero?
       # il thread di input di run non deve chiamare notcurses dopo lo stop; un Ctrl+C arrivato mentre halt lo
       # aspetta si solleva alla fine
       interrupted = @input_reader&.halt
-      if @closed # un gestore trap ha chiuso il contesto mentre halt aspettava il thread
+      # i figli con un thread Ruby (FdPlane, Subprocess) si fermano con il contesto ancora aperto: il loro
+      # thread può essere dentro un'operazione sul contesto
+      first_error = close_thread_children
+      unless @open_token.pop # un gestore trap o un altro thread hanno già chiuso il contesto
         raise interrupted if interrupted
+        raise first_error if first_error
 
         return nil
       end
 
-      first_error = close_children
-      # prima della chiamata: Ruby consegna un Ctrl-C al suo ritorno, quando il C ha già liberato il contesto
-      @closed = true
+      @close_error = first_error
+      @closing = true # prima di leggere il contatore delle operazioni in corso
+      Guard.defer(self)
       begin
-        rc = stop_notcurses(@ptr)
-      ensure
-        mark_closed!(fclose: @own_fp)
+        Guard.settle_if_idle
+      rescue Exception => e # rubocop:disable Lint/RescueException
+        error = e
       end
       raise interrupted if interrupted
+      raise error if error
+
+      nil
+    end
+    alias stop close
+
+    # Chiusura fisica, senza operazioni del wrapper in corso: chiude i figli in
+    # ordine inverso di creazione, poi +notcurses_stop+. La esegue {#close}, o
+    # l'ultima operazione in corso alla sua uscita (vedi {Guard}).
+    #
+    # @api private
+    # @return [nil]
+    # @raise [ContextError] se +notcurses_stop+ restituisce un errore
+    # @raise [Exception] la prima eccezione del close di un oggetto figlio
+    def release_native!
+      return mark_closed!(fclose: false) unless @pid == Process.pid
+
+      stopping = false
+      @closer = Thread.current # per questo thread il contesto resta aperto: il close dei figli lo usa
+      begin
+        first_error = @close_error
+        children_error = close_children
+        first_error ||= children_error
+        # prima della chiamata: Ruby consegna un Ctrl-C al suo ritorno, quando il C ha già liberato il contesto
+        @closed = true
+        @closer = nil
+        stopping = true
+        begin
+          rc = stop_notcurses(@ptr)
+        ensure
+          mark_closed!(fclose: @own_fp)
+        end
+      ensure
+        unless stopping # interrotta prima dello stop (eccezione asincrona): resta in attesa
+          @closer = nil
+          Guard.defer(self)
+        end
+      end
       raise first_error if first_error
       # notcurses_stop restituisce l'OR di più ritorni: qualsiasi valore diverso da 0 è un errore
       raise ContextError, "notcurses_stop fallita (#{rc})" unless rc.zero?
 
       nil
     end
-    alias stop close
+
+    # true dopo {#close}. Durante la chiusura fisica il contesto resta aperto
+    # solo per il thread che la esegue (il close dei figli lo usa).
+    #
+    # @return [Boolean]
+    def closed?
+      return true if @closed
+
+      @closing ? !Thread.current.equal?(@closer) : false
+    end
 
     # Piano standard (+notcurses_stdplane+): sempre presente, grande quanto il
     # terminale (meno i margini), non distruggibile.
@@ -1173,14 +1245,27 @@ module Notcurses
     # sarebbe un use-after-free, e {#check_not_in_callback!} lo impedisce.
     # @api private
     def callback_scope
+      me = Thread.current
       @callback_depth += 1
+      @callback_threads[me] = @callback_threads.fetch(me, 0) + 1
       seen = @callback_errors_seen
       @callback_errors_seen = @callback_errors.size
       yield
     ensure
       @callback_errors_seen = seen
       @callback_depth -= 1
+      depth = @callback_threads[me].to_i
+      if depth > 1
+        @callback_threads[me] = depth - 1
+      else
+        @callback_threads.delete(me)
+      end
     end
+
+    # true se il thread corrente è dentro un callback chiamato dal C.
+    # @api private
+    # @return [Boolean]
+    def in_callback? = @callback_threads.key?(Thread.current)
 
     # @api private
     # @raise [Error] (della classe error) se è in corso un callback chiamato dal C
@@ -1199,6 +1284,20 @@ module Notcurses
       first_error = nil
       @children.keys.reverse_each do |child|
         child.close
+      rescue Exception => e # rubocop:disable Lint/RescueException
+        first_error ||= e
+      end
+      first_error
+    end
+
+    # Chiude, come {#close_children}, solo i figli con un thread Ruby
+    # ({FdPlane}, {Subprocess}): il loro close attende il thread, che può
+    # usare il contesto, e va eseguito prima che il contesto risulti chiuso.
+    # @return [Exception, nil] la prima eccezione
+    def close_thread_children
+      first_error = nil
+      @children.keys.reverse_each do |child|
+        child.close if child.is_a?(FdPlane)
       rescue Exception => e # rubocop:disable Lint/RescueException
         first_error ||= e
       end
