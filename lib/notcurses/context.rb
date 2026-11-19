@@ -405,7 +405,7 @@ module Notcurses
       interrupted = @input_reader&.halt
       # i figli con un thread Ruby (FdPlane, Subprocess) si fermano con il contesto ancora aperto: il loro
       # thread può essere dentro un'operazione sul contesto
-      first_error = close_thread_children
+      first_error = close_children(FdPlane)
       unless @open_token.pop # un gestore trap o un altro thread hanno già chiuso il contesto
         raise interrupted if interrupted
         raise first_error if first_error
@@ -1346,26 +1346,15 @@ module Notcurses
     # Chiude gli oggetti adottati in ordine inverso di creazione, anche se un
     # close solleva: un reader rimasto aperto farebbe un double free nello stop
     # o nel drop. Anche SystemExit e Interrupt, che il blocco di un FdPlane può
-    # aver salvato.
+    # aver salvato. Con kind solo i figli di quella classe: {#close} chiude
+    # prima i figli con un thread Ruby ({FdPlane}, {Subprocess}), perché il
+    # loro close attende il thread, che può usare il contesto.
+    # @param kind [Module] classe dei figli da chiudere
     # @return [Exception, nil] la prima eccezione
-    def close_children
+    def close_children(kind = Object)
       first_error = nil
       @children.keys.reverse_each do |child|
-        child.close
-      rescue Exception => e # rubocop:disable Lint/RescueException
-        first_error ||= e
-      end
-      first_error
-    end
-
-    # Chiude, come {#close_children}, solo i figli con un thread Ruby
-    # ({FdPlane}, {Subprocess}): il loro close attende il thread, che può
-    # usare il contesto, e va eseguito prima che il contesto risulti chiuso.
-    # @return [Exception, nil] la prima eccezione
-    def close_thread_children
-      first_error = nil
-      @children.keys.reverse_each do |child|
-        child.close if child.is_a?(FdPlane)
+        child.close if child.is_a?(kind)
       rescue Exception => e # rubocop:disable Lint/RescueException
         first_error ||= e
       end
