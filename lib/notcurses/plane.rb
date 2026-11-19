@@ -1688,6 +1688,12 @@ module Notcurses
     # ha solo uno stub che fallisce: in quel caso il metodo solleva sempre
     # PlaneError.
     #
+    # Glifi larghi (ICH-488): il C disegna il codice con il blitter :half, che
+    # scrive ogni cella da sola, e su una metà di un glifo largo lascerebbe
+    # l'altra metà orfana. Il wrapper svuota l'altra metà, che diventa una
+    # cella vuota, come {Visual.blit_rgba}. Il controllo legge tutto il piano:
+    # il costo è proporzionale alla sua area.
+    #
     # @param data [String] byte da codificare, non vuoto
     # @param rows [Integer] righe disponibili, >= 1
     # @param cols [Integer] colonne disponibili, >= 1
@@ -1709,7 +1715,11 @@ module Notcurses
         bytes = data.b
         buf = ::FFI::MemoryPointer.new(:uchar, bytes.bytesize)
         buf.put_bytes(0, bytes)
-        version = FFI.ncplane_qrcode(ptr, ymax, xmax, buf, bytes.bytesize)
+        prows, pcols = dims
+        # il codice può essere più piccolo dell'area: il controllo copre tutto il piano
+        version = keep_glyphs_whole(ptr, 0, 0, prows, pcols, all: true) do
+          FFI.ncplane_qrcode(ptr, ymax, xmax, buf, bytes.bytesize)
+        end
         Util.check!(version, PlaneError, 'ncplane_qrcode (notcurses compilato senza qrcodegen?)')
         [version, ymax.read_uint, xmax.read_uint]
       end

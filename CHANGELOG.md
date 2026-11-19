@@ -22,6 +22,11 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Plane#qrcode` sopra una metà di un glifo largo non lascia più l'altra metà orfana (ICH-488): il C disegna il
+  codice con il blitter `:half`, che scrive ogni cella da sola, come i blit di ICH-486. Controllato su una build di
+  notcurses 3.0.17 con libqrcodegen: un codice dal cursore in (0, 0) che copre la metà sinistra lasciava la metà
+  destra, e una scrittura larga successiva cancellava la prima cella della riga sotto. Ora l'altra metà diventa una
+  cella vuota. Sulla build senza qrcodegen (quella di Arch Linux) la spec viene saltata.
 - `Visual.from_palidx` ora dà ai pixel i colori della palette e `Visual#rotate` non perde più la prima riga e la
   prima colonna di pixel (ICH-223): `ncvisual_from_palidx` di 3.0.17 ignora la palette e `ncvisual_rotate` confronta
   con `>` invece di `>=` (visual.c:746), anche a 0 radianti. `from_palidx` costruisce i pixel RGBA in Ruby (RGB del
