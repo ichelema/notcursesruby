@@ -624,9 +624,10 @@ module Notcurses
         # arriverebbe solo all'attesa successiva
         sleep 0 if Thread.pending_interrupt?
       end
-      result = user ? user.call(resource) : resource
-      keep = user.nil?
-      result
+      return user.call(resource) if user
+
+      keep = true
+      resource
     ensure
       resource&.close unless keep
     end
