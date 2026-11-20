@@ -279,8 +279,9 @@ module Notcurses
     # per tutta la sua vita. Se il fd 1 non si può spostare (per esempio senza
     # descrittori liberi) lo stop avviene lo stesso, e il reset arriva sullo
     # stdout come senza il wrapper. Un fd 1 aperto in sola lettura non si
-    # sposta: il C non riesce a scriverci il reset e close solleva
-    # DirectError, come senza il wrapper.
+    # sposta: se il terminale ha un reset (per esempio xterm-256color) il C
+    # non riesce a scriverlo e close solleva DirectError, come senza il
+    # wrapper; senza reset (per esempio vt52) close riesce.
     #
     # Un'eccezione sollevata durante +ncdirect_stop+ (per esempio un Ctrl-C)
     # esce da close, ma lascia il contesto chiuso e il registro libero: un
