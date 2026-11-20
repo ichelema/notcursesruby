@@ -6,7 +6,7 @@
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
 > `git show ad0315b:RIPRESA.md`; quello dei lotti della revisione in `git show 8a4b5f7:RIPRESA.md`.
 
-## Stato e prossimo step (aggiornato il 2026-11-20, lotto 6 in corso, PR #29 in attesa della review)
+## Stato e prossimo step (aggiornato il 2026-11-20, lotto 6 in corso, PR #29 in draft per un HIGH)
 
 - Lotto 1 fatto: PR #22, merge `74deb80`. Lotto 2 fatto: PR #23, merge `cb90c4f`. Lotto 2b fatto: PR #24, merge
   `6374e41`. Lotto 2c fatto: PR #25, merge `d2c5f7c`. Lotto 3 fatto: PR #26, merge `e15b40a` (ICH-454, ICH-456,
@@ -39,11 +39,17 @@
   `:braille` di tutto un piano 60x200 costa ancora 20 ms (0,19 ms su `master`). Il costo è tracciato in ICH-556
   (Backlog, Low, Performance, `related` a ICH-549; scelta dell'utente del 2026-11-20): non blocca la PR #29, da
   assegnare a un lotto successivo.
-- **Prossimo step:** lancia `/trinity:workflow:3_independent-review ICH-458 ICH-486 ICH-222 ICH-223 ICH-488 opus`
-  (il changeset comprende i 4 commit nuovi; di' al reviewer di controllare anche ICH-549, ICH-550, ICH-551 e
-  ICH-552). Se la review trova problemi: `/trinity:workflow:4_review-fix-loop` con gli stessi argomenti. **Non
-  mergiare la PR #29 prima della review.** Poi CI verde, merge dell'utente (`gh pr merge 29 --merge`) e chiusura del
-  lotto (passo 7).
+- **Review-fix loop fatto (2026-11-20, 3 round, solo il reviewer GPT: il reviewer Sonnet è fallito per credito esaurito,
+  e l'utente ha scelto di proseguire con GPT).** Branch su `361d90e`; 10 commit di fix fra `f0c55f5` e `361d90e`.
+  Commento con i dettagli: https://github.com/ichelema/notcursesruby/pull/29#issuecomment-7037947324. Issue nuove in
+  Backlog: ICH-560 (`fflush` nel layer FFI, regola 1), ICH-561, ICH-562, ICH-567, ICH-568, ICH-569.
+- **PR #29 in draft: non mergiarla.** Il round 3 ha confermato un HIGH non corretto: `Direct#stop` con `output:` va in
+  SIGSEGV se il fd 1 ereditato è aperto in sola lettura (`unmute_stdout!`, `IO#reopen` fra modi d'accesso diversi,
+  `lib/notcurses/direct.rb:1553`; sulla baseline lo stesso caso dà `DirectError`). Prova:
+  `spawn(..., out: File.open(File::NULL, 'r'))`, poi `Direct.new(output: File::NULL, ...).stop`.
+- **Prossimo step:** correggi il HIGH sul branch (spec in un processo figlio con il fd 1 `O_RDONLY`, poi il fix minimo,
+  per esempio non spostare un fd 1 che non è aperto in scrittura), suite completa, push. Poi una review mirata del
+  fix, `gh pr ready 29`, CI verde, merge dell'utente (`gh pr merge 29 --merge`) e chiusura del lotto (passo 7).
 - Nata dal lotto 6, in Backlog, Low, da assegnare a un lotto successivo (non blocca la PR #29): ICH-554 (`Visual#rotate`
   chiama il C una volta per pixel, circa 0,9 s su 1024x1024; accelerarlo può servire un cambio del layer FFI, regola 1).
 - Alla chiusura del lotto 6: 3 bug di notcurses nuovi nelle tabelle di `RICONSEGNA.md` (elenco in
