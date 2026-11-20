@@ -14,8 +14,6 @@
   Blocked). Lotto 5 fatto: PR #28, merge `3d3e0e9` (ICH-475 e ICH-464 a Done). Log in `memory/backlog-issue.md`, esito
   in `RICONSEGNA.md`. Stato di `master` su `3d3e0e9`: 1209 esempi, 0 fallimenti (ordine normale e semi 1234, 4242, 7);
   coverage 98,22 %; RuboCop 0; YARD 100 %; gem costruita; layer FFI invariato; CI verde.
-- **Da fare dall'utente:** rimuovere worktree e branch del lotto 5, anche il remoto:
-  `/trinity:workflow:5_remove-worktree bug+ICH-475-464-opus` (il comando non si lancia dallo strumento Skill).
 - **ICH-463 in Blocked** (stato del team ICH «Waiting on something outside this repo»), scelta dell'utente: la
   correzione è in notcurses (`process_melange`, `in.c:2427`: `consumed < 0` → `<= 0`), proposta upstream con la PR
   [#2954](https://github.com/dankamongmen/notcurses/pull/2954) (issue #2947), dal fork
