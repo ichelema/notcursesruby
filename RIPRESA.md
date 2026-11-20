@@ -6,7 +6,7 @@
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
 > `git show ad0315b:RIPRESA.md`; quello dei lotti della revisione in `git show 8a4b5f7:RIPRESA.md`.
 
-## Stato e prossimo step (aggiornato il 2026-11-19, lotto 5 chiuso)
+## Stato e prossimo step (aggiornato il 2026-11-20, lotto 6 in corso, PR #29 bloccata)
 
 - Lotto 1 fatto: PR #22, merge `74deb80`. Lotto 2 fatto: PR #23, merge `cb90c4f`. Lotto 2b fatto: PR #24, merge
   `6374e41`. Lotto 2c fatto: PR #25, merge `d2c5f7c`. Lotto 3 fatto: PR #26, merge `e15b40a` (ICH-454, ICH-456,
@@ -25,9 +25,25 @@
   chiudi la issue. Se upstream non mergia, le alternative sono nella PR #27. L'automazione di Linear ha portato la
   issue a In Progress e a Done anche con `Refs` (il nome del branch contiene l'ID): dopo ogni evento della PR
   controlla lo stato.
-- **Prossimo step: lotto 6** (`bug`): ICH-458, ICH-486, ICH-222, ICH-223, ICH-488. Il flusso parte dalla spiegazione
-  delle issue (passo 0 della "Procedura per ogni lotto"), poi:
-  `/trinity:workflow:1_create-worktree master ICH-458 ICH-486 ICH-222 ICH-223 ICH-488 opus`.
+- **Lotto 6 in corso** (`bug`): ICH-458, ICH-486, ICH-222, ICH-223, ICH-488. PR #29 aperta, branch
+  `bug/ICH-458-486-222-223-488-opus` su `4ee2690`, worktree `.claude/worktrees/bug+ICH-458-486-222-223-488-opus`.
+  La review del 2026-11-20 ha trovato 9 finding: F1 (BLOCKER, segfault di `Direct#close` con lo stdout su un
+  terminale) e F2 (HIGH, `rotate` perdeva pixel) sono corretti nel branch, con i LOW delle due review mirate. Log
+  completo in `memory/backlog-issue.md`, sezione "Lotto 6".
+- **La PR #29 è bloccata: non mergiarla** (scelta dell'utente del 2026-11-20) finché non sono fatte, sullo stesso
+  branch, le 4 issue nate dalla review, in Backlog: ICH-549 (Medium, i blit leggono tutto il piano), ICH-550 (Medium,
+  blit `:pixel` sopra glifi larghi), ICH-551 (Low, `from_palidx` con una voce `Channel.palindex` solleva
+  `ArgumentError`: scelta dell'utente), ICH-552 (Low, `qrcode` usa `keeping_glyphs_whole`). Ognuna ha una
+  relazione `blocks` verso ICH-486, ICH-223 o ICH-488.
+- **Prossimo step:** sviluppa ICH-549, ICH-550, ICH-551 e ICH-552 nel worktree del lotto 6, in una sessione nuova.
+  I command di Trinity trovano il worktree dal nome del branch, quindi solo con i 5 ID originali: per le issue nuove
+  segui a mano i passi di `2_work-issue` (spec che fallisce, fix, suite completa, un commit per issue con
+  `Refs ICH-5xx`, push). Poi aggiungi `Fixes ICH-549` ... `Fixes ICH-552` al corpo della PR #29 e lancia
+  `/trinity:workflow:3_independent-review ICH-458 ICH-486 ICH-222 ICH-223 ICH-488 opus`. Prima del merge: suite con i
+  semi 1234, 4242, 7, coverage e CI verde (non rifatti dopo la review).
+- Alla chiusura del lotto 6: 3 bug di notcurses nuovi nelle tabelle di `RICONSEGNA.md` (elenco in
+  `memory/backlog-issue.md`); controlla che ICH-542 (`Refs` nella PR) non vada a Done con il merge. ICH-552 e la
+  spec di `qrcode` si provano solo con una build di notcurses con libqrcodegen (submodule, `-DUSE_QRCODEGEN=on`).
 - Nate dal lotto 5, in Backlog, Low, da assegnare a un lotto (chiedi all'utente): ICH-540 (`Plane#close`,
   `#family_destroy`, `Widget#close` e `Context#drop_planes` da un gestore `trap` che torna non rinviano la
   distruzione) e ICH-541 (un Fiber sospeso dentro un'operazione del wrapper tiene lo stop in attesa per sempre).
@@ -220,6 +236,10 @@ Le issue nate dai lotti 1, 2, 2b, 2c e 3 sono state aggiunte dopo (lotti 2, 2b, 
 | 6 | `bug` | ICH-222 | Low | Free Direct::Frame memory on close and keep the Direct#stop reset off stdout |
 | 6 | `bug` | ICH-223 | Low | Fix Visual.from_palidx palette colors and Visual#rotate pixel loss |
 | 6 | `bug` | ICH-488 | Low | Check Plane#qrcode over one half of a wide glyph (nata dal lotto 1) |
+| 6 (seguito) | `bug` | ICH-549 | Medium | Keep Visual blits from reading every cell of the plane for the wide-glyph check (nata dal lotto 6; sul branch della PR #29) |
+| 6 (seguito) | `bug` | ICH-550 | Medium | Keep Visual#blit with the :pixel blitter from leaving orphan right halves of wide glyphs (nata dal lotto 6; sul branch della PR #29) |
+| 6 (seguito) | `bug` | ICH-551 | Low | Make Visual.from_palidx raise ArgumentError for a palette entry with a palette index (nata dal lotto 6; sul branch della PR #29) |
+| 6 (seguito) | `bug` | ICH-552 | Low | Reuse Plane#keeping_glyphs_whole in Plane#qrcode (nata dal lotto 6; sul branch della PR #29) |
 | 7 | `bug` | ICH-441 | Medium | Handle Process.daemon with an open Context or Direct without leaving the terminal altered |
 | 7 | `bug` | ICH-226 | Low | Harden Context and Direct init against a second Ctrl-C and Thread#kill |
 | 7 | `bug` | ICH-474 | Low | Keep the C resource when an async exception arrives during Visual.from_file, Direct#load_image or Direct#render_frame |

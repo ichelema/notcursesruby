@@ -685,3 +685,74 @@ Implementazione il 2026-11-18 e 19 in una sessione, semplificazione e review il 
 - `master` su `3d3e0e9` (merge fatto dall'utente): 1209 esempi, 0 fallimenti, in ordine normale e con i semi 1234,
   4242, 7; coverage 98,22 %; RuboCop 0; gem costruita; YARD senza warning; `ruby -w` senza warning;
   `git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto; CI di `master` verde.
+
+## Lotto 6 — ICH-458, ICH-486, ICH-222, ICH-223, ICH-488 (PR #29, aperta e bloccata)
+
+Implementazione il 2026-11-19 in una sessione, review e correzioni il 2026-11-20 in un'altra. Branch
+`bug/ICH-458-486-222-223-488-opus`, worktree `.claude/worktrees/bug+ICH-458-486-222-223-488-opus`. La PR #29 resta
+aperta e **non va mergiata** (scelta dell'utente del 2026-11-20) finché ICH-549, ICH-550, ICH-551 e ICH-552, nate
+dalla review, non sono fatte sullo stesso branch. Ognuna ha una relazione `blocks` verso la issue di origine.
+
+### Fix
+
+- `1aa5d70` (ICH-486): i blit di celle su un piano esistente girano dentro `Plane#keeping_glyphs_whole`
+  (`@api private`), che riusa `keep_glyphs_whole` di ICH-450 su tutto il piano.
+- `7c9ddcf` (ICH-223): `from_palidx` costruisce i pixel RGBA in Ruby; `rotate` è un porting in Ruby di
+  `ncvisual_rotate` con `>=` al posto di `>` (`visual.c:746`).
+- `0a8c1b6` e `ad360a4` (ICH-488): `qrcode` dentro `keep_glyphs_whole`; il buffer overflow del C con il cursore fuori
+  da (0, 0) è documentato e tracciato in ICH-542 (High, `Refs` nella PR).
+- `d1fb09b` (ICH-222): `mute_stdout!` porta il fd 1 su `/dev/null` durante `ncdirect_stop`; la memoria di
+  `Direct::Frame` è un won't fix spiegato nello YARD e in un commento sulla issue.
+- `43ef5a3` (ICH-458): prima di ogni frame bitmap `stream` fa posto sotto il cursore (VT per riga, poi CUU).
+- Review 2026-11-20: `a64cc37` (F1), `57e5668` (F2), `c0da6ac` e `4ee2690` (i LOW delle review mirate).
+
+### Decisioni
+
+- Dell'utente: F7 (`from_palidx` con una voce `Channel.palindex`) solleva `ArgumentError`, non solo documentato; F1 e
+  F2 corretti subito, con una review mirata per ciascuno, solo sul commit del fix; F3, F4, F7 e F8 aperti come issue
+  (ICH-549..552) e sviluppati in una sessione nuova; la PR #29 resta bloccata fino ad allora; F9 (costo di `rotate`,
+  una chiamata C per pixel) resta documentato nello YARD, senza issue.
+- Mie: `RICONSEGNA.md` non si aggiorna nel branch ma su `master` alla chiusura del lotto, come nei lotti precedenti.
+  Nella review mirata il changeset è il solo commit del fix, con baseline il suo genitore.
+
+### Review
+
+- Round 1 completo (`/trinity:workflow:3_independent-review`, orchestratore; verify di un `trinity:reviewer`
+  Sonnet; 8 CONFIRMED, 1 PLAUSIBLE): BLOCKER F1, `Direct#close` con `output:` e fd 1 su un terminale: segfault in
+  `IO#reopen` (Ruby da 3.1 a 4.0), lo stop non parte; HIGH F2, `rotate` perde pixel opachi con bordi trasparenti
+  diversi sui lati; MEDIUM F3, ogni blit legge tutto il piano (60x200: 19 ms contro 0,004 ms); MEDIUM F4, un blit
+  `:pixel` sopra glifi larghi lascia metà destre orfane; HIGH F5, ICH-542 (esisteva già, fuori dal lotto); LOW F6
+  (spec di ICH-222 senza tty), F7, F8 (`qrcode` ripete `keeping_glyphs_whole`), F9.
+- Review mirata di `a64cc37` (2 CONFIRMED, LOW): il commento citava solo il terminale, ma il segfault avviene con il
+  fd 1 aperto O_RDWR (anche un file `r+`); il messaggio della spec diceva «processo figlio bloccato» quando lo stdout
+  non era ripristinato.
+- Review mirata di `57e5668` (3 CONFIRMED, LOW): lo YARD diceva che le dimensioni sono quelle del C, ma
+  `ncvisual_bounding_box` del C a volte calcola un riquadro più stretto; righe del C troncate; il CHANGELOG riportava
+  l'esito dello stato intermedio del branch, non quello rilasciato.
+- Le review mirate non erano indipendenti dall'autore del fix (orchestratore); il verify sì.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| `Direct#close` andava in segfault con lo stdout su un terminale | `IO.for_fd(1).reopen(File::NULL, 'w')` con il fd 1 O_RDWR: Ruby controlla il cambio del modo d'accesso e va in segfault leggendo un path nil (da 3.1.7 a 4.0.7; con un fd in sola scrittura funziona) | `File.open(File::NULL, 'w') { \|null\| stdout.reopen(null) }`; spec con il fd 1 su un pty |
+| `rotate` perdeva pixel con bordi asimmetrici | `rotate_bounding_box` ruota il riquadro attorno al suo centro, i pixel attorno al centro dell'immagine (`visual.c:658-705`) | riquadro ruotato in coordinate dell'immagine; prodotti, somme e `round` monotoni: nessun indice fuori |
+| La spec di F1 restava nel ciclo d'attesa | il pty scrive `"\r\n"` al posto di `"\n"` (ONLCR) | attesa di `'fine'`, al massimo 5 s |
+| Prove nel pty: il figlio restava bloccato dopo la heap corrotta (ICH-542) | dopo l'abort il gestore `[BUG]` di Ruby non esce | ogni prova con `timeout -s KILL 20` |
+| 10 spec di `direct_spec.rb` fallivano nel worktree di review | submodule `notcurses/` vuoto nei worktree detached | ignorati: ambiente; la CI copre |
+| `require 'benchmark'` falliva su Ruby 4.0.7 | `benchmark` non è più nella libreria standard e non è nel bundle | `Process.clock_gettime` |
+| La spec di `qrcode` è sempre saltata in locale e in CI | la build di Arch ha solo lo stub | build 3.0.17 dal submodule con `-DUSE_QRCODEGEN=on` (qrcodegen-cmake 1.8.0) e `LD_LIBRARY_PATH`; l'ultima era nello scratchpad della sessione del 2026-11-19 (`.../597b2d0b-.../scratchpad/ncqr`), che può sparire |
+
+### Bug di notcurses nuovi (da mettere nelle tabelle di `RICONSEGNA.md` alla chiusura del lotto)
+
+- `ncplane_qrcode` con il cursore fuori da (0, 0) scrive fuori dal buffer di pixel (`fill.c:612-616`, ICH-542).
+- `rotate_bounding_box` ruota il riquadro attorno al proprio centro, i pixel attorno al centro dell'immagine
+  (`visual.c:658-705`): con bordi trasparenti asimmetrici `ncvisual_rotate` perde pixel opachi. Aggirato.
+- `ncvisual_bounding_box` (`visual.c:537-628`) a volte calcola un riquadro più stretto di quello vero (due pixel sulla
+  diagonale di un 2x2: una colonna). Aggirato: il wrapper calcola il riquadro vero.
+
+### Verifica (branch su `4ee2690`, 2026-11-20)
+
+- 1232 esempi, 0 fallimenti, 1 pending (`qrcode` sulla build con lo stub), solo in ordine normale; RuboCop 0 offense
+  (107 file); YARD senza warning, 100 %. CI verde su `a64cc37` e `57e5668`; su `4ee2690` non ancora vista. I semi
+  1234, 4242, 7 e la coverage non sono stati rifatti dopo le correzioni della review.
