@@ -1691,8 +1691,8 @@ module Notcurses
     # Glifi larghi (ICH-488): il C disegna il codice con il blitter :half, che
     # scrive ogni cella da sola, e su una metà di un glifo largo lascerebbe
     # l'altra metà orfana. Il wrapper svuota l'altra metà, che diventa una
-    # cella vuota, come {Visual.blit_rgba}. Il controllo legge tutto il piano:
-    # il costo è proporzionale alla sua area.
+    # cella vuota, come {Visual.blit_rgba}. Il controllo legge i glifi larghi
+    # nelle rows x cols celle da (0, 0): il costo è proporzionale a quell'area.
     #
     # Bug di 3.0.17 non aggirato: con il cursore fuori da (0, 0) il C scrive
     # fuori dal proprio buffer di pixel (fill.c:612-616) e corrompe la heap.
@@ -1720,9 +1720,9 @@ module Notcurses
         bytes = data.b
         buf = ::FFI::MemoryPointer.new(:uchar, bytes.bytesize)
         buf.put_bytes(0, bytes)
-        prows, pcols = dims
-        # il codice può essere più piccolo dell'area: il controllo copre tutto il piano
-        version = keep_glyphs_whole(ptr, 0, 0, prows, pcols, all: true) do
+        # il C disegna il codice da (0, 0) (fill.c:625-629), in al massimo rows x cols celle; il codice può
+        # essere più piccolo: il controllo copre anche l'interno
+        version = keeping_glyphs_whole(0, 0, rows, cols, all: true) do
           FFI.ncplane_qrcode(ptr, ymax, xmax, buf, bytes.bytesize)
         end
         Util.check!(version, PlaneError, 'ncplane_qrcode (notcurses compilato senza qrcodegen?)')
