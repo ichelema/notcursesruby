@@ -822,6 +822,65 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(status.exitstatus).to eq(0), out
   end
 
+  # ICH-550. Un blit :pixel su un piano esistente non scrive celle, e dopo il blit ncplane_at_yx_cell fallisce su
+  # ogni cella (notcurses.c:274-277): il controllo dei glifi larghi di ICH-486 li prendeva per coperti a metà e
+  # svuotava la sola metà sinistra. Il resize e i due render tolgono il bitmap: le celle tornano leggibili.
+  def pixel_over_glyphs_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [24, 80, 640, 384]
+    STDIN.reopen(slave)
+    replies = {
+      "\e[6n" => "\e[5;1R", "\e[c" => "\e[?62;4;22c", "\e[14t" => "\e[4;384;640t", "\e[18t" => "\e[8;24;80t",
+      "\e[?2;1;0S" => "\e[?2;0;640;384S", "\e[?1;1;0S" => "\e[?1;0;256S"
+    }
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        data.scan(Regexp.union(replies.keys)) { |q| master.write(replies[q]) }
+      end
+    rescue IOError, Errno::EIO
+    end
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      puts "pixel #{nc.pixel_support}"
+      ffi = Notcurses::FFI
+      pl = nc.stdplane.create_child(rows: 4, cols: 10)
+      pl.putstr('漢字ab', y: 0, x: 0)
+      pl.putstr('VWXYZ', y: 1, x: 0)
+      rgba = "\xff".b * (32 * 80 * 4)
+      Notcurses::Visual.from_rgba(rgba, rows: 32, cols: 80) { |v| v.blit(plane: pl, blitter: :pixel, scale: :none) }
+      nc.render
+      pl.resize(2, 7)
+      2.times { nc.render }
+      halves = (0...6).map do |x|
+        cell = ffi::NcCell.new
+        next :illeggibile if ffi.ncplane_at_yx_cell(pl.to_ptr, 0, x, cell).negative?
+
+        half = if ffi.nccell_wide_left_p(cell) then :left
+               elsif ffi.nccell_wide_right_p(cell) then :right
+               else :none
+               end
+        ffi.nccell_release(pl.to_ptr, cell)
+        half
+      end
+      puts "riga 0 #{halves.join(' ')}"
+      # sopra una metà destra orfana in colonna 3 il C cancellerebbe anche la cella 4 (notcurses.c:1956-1962)
+      pl.putstr('中', y: 0, x: 2)
+      puts "scrittura larga #{pl.contents(y: 0, rows: 1) == '漢中ab'} #{pl.contents(y: 1, rows: 1) == 'VWXYZ'}"
+    end
+    puts 'fine'
+  RUBY
+
+  it 'un blit :pixel sopra glifi larghi li lascia interi (prima: metà destre orfane, tolto il bitmap)' do
+    out, status, timed_out = run_child(pixel_over_glyphs_script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('pixel sixel', 'riga 0 left right left right none none', 'scrittura larga true true', 'fine')
+    expect(status.exitstatus).to eq(0), out
+  end
+
   it 'il controllo dei bordi vale per il piano C: un glifo scritto da un secondo wrapper e tagliato non rompe la riga sotto' do
     out, status, timed_out = run_child(two_wrappers_script(1), timeout: 30)
     expect(timed_out).to be(false), out

@@ -65,7 +65,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   di ICH-450, con ogni blitter di celle. Il controllo legge solo i glifi a cavallo dei lati del rettangolo del blit,
   che il wrapper calcola con `ncvisual_geom` (ICH-549): il costo è proporzionale alle righe del blit, non all'area
   del piano. Con `:braille`, che non tocca le celle con soli pixel trasparenti, legge anche i glifi dentro il
-  rettangolo.
+  rettangolo. Con un blitter che diventa `:pixel` il C non scrive celle e il wrapper non fa il controllo (ICH-550):
+  i glifi larghi sotto il bitmap restano interi.
 - Un gestore `trap` che chiude il contesto o il `Direct` e poi torna al codice interrotto non fa più usare al C un
   puntatore già liberato (ICH-464). Il segnale poteva arrivare fra `to_ptr` e la chiamata C, o fra due chiamate C con
   lo stesso puntatore (per esempio `ncpile_render` e `ncpile_rasterize` dentro `Context#render`: 37 crash su 80

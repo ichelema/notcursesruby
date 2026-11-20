@@ -3122,7 +3122,7 @@ module Notcurses
       done = true
       rc
     ensure
-      rows, cols = dims if glyphs # il blocco può aver ridimensionato il piano (il blitter :pixel)
+      rows, cols = dims if glyphs # le dimensioni dopo il blocco
       glyphs&.each do |y, x|
         next if y >= rows || x + 1 >= cols
 

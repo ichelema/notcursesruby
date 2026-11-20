@@ -894,7 +894,10 @@ module Notcurses
     #   l'immagine, con y e x posizione nel genitore.
     # Il piano nuovo è del chiamante: chiudilo con {Plane#close}.
     #
-    # Glifi larghi: con plane: p, senza child:, come in {.blit_rgba}.
+    # Glifi larghi: con plane: p, senza child:, come in {.blit_rgba}. Con un
+    # blitter che diventa :pixel (ICH-550) il C non scrive celle: i glifi larghi
+    # sotto il bitmap restano interi nel piano, e tornano visibili quando un
+    # resize toglie il bitmap.
     #
     # Bug di 3.0.17 aggirato: con una regione diversa dall'immagine intera il C
     # ridimensiona dall'inizio dei dati ignorando begy/begx, poi legge oltre il
@@ -1262,12 +1265,14 @@ module Notcurses
       # di visual.c:432-437. I blitter di celle riscrivono ogni cella del
       # rettangolo, anche quelle trasparenti; :braille invece non tocca una
       # cella con soli pixel trasparenti (blit.c:1203-1206), e il controllo
-      # copre anche l'interno. Con :pixel il controllo copre tutto il piano.
+      # copre anche l'interno. Un blitter che il C risolve in :pixel non scrive
+      # celle, e dopo il blit le celle del piano non si leggono più
+      # (notcurses.c:274-277): nessun controllo, i glifi sotto il bitmap restano
+      # interi (ICH-550).
       def keeping_glyphs_whole(ctx, plane, src, vopts, &block)
         Guard.run do
           geom = FFI::NcVgeom.new
-          next yield if FFI.ncvisual_geom(ctx.to_ptr, src, vopts, geom).negative?
-          next plane.keeping_glyphs_whole(0, 0, *plane.dims, all: true, &block) if geom[:blitter] == FFI::NCBLIT_PIXEL
+          next yield if FFI.ncvisual_geom(ctx.to_ptr, src, vopts, geom).negative? || geom[:blitter] == FFI::NCBLIT_PIXEL
 
           y = vopts[:y]
           x = vopts[:x]
