@@ -36,9 +36,10 @@ module Notcurses
   # Thread#raise, Timeout) arrivano solo alle attese (sleep, IO, Queue, ...)
   # e alle chiamate che rilasciano il GVL ({Visual#stream} e le letture di un
   # file: {Visual.from_file}, {Visual#decode}, {Visual#decode_loop}), mai a
-  # metà delle altre chiamate del wrapper. Durante una lettura l'interruzione arriva al ritorno della
-  # chiamata C: il visual di {Visual.from_file} resta allocato, con il file
-  # aperto, fino alla fine del processo. Eccezione su Ruby 3.1 (su 4.0.7
+  # metà delle altre chiamate del wrapper. Durante una lettura l'interruzione
+  # sveglia la chiamata C e arriva al suo ritorno: {Visual.from_file}
+  # distrugge prima il visual eventualmente creato, che chiude il file, e il
+  # kill di {#close} arriva dopo. Eccezione su Ruby 3.1 (su 4.0.7
   # no): anche +String#grapheme_clusters+ e +each_grapheme_cluster+ sono
   # attese, e i metodi di testo del wrapper li usano (per esempio
   # {Plane#putstr}), quindi lì un'interruzione può fermarli a metà testo.

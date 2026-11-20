@@ -299,6 +299,40 @@ RSpec.describe Notcurses::Visual do
     end
 
     describe '.from_file e .open' do
+      # ICH-474: un'eccezione asincrona al ritorno di ncvisual_from_file arrivava prima che il wrapper incapsulasse
+      # il puntatore: il visual restava allocato, con il file aperto.
+      it 'un Thread#raise al ritorno di ncvisual_from_file distrugge il visual creato dal C' do
+        created = []
+        destroyed = []
+        allow(ffi).to receive(:ncvisual_destroy).and_wrap_original do |m, ptr|
+          destroyed << ptr.address
+          m.call(ptr)
+        end
+        paused = Queue.new
+        resume = Queue.new
+        tp = TracePoint.new(:c_return) do |t|
+          next unless t.method_id == :ncvisual_from_file && Thread.current[:pausa]
+
+          created << t.return_value.address
+          paused << true
+          resume.pop
+        end
+        tp.enable
+        a = Thread.new do
+          Thread.current[:pausa] = true
+          described_class.from_file(png) { :blocco }
+        rescue RuntimeError => e
+          e.message
+        end
+        paused.pop
+        a.raise(RuntimeError, 'interrotto')
+        resume << true
+        result = a.value
+        tp.disable
+        expect([result, destroyed]).to eq(['interrotto', created])
+        expect(created.first).not_to eq(0)
+      end
+
       it 'carica un\'immagine e ne decodifica il primo frame' do
         v = described_class.from_file(png)
         expect(v.dims).to eq([4, 2])

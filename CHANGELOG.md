@@ -231,7 +231,10 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 - `Visual.from_file`, `Visual#decode`, `Visual#decode_loop`, `Direct#render_frame`, `Direct#load_image`,
   `Direct::Image.new` e `Direct#stream` aprono e leggono il file con ffmpeg senza il GVL: con una FIFO, un URL o un
   file system lento gli altri thread Ruby girano. Prima una FIFO riempita da un thread dello stesso processo
-  bloccava la chiamata per sempre (ICH-312).
+  bloccava la chiamata per sempre (ICH-312). Un'eccezione asincrona (`Thread#raise`, `Timeout`, il kill di
+  `FdPlane#close`) sveglia la chiamata e arriva al suo ritorno: `Visual.from_file`, `Direct#load_image` e
+  `Direct::Image.new` liberano prima il visual o l'immagine creati dal C, con il file aperto (ICH-474); su Ruby 3.1,
+  3.2 e 3.3 un Ctrl-C può ancora lasciarli allocati.
 - `require 'notcurses'` funziona anche dove il `types.conf` della gem ffi non ha `wchar_t` o `uintmax_t` (FreeBSD,
   NetBSD, OpenBSD, Linux i386, ppc64, riscv64 e s390x): prima sollevava `TypeError`. Anche `Direct#box` non dipende
   più dalla mappa globale dei tipi di ffi (ICH-313).

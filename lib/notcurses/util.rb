@@ -603,5 +603,32 @@ module Notcurses
         resource.close
       end
     end
+
+    # Crea una risorsa con una chiamata C bloccante (+blocking: true+) e la
+    # incapsula con le eccezioni asincrone rimandate (ICH-474): un
+    # Thread#raise, un Timeout o un Thread#kill arrivano a risorsa già
+    # assegnata, e l'ensure la chiude. Durante la chiamata Ruby sveglia
+    # comunque il C (+open+ di una FIFO senza writer esce con EINTR). Su
+    # Ruby 3.1, 3.2 e 3.3 l'Interrupt di un segnale non si rimanda e può
+    # ancora perdere la risorsa. Con user si comporta come {with_resource}.
+    # @param user [Proc, nil] il blocco del chiamante
+    # @yieldreturn [#close] la risorsa creata
+    # @return [Object] la risorsa, o il valore di user
+    def create_resource(user = nil)
+      resource = nil
+      keep = false
+      begin
+        Thread.handle_interrupt(Object => :never) { resource = yield }
+      ensure
+        # punto di consegna dopo la chiamata C: in un thread con :on_blocking (FdPlane) il kill di close
+        # arriverebbe solo all'attesa successiva
+        sleep 0 if Thread.pending_interrupt?
+      end
+      result = user ? user.call(resource) : resource
+      keep = user.nil?
+      result
+    ensure
+      resource&.close unless keep
+    end
   end
 end

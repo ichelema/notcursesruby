@@ -1161,8 +1161,9 @@ module Notcurses
     # finché la chiamata non torna. Un {#close} durante la chiamata (da un
     # altro thread o dall'hook at_exit) rinvia lo stop al suo ritorno: il frame
     # restituito risulta già chiuso. Un'eccezione asincrona (Ctrl-C,
-    # Thread#raise, Timeout) arriva al ritorno della chiamata C: il frame creato
-    # dal C resta allocato fino alla fine del processo.
+    # Thread#raise, Timeout) sveglia la chiamata C e arriva al suo ritorno:
+    # render_frame abbandona il frame eventualmente creato, come {Frame#close}
+    # (la memoria C resta allocata: in 3.0.17 non esiste un free sicuro).
     #
     # @param path [String] file immagine
     # @param blitter [Symbol, Integer] come in {#render_image}
@@ -1183,10 +1184,12 @@ module Notcurses
         s = Util.scale_value(scale)
         Util.nonneg_int!(max_rows, 'max_rows')
         Util.nonneg_int!(max_cols, 'max_cols')
-        v = FFI.ncdirect_render_frame(ptr, file, b, s, max_rows, max_cols)
-        raise DirectError, "ncdirect_render_frame(#{file.inspect}) ha restituito NULL" if v.null?
+        Util.create_resource do
+          v = FFI.ncdirect_render_frame(ptr, file, b, s, max_rows, max_cols)
+          raise DirectError, "ncdirect_render_frame(#{file.inspect}) ha restituito NULL" if v.null?
 
-        Frame.new(v, self)
+          Frame.new(v, self)
+        end
       end
     end
 
@@ -1194,9 +1197,12 @@ module Notcurses
     # (+ncdirectf_from_file+). La chiamata C apre e legge il file senza il GVL:
     # gli altri thread Ruby girano, ma non devono usare lo stesso contesto
     # finché la chiamata non torna. Un'eccezione asincrona (Ctrl-C,
-    # Thread#raise, Timeout) arriva al ritorno della chiamata C: l'immagine
-    # creata dal C resta allocata, con il file aperto, fino alla fine del
-    # processo.
+    # Thread#raise, Timeout) sveglia la chiamata C (per esempio l'apertura di
+    # una FIFO senza writer) e arriva al suo ritorno: load_image libera
+    # l'immagine eventualmente creata, che chiude il file, prima di
+    # sollevarla. Limite: su Ruby 3.1, 3.2 e 3.3 l'Interrupt di un segnale
+    # (Ctrl-C) non si rimanda, e l'immagine creata dal C può restare
+    # allocata, con il file aperto, fino alla fine del processo.
     #
     # @param path [String] file immagine o video
     # @return [Image] senza blocco; con un blocco, il valore del blocco
@@ -1205,7 +1211,7 @@ module Notcurses
     #   processo non ha il multimedia
     # @raise [TypeError, ArgumentError] se path non è valido
     # @raise [ClosedError] se il contesto è chiuso
-    def load_image(path, &block) = Util.with_resource(Image.new(self, path), &block)
+    def load_image(path, &block) = Util.create_resource(block) { Image.new(self, path) }
 
     # Disegna tutti i frame di un video (o di una GIF animata) uno sopra
     # l'altro, alla velocità della decodifica: per rallentare, attendi nel
@@ -1382,9 +1388,12 @@ module Notcurses
       # Carica il file (+ncdirectf_from_file+). Usa di solito {Direct#load_image}.
       # La chiamata C apre e legge il file senza il GVL: gli altri thread Ruby
       # girano, ma non devono usare lo stesso contesto finché la chiamata non
-      # torna. Un'eccezione asincrona (Ctrl-C, Thread#raise, Timeout) arriva al
-      # ritorno della chiamata C: l'immagine creata dal C resta allocata, con il
-      # file aperto, fino alla fine del processo.
+      # torna. Un'eccezione asincrona (Ctrl-C, Thread#raise, Timeout) sveglia
+      # la chiamata C e arriva al suo ritorno: new libera l'immagine
+      # eventualmente creata, che chiude il file, prima di sollevarla. Limite:
+      # su Ruby 3.1, 3.2 e 3.3 l'Interrupt di un segnale (Ctrl-C) non si
+      # rimanda, e l'immagine creata dal C può restare allocata, con il file
+      # aperto, fino alla fine del processo.
       #
       # @param direct [Direct] contesto aperto
       # @param path [String] file immagine o video
@@ -1396,15 +1405,18 @@ module Notcurses
         Guard.run do
           dptr = Util.ptr_of(direct, Direct, 'direct')
           file = Args.path(path)
-          ptr = FFI.ncdirectf_from_file(dptr, file)
-          if ptr.null?
-            raise DirectError, "ncdirectf_from_file(#{file.inspect}) ha restituito NULL (file mancante o non " \
-                               'decodificabile? contesto senza multimedia?)'
-          end
+          Util.create_resource do
+            ptr = FFI.ncdirectf_from_file(dptr, file)
+            if ptr.null?
+              raise DirectError, "ncdirectf_from_file(#{file.inspect}) ha restituito NULL (file mancante o non " \
+                                 'decodificabile? contesto senza multimedia?)'
+            end
 
-          @ptr = ptr
-          @closed = false
-          @owner = nil
+            @ptr = ptr
+            @closed = false
+            @owner = nil
+            self
+          end
         end
       end
 

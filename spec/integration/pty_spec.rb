@@ -651,6 +651,75 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(status.exitstatus).to eq(0), out
   end
 
+  # ICH-474: un'eccezione asincrona consegnata al ritorno di ncvisual_from_file o ncdirectf_from_file, prima che il
+  # wrapper incapsulasse il puntatore, lasciava allocato il visual con il file aperto. Il writer è un processo
+  # esterno: apre subito la FIFO e scrive l'immagine dopo 0,6 s; l'eccezione parte a 0,2 s.
+  def fifo_raise_script = <<~'RUBY'
+    require 'notcurses'
+    require 'rbconfig'
+    require 'tmpdir'
+    $stdout.sync = true
+    dir = Dir.mktmpdir
+    fd_dir = File.directory?('/proc/self/fd') ? '/proc/self/fd' : '/dev/fd'
+    # il blocco riceve la FIFO e restituisce l'esito, o solleva l'eccezione asincrona
+    interrupted = lambda do |name, &block|
+      fifo = File.join(dir, "#{name}.png")
+      File.mkfifo(fifo)
+      writer = spawn(RbConfig.ruby, '-e', 'File.open(ARGV[0], "w") { |f| sleep 0.6; f.write(File.binread(ARGV[1])) }',
+                     fifo, PNG)
+      result = begin
+        block.call(fifo)
+      rescue RuntimeError => e
+        e.message
+      end
+      Process.wait(writer)
+      puts "#{name}: #{result}"
+    end
+    raise_in = ->(thread) { Thread.new { sleep 0.2; thread.raise(RuntimeError, 'interrotto') } }
+    fds = nil
+    Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                            drain_input: true) do |nc|
+      fds = Dir.children(fd_dir).size
+      interrupted.call('from_file') do |fifo|
+        raise_in.call(Thread.current)
+        Notcurses::Visual.from_file(fifo) { }
+        'nessuna eccezione'
+      end
+      interrupted.call('fdplane') do |fifo|
+        started = Queue.new
+        r, w = IO.pipe
+        nc.stdplane.create_child(rows: 2, cols: 10) do |plane|
+          f = Notcurses::FdPlane.new(plane, r, on_data: ->(_, _) { started << true; Notcurses::Visual.from_file(fifo) { } })
+          w.write('x')
+          started.pop
+          sleep 0.2
+          f.close # il kill del thread di lettura arriva al ritorno della chiamata C
+          w.close
+          'close'
+        end
+      end
+      puts "Context: descrittori in più #{Dir.children(fd_dir).size - fds}"
+    end
+    Notcurses::Direct.open(output: '/dev/null', termtype: 'xterm-256color') do |d|
+      fds = Dir.children(fd_dir).size
+      interrupted.call('load_image') do |fifo|
+        raise_in.call(Thread.current)
+        d.load_image(fifo) { }
+        'nessuna eccezione'
+      end
+      puts "Direct: descrittori in più #{Dir.children(fd_dir).size - fds}"
+    end
+  RUBY
+
+  it "un'eccezione asincrona durante Visual.from_file o Direct#load_image non lascia il file aperto" do
+    png = File.expand_path('../fixtures/visual/rgbw.png', __dir__)
+    out, status, timed_out = run_child("PNG = #{png.dump}\n#{fifo_raise_script}", timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('from_file: interrotto', 'fdplane: close', 'Context: descrittori in più 0',
+                           'load_image: interrotto', 'Direct: descrittori in più 0')
+    expect(status.exitstatus).to eq(0), out
+  end
+
   # Un figlio di fork esce da Context.open: il suo close non deve toccare il
   # terminale del padre (reset, \e[?1049l, termios di init).
   def fork_script = <<~'RUBY'
