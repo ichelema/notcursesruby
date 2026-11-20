@@ -754,7 +754,9 @@ module Notcurses
     # all'immagine ruotata: contano solo i pixel con RGBA diverso da 0, e si
     # tagliano i bordi di pixel con i quattro byte a 0 (un pixel trasparente
     # con un colore, alpha 0 e RGB diverso da 0, conta). notcurses garantisce
-    # solo ±π/2.
+    # solo ±π/2. Quattro rotazioni di π/2 ridanno l'immagine di partenza solo
+    # se non ha bordi di pixel a 0: la prima rotazione li taglia, e le
+    # successive ruotano l'immagine ritagliata.
     #
     # Bug di 3.0.17 aggirati: +ncvisual_rotate+ perde la prima riga e la prima
     # colonna di pixel a qualsiasi angolo, anche 0 (visual.c:746 confronta con
