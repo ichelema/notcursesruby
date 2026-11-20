@@ -39,6 +39,8 @@
   `Refs ICH-5xx`, push). Poi aggiungi `Fixes ICH-549` ... `Fixes ICH-552` al corpo della PR #29 e lancia
   `/trinity:workflow:3_independent-review ICH-458 ICH-486 ICH-222 ICH-223 ICH-488 opus`. Prima del merge: suite con i
   semi 1234, 4242, 7, coverage e CI verde (non rifatti dopo la review).
+- Nata dal lotto 6, in Backlog, Low, da assegnare a un lotto successivo (non blocca la PR #29): ICH-554 (`Visual#rotate`
+  chiama il C una volta per pixel, circa 0,9 s su 1024x1024; accelerarlo può servire un cambio del layer FFI, regola 1).
 - Alla chiusura del lotto 6: 3 bug di notcurses nuovi nelle tabelle di `RICONSEGNA.md` (elenco in
   `memory/backlog-issue.md`); controlla che ICH-542 (`Refs` nella PR) non vada a Done con il merge. ICH-552 e la
   spec di `qrcode` si provano solo con una build di notcurses con libqrcodegen (submodule, `-DUSE_QRCODEGEN=on`).

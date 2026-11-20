@@ -711,7 +711,7 @@ dalla review, non sono fatte sullo stesso branch. Ognuna ha una relazione `block
 - Dell'utente: F7 (`from_palidx` con una voce `Channel.palindex`) solleva `ArgumentError`, non solo documentato; F1 e
   F2 corretti subito, con una review mirata per ciascuno, solo sul commit del fix; F3, F4, F7 e F8 aperti come issue
   (ICH-549..552) e sviluppati in una sessione nuova; la PR #29 resta bloccata fino ad allora; F9 (costo di `rotate`,
-  una chiamata C per pixel) resta documentato nello YARD, senza issue.
+  una chiamata C per pixel) è aperto come ICH-554 (Low, Performance, `related` a ICH-223), che non blocca la PR.
 - Mie: `RICONSEGNA.md` non si aggiorna nel branch ma su `master` alla chiusura del lotto, come nei lotti precedenti.
   Nella review mirata il changeset è il solo commit del fix, con baseline il suo genitore.
 
