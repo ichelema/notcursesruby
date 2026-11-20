@@ -751,8 +751,10 @@ module Notcurses
     # --- trasformazioni ---
 
     # Ruota il visual, come +ncvisual_rotate+; le dimensioni si adattano
-    # all'immagine ruotata (solo i pixel diversi da 0 contano: i bordi
-    # trasparenti vengono tagliati). notcurses garantisce solo ±π/2.
+    # all'immagine ruotata: contano solo i pixel con RGBA diverso da 0, e si
+    # tagliano i bordi di pixel con i quattro byte a 0 (un pixel trasparente
+    # con un colore, alpha 0 e RGB diverso da 0, conta). notcurses garantisce
+    # solo ±π/2.
     #
     # Bug di 3.0.17 aggirati: +ncvisual_rotate+ perde la prima riga e la prima
     # colonna di pixel a qualsiasi angolo, anche 0 (visual.c:746 confronta con
@@ -762,8 +764,10 @@ module Notcurses
     # pixel attorno al centro dell'immagine (visual.c:658-705). Il wrapper non
     # lo chiama: ripete in Ruby l'algoritmo del C con il confronto corretto e
     # con il riquadro ruotato attorno al centro dell'immagine. Ai multipli di
-    # π/2 nessun pixel opaco si perde. Le dimensioni seguono il riquadro vero
-    # dei pixel diversi da 0: +ncvisual_bounding_box+ del C (visual.c:537-628)
+    # π/2 nessun pixel opaco si perde; agli altri angoli più pixel possono
+    # finire nella stessa posizione e sovrapporsi, come nel C. Le dimensioni
+    # seguono il riquadro vero dei pixel diversi da 0:
+    # +ncvisual_bounding_box+ del C (visual.c:537-628)
     # a volte lo calcola più stretto (due pixel sulla diagonale di un 2x2 danno
     # una sola colonna), e in quei casi le dimensioni sono diverse da quelle
     # del C. Il wrapper legge ogni pixel con +ncvisual_at_yx+, porta il visual alle
@@ -1266,7 +1270,7 @@ module Notcurses
       # (ICH-549). Il rettangolo viene da ncvisual_geom, la funzione con cui
       # ncvisual_blit lo calcola (visual.c:1155): se fallisce qui, il blit
       # fallisce prima di scrivere. Con y: o x: simbolici la posizione è quella
-      # di visual.c:432-437. I blitter di celle riscrivono ogni cella del
+      # di visual.c:435-440. I blitter di celle riscrivono ogni cella del
       # rettangolo, anche quelle trasparenti; :braille invece non tocca una
       # cella con soli pixel trasparenti (blit.c:1203-1206), e il controllo
       # copre anche l'interno. Un blitter che il C risolve in :pixel non scrive

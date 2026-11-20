@@ -52,7 +52,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   notcurses 3.0.17 con libqrcodegen: un codice dal cursore in (0, 0) che copre la metà sinistra lasciava la metà
   destra, e una scrittura larga successiva cancellava la prima cella della riga sotto. Ora l'altra metà diventa una
   cella vuota. Sulla build senza qrcodegen (quella di Arch Linux) la spec viene saltata.
-- `Visual.from_palidx` ora dà ai pixel i colori della palette e `Visual#rotate` non perde più pixel (ICH-223):
+- `Visual.from_palidx` ora dà ai pixel i colori della palette e `Visual#rotate` ai multipli di π/2 non perde più pixel
+  (ICH-223):
   `ncvisual_from_palidx` di 3.0.17 ignora la palette, e `ncvisual_rotate` perde la prima riga e la prima colonna
   (confronta con `>` invece di `>=`, visual.c:746, anche a 0 radianti) e, con bordi trasparenti diversi sui lati,
   anche pixel opachi (ruota il riquadro dei pixel opachi attorno al suo centro e i pixel attorno al centro
