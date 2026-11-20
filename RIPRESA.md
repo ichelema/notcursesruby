@@ -6,7 +6,7 @@
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
 > `git show ad0315b:RIPRESA.md`; quello dei lotti della revisione in `git show 8a4b5f7:RIPRESA.md`.
 
-## Stato e prossimo step (aggiornato il 2026-11-20, lotto 6 fatto, prossimo lotto 7)
+## Stato e prossimo step (aggiornato il 2026-11-20, lotto 6 fatto, lotto 7 in corso)
 
 - Lotto 1 fatto: PR #22, merge `74deb80`. Lotto 2 fatto: PR #23, merge `cb90c4f`. Lotto 2b fatto: PR #24, merge
   `6374e41`. Lotto 2c fatto: PR #25, merge `d2c5f7c`. Lotto 3 fatto: PR #26, merge `e15b40a` (ICH-454, ICH-456,
@@ -45,9 +45,15 @@
   Backlog: ICH-560 (`fflush` nel layer FFI, regola 1), ICH-561, ICH-562, ICH-567, ICH-568, ICH-569.
 - **Lotto 6 fatto:** PR #29, merge `0730865` (2026-11-20). Chiuso: verifiche, `RICONSEGNA.md`, log. Retain in
   Hindsight fatto il 2026-11-20 (cause radice e decisioni del lotto, tag `repo:notcursesruby`).
-- **Prossimo step:** lotto 7 (`bug`): ICH-441, ICH-226, ICH-474, ICH-539; chiedi all'utente se aggiungere ICH-568 e
-  ICH-569 (eccezioni asincrone, nate dal lotto 6). Spiega le issue, poi
-  `/trinity:workflow:1_create-worktree master <ID...> opus`.
+- **Lotto 7 in corso** (`bug`, 2026-11-20): ICH-441, ICH-226, ICH-474, ICH-539, ICH-568, ICH-569 (le ultime due
+  aggiunte dall'utente). PR #30 aperta, branch `bug/ICH-441-226-474-539-568-569-opus` su `c08d17a`, worktree
+  `.claude/worktrees/bug+ICH-441-226-474-539-568-569-opus` (submodule `notcurses/` clonato in locale dal checkout
+  principale). Scelte dell'utente: ICH-441 errore in `Process.daemon` con un contesto aperto (non lo stop prima del
+  fork); ICH-539 chiusa con la sola documentazione (le finestre esistono anche su Ruby 3.3: solo da 3.4
+  `handle_interrupt` rinvia SIGINT). Verifica locale su `c08d17a`: 1257 esempi, 0 fallimenti, semi 1234, 4242 e 7,
+  coverage 98,14 %, RuboCop 0, YARD 100 %. Retain in Hindsight fatto.
+- **Prossimo step:** `/trinity:workflow:2_work-simplify ICH-441 ICH-226 ICH-474 ICH-539 ICH-568 ICH-569 opus`, poi
+  la review; il merge resta all'utente.
 - Nata dal lotto 6, in Backlog, Low, da assegnare a un lotto successivo (non blocca la PR #29): ICH-554 (`Visual#rotate`
   chiama il C una volta per pixel, circa 0,9 s su 1024x1024; accelerarlo può servire un cambio del layer FFI, regola 1).
 - Alla chiusura del lotto 6: 3 bug di notcurses nuovi nelle tabelle di `RICONSEGNA.md` (elenco in
