@@ -274,8 +274,9 @@ corto e sicuro, altrimenti si documenta nel YARD. I più importanti:
 
 Bug noti **non** aggirati (documentati nel YARD): dopo il primo scroll di un piano `duplicate`, i resize (anche
 l'autogrow), `rotate_*`, il merge sulla destinazione e `FadeContext` permutano o perdono righe (`logrow`);
-`ncvisual_from_palidx` non usa i colori della palette; `ncvisual_rotate` perde la prima riga e la prima colonna;
-Backspace del reader non cancella la colonna 0; l'intestazione di `Tabbed` non segue il resize.
+Backspace del reader non cancella la colonna 0; l'intestazione di `Tabbed` non segue il resize. `ncvisual_from_palidx`
+(non usa i colori della palette) e `ncvisual_rotate` (perde la prima riga e la prima colonna) sono aggirati dal lotto 6
+delle issue in Backlog.
 
 ### API volutamente non wrappate
 
@@ -1261,6 +1262,16 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
   finestra al ritorno di `Array#pop`, più tre LOW. Tutti corretti; due limiti documentati e aperti in Backlog
   (ICH-540, ICH-541). I fix del round 1 li ha scritti l'orchestratore: la review del round 2 non era indipendente
   dall'autore.
+  Lotto 6: tre sessioni. Una `/trinity:workflow:3_independent-review` (orchestratore, verify Sonnet) ha trovato 9
+  finding: F1 (segfault di `Direct#close` con lo stdout su un terminale) e F2 (`rotate` perdeva pixel) corretti
+  subito; 4 issue nate dalla review (ICH-549..552) fatte sullo stesso branch prima del merge (scelta dell'utente).
+  Poi una seconda review dell'orchestratore (3 CONFIRMED, corretti nel loop) e un
+  `/trinity:workflow:4_review-fix-loop` da 3 round con il solo reviewer GPT: il reviewer Sonnet è fallito per credito
+  esaurito, e l'utente ha scelto di proseguire con GPT; il round 2 ha aspettato circa 50 minuti il limite d'uso di
+  GPT. Round 1: 11 finding (7 corretti, 3 issue, 1 scartato); round 2: 9 (5 corretti, 3 limiti documentati, 1
+  issue); round 3: 4 (1 LOW corretto, 2 issue, 1 HIGH). Il HIGH (segfault di `Direct#stop` con il fd 1 in sola
+  lettura) è corretto dopo il loop in `7ae8438`, con una review mirata di GPT (approvabile con riserve, il LOW in
+  `4f6af76`). I fix li ha scritti l'orchestratore.
 
 ### Lotti
 
@@ -1273,6 +1284,7 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
 | 3 | [#26](https://github.com/ichelema/notcursesruby/pull/26) | `e15b40a` | ICH-454, ICH-456, ICH-455; ICH-536, ICH-537, ICH-538 (nate dal lotto 3, sullo stesso branch per scelta dell'utente) | con kitty notcurses alza il segnale anche per la ripetizione e il rilascio e lo decide da un flag privato che `stty` non cambia (`in.c:506-516`, `termdesc.c:390`); con la coda di input piena (8192 eventi) scarta il tasto nuovo senza frenare chi scrive (`in.c:523-527`); due assert con le sequenze escape spezzate fra due letture (`in.c:803`, `in.c:2229`), non aggirati; tabella "Bug e limiti di notcurses 3.0.17 trovati nella Fase 3" |
 | 4 | [#27](https://github.com/ichelema/notcursesruby/pull/27) | `494ffe0` | ICH-463, in Blocked: la PR documenta il limite e non chiude la issue | un carattere UTF-8 di più byte spezzato fra due letture fa girare per sempre il thread di input: `process_input` restituisce 0 (servono altri byte) e `process_melange` esce dal ciclo solo con un valore negativo (`in.c:2427`); `get` non riceve più eventi e `notcurses_stop` non ritorna (`in.c:2662`). Non aggirato; correzione di una riga proposta upstream (issue [#2947](https://github.com/dankamongmen/notcurses/issues/2947), PR [#2954](https://github.com/dankamongmen/notcurses/pull/2954)); tabella "Bug e limiti di notcurses 3.0.17 trovati nella Fase 3" |
 | 5 | [#28](https://github.com/ichelema/notcursesruby/pull/28) | `3d3e0e9` | ICH-475, ICH-464; ICH-540 e ICH-541 nate dalla review, in Backlog | nessuno |
+| 6 | [#29](https://github.com/ichelema/notcursesruby/pull/29) | `0730865` | ICH-458, ICH-486, ICH-222, ICH-223, ICH-488; ICH-549, ICH-550, ICH-551, ICH-552 (nate dalla review, sullo stesso branch per scelta dell'utente); ICH-542 (`Refs`) resta in Backlog | `ncplane_qrcode` con il cursore fuori da (0, 0) scrive fuori dal buffer di pixel (`fill.c:612-616`, ICH-542, non aggirato); `rotate_bounding_box` ruota il riquadro attorno al proprio centro e i pixel attorno al centro dell'immagine (`visual.c:658-705`): `ncvisual_rotate` perde pixel opachi con bordi trasparenti asimmetrici; `ncvisual_bounding_box` a volte calcola un riquadro più stretto (`visual.c:537-628`); tabelle "Visual" e "Piani" di `memory/fase2-wrapper-idiomatico.md` |
 
 ### Cambi dell'API pubblica
 
@@ -1376,6 +1388,25 @@ del lotto 3. Comportamenti nuovi:
   `Context#in_callback?` (lotto 5).
 - Limiti documentati nello YARD: il close di un piano o di un widget da un gestore `trap` che torna non è rinviato
   (ICH-540); un Fiber sospeso dentro un'operazione tiene lo stop in attesa (ICH-541) (lotto 5).
+- `Direct#stream` con `:pixel`, su un terminale con la grafica a pixel, fa posto sotto il cursore prima di ogni frame
+  più basso dello schermo: i frame restano sulle righe del primo anche in fondo allo schermo. Con `align: :left` il
+  primo frame parte dalla colonna del cursore e i successivi dalla colonna 0 (scelta dell'utente). Un movimento del
+  cursore fallito solleva `DirectError` (lotto 6, ICH-458).
+- `Visual.blit_rgba`, `.blit_bgrx`, `.blit_rgb_loose`, `.blit_rgb_packed` e `Visual#blit` su un piano esistente
+  svuotano l'altra metà dei glifi larghi coperti a metà. Il controllo legge i glifi sui lati del rettangolo di
+  `ncvisual_geom` (con `:braille` anche l'interno: 20 ms su 60x200, ICH-556); un blit 1x1 costa 0,012-0,017 ms contro
+  0,004 su `master` (ICH-562). Un blit `:pixel` non si controlla (lotto 6, ICH-486, ICH-549, ICH-550).
+- `Direct#close` e `#stop` con `output:` non scrivono più il reset di `ncdirect_stop` sullo stdout: durante lo stop il
+  fd 1 punta a `/dev/null`. Limiti nello YARD: un altro thread che scrive sullo stdout durante lo stop, o un processo
+  figlio creato in quel momento, perde l'output; il buffer stdio della libc si perde (ICH-560); senza descrittori liberi
+  il reset arriva sullo stdout; un fd 1 in sola lettura non si sposta. `Direct::Frame#close` continua a non liberare la
+  memoria (won't fix) (lotto 6, ICH-222).
+- `Visual.from_palidx` dà ai pixel i colori della palette e solleva `ArgumentError` per una voce `Channel.palindex`
+  (ICH-551). `Visual#rotate` è in Ruby: nessun pixel opaco si perde ai multipli di π/2, i bordi di pixel a 0 si
+  tagliano, una chiamata C per pixel (ICH-554); un'eccezione asincrona arriva dopo la scrittura (lotto 6, ICH-223).
+- `Plane#qrcode` sopra metà di un glifo largo svuota l'altra metà; con il cursore fuori da (0, 0) il C corrompe la heap
+  (documentato, ICH-542) (lotto 6, ICH-488, ICH-552).
+- Nuovo metodo `@api private`: `Plane#keeping_glyphs_whole(top, left, height, width, all: false)` (lotto 6).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
@@ -1386,6 +1417,7 @@ del lotto 3. Comportamenti nuovi:
 - Lotto 3: nessuno.
 - Lotto 4: nessuno.
 - Lotto 5: nessuno.
+- Lotto 6: nessuno. `lib/notcurses/direct.rb` usa `fcntl` della libreria standard (regola 10).
 
 ### Issue aperte nate dai lotti
 
@@ -1433,3 +1465,19 @@ del lotto 3. Comportamenti nuovi:
   Backlog, limite nello YARD).
 - ICH-541 — un Fiber sospeso dentro un'operazione del wrapper (per esempio un Enumerator esterno su `Direct#stream`)
   tiene lo stop in attesa per sempre, anche all'uscita (lotto 5, review round 1; Low, in Backlog, limite nello YARD).
+- ICH-542 — `Plane#qrcode` con il cursore fuori da (0, 0): il C scrive fuori dal buffer di pixel (lotto 6, High, in
+  Backlog; documentato nello YARD).
+- ICH-549, ICH-550, ICH-551, ICH-552 — nate dalla review del lotto 6, fatte sullo stesso branch (Done nel lotto 6).
+- ICH-554 — `Visual#rotate` chiama il C una volta per pixel, circa 0,9 s su 1024x1024 (lotto 6; Low, in Backlog).
+- ICH-556 — il controllo dei blit `:braille` legge tutte le celle del rettangolo (lotto 6; Low, in Backlog).
+- ICH-560 — `Direct#close` perde il buffer stdio della libc durante lo stop: serve `fflush` nel layer FFI (regola 1)
+  (lotto 6, review-fix loop; Medium, in Backlog).
+- ICH-561 — un blit `:pixel` che restringe il piano taglia un glifo largo (lotto 6, review-fix loop; Medium, in
+  Backlog; anche su `master`).
+- ICH-562 — un blit 1x1 crea due `ncvisual` (lotto 6, review-fix loop; Low, in Backlog).
+- ICH-567 — `Direct#stream` con `:pixel` e frame di altezze diverse, uno alto quanto lo schermo (lotto 6, review-fix
+  loop; Medium, in Backlog).
+- ICH-568 — il rollback di `Direct.new` con un secondo `Thread#raise` durante il ripristino dello stdout lascia il
+  registro occupato (lotto 6, review-fix loop; Medium, in Backlog; con ICH-226 nel lotto 7).
+- ICH-569 — un'eccezione asincrona dopo la creazione del `ncvisual` temporaneo di `Visual.blit_rgba` lo perde (lotto 6,
+  review-fix loop; Medium, in Backlog; con ICH-474 nel lotto 7).

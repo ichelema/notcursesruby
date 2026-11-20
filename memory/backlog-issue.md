@@ -686,7 +686,7 @@ Implementazione il 2026-11-18 e 19 in una sessione, semplificazione e review il 
   4242, 7; coverage 98,22 %; RuboCop 0; gem costruita; YARD senza warning; `ruby -w` senza warning;
   `git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto; CI di `master` verde.
 
-## Lotto 6 — ICH-458, ICH-486, ICH-222, ICH-223, ICH-488 (PR #29, aperta e bloccata)
+## Lotto 6 — ICH-458, ICH-486, ICH-222, ICH-223, ICH-488, poi ICH-549..552 (PR #29, merge `0730865`)
 
 Implementazione il 2026-11-19 in una sessione, review e correzioni il 2026-11-20 in un'altra. Branch
 `bug/ICH-458-486-222-223-488-opus`, worktree `.claude/worktrees/bug+ICH-458-486-222-223-488-opus`. La PR #29 non
@@ -827,3 +827,46 @@ Letture di `ncplane_at_yx_cell` per un blit 1x1: 28 su un piano 4x8 e 11940 su u
   `qrcode` passano, quella di ICH-488 gira.
 - Review indipendente non ancora fatta: `/trinity:workflow:3_independent-review ICH-458 ICH-486 ICH-222 ICH-223
   ICH-488 opus`.
+
+### Quarta parte: review dell'orchestratore e review-fix loop con GPT (2026-11-20)
+
+- Review dell'orchestratore (`/trinity:workflow:3_independent-review`, verify di un `trinity:reviewer` Sonnet): 7
+  candidati, 3 CONFIRMED (spec dell'allineamento orizzontale debole, riferimento a `visual.c` sbagliato, `mute_stdout!`
+  con `$stdout` chiuso), 2 PLAUSIBLE, 2 REFUTED (il controllo dell'interno per `:braille` serve; gli altri blitter di
+  celle riscrivono o rilasciano ogni cella). Il costo dei blit `:braille` è diventato ICH-556 (scelta dell'utente).
+- `/trinity:workflow:4_review-fix-loop`, 3 round, solo `gpt-bridge:reviewer`: il `trinity:reviewer` Sonnet è fallito
+  per credito esaurito (billing_error) e l'utente ha scelto di proseguire con GPT. Il round 2 si è fermato due volte
+  per `usage_limit_reached` del piano ChatGPT (finestra di 5 ore): ripreso dopo circa 50 minuti con un timer.
+  - Round 1 (11 finding): corretti in `f0c55f5`..`d33421f` i casi limite dello stdout in `Direct#close` (`$stdout`
+    chiuso o senza `flush`, close concorrente che perdeva il claim, fd 1 riusato da `fopen`, `FD_CLOEXEC`),
+    i movimenti falliti di `stream`, la prova di qrcodegen dal C, la spec dell'allineamento, lo YARD di `rotate`.
+    Issue: ICH-560 (buffer stdio della libc: serve `fflush`, il layer FFI non lo ha; l'utente ha rifiutato la
+    domanda sul layer FFI e ha detto di continuare: nessun cambio della Fase 1), ICH-561, ICH-562. Scartato:
+    `Visual.blit_palindex` (non esiste).
+  - Round 2 (9 finding): corretti in `dc4453f`..`3df01a7` il `Thread#raise` fra il ripristino dello stdout e
+    `mark_closed!` (regressione del fix del round 1), la risalita fallita di `stream` con `:pixel`, `rotate`
+    interrotto, la spec del terminale foot (`:quad`, `:sextant`, `:octant` veri), il controllo del fd 1 con `fstat`.
+    Documentati come limiti: processo figlio creato durante lo stop, fd 1 non spostabile, frame non liberato dopo un
+    movimento fallito. Issue: ICH-567.
+  - Round 3 (4 finding): LOW corretto senza review (`361d90e`, YARD di `rotate`); issue ICH-568 e ICH-569; HIGH:
+    `Direct#stop` con il fd 1 in sola lettura va in SIGSEGV. PR in draft.
+- HIGH corretto su richiesta dell'utente in `7ae8438`: `mute_stdout!` non sposta un fd 1 in sola lettura (`Fcntl`).
+  Review mirata di GPT: approvabile con riserve; il LOW (con `vt52` non c'è un reset e `close` riesce) in `4f6af76`.
+
+#### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| La spec del fd 1 chiuso non riproduceva F5 | con il fd 1 chiuso all'exec Ruby lo prende per una pipe interna; `STDOUT.close` non chiude i fd da 0 a 2 | nel figlio `close(1)` della libc via FFI |
+| `Direct#stop` in SIGSEGV con il fd 1 `O_RDONLY` | `IO#reopen` fra modi d'accesso diversi va in segfault anche da un IO (Ruby 4.0.7) | non spostare un fd 1 in sola lettura |
+| Commit spezzati per fix con un ciclo `for f in $list` | zsh non divide le parole di una variabile; la sintassi `${(@f)...}` la blocca il controllo di sicurezza | lista dei file scritta per esteso a ogni commit |
+| `rm -rf` in un comando | errore mio: un hook mette in coda ogni `rm` | nessun `rm`; cartelle nuove nello scratchpad |
+| GPT `usage_limit_reached` | limite del piano ChatGPT, finestra di 5 ore | timer in background fino a `resets_at`, poi un reviewer nuovo |
+
+#### Verifica finale (`master` su `0730865`, 2026-11-20)
+
+- 1248 esempi, 0 fallimenti, 1 pending (`qrcode` sullo stub), in ordine normale e con i semi 1234, 4242 e 7; coverage
+  98,17 % di righe; RuboCop 0 offense (107 file); YARD senza warning, 100 %; `ruby -w` pulito; gem costruita;
+  `git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto. CI verde sulla PR e su `master`.
+- Linear: le 9 issue del lotto a Done; ICH-542 riportata da In Progress a Backlog (automazione). Worktree e branch,
+  anche remoto, rimossi.

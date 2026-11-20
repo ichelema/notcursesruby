@@ -224,7 +224,7 @@ copertura.
 
 | Bug | Workaround |
 | --- | --- |
-| `ncdirect_stop` scrive il proprio reset (`\e[39;49m\e(B\e[m`) sullo stdout del processo anche quando l'output è un file (`direct.c:841`) | documentato |
+| `ncdirect_stop` scrive il proprio reset (`\e[39;49m\e(B\e[m`) sullo stdout del processo anche quando l'output è un file (`direct.c:841`) | dal lotto 6 delle issue in Backlog (ICH-222): durante lo stop il fd 1 punta a `/dev/null` (`mute_stdout!`); un fd 1 in sola lettura non si sposta (`IO#reopen` fra modi d'accesso diversi va in segfault in Ruby). Limiti nello YARD di `Direct#close`; il buffer stdio della libc si perde (ICH-560) |
 | `ncdirect_vline` con `UINT_MAX` va in SIGFPE; oltre `INT_MAX` le linee fanno fino a 2^32 iterazioni con colori sbagliati (`direct.c:1351`) | lunghezza massima `INT_MAX - 1` |
 | `ncdirect_vline` torna indietro di una colonna dopo ogni carattere (`direct.c:1389`) | un solo EGC largo una colonna |
 | Dopo uno ZWJ (U+200D) `ncdirect_putegc` e `ncstrwidth` uniscono tutto il resto del testo in un solo EGC (`egcpool.h:126-128`) | `putegc` passa al C solo il primo segmento di `Util.zwj_segments`; `print_aligned` misura con `Notcurses.strwidth`, che somma i segmenti (ICH-285) |
@@ -248,6 +248,10 @@ copertura.
 | `ncvisual_from_rgba` accetta `rowstride < cols * 4` lasciando pixel non inizializzati (`visual.c:784`); senza ffmpeg, con `rowstride > cols * 4` scrive oltre il buffer (`visual.c:768`, `801`) | `rowstride` controllato, al C passano righe compatte |
 | `ncvisual_from_rgb_loose` con `rowstride` maggiore dello stride interno copia righe oltre il buffer (`visual.c:884`) | al C passano righe compatte |
 | `ncblit_rgb_packed` legge i pixel con passo di 1 byte invece di 3 (`visual.c:494`) | `Visual.blit_rgb_packed` usa `ncvisual_from_rgb_packed` e `ncvisual_blit` |
+| `ncvisual_from_palidx` ignora i colori della palette (`visual.c:969`) | dal lotto 6 (ICH-223): `Visual.from_palidx` costruisce i pixel RGBA in Ruby e chiama `ncvisual_from_rgba`; una voce `Channel.palindex` solleva `ArgumentError` (ICH-551) |
+| `ncvisual_rotate` perde la prima riga e la prima colonna a ogni angolo (`visual.c:746`, `>` al posto di `>=`); `rotate_bounding_box` ruota il riquadro dei pixel attorno al proprio centro e i pixel attorno al centro dell'immagine (`visual.c:658-705`): con bordi trasparenti diversi sui lati perde pixel opachi | dal lotto 6 (ICH-223): `Visual#rotate` è un porting in Ruby con `>=` e il riquadro ruotato attorno al centro dell'immagine; resize e scrittura dei pixel in un blocco `Thread.handle_interrupt`. Costo: una chiamata C per pixel (ICH-554) |
+| `ncvisual_bounding_box` a volte calcola un riquadro più stretto di quello vero (`visual.c:537-628`; due pixel sulla diagonale di un 2x2 danno una colonna) | dal lotto 6: il wrapper calcola il riquadro vero (`Internal.bounding_box`) |
+| I blitter di celle scrivono ogni cella da sola: un blit su una metà di un glifo largo lascia l'altra metà orfana (ICH-486), come `ncplane_gradient` prima di ICH-450 | dal lotto 6: i blit su un piano esistente svuotano l'altra metà; il rettangolo viene da `ncvisual_geom` (ICH-549), e con `:braille` il controllo copre anche l'interno, perché `braille_blit` non tocca le celle con soli pixel trasparenti (`blit.c:1205-1206`, costo in ICH-556); un blit `:pixel` non scrive celle e non si controlla (ICH-550); un blit `:pixel` che restringe il piano può tagliare un glifo largo (`visual.c:1123`, ICH-561, non aggirato) |
 | `ncvisual_stream` su un visual non creato da file, o con `vopts` NULL: crash (`ffmpeg.c:501`, `508`) | `VisualError` per un visual non da file; opzioni sempre passate |
 | Stream con `child: true` (`NCVISUAL_OPTION_CHILDPLANE`): un piano nuovo a ogni frame, tutti lasciati tranne l'ultimo (`ffmpeg.c:528`) | `child:` e regioni non ammessi in `stream` |
 | Blit di una regione diversa dall'immagine intera: il C ridimensiona dall'inizio dei dati ignorando `begy`/`begx`, poi legge oltre il buffer (`ffmpeg.c:586`); con `nointerpolate` o senza ffmpeg la regione è ignorata | la regione viene copiata pixel per pixel in un visual temporaneo, che viene disegnato |
@@ -359,10 +363,12 @@ fino al ridisegno successivo. Bordi arrotondati, ASCII senza UTF-8; niente PgUp/
   da double a `uintmax_t` (`plot.c:128-136`, `298-306`): fuori intervallo è un comportamento indefinito, "184.47P"
   sulla build CachyOS x86-64-v4 e "0.00" sulla build Arch generica. Con `exponential:` e `:uint64` la riga alta
   moltiplica interi (`plot.c:300`) e riparte da 0 oltre 2^64 (lotto 11, ICH-290).
-- Direct: `Frame#close` abbandona il frame senza liberarne la memoria C (3.0.17 non offre un distruttore pubblico);
-  `stop` scrive il reset su stdout.
-- Visual: `ncvisual_from_palidx` non usa i colori della palette (`visual.c:969`); `ncvisual_rotate` perde la prima
-  riga e la prima colonna di pixel a qualsiasi angolo (`visual.c:746`).
+- Direct: `Frame#close` abbandona il frame senza liberarne la memoria C (3.0.17 non offre un distruttore pubblico;
+  won't fix nel lotto 6 delle issue in Backlog, ICH-222). Il reset di `stop` su stdout è aggirato dal lotto 6.
+- Visual: `ncvisual_from_palidx` e `ncvisual_rotate` sono aggirati dal lotto 6 (tabella "Visual").
+- Piani: `ncplane_qrcode` con il cursore fuori da (0, 0) scrive fuori dal proprio buffer di pixel (`fill.c:612-616`)
+  e corrompe la heap: documentato nello YARD di `Plane#qrcode` (ICH-542). Il codice QR sopra metà di un glifo largo
+  lascia l'altra metà orfana: aggirato dal lotto 6 (ICH-488).
 
 ## Metodi e funzioni non wrappati
 
