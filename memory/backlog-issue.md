@@ -783,8 +783,9 @@ trovano il worktree solo con i 5 ID originali. Un commit per issue, con `Refs`; 
   soli lati. `braille_blit` non tocca una cella con soli pixel trasparenti (`blit.c:1203-1206`); `tria_blit_ascii`,
   `tria_blit`, `quadrant_blit` e `hires_blit` la rilasciano con `nccell_release`. Con i soli lati un glifo largo
   dentro il rettangolo, coperto a metà da pixel opachi, resta con una metà orfana (spec nuova, rossa con i soli
-  lati). Costo rimasto: un blit `:braille` di tutto un piano 60x200 costa 20 ms (0,19 ms su `master`). Da
-  riportare all'utente: una issue nuova è una sua scelta (regola 16).
+  lati). Costo rimasto: un blit `:braille` di tutto un piano 60x200 costa 20 ms (0,19 ms su `master`). L'utente
+  ha scelto il 2026-11-20 di aprire una issue: ICH-556 (Backlog, Low, Performance, `related` a ICH-549), che non
+  blocca la PR #29.
 - Geometria dal C e non ricalcolata in Ruby: `scale_visual` (`:scale`) usa aritmetica `float`, che in Ruby non si
   ripete in modo sicuro.
 - ICH-549 prima di ICH-550: nel commit di ICH-549 il blitter `:pixel` tiene il controllo di tutto il piano, così la

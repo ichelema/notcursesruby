@@ -36,8 +36,9 @@
   fallimenti, semi 1234, 4242 e 7, coverage 98,15 %, RuboCop 0, YARD 100 %; CI della PR verde su tutta la matrice.
 - **Scostamento da ICH-549, da far vedere al reviewer:** con `:braille` il controllo legge anche i glifi dentro il
   rettangolo, perché `braille_blit` non tocca le celle con soli pixel trasparenti (`blit.c:1203-1206`). Un blit
-  `:braille` di tutto un piano 60x200 costa ancora 20 ms (0,19 ms su `master`). Una issue nuova per questo costo è
-  una scelta dell'utente (regola 16), non ancora fatta.
+  `:braille` di tutto un piano 60x200 costa ancora 20 ms (0,19 ms su `master`). Il costo è tracciato in ICH-556
+  (Backlog, Low, Performance, `related` a ICH-549; scelta dell'utente del 2026-11-20): non blocca la PR #29, da
+  assegnare a un lotto successivo.
 - **Prossimo step:** lancia `/trinity:workflow:3_independent-review ICH-458 ICH-486 ICH-222 ICH-223 ICH-488 opus`
   (il changeset comprende i 4 commit nuovi; di' al reviewer di controllare anche ICH-549, ICH-550, ICH-551 e
   ICH-552). Se la review trova problemi: `/trinity:workflow:4_review-fix-loop` con gli stessi argomenti. **Non
