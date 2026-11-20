@@ -1231,7 +1231,8 @@ module Notcurses
     # @return [self] (con +break+, il valore di break)
     # @raise [DirectError] se il file non si apre, se un frame non si
     #   renderizza o non si decodifica, se la scrittura fallisce, o se con
-    #   :pixel il cursore non si sposta per fare posto al frame
+    #   :pixel il cursore non si sposta per fare posto al frame o non risale
+    #   sul frame precedente (il frame già creato non si libera: vedi {Frame})
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il contesto è chiuso
     def stream(path, align: :left, blitter: :default, scale: :scale)
@@ -1248,8 +1249,11 @@ module Notcurses
             # a ogni frame: un close arrivato durante il frame precedente ferma qui lo stream (ClosedError)
             ptr = to_ptr
             # il raster lascia il cursore sotto il frame (direct.c:558), non sull'ultima
-            # riga come presume ncdirect_stream (direct.c:1550-1559); ritorno ignorato come nel C
-            FFI.ncdirect_cursor_up(ptr, rows) if rows.positive?
+            # riga come presume ncdirect_stream (direct.c:1550-1559). Con le celle ritorno ignorato come nel C;
+            # con un bitmap una risalita fallita solleva DirectError, come i movimenti qui sotto
+            if rows.positive?
+              bitmap ? cursor_up(count: rows) : FFI.ncdirect_cursor_up(ptr, rows)
+            end
             frame = image.render(self, blitter: blitter, scale: scale)
             rows, = frame.dims
             # dopo un bitmap che finisce sull'ultima riga il C manda una CUP sotto lo schermo (direct.c:607-613): lo

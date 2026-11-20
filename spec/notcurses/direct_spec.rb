@@ -776,6 +776,20 @@ RSpec.describe Notcurses::Direct do
         end
       end
 
+      # Review della PR #29 (round 2): la risalita fra un frame bitmap e il successivo ignorava il ritorno del C.
+      it 'stream con :pixel solleva DirectError se il cursore non risale sul frame precedente' do
+        tall = write_tall_two_frame_gif(File.join(@dir, 'alta.gif'))
+        allow(ffi).to receive(:ncdirect_check_pixel_support).and_return(1)
+        calls = 0
+        # 1: la risalita che fa posto al primo frame; 2: quella sul primo frame, prima del secondo
+        allow(ffi).to receive(:ncdirect_cursor_up).and_wrap_original do |original, *args|
+          calls += 1
+          (calls == 2) ? -1 : original.call(*args)
+        end
+        expect { d.stream(tall, blitter: :pixel, scale: :none) }.to raise_error(Notcurses::DirectError, /ncdirect_cursor_up/)
+        expect(calls).to eq(2)
+      end
+
       it 'stream si ferma con break e chiude l\'immagine' do
         allow(ffi).to receive(:ncdirect_raster_frame).and_call_original
         allow(ffi).to receive(:ncdirectf_free).and_call_original
