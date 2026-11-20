@@ -3,6 +3,7 @@
 # frozen_string_literal: true
 
 require 'rbconfig'
+require 'tmpdir'
 
 # Le funzioni che aspettano il terminale (init, posizione del cursore, readline)
 # rilasciano il GVL: nella Fase 1 sono collegate con blocking: true. Qui il
@@ -835,5 +836,44 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(timed_out).to be(false), out
     expect(out).to include('fine')
     expect(status.exitstatus).to eq(0), out
+  end
+
+  # ICH-222: con output: su un file Direct#close porta il fd 1 su /dev/null durante ncdirect_stop. Qui il fd 1 è il
+  # terminale (aperto in lettura e scrittura), come in una shell interattiva. Il testo che il terminale riceve fra
+  # "mark" e "fine" è l'output dello stop: niente reset del C, e dopo lo stop lo stdout è di nuovo il terminale.
+  def direct_stop_tty_script(out) = "OUT = #{out.dump}\n" + <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    STDOUT.reopen(slave)
+    STDOUT.sync = true
+    seen = String.new(encoding: Encoding::BINARY)
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        seen << data
+        data.scan(/\e\[6n|\e\[c/) { |q| master.write(q == "\e[6n" ? "\e[1;1R" : "\e[?62;22c") }
+      end
+    rescue IOError, Errno::EIO
+    end
+    d = Notcurses::Direct.new(output: OUT, termtype: 'xterm-256color')
+    STDOUT.write("mark\n")
+    d.close
+    STDOUT.write("fine\n")
+    sleep 0.01 until seen.include?('fine') # il pty scrive "\r\n" al posto di "\n" (ONLCR)
+    STDERR.puts "stop #{seen[/mark\r?\n(.*)fine/m, 1].inspect}"
+  RUBY
+
+  it 'Direct#close con output: su un file e lo stdout sul terminale non scrive il reset sul terminale (prima: SIGSEGV)' do
+    Dir.mktmpdir do |dir|
+      out, status, timed_out = run_child(direct_stop_tty_script(File.join(dir, 'out')), timeout: 20)
+      expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+      expect(status.exitstatus).to eq(0), out
+      expect(out).to match(/^stop "/)
+      expect(out).not_to include('\e[39;49m')
+    end
   end
 end

@@ -1503,12 +1503,14 @@ module Notcurses
     # a /dev/null. Il fd salvato sta in @muted_stdout, non in una variabile
     # locale: un'eccezione asincrona arrivata a metà non lascia lo stdout su
     # /dev/null, perché unmute_stdout! gira nell'ensure. Con il fd 1 chiuso
-    # non c'è niente da proteggere.
+    # non c'è niente da proteggere. Il fd 1 si riapre da un IO aperto su
+    # /dev/null, non dal path: reopen con un path va in segfault (Ruby da 3.1
+    # a 4.0) quando il fd 1 è un terminale.
     def mute_stdout!
       stdout = IO.for_fd(1, autoclose: false)
       $stdout.flush # il testo di Ruby non ancora scritto va sullo stdout vero
       @muted_stdout = stdout.dup
-      stdout.reopen(File::NULL, 'w')
+      File.open(File::NULL, 'w') { |null| stdout.reopen(null) }
     rescue SystemCallError, IOError
       nil
     end
