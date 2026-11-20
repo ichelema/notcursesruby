@@ -738,11 +738,14 @@ module Notcurses
     # +>+ invece di +>=+), e le immagini di una sola riga o colonna diventano
     # trasparenti. Con bordi trasparenti diversi sui lati perde anche pixel
     # opachi: ruota il riquadro dei pixel opachi attorno al suo centro e i
-    # pixel attorno al centro dell'immagine (visual.c:658-700). Il wrapper non
+    # pixel attorno al centro dell'immagine (visual.c:658-705). Il wrapper non
     # lo chiama: ripete in Ruby l'algoritmo del C con il confronto corretto e
     # con il riquadro ruotato attorno al centro dell'immagine. Ai multipli di
-    # π/2 nessun pixel opaco si perde e le dimensioni sono quelle del C. Il
-    # wrapper legge ogni pixel con +ncvisual_at_yx+, porta il visual alle
+    # π/2 nessun pixel opaco si perde. Le dimensioni seguono il riquadro vero
+    # dei pixel diversi da 0: +ncvisual_bounding_box+ del C (visual.c:537-628)
+    # a volte lo calcola più stretto (due pixel sulla diagonale di un 2x2 danno
+    # una sola colonna), e in quei casi le dimensioni sono diverse da quelle
+    # del C. Il wrapper legge ogni pixel con +ncvisual_at_yx+, porta il visual alle
     # dimensioni nuove con +ncvisual_resize_noninterpolative+ e riscrive ogni
     # pixel con +ncvisual_set_yx+. Il costo è proporzionale all'area, con una
     # chiamata C per pixel.
@@ -1295,11 +1298,11 @@ module Notcurses
         end
       end
 
-      # Porting di ncvisual_rotate (visual.c:707-751) con due correzioni. Il ciclo
+      # Porting di ncvisual_rotate (visual.c:707-763) con due correzioni. Il ciclo
       # sui pixel copia anche la prima riga e la prima colonna (+>=+ al posto di
       # +>+, visual.c:746). Gli angoli del riquadro dei pixel reali ruotano attorno
       # al centro dell'immagine, come i pixel: il C li ruota attorno al centro del
-      # riquadro (visual.c:658-700), e con bordi trasparenti diversi sui lati i
+      # riquadro (visual.c:658-705), e con bordi trasparenti diversi sui lati i
       # pixel finiscono fuori. Un pixel è reale se vale diverso da 0.
       # @param pixels [Array<Integer>] rows * cols valori a 32 bit, a righe
       # @param rads [Float] angolo, positivo = senso antiorario

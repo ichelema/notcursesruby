@@ -53,7 +53,7 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   `ncvisual_from_palidx` di 3.0.17 ignora la palette, e `ncvisual_rotate` perde la prima riga e la prima colonna
   (confronta con `>` invece di `>=`, visual.c:746, anche a 0 radianti) e, con bordi trasparenti diversi sui lati,
   anche pixel opachi (ruota il riquadro dei pixel opachi attorno al suo centro e i pixel attorno al centro
-  dell'immagine, visual.c:658-700: un 4x4 con 4 pixel opachi in basso a destra diventava un 2x2 con 1 pixel).
+  dell'immagine, visual.c:658-705: un 4x4 con 4 pixel opachi in basso a destra diventava un 2x2 senza pixel opachi).
   `from_palidx` costruisce i pixel RGBA in Ruby (RGB del canale, alpha 0 se `:transparent` altrimenti 255, bianco
   per il colore di default) e crea il visual come `from_rgba`; un indice >= `palette.size` solleva ancora
   `VisualError`. `rotate` ripete in Ruby l'algoritmo del C con le due correzioni, senza cambiare il puntatore del
