@@ -64,7 +64,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   per il colore di default) e crea il visual come `from_rgba`; un indice >= `palette.size` solleva ancora
   `VisualError`, e una voce della palette con un indice di palette (`Channel.palindex`), che non ha un colore RGB,
   solleva `ArgumentError` (ICH-551). `rotate` ripete in Ruby l'algoritmo del C con le due correzioni, senza cambiare
-  il puntatore del visual: il costo è proporzionale all'area, con una chiamata C per pixel.
+  il puntatore del visual: il costo è proporzionale all'area, con una chiamata C per pixel. Un'eccezione asincrona
+  (per esempio `Thread#raise`) arriva dopo la scrittura dei pixel: il visual è tutto ruotato o com'era.
 - `Visual.blit_rgba`, `.blit_bgrx`, `.blit_rgb_loose`, `.blit_rgb_packed` e `Visual#blit` su un piano esistente
   sopra una metà di un glifo largo non lasciano più l'altra metà orfana (ICH-486): il C scrive ogni cella da sola, e
   una scrittura larga successiva vicino alla metà destra orfana cancellava la prima cella della riga sotto

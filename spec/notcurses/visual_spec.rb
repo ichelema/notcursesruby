@@ -408,6 +408,38 @@ RSpec.describe Notcurses::Visual do
     end
 
     describe '#rotate' do
+      # Review della PR #29 (round 2): un'eccezione asincrona durante la scrittura dei pixel lasciava il visual con
+      # le dimensioni nuove e i pixel in parte vecchi: ora è tutto ruotato o tutto com'era.
+      it 'un Thread#raise durante la scrittura dei pixel non lascia un visual a metà' do
+        pixels = [[1, 0, 0, 255], [2, 0, 0, 255], [3, 0, 0, 255], [4, 0, 0, 255], [5, 0, 0, 255], [6, 0, 0, 255]]
+        reds = ->(v) { (0...v.dims[0]).map { |y| (0...v.dims[1]).map { |x| v.at(y, x).to_a[0] } } }
+        whole = described_class.from_rgba(rgba(pixels), rows: 2, cols: 3) { |v| reds.call(v.rotate(Math::PI / 2)) }
+        described_class.from_rgba(rgba(pixels), rows: 2, cols: 3) do |v|
+          paused = Queue.new
+          resume = Queue.new
+          tp = TracePoint.new(:c_return) do |t|
+            next unless t.method_id == :ncvisual_set_yx && Thread.current[:pausa] && !Thread.current[:fatto]
+
+            Thread.current[:fatto] = true
+            paused << true
+            resume.pop
+          end
+          tp.enable
+          a = Thread.new do
+            Thread.current[:pausa] = true
+            v.rotate(Math::PI / 2)
+          rescue RuntimeError
+            nil
+          end
+          paused.pop
+          a.raise(RuntimeError, 'interrotto')
+          resume << true
+          a.join
+          tp.disable
+          expect(reds.call(v)).to eq(whole).or eq([[1, 2, 3], [4, 5, 6]])
+        end
+      end
+
       it 'ruota di π/2 in senso antiorario e restituisce self' do
         expect(visual.rotate(Math::PI / 2)).to equal(visual)
         expect(visual.dims).to eq([2, 4])

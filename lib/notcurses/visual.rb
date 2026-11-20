@@ -773,7 +773,8 @@ module Notcurses
     # del C. Il wrapper legge ogni pixel con +ncvisual_at_yx+, porta il visual alle
     # dimensioni nuove con +ncvisual_resize_noninterpolative+ e riscrive ogni
     # pixel con +ncvisual_set_yx+. Il costo è proporzionale all'area, con una
-    # chiamata C per pixel.
+    # chiamata C per pixel. Un'eccezione asincrona (per esempio +Thread#raise+)
+    # arriva dopo la scrittura dei pixel: il visual è tutto ruotato o com'era.
     #
     # @param radians [Numeric] angolo; positivo = senso antiorario
     # @return [self]
@@ -792,9 +793,12 @@ module Notcurses
 
         data, new_rows, new_cols = rotated
         Internal.dims!(new_rows, new_cols)
-        Util.check!(FFI.ncvisual_resize_noninterpolative(ptr, new_rows, new_cols), VisualError,
-                    "ncvisual_resize_noninterpolative(#{new_rows}, #{new_cols})")
-        Internal.write_pixels(ptr, data, new_cols)
+        # resize e scrittura senza eccezioni asincrone in mezzo: il visual è tutto ruotato o tutto com'era
+        Thread.handle_interrupt(Object => :never) do
+          Util.check!(FFI.ncvisual_resize_noninterpolative(ptr, new_rows, new_cols), VisualError,
+                      "ncvisual_resize_noninterpolative(#{new_rows}, #{new_cols})")
+          Internal.write_pixels(ptr, data, new_cols)
+        end
         self
       end
     end
