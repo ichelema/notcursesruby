@@ -484,6 +484,29 @@ RSpec.describe Notcurses::Visual do
         end
       end
 
+      # Prima (bug di 3.0.17, visual.c:658-700): il C ruota il riquadro dei pixel opachi attorno al suo centro e i
+      # pixel attorno al centro dell'immagine; con bordi trasparenti diversi sui lati i pixel finivano fuori.
+      it 'con bordi trasparenti diversi sui lati ruota il blocco opaco senza perdere pixel (prima: 1 pixel su 4)' do
+        data = (0...16).flat_map { |i| i.divmod(4).then { |y, x| y >= 2 && x >= 2 ? [10 + y, 20 + x, 30, 255] : Array.new(4, 0) } }
+        described_class.from_rgba(data.pack('C*'), rows: 4, cols: 4) do |v|
+          block = pixels_of(v)[2..3].map { |row| row[2..3] }
+          v.rotate(Math::PI / 2)
+          expect(v.dims).to eq([2, 2])
+          expect(pixels_of(v)).to eq([[block[0][1], block[1][1]], [block[0][0], block[1][0]]])
+        end
+      end
+
+      it "quattro rotazioni di π/2 con la prima riga trasparente danno le righe opache dell'originale " \
+         '(prima: 2x4 con 8 pixel su 12)' do
+        data = (0...16).flat_map { |i| i.divmod(4).then { |y, x| y.zero? ? Array.new(4, 0) : [10 + y, 20 + x, 30, 255] } }
+        described_class.from_rgba(data.pack('C*'), rows: 4, cols: 4) do |v|
+          opaque = pixels_of(v)[1..]
+          4.times { v.rotate(Math::PI / 2) }
+          expect(v.dims).to eq([3, 4])
+          expect(pixels_of(v)).to eq(opaque)
+        end
+      end
+
       it 'valida l\'angolo' do
         expect { visual.rotate('1') }.to raise_error(TypeError)
         expect { visual.rotate(Float::NAN) }.to raise_error(ArgumentError)

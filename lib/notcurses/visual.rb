@@ -733,12 +733,16 @@ module Notcurses
     # all'immagine ruotata (solo i pixel diversi da 0 contano: i bordi
     # trasparenti vengono tagliati). notcurses garantisce solo ±π/2.
     #
-    # Bug di 3.0.17 aggirato: +ncvisual_rotate+ perde la prima riga e la prima
+    # Bug di 3.0.17 aggirati: +ncvisual_rotate+ perde la prima riga e la prima
     # colonna di pixel a qualsiasi angolo, anche 0 (visual.c:746 confronta con
     # +>+ invece di +>=+), e le immagini di una sola riga o colonna diventano
-    # trasparenti. Il wrapper non lo chiama: ripete in Ruby l'algoritmo del C
-    # (stesse dimensioni risultanti, stesso arrotondamento) con il confronto
-    # corretto, legge ogni pixel con +ncvisual_at_yx+, porta il visual alle
+    # trasparenti. Con bordi trasparenti diversi sui lati perde anche pixel
+    # opachi: ruota il riquadro dei pixel opachi attorno al suo centro e i
+    # pixel attorno al centro dell'immagine (visual.c:658-700). Il wrapper non
+    # lo chiama: ripete in Ruby l'algoritmo del C con il confronto corretto e
+    # con il riquadro ruotato attorno al centro dell'immagine. Ai multipli di
+    # π/2 nessun pixel opaco si perde e le dimensioni sono quelle del C. Il
+    # wrapper legge ogni pixel con +ncvisual_at_yx+, porta il visual alle
     # dimensioni nuove con +ncvisual_resize_noninterpolative+ e riscrive ogni
     # pixel con +ncvisual_set_yx+. Il costo è proporzionale all'area, con una
     # chiamata C per pixel.
@@ -1291,8 +1295,12 @@ module Notcurses
         end
       end
 
-      # Porting di ncvisual_rotate (visual.c:731-775) con +>=+ al posto di +>+ nel
-      # ciclo sui pixel (visual.c:746). Un pixel è reale se vale diverso da 0.
+      # Porting di ncvisual_rotate (visual.c:707-751) con due correzioni. Il ciclo
+      # sui pixel copia anche la prima riga e la prima colonna (+>=+ al posto di
+      # +>+, visual.c:746). Gli angoli del riquadro dei pixel reali ruotano attorno
+      # al centro dell'immagine, come i pixel: il C li ruota attorno al centro del
+      # riquadro (visual.c:658-700), e con bordi trasparenti diversi sui lati i
+      # pixel finiscono fuori. Un pixel è reale se vale diverso da 0.
       # @param pixels [Array<Integer>] rows * cols valori a 32 bit, a righe
       # @param rads [Float] angolo, positivo = senso antiorario
       # @return [Array(Array<Integer>, Integer, Integer), nil] pixel, righe e colonne
@@ -1304,27 +1312,24 @@ module Notcurses
         box = bounding_box(pixels, rows, cols)
         return if box.nil?
 
-        # rotate_bounding_box: gli angoli del riquadro, ruotati attorno al suo centro
-        box_rows = box[1] - box[0] + 1
-        box_cols = box[3] - box[2] + 1
-        corners = [[0, 0], [0, box_cols - 1], [box_rows - 1, box_cols - 1], [box_rows - 1, 0]]
-        rotated = corners.map { |y, x| rotate_point(y, x, stheta, ctheta, (box_rows - 1) / 2, (box_cols - 1) / 2) }
+        centy = (rows - 1) / 2
+        centx = (cols - 1) / 2
+        corners = [[box[0], box[2]], [box[0], box[3]], [box[1], box[3]], [box[1], box[2]]]
+        rotated = corners.map { |y, x| rotate_point(y, x, stheta, ctheta, centy, centx) }
         offy = rotated.map(&:first).min
         offx = rotated.map(&:last).min
         out_rows = rotated.map(&:first).max - offy + 1
         out_cols = rotated.map(&:last).max - offx + 1
 
+        # la rotazione è lineare e round è monotono: ogni pixel del riquadro finisce fra gli angoli ruotati
         data = Array.new(out_rows * out_cols, 0)
-        centy = (rows - 1) / 2
-        centx = (cols - 1) / 2
         rows.times do |y|
           cols.times do |x|
-            targy, targx = rotate_point(y, x, stheta, ctheta, centy, centx)
-            deconvy = targy - offy
-            deconvx = targx - offx
-            next unless deconvy >= 0 && deconvx >= 0 && deconvy < out_rows && deconvx < out_cols
+            pixel = pixels[(y * cols) + x]
+            next if pixel.zero? # 0 come lo sfondo di data
 
-            data[(deconvy * out_cols) + deconvx] = pixels[(y * cols) + x]
+            targy, targx = rotate_point(y, x, stheta, ctheta, centy, centx)
+            data[((targy - offy) * out_cols) + targx - offx] = pixel
           end
         end
         [data, out_rows, out_cols]
