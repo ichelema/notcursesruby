@@ -339,9 +339,13 @@ RSpec.describe "Chiusura durante un'operazione in corso (integrazione)" do
             if t.path.end_with?('/notcurses/guard.rb')
               %i[defer settle_if_idle settle].include?(t.method_id)
             elsif t.defined_class == KLASS
-              t.method_id == :close || (t.method_id == :release_native! && t.lineno < STOP_LINE)
+              # mute_stdout! (Direct, ICH-222): il fd 1 su /dev/null durante lo stop
+              %i[close mute_stdout!].include?(t.method_id) ||
+                (t.method_id == :release_native! && t.lineno < STOP_LINE)
             end
           end
+          fd1 = -> { IO.for_fd(1, autoclose: false).stat.then { |s| [s.dev, s.ino] } }
+          OUT = fd1.call
           root = #{create}
           points = record_points(TARGET) { root.close }
           bad = []
@@ -350,7 +354,8 @@ RSpec.describe "Chiusura durante un'operazione in corso (integrazione)" do
             stops = $stops
             fired = interrupt_at(point) { root.close }
             root.close
-            bad << point_name(point) unless fired && $stops == stops + 1 && Notcurses.active_context.nil?
+            bad << point_name(point) unless fired && $stops == stops + 1 && Notcurses.active_context.nil? &&
+                                            fd1.call == OUT
           rescue Exception => e # rubocop:disable Lint/RescueException
             bad << "\#{point_name(point)} (\#{e.class})"
             break

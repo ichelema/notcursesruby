@@ -2330,6 +2330,28 @@ RSpec.describe Notcurses::Plane do
         expect(result).to eq(:senza_qrcodegen).or match([Integer, Integer, Integer])
       end
     end
+
+    # ICH-488: il QR (versione 1: 11 righe x 21 colonne con il blitter :half, dal cursore in (0, 0)) copre la
+    # colonna 20, la metà sinistra di 漢 nelle ultime due colonne del piano. Il cursore resta in (0, 0): da
+    # un'altra posizione ncplane_qrcode di 3.0.17 scrive fuori dal proprio buffer (fill.c:612-616).
+    it "qrcode sulla metà sinistra di un glifo largo lascia vuota l'altra metà (prima: \"XYZ\" nella riga sotto)" do
+      with_parent(rows: 12, cols: 22) do |c|
+        # la prova chiama il C, non il wrapper: un errore del wrapper fa fallire la spec, non la salta
+        stub = c.create_child(rows: 11, cols: 21) do |probe|
+          ymax = ::FFI::MemoryPointer.new(:uint).tap { |m| m.write_uint(11) }
+          xmax = ::FFI::MemoryPointer.new(:uint).tap { |m| m.write_uint(21) }
+          Notcurses::FFI.ncplane_qrcode(probe.to_ptr, ymax, xmax, ::FFI::MemoryPointer.from_string('x'), 1).negative?
+        end
+        skip 'notcurses compilato senza qrcodegen (ncplane_qrcode è lo stub)' if stub
+        11.times { |y| c.putstr('ab漢', y: y, x: 18) }
+        c.putstr('WXYZ', y: 11, x: 0)
+        c.move_cursor(0, 0)
+        expect(c.qrcode('x', rows: 11, cols: 21)).to eq([1, 10, 21])
+        expect(c.at(y: 10, x: 21).egc).to eq('')
+        c.putstr('中', y: 10, x: 20)
+        expect(c.contents(y: 11, rows: 1)).to eq('WXYZ')
+      end
+    end
   end
 
   describe 'dissolvenze' do

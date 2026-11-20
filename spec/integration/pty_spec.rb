@@ -3,6 +3,7 @@
 # frozen_string_literal: true
 
 require 'rbconfig'
+require 'tmpdir'
 
 # Le funzioni che aspettano il terminale (init, posizione del cursore, readline)
 # rilasciano il GVL: nella Fase 1 sono collegate con blocking: true. Qui il
@@ -223,6 +224,174 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(timed_out).to be(false), "processo figlio bloccato (GVL tenuto durante un'attesa?):\n#{out}"
     expect(out).to include('can_pixel true', 'render_image ok', 'raster ok', 'stream ok', 'fine')
     expect(status.exitstatus).to eq(0), out
+  end
+
+  # ICH-458. Terminale sixel finto che segue il cursore (quello di pixel_script risponde sempre \e[5;1R): CUP, CUU,
+  # CUD, HPA e VPA si fermano ai bordi, LF e VT sull'ultima riga e SU fanno scorrere lo schermo, \e[6n riceve la
+  # posizione vera. Di ogni sixel registra la riga dello schermo, le righe già scorse e l'altezza: riga + righe
+  # scorse è la riga del contenuto, che resta la stessa quando lo schermo scorre. Due frame sono uno sopra l'altro se
+  # hanno la stessa riga del contenuto.
+  # SCROLL = false: un sixel non fa scorrere lo schermo e lascia il cursore sulla sua ultima riga.
+  # SCROLL = true: un sixel lascia il cursore sulla riga sotto; se finisce sull'ultima riga lo schermo scorre di una
+  # riga (termdesc.h:165-166).
+  # MAX_GEOMETRY = false: il terminale non risponde a XTSMGRAPHICS, notcurses non limita l'altezza di un sixel a
+  # rows - 1 (notcurses.c:430-441) e :stretch dà un frame alto quanto lo schermo.
+  def sixel_stream_script(row:, scroll:, scale: :scale, max_geometry: true)
+    video = File.expand_path('../fixtures/visual/frames.mkv', __dir__)
+    "VIDEO = #{video.dump}\nROW = #{row}\nSCROLL = #{scroll}\nSCALE = #{scale.inspect}\n" \
+      "MAX_GEOMETRY = #{max_geometry}\n" + <<~'RUBY'
+        require 'notcurses'
+        require 'io/console'
+        require 'pty'
+        $stdout.sync = true
+
+        class SixelTerminal
+          ROWS = 24
+          COLS = 80
+          CELL_HEIGHT = 16
+          TOKEN = /\A(?:\e[P_].*?\e\\|\e\].*?(?:\a|\e\\)|\e\[[0-?]*[ -\/]*[@-~]|\e[^\[\]P_]|[^\e])/mn
+          REPLIES = {
+            "\e[c" => "\e[?62;4;22c", "\e[14t" => "\e[4;384;640t", "\e[18t" => "\e[8;24;80t",
+            "\e[?2;1;0S" => (MAX_GEOMETRY ? "\e[?2;0;640;384S" : nil), "\e[?1;1;0S" => "\e[?1;0;256S"
+          }.compact.freeze
+
+          attr_reader :frames, :done
+
+          def initialize(master)
+            @master = master
+            @buffer = String.new(encoding: Encoding::BINARY)
+            @row = ROW
+            @col = @scrolled = 0
+            @frames = []
+            @done = Queue.new
+          end
+
+          # Una sequenza spezzata fra due letture resta nel buffer fino alla lettura successiva.
+          def feed(data)
+            @buffer << data
+            while (token = @buffer.slice!(TOKEN))
+              handle(token)
+            end
+          end
+
+          def handle(token)
+            if token == "\e[6n" then @master.write("\e[#{@row + 1};#{@col + 1}R")
+            elsif token == "\e[5n" then @done.push(true) # lo manda lo script dopo la chiusura di Direct
+            elsif REPLIES.key?(token) then @master.write(REPLIES[token])
+            elsif token.start_with?("\eP") then sixel(token)
+            elsif (m = token.match(/\A\e\[(\d*);?(\d*)([ABGHSd])\z/n)) then csi(m[3], m[1].to_i, m[2].to_i)
+            elsif ["\n", "\v", "\f"].include?(token) then line_feed
+            elsif token == "\r" then @col = 0
+            end
+          end
+
+          # Un parametro assente o 0 vale 1.
+          def csi(final, first, second)
+            first = 1 if first.zero?
+            second = 1 if second.zero?
+            case final
+            when 'A' then @row = [@row - first, 0].max
+            when 'B' then @row = [@row + first, ROWS - 1].min
+            when 'G' then @col = [first, COLS].min - 1
+            when 'd' then @row = [first, ROWS].min - 1
+            when 'S' then @scrolled += first
+            when 'H'
+              @row = [first, ROWS].min - 1
+              @col = [second, COLS].min - 1
+            end
+          end
+
+          def line_feed
+            if @row == ROWS - 1 then @scrolled += 1
+            else @row += 1
+            end
+          end
+
+          # Le query DCS (XTGETTCAP) non hanno gli attributi raster: i frame sono solo i sixel.
+          def sixel(token)
+            height = token[/\A\eP[\d;]*q"\d+;\d+;\d+;(\d+)/n, 1] or return
+            rows = (height.to_i + CELL_HEIGHT - 1) / CELL_HEIGHT
+            @frames << [@row, @scrolled, rows]
+            @row += SCROLL ? rows : rows - 1
+            return if @row < ROWS
+
+            @scrolled += @row - (ROWS - 1) if SCROLL
+            @row = ROWS - 1
+          end
+        end
+
+        master, slave = PTY.open
+        slave.winsize = [24, 80, 640, 384]
+        STDIN.reopen(slave)
+        terminal = SixelTerminal.new(master)
+        Thread.new do
+          loop { terminal.feed(master.readpartial(65_536)) }
+        rescue IOError, Errno::EIO
+        end
+        Notcurses::Direct.open(output: slave.path, termtype: 'xterm-256color') do |d|
+          puts "can_pixel #{d.can_pixel?}"
+          d.stream(VIDEO, blitter: :pixel, scale: SCALE)
+        end
+        slave.write("\e[5n") # il terminale ha letto tutto l'output di Direct quando arriva qui
+        terminal.done.pop
+        puts "frames #{terminal.frames.map { |frame| frame.join('/') }.join(' ')}"
+        puts 'fine'
+      RUBY
+  end
+
+  # @return [Array<Array(Integer, Integer, Integer)>] di ogni sixel: riga dello schermo, righe già scorse, altezza
+  def sixel_frames(**opts)
+    out, status, timed_out = run_child(sixel_stream_script(**opts), timeout: 30)
+    expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+    expect(out).to include('can_pixel true', 'fine')
+    expect(status.exitstatus).to eq(0), out
+    out[/^frames (.*)$/, 1].split.map { |frame| frame.split('/').map(&:to_i) }
+  end
+
+  # Il video ha 4 frame. Con :scale un frame è alto 23 righe (rows - 1, il massimo di un sixel) e largo 46 colonne.
+  # Controlla che lo stream partito dalla riga row disegni ogni frame sulle righe del primo.
+  def expect_frames_in_place(row:, scroll:)
+    frames = sixel_frames(row: row, scroll: scroll)
+    expect(frames.map(&:last)).to eq([23, 23, 23, 23])
+    content_rows = frames.map { |screen_row, scrolled, _| screen_row + scrolled }
+    expect(content_rows.uniq.size).to eq(1), "dalla riga #{row}: #{frames.inspect}"
+  end
+
+  # Dalla riga 23 il frame non entra sotto il cursore, e il C lo sposterebbe in alto fino a farlo finire sull'ultima
+  # riga (direct.c:442-448); dalla riga 1 finirebbe sull'ultima riga senza spostamenti. Dopo un frame che finisce
+  # sull'ultima riga il C manda una CUP alla riga sotto lo schermo (direct.c:607-613). Prima del fix i frame dopo il
+  # primo partivano una riga più in alto.
+  it 'stream con :pixel in fondo allo schermo disegna ogni frame sulle righe del primo: terminale che ferma la CUP' do
+    aggregate_failures do
+      expect_frames_in_place(row: 23, scroll: false)
+      expect_frames_in_place(row: 1, scroll: false)
+    end
+  end
+
+  # Passa anche prima del fix: lo scorrimento dopo il primo frame compensava la riga in meno. Fallisce se stream
+  # rimette ogni frame sulla riga di schermo del primo, come suggeriva la issue: lo schermo scorre a ogni frame.
+  it "stream con :pixel in fondo allo schermo: terminale che scorre dopo un sixel sull'ultima riga" do
+    aggregate_failures do
+      expect_frames_in_place(row: 23, scroll: true)
+      expect_frames_in_place(row: 1, scroll: true)
+    end
+  end
+
+  it 'stream con :pixel e spazio sotto il cursore non sposta i frame e non fa scorrere lo schermo' do
+    tall = [[0, 0, 23]] * 4
+    small = [[2, 0, 1]] * 4
+    expect(sixel_frames(row: 0, scroll: false)).to eq(tall)
+    expect(sixel_frames(row: 0, scroll: true)).to eq(tall)
+    expect(sixel_frames(row: 2, scroll: false, scale: :none)).to eq(small)
+    expect(sixel_frames(row: 2, scroll: true, scale: :none)).to eq(small)
+  end
+
+  # Il C porta il frame alla riga 0 e fa scorrere lo schermo di y - 1 = 4 righe (direct.c:442-455). Se un sixel
+  # sull'ultima riga fa scorrere lo schermo, lo schermo scorre a ogni frame: non c'è una riga libera da lasciare.
+  it 'stream con :pixel di un frame alto quanto lo schermo parte dalla riga 0 a ogni frame, come prima' do
+    full = { row: 5, scale: :stretch, max_geometry: false }
+    expect(sixel_frames(**full, scroll: false)).to eq([[0, 4, 24]] * 4)
+    expect(sixel_frames(**full, scroll: true)).to eq([[0, 4, 24], [0, 5, 24], [0, 6, 24], [0, 7, 24]])
   end
 
   # Context#close: notcurses_stop chiama tcsetattr(TCSAFLUSH) (notcurses.c:147),
@@ -653,6 +822,121 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(status.exitstatus).to eq(0), out
   end
 
+  # ICH-550. Un blit :pixel su un piano esistente non scrive celle, e dopo il blit ncplane_at_yx_cell fallisce su
+  # ogni cella (notcurses.c:274-277): il controllo dei glifi larghi di ICH-486 li prendeva per coperti a metà e
+  # svuotava la sola metà sinistra. Il resize e i due render tolgono il bitmap: le celle tornano leggibili.
+  def pixel_over_glyphs_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [24, 80, 640, 384]
+    STDIN.reopen(slave)
+    replies = {
+      "\e[6n" => "\e[5;1R", "\e[c" => "\e[?62;4;22c", "\e[14t" => "\e[4;384;640t", "\e[18t" => "\e[8;24;80t",
+      "\e[?2;1;0S" => "\e[?2;0;640;384S", "\e[?1;1;0S" => "\e[?1;0;256S"
+    }
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        data.scan(Regexp.union(replies.keys)) { |q| master.write(replies[q]) }
+      end
+    rescue IOError, Errno::EIO
+    end
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      puts "pixel #{nc.pixel_support}"
+      ffi = Notcurses::FFI
+      pl = nc.stdplane.create_child(rows: 4, cols: 10)
+      pl.putstr('漢字ab', y: 0, x: 0)
+      pl.putstr('VWXYZ', y: 1, x: 0)
+      rgba = "\xff".b * (32 * 80 * 4)
+      Notcurses::Visual.from_rgba(rgba, rows: 32, cols: 80) { |v| v.blit(plane: pl, blitter: :pixel, scale: :none) }
+      nc.render
+      pl.resize(2, 7)
+      2.times { nc.render }
+      halves = (0...6).map do |x|
+        cell = ffi::NcCell.new
+        next :illeggibile if ffi.ncplane_at_yx_cell(pl.to_ptr, 0, x, cell).negative?
+
+        half = if ffi.nccell_wide_left_p(cell) then :left
+               elsif ffi.nccell_wide_right_p(cell) then :right
+               else :none
+               end
+        ffi.nccell_release(pl.to_ptr, cell)
+        half
+      end
+      puts "riga 0 #{halves.join(' ')}"
+      # sopra una metà destra orfana in colonna 3 il C cancellerebbe anche la cella 4 (notcurses.c:1956-1962)
+      pl.putstr('中', y: 0, x: 2)
+      puts "scrittura larga #{pl.contents(y: 0, rows: 1) == '漢中ab'} #{pl.contents(y: 1, rows: 1) == 'VWXYZ'}"
+    end
+    puts 'fine'
+  RUBY
+
+  it 'un blit :pixel sopra glifi larghi li lascia interi (prima: metà destre orfane, tolto il bitmap)' do
+    out, status, timed_out = run_child(pixel_over_glyphs_script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('pixel sixel', 'riga 0 left right left right none none', 'scrittura larga true true', 'fine')
+    expect(status.exitstatus).to eq(0), out
+  end
+
+  # Review della PR #29 (ICH-486, ICH-549): con xterm-256color :quad, :sextant e :octant degradano a :half, e la
+  # matrice di visual_spec.rb non li esercita. Il terminale finto si presenta come foot (XTVERSION): notcurses
+  # attiva i tre blitter, e no_degrade: true fa fallire il blit se il blitter non c'è.
+  def foot_blitters_script(mutate: false) = "MUTATE = #{mutate}\n" + <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    if MUTATE # senza il controllo dei glifi larghi: la spec deve fallire
+      Notcurses::Plane.prepend(Module.new { def keeping_glyphs_whole(*, **) = yield })
+    end
+    master, slave = PTY.open
+    slave.winsize = [24, 80, 640, 384]
+    STDIN.reopen(slave)
+    replies = { "\e[6n" => "\e[5;1R", "\e[c" => "\eP>|foot(1.20.0)\e\\\e[?62;22c" }
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        data.scan(Regexp.union(replies.keys)) { |q| master.write(replies[q]) }
+      end
+    rescue IOError, Errno::EIO
+    end
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      red = [255, 0, 0, 255].pack('C*')
+      blits = {
+        blit_rgba: ->(p, b, x) { Notcurses::Visual.blit_rgba(red, plane: p, rows: 1, cols: 1, blitter: b, no_degrade: true, y: 0, x: x) },
+        blit: ->(p, b, x) { Notcurses::Visual.from_rgba(red, rows: 1, cols: 1) { |v| v.blit(plane: p, blitter: b, no_degrade: true, y: 0, x: x) } }
+      }
+      blits.each do |name, blit|
+        %i[quad sextant octant].product([2, 3]).each do |b, x|
+          nc.stdplane.create_child(rows: 2, cols: 4) do |p|
+            p.putstr('ab漢', y: 0, x: 0)
+            p.putstr('WXYZ', y: 1, x: 0)
+            blit.call(p, b, x)
+            other = p.at(y: 0, x: x == 2 ? 3 : 2).egc
+            p.putstr('中', y: 0, x: 2)
+            puts "#{name} #{b} x=#{x}: #{other.inspect} #{p.contents(y: 1, rows: 1)}"
+          end
+        end
+      end
+    end
+    puts 'fine'
+  RUBY
+
+  it ':quad, :sextant e :octant sopra metà di un glifo largo lasciano vuota l\'altra metà (terminale foot)' do
+    out, status, timed_out = run_child(foot_blitters_script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(status.exitstatus).to eq(0), out
+    lines = out.lines.grep(/x=/)
+    expect(lines.size).to eq(12), out
+    expect(lines).to all(end_with(": \"\" WXYZ\n"))
+    # la spec fallisce senza il controllo: altrimenti non proteggerebbe niente
+    mutated, = run_child(foot_blitters_script(mutate: true), timeout: 30)
+    expect(mutated.lines.grep(/x=/).grep_v(/: "" WXYZ$/)).not_to be_empty
+  end
+
   it 'il controllo dei bordi vale per il piano C: un glifo scritto da un secondo wrapper e tagliato non rompe la riga sotto' do
     out, status, timed_out = run_child(two_wrappers_script(1), timeout: 30)
     expect(timed_out).to be(false), out
@@ -667,5 +951,47 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(timed_out).to be(false), out
     expect(out).to include('fine')
     expect(status.exitstatus).to eq(0), out
+  end
+
+  # ICH-222: con output: su un file Direct#close porta il fd 1 su /dev/null durante ncdirect_stop. Qui il fd 1 è il
+  # terminale (aperto in lettura e scrittura), come in una shell interattiva. Il testo che il terminale riceve fra
+  # "mark" e "fine" è l'output dello stop: niente reset del C, e dopo lo stop lo stdout è di nuovo il terminale.
+  def direct_stop_tty_script(out) = "OUT = #{out.dump}\n" + <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    STDOUT.reopen(slave)
+    STDOUT.sync = true
+    seen = String.new(encoding: Encoding::BINARY)
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        seen << data
+        data.scan(/\e\[6n|\e\[c/) { |q| master.write(q == "\e[6n" ? "\e[1;1R" : "\e[?62;22c") }
+      end
+    rescue IOError, Errno::EIO
+    end
+    d = Notcurses::Direct.new(output: OUT, termtype: 'xterm-256color')
+    STDOUT.write("mark\n")
+    d.close
+    STDOUT.write("fine\n")
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+    # il pty scrive "\r\n" al posto di "\n" (ONLCR)
+    sleep 0.01 until seen.include?('fine') || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+    abort 'stdout non ripristinato: il terminale non ha ricevuto "fine" dopo lo stop' unless seen.include?('fine')
+    STDERR.puts "stop #{seen[/mark\r?\n(.*)fine/m, 1].inspect}"
+  RUBY
+
+  it 'Direct#close con output: su un file e lo stdout sul terminale non scrive il reset sul terminale (prima: SIGSEGV)' do
+    Dir.mktmpdir do |dir|
+      out, status, timed_out = run_child(direct_stop_tty_script(File.join(dir, 'out')), timeout: 20)
+      expect(timed_out).to be(false), "processo figlio bloccato:\n#{out}"
+      expect(status.exitstatus).to eq(0), out
+      expect(out).to match(/^stop "/)
+      expect(out).not_to include('\e[39;49m')
+    end
   end
 end

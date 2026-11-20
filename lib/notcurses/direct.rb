@@ -2,6 +2,7 @@
 # Source: notcurses/include/notcurses/direct.h
 # frozen_string_literal: true
 
+require 'fcntl'
 # IO#wait_readable è nel core da Ruby 3.2: su 4.0 require 'io/wait' stampa un avviso.
 require 'io/wait' unless IO.method_defined?(:wait_readable)
 
@@ -240,7 +241,14 @@ module Notcurses
         @closed = false
       rescue Exception # rubocop:disable Lint/RescueException
         ptr = init&.value
-        FFI.ncdirect_stop(ptr) if ptr && !ptr.null?
+        if ptr && !ptr.null?
+          begin
+            mute_stdout! if fp && !fp.null?
+            FFI.ncdirect_stop(ptr)
+          ensure
+            unmute_stdout!
+          end
+        end
         # il C ha già scritto termtype in TERM: un init successivo senza termtype fallirebbe
         ENV['TERM'] = old_term unless term.nil?
         Notcurses.release_context(self)
@@ -255,9 +263,25 @@ module Notcurses
     # inutilizzabili (la loro memoria C resta allocata). Le {Image} restano
     # valide.
     #
-    # Bug di 3.0.17 (direct.c:841): +ncdirect_stop+ scrive il proprio reset
-    # (+\e[39;49m\e(B\e[m+) sullo stdout del processo anche quando output è
-    # un file.
+    # Bug di 3.0.17 aggirato (direct.c:841, ICH-222): +ncdirect_stop+ scrive
+    # il proprio reset (+\e[39;49m\e(B\e[m+) sullo stdout del processo anche
+    # quando output è un file. Con output diverso da nil il wrapper, durante
+    # lo stop, fa puntare il fd 1 a /dev/null e poi lo rimette com'era (prima
+    # svuota +$stdout+). Il fd 1 è del processo: un altro thread che scrive
+    # sullo stdout durante lo stop perde quell'output. Con un FILE* passato
+    # come output che scrive sul fd 1 il reset del C si perde, ma il wrapper
+    # ha già scritto il proprio sull'output. Limite (ICH-560): il testo che
+    # codice C ha scritto sullo stdout della libc senza svuotarlo (per
+    # esempio printf di un'estensione nativa) si perde, perché lo stop lo
+    # svuota con il fd 1 già su /dev/null (fbuf.h:318). Il testo di +$stdout+
+    # non passa dalla libc e non si perde. Un processo figlio creato da un
+    # altro thread (spawn, fork) durante lo stop eredita il fd 1 su /dev/null
+    # per tutta la sua vita. Se il fd 1 non si può spostare (per esempio senza
+    # descrittori liberi) lo stop avviene lo stesso, e il reset arriva sullo
+    # stdout come senza il wrapper. Un fd 1 aperto in sola lettura non si
+    # sposta: se il terminale ha un reset (per esempio xterm-256color) il C
+    # non riesce a scriverlo e close solleva DirectError, come senza il
+    # wrapper; senza reset (per esempio vt52) close riesce.
     #
     # Un'eccezione sollevata durante +ncdirect_stop+ (per esempio un Ctrl-C)
     # esce da close, ma lascia il contesto chiuso e il registro libero: un
@@ -329,10 +353,13 @@ module Notcurses
 
       claim = Object.new
       stopping = false
+      owner = false
       begin
         # una sola esecuzione, anche se il contesto è in coda più volte: come in Context#release_native!
         @claims << claim
         return nil unless @claims.first.equal?(claim)
+
+        owner = true # solo chi fa lo stop rimette lo stdout: un close concorrente non tocca il fd 1
 
         # ncdirect_stop non resetta il FILE* (solo stdout): lo fa il wrapper, prima, perché lo stop ne fa ancora
         # il flush
@@ -340,15 +367,22 @@ module Notcurses
         FFI.ncdirect_set_bg_default(@ptr)
         FFI.ncdirect_set_styles(@ptr, 0)
         FFI.ncdirect_flush(@ptr)
+        mute_stdout! unless @fp.null?
         # prima della chiamata: Ruby consegna un Ctrl-C al suo ritorno, quando il C ha già liberato il contesto
         @closed = true
         stopping = true
         begin
           rc = FFI.ncdirect_stop(@ptr)
         ensure
-          mark_closed!(fclose: @own_fp)
+          # prima di fclose: con il fd 1 chiuso all'avvio, fopen ha dato all'output il fd 1. Senza eccezioni
+          # asincrone fra i due: dopo lo stop del C il registro va liberato comunque
+          Thread.handle_interrupt(Object => :never) do
+            unmute_stdout!
+            mark_closed!(fclose: @own_fp)
+          end
         end
       ensure
+        unmute_stdout! if owner
         if !stopping && @claims.first.equal?(claim) # interrotta prima dello stop (eccezione asincrona)
           # resta in attesa: lo stato prima della lista, la lista prima della coda
           @closed = false
@@ -1164,15 +1198,28 @@ module Notcurses
     # di una riga in meno e ogni frame scende di una riga. Con il blitter
     # :pixel i frame precedenti non vengono tolti dal terminale (il C usa una
     # funzione interna) e ogni frame attende la posizione del cursore come
-    # {Frame#raster}. Con :pixel, quando un frame più basso dello schermo
-    # finisce sull'ultima riga (per esempio con il cursore in fondo; il C
-    # sposta in alto un frame che non entra sotto il cursore, direct.c:442-448),
-    # il C porta il cursore con una CUP alla riga sotto lo schermo
-    # (direct.c:607-613) e l'esito dipende dal terminale. Se il terminale ferma
-    # il cursore sull'ultima riga del frame, il frame successivo parte una riga
-    # più in alto e da lì resta fermo: l'ultima riga del primo frame rimane
-    # visibile. Se un sixel sull'ultima riga fa scorrere lo schermo di una riga
-    # (termdesc.h:165-166), i frame si sovrappongono.
+    # {Frame#raster}.
+    #
+    # Con il blitter :pixel, su un terminale con la grafica a pixel
+    # ({#can_pixel?}), prima di ogni frame stream fa posto sotto il cursore: il
+    # cursore scende di tante righe quante ne ha il frame (lo schermo scorre se
+    # serve) e risale. Così il frame parte dalla riga del cursore e non finisce
+    # sull'ultima riga dello schermo: sotto resta una riga libera, dove il C
+    # lascia il cursore, e ogni frame occupa le righe del primo. Senza questo
+    # passo un frame che non entra sotto il cursore finirebbe sull'ultima riga
+    # (direct.c:442-448), il C manderebbe una CUP alla riga sotto lo schermo
+    # (direct.c:607-613) e la riga del frame successivo dipenderebbe dal
+    # terminale: alcuni fanno scorrere lo schermo dopo un bitmap sull'ultima
+    # riga (termdesc.h:165-166), altri no, e la posizione del cursore è la
+    # stessa nei due casi. {#render_image} e {Frame#raster} non fanno posto: lì
+    # un frame che non entra sotto il cursore finisce sull'ultima riga. Il
+    # costo è di pochi byte per frame (un carattere VT per riga e una CUU),
+    # senza altre query al terminale. Un frame alto quanto lo schermo non
+    # lascia una riga libera: parte dalla riga 0 come prima (direct.c:444), e
+    # sui terminali che scorrono dopo un bitmap sull'ultima riga lo schermo
+    # scorre di una riga a ogni frame. Avvia lo stream con il cursore a inizio
+    # riga: con align :left il primo frame parte dalla colonna del cursore, i
+    # successivi dalla colonna 0.
     #
     # Thread: l'apertura del file e la decodifica di ogni frame avvengono senza
     # il GVL, come in {#load_image}: gli altri thread Ruby girano, ma non devono
@@ -1187,24 +1234,42 @@ module Notcurses
     # @yieldparam index [Integer] indice del frame appena disegnato, da 0
     # @return [self] (con +break+, il valore di break)
     # @raise [DirectError] se il file non si apre, se un frame non si
-    #   renderizza o non si decodifica, o se la scrittura fallisce
+    #   renderizza o non si decodifica, se la scrittura fallisce, o se con
+    #   :pixel il cursore non si sposta per fare posto al frame o non risale
+    #   sul frame precedente (il frame già creato non si libera: vedi {Frame})
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il contesto è chiuso
     def stream(path, align: :left, blitter: :default, scale: :scale)
       Guard.run do
-        to_ptr
+        ptr = to_ptr
         Args.align(align)
-        Args.visual_options(blitter, scale)
+        vopts = Args.visual_options(blitter, scale)
+        # il C disegna un bitmap con queste due condizioni (lookup_blitset, blit.c:1320-1328); senza la grafica a
+        # pixel :pixel degrada a un blitter di celle, e lo stream resta quello delle celle
+        bitmap = vopts[:blitter] == FFI::NCBLIT_PIXEL && FFI.ncdirect_check_pixel_support(ptr).positive?
         load_image(path) do |image|
           rows = index = rc = 0
           while rc.zero?
             # a ogni frame: un close arrivato durante il frame precedente ferma qui lo stream (ClosedError)
             ptr = to_ptr
             # il raster lascia il cursore sotto il frame (direct.c:558), non sull'ultima
-            # riga come presume ncdirect_stream (direct.c:1550-1559); ritorno ignorato come nel C
-            FFI.ncdirect_cursor_up(ptr, rows) if rows.positive?
+            # riga come presume ncdirect_stream (direct.c:1550-1559). Con le celle ritorno ignorato come nel C;
+            # con un bitmap una risalita fallita solleva DirectError, come i movimenti qui sotto
+            if rows.positive?
+              bitmap ? cursor_up(count: rows) : FFI.ncdirect_cursor_up(ptr, rows)
+            end
             frame = image.render(self, blitter: blitter, scale: scale)
             rows, = frame.dims
+            # dopo un bitmap che finisce sull'ultima riga il C manda una CUP sotto lo schermo (direct.c:607-613): lo
+            # schermo scorre o no secondo il terminale, e il cursore è nello stesso punto nei due casi. Quindi il
+            # bitmap non deve finire lì: il cursore scende di rows righe (VT: lo schermo scorre se serve, la colonna
+            # resta) e risale, e sotto il frame resta una riga libera. Un frame alto quanto lo schermo non ha una riga
+            # libera: parte dalla riga 0 come prima (direct.c:444). Un movimento fallito solleva DirectError: il
+            # frame partirebbe da un'altra riga
+            if bitmap && rows < FFI.ncdirect_dim_y(ptr)
+              cursor_down(count: rows)
+              cursor_up(count: rows)
+            end
             frame.raster(align: align)
             yield index if block_given?
             index += 1
@@ -1390,9 +1455,14 @@ module Notcurses
     # un piano senza pila). La crea {Direct#render_frame} o {Image#render}.
     #
     # Si libera solo disegnandola con {#raster}: {#close} la abbandona senza
-    # liberarla (in 3.0.17 non esiste altro modo: +ncplane_destroy+ su un
-    # ncdirectv va in crash), e lo stesso succede ai frame non disegnati quando
-    # il contesto si chiude.
+    # liberarla, e lo stesso succede ai frame non disegnati quando il contesto
+    # si chiude (ICH-222, won't fix). In 3.0.17 non esiste un free sicuro:
+    # +ncdirect_raster_frame+ la libera con +free_plane+, che la libreria non
+    # esporta; +ncplane_destroy+ legge il contesto notcurses del piano, che un
+    # ncdirectv non ha, e va in crash; +ncdirectf_free+ libera un'altra
+    # struttura (l'{Image}). Liberare a mano i campi interni del piano
+    # dipenderebbe dal layout della struct. Per non perdere memoria disegna
+    # ogni frame che crei.
     class Frame
       include Resource
 
@@ -1442,8 +1512,9 @@ module Notcurses
         end
       end
 
-      # Abbandona il frame senza disegnarlo. La memoria C resta allocata (vedi
-      # la descrizione della classe). Idempotente.
+      # Abbandona il frame senza disegnarlo. La memoria C resta allocata: in
+      # 3.0.17 non esiste un free sicuro (vedi la descrizione della classe).
+      # Idempotente.
       # @return [nil]
       def close
         @closed = true
@@ -1452,6 +1523,46 @@ module Notcurses
     end
 
     private
+
+    # +ncdirect_stop+ scrive il proprio reset sullo stdout della libc anche
+    # con un altro output (direct.c:841): fino a unmute_stdout! il fd 1 punta
+    # a /dev/null. Il fd salvato sta in @muted_stdout, non in una variabile
+    # locale: un'eccezione asincrona arrivata a metà non lascia lo stdout su
+    # /dev/null, perché unmute_stdout! gira nell'ensure. Con il fd 1 chiuso
+    # non c'è niente da proteggere. Il fd 1 si riapre da un IO aperto su
+    # /dev/null, non dal path: reopen con un path va in segfault (Ruby da 3.1
+    # a 4.0) quando il fd 1 è aperto in lettura e scrittura, per esempio un
+    # terminale o un file aperto con r+. Un fd 1 in sola lettura resta com'è:
+    # il ripristino fra modi d'accesso diversi va in segfault anche con un IO,
+    # e il C non riesce comunque a scriverci il reset.
+    def mute_stdout!
+      stdout = IO.for_fd(1, autoclose: false)
+      return if (stdout.fcntl(Fcntl::F_GETFL) & Fcntl::O_ACCMODE) == Fcntl::O_RDONLY
+      begin
+        $stdout.flush # il testo di Ruby non ancora scritto va sullo stdout vero
+      rescue
+        nil # $stdout può essere un IO chiuso o un oggetto senza flush: lo stop si fa lo stesso
+      end
+      @muted_cloexec = stdout.close_on_exec?
+      @muted_stdout = stdout.dup
+      File.open(File::NULL, 'w') { |null| stdout.reopen(null) }
+    rescue SystemCallError, IOError
+      nil
+    end
+
+    # Rimette il fd 1 salvato da mute_stdout!, se c'è.
+    def unmute_stdout!
+      Thread.handle_interrupt(Object => :never) do
+        saved = @muted_stdout
+        return unless saved
+
+        stdout = IO.for_fd(1, autoclose: false)
+        stdout.reopen(saved)
+        stdout.close_on_exec = @muted_cloexec # reopen toglie FD_CLOEXEC
+        @muted_stdout = nil
+        saved.close
+      end
+    end
 
     # Stato Ruby di un contesto chiuso: FILE* chiuso (se fclose), registro libero.
     # @return [nil]

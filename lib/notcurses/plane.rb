@@ -1688,6 +1688,17 @@ module Notcurses
     # ha solo uno stub che fallisce: in quel caso il metodo solleva sempre
     # PlaneError.
     #
+    # Glifi larghi (ICH-488): il C disegna il codice con il blitter :half, che
+    # scrive ogni cella da sola, e su una metà di un glifo largo lascerebbe
+    # l'altra metà orfana. Il wrapper svuota l'altra metà, che diventa una
+    # cella vuota, come {Visual.blit_rgba}. Il controllo legge i glifi larghi
+    # nelle rows x cols celle da (0, 0): il costo è proporzionale a quell'area.
+    #
+    # Bug di 3.0.17 non aggirato: con il cursore fuori da (0, 0) il C scrive
+    # fuori dal proprio buffer di pixel (fill.c:612-616) e corrompe la heap.
+    # Muovi il cursore in (0, 0) prima della chiamata, e per un codice in
+    # un'altra posizione usa un piano figlio.
+    #
     # @param data [String] byte da codificare, non vuoto
     # @param rows [Integer] righe disponibili, >= 1
     # @param cols [Integer] colonne disponibili, >= 1
@@ -1709,7 +1720,11 @@ module Notcurses
         bytes = data.b
         buf = ::FFI::MemoryPointer.new(:uchar, bytes.bytesize)
         buf.put_bytes(0, bytes)
-        version = FFI.ncplane_qrcode(ptr, ymax, xmax, buf, bytes.bytesize)
+        # il C disegna il codice da (0, 0) (fill.c:625-629), in al massimo rows x cols celle; il codice può
+        # essere più piccolo: il controllo copre anche l'interno
+        version = keeping_glyphs_whole(0, 0, rows, cols, all: true) do
+          FFI.ncplane_qrcode(ptr, ymax, xmax, buf, bytes.bytesize)
+        end
         Util.check!(version, PlaneError, 'ncplane_qrcode (notcurses compilato senza qrcodegen?)')
         [version, ymax.read_uint, xmax.read_uint]
       end
@@ -2667,6 +2682,37 @@ module Notcurses
       @resize = keep[:resize]
     end
 
+    # Esegue il blocco (un blit C che scrive celle di questo piano nel
+    # rettangolo dato) e poi svuota l'altra metà dei glifi larghi che il blit
+    # ha coperto solo a metà, come i riempimenti (ICH-450, ICH-486). Il
+    # controllo legge solo i glifi a cavallo dei lati del rettangolo (ICH-549):
+    # il costo è proporzionale alle sue righe. Con all: true legge anche quelli
+    # dentro, per un blit che non scrive ogni cella del rettangolo: il costo è
+    # proporzionale alla sua area. La parte del rettangolo fuori dal piano non
+    # conta.
+    # @api private
+    # @param top [Integer] prima riga del rettangolo
+    # @param left [Integer] prima colonna del rettangolo
+    # @param height [Integer] righe del rettangolo
+    # @param width [Integer] colonne del rettangolo
+    # @param all [Boolean] true = controlla anche i glifi dentro il rettangolo
+    # @yieldreturn [Object] il risultato del blit
+    # @return [Object] il valore del blocco
+    # @raise [ClosedError] se il piano è chiuso
+    def keeping_glyphs_whole(top, left, height, width, all: false, &block)
+      Guard.run do
+        ptr = to_ptr
+        rows, cols = dims
+        bottom = [top + height, rows].min
+        right = [left + width, cols].min
+        top = [top, 0].max
+        left = [left, 0].max
+        next yield if bottom <= top || right <= left # il blit non scrive celle del piano
+
+        keep_glyphs_whole(ptr, top, left, bottom - top, right - left, all: all, &block)
+      end
+    end
+
     private
 
     # Puntatore di un altro piano dello stesso contesto.
@@ -3058,8 +3104,8 @@ module Notcurses
     # Esegue il blocco (un riempimento C che cambia le celle una per una nel
     # rettangolo dato) e poi svuota l'altra metà dei glifi larghi che ha
     # coperto solo a metà. I glifi da controllare si leggono prima della
-    # chiamata: quelli a cavallo dei lati del rettangolo, o con all: true tutti
-    # quelli del piano. Una metà sinistra che half_at non riesce a leggere
+    # chiamata: quelli a cavallo dei lati del rettangolo, e con all: true anche
+    # quelli dentro. Una metà sinistra che half_at non riesce a leggere
     # (nil: da ICH-487 non più per l'egcpool pieno) conta come glifo se la
     # metà destra c'è. Dopo la chiamata la stessa cella illeggibile è ancora
     # quella di prima, salvo con long_fill (il riempimento scrive un EGC di più
@@ -3069,14 +3115,17 @@ module Notcurses
     # rettangolo.
     def keep_glyphs_whole(ptr, top, left, height, width, all: false, long_fill: false)
       ys = top...(top + height)
-      xs = all ? (left...(left + width - 1)) : [left - 1, left + width - 1]
+      xs = all ? ((left - 1)...(left + width)) : [left - 1, left + width - 1]
       glyphs = ys.flat_map { |y| xs.select { |x| glyph_at?(ptr, y, x) }.map { |x| [y, x] } }
       done = false
       rc = yield
       done = true
       rc
     ensure
+      rows, cols = dims if glyphs # le dimensioni dopo il blocco
       glyphs&.each do |y, x|
+        next if y >= rows || x + 1 >= cols
+
         left_half = half_at(ptr, y, x) || (long_fill ? nil : :left)
         right_half = half_at(ptr, y, x + 1)
         next if left_half == :left && right_half == :right

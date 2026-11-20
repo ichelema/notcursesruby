@@ -45,6 +45,8 @@ RSpec.describe 'Copertura delle funzioni FFI' do
     simple_streamer: 'va in crash con vopts->n NULL; Visual#stream senza blocco ne fa il lavoro in Ruby (render e attesa) per ' \
                      'controllare a ogni frame se il visual o il contesto sono stati chiusi',
     blit_rgb_packed: 'bug di 3.0.17 (passo di 1 byte invece di 3): Visual.blit_rgb_packed usa ncvisual_from_rgb_packed e ncvisual_blit',
+    from_palidx: 'bug di 3.0.17 (ignora i colori della palette, visual.c:969): Visual.from_palidx costruisce i pixel RGBA in Ruby',
+    rotate: 'bug di 3.0.17 (perde la prima riga e la prima colonna, visual.c:746): Visual#rotate è scritto in Ruby',
     byte_order: 'macro di byte order: in Ruby i pixel si leggono e scrivono con pack/unpack',
     printf_format: 'macro di larghezza per i formati printf: Notcurses.metric e i *_prefix restituiscono String (si allineano con String#rjust)',
     delitem: 'bug di 3.0.17 (selector.c:436-441: selezione fuori limite, startdisp mai aggiornato, segfault nel ridisegno, double free nel destroy): Selector non cancella voci',
@@ -90,6 +92,7 @@ RSpec.describe 'Copertura delle funzioni FFI' do
     'notcurses_get' => :get, 'notcurses_get_blocking' => :get_blocking, 'ncdirect_get_blocking' => :get_blocking,
     'ncdirect_printf_aligned' => :direct_printf, 'ncdirect_stream' => :direct_stream, 'ncdirect_get' => :direct_get,
     'ncvisual_simple_streamer' => :simple_streamer, 'ncblit_rgb_packed' => :blit_rgb_packed,
+    'ncvisual_from_palidx' => :from_palidx, 'ncvisual_rotate' => :rotate,
     'htole' => :byte_order,
     'NCMETRICFWIDTH' => :printf_format, 'NCPREFIXFMT' => :printf_format, 'NCIPREFIXFMT' => :printf_format,
     'NCBPREFIXFMT' => :printf_format,

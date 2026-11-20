@@ -195,6 +195,161 @@ RSpec.describe Notcurses::Direct do
       end
     end
 
+    # ICH-222: ncdirect_stop scrive il proprio reset sullo stdout della libc anche con un altro output (direct.c:841).
+    it 'close con output: su un file non scrive niente sullo stdout del processo (prima: "\e[39;49m\e(B\e[m")' do
+      Dir.mktmpdir do |dir|
+        out = File.join(dir, 'out')
+        stdout = File.join(dir, 'stdout')
+        {
+          "output: #{out.inspect}" => "before\nafter\n",
+          "output: Notcurses::FFI.fopen(#{out.inspect}, 'w')" => "before\nafter\n",
+          'output: nil' => "before\nx\e[39;49m\e(B\e[mafter\n" # lo stdout è l'output: il reset del C resta
+        }.each do |output, expected|
+          script = "require 'notcurses'; print \"before\\n\"; " \
+                   "Notcurses::Direct.open(#{output}, termtype: 'xterm-256color', drain_input: true) { |d| d.putstr('x') }; " \
+                   "print \"after\\n\""
+          pid = spawn(RbConfig.ruby, '-I', DirectSpecHelpers::LIB_DIR, '-e', script,
+                      in: File::NULL, out: stdout, err: File::NULL)
+          _, status = Process.wait2(pid)
+          expect(status.exitstatus).to eq(0), output
+          expect(File.binread(stdout)).to eq(expected), output
+        end
+      end
+    end
+
+    # Review della PR #29: lo stdout del processo dopo close con output: su un file, in casi limite del fd 1.
+    # Ogni caso: preparazione, controllo dopo close, stdout atteso (nil: non controllato), stderr atteso.
+    {
+      # $stdout di Ruby è un altro IO, chiuso: prima il flush sollevava IOError e il fd 1 non veniva silenziato
+      '$stdout chiuso' => ['$stdout = File.open(File::NULL, "w"); $stdout.close', 'STDOUT.write("after\\n")',
+                           "after\n", ''],
+      # $stdout senza flush: prima close sollevava NoMethodError
+      '$stdout senza flush' => ['w = Object.new; def w.write(*) = 0; $stdout = w', 'STDOUT.write("after\\n")',
+                                "after\n", ''],
+      # FD_CLOEXEC del fd 1: prima reopen lo toglieva
+      'close_on_exec' => ['STDOUT.close_on_exec = true', 'STDOUT.write("after " + STDOUT.close_on_exec?.to_s + "\\n")',
+                          "after true\n", ''],
+      # fd 1 chiuso (con close della libc: STDOUT.close non chiude i fd da 0 a 2): fopen dà all'output il fd 1, e
+      # prima il ripristino dopo fclose sollevava Errno::EBADF; dopo close il fd 1 è di nuovo chiuso
+      'fd 1 chiuso' => ['module C; extend FFI::Library; ffi_lib FFI::Library::LIBC; ' \
+                        'attach_function :close, [:int], :int; end; C.close(1)',
+                        'STDERR.write(begin; IO.for_fd(1, autoclose: false).stat; "aperto"; rescue Errno::EBADF; "chiuso"; end)',
+                        nil, 'chiuso']
+    }.each do |name, (setup, check, out, err)|
+      it "close con output: su un file e #{name} non scrive il reset sullo stdout e non solleva" do
+        Dir.mktmpdir do |dir|
+          stdout = File.join(dir, 'stdout')
+          stderr = File.join(dir, 'stderr')
+          script = "require 'notcurses'; #{setup}; " \
+                   "d = Notcurses::Direct.new(output: #{File.join(dir, 'out').dump}, termtype: 'xterm-256color', " \
+                   "drain_input: true); d.close; #{check}"
+          pid = spawn(RbConfig.ruby, '-I', DirectSpecHelpers::LIB_DIR, '-e', script,
+                      in: File::NULL, out: stdout, err: stderr)
+          _, status = Process.wait2(pid)
+          expect([status.exitstatus, File.read(stderr)]).to eq([0, err]), name
+          expect(File.binread(stdout)).to eq(out), name if out
+        end
+      end
+    end
+
+    # Review della PR #29 (round 3): con il fd 1 aperto in sola lettura il ripristino (IO#reopen fra modi d'accesso
+    # diversi) mandava Ruby in SIGSEGV. Come prima del mute: il reset del C non si scrive, close solleva DirectError
+    # e il registro si libera; il fd 1 resta in sola lettura.
+    it 'close con output: su un file e il fd 1 in sola lettura solleva DirectError senza crash (prima: SIGSEGV)' do
+      Dir.mktmpdir do |dir|
+        script = <<~RUBY
+          require 'notcurses'
+          require 'fcntl'
+          d = Notcurses::Direct.new(output: #{File.join(dir, 'out').dump}, termtype: 'xterm-256color', drain_input: true)
+          begin
+            d.close
+            STDERR.write('nessun errore ')
+          rescue Notcurses::DirectError
+            STDERR.write('DirectError ')
+          end
+          mode = IO.for_fd(1, autoclose: false).fcntl(Fcntl::F_GETFL) & Fcntl::O_ACCMODE
+          STDERR.write("\#{Notcurses.active_context.nil? ? 'libero' : 'occupato'} \#{mode == Fcntl::O_RDONLY ? 'rdonly' : mode}")
+        RUBY
+        err = File.join(dir, 'stderr')
+        readonly = File.open(File::NULL, 'r')
+        pid = spawn(RbConfig.ruby, '-I', DirectSpecHelpers::LIB_DIR, '-e', script, in: File::NULL, out: readonly, err: err)
+        readonly.close
+        _, status = Process.wait2(pid)
+        expect([status.termsig, status.exitstatus, File.read(err).lines.last]).to eq([nil, 0, 'DirectError libero rdonly'])
+      end
+    end
+
+    # Review della PR #29: un secondo close che non fa lo stop (claim perso) rimetteva il fd 1 mentre il primo stava
+    # per chiamare ncdirect_stop, e il reset arrivava sullo stdout.
+    # Review della PR #29 (round 2): un'eccezione asincrona consegnata fra il ripristino del fd 1 e mark_closed!
+    # lasciava il registro occupato dopo lo stop del C: ogni Direct.open successivo sollevava InitError.
+    it 'un Thread#raise durante il ripristino dello stdout non lascia occupato il registro' do
+      Dir.mktmpdir do |dir|
+        script = <<~RUBY
+          require 'notcurses'
+          d = Notcurses::Direct.new(output: #{File.join(dir, 'out').dump}, termtype: 'xterm-256color', drain_input: true)
+          paused = Queue.new
+          resume = Queue.new
+          tp = TracePoint.new(:c_return) do |t|
+            next unless t.method_id == :reopen && Thread.current[:pausa] && !Thread.current[:fatto]
+            Thread.current[:fatto] = true if (Thread.current[:reopen] = Thread.current[:reopen].to_i + 1) == 2
+            next unless Thread.current[:fatto] # il secondo reopen: quello di unmute_stdout!
+            paused << true
+            resume.pop
+          end
+          tp.enable
+          a = Thread.new do
+            Thread.current[:pausa] = true
+            d.close
+          rescue RuntimeError
+            nil
+          end
+          paused.pop
+          a.raise(RuntimeError, 'interrotto')
+          resume << true
+          a.join
+          tp.disable
+          Notcurses::Direct.open(output: #{File.join(dir, 'out2').dump}, termtype: 'xterm-256color', drain_input: true) { nil }
+          STDERR.write('ok')
+        RUBY
+        err = File.join(dir, 'stderr')
+        pid = spawn(RbConfig.ruby, '-I', DirectSpecHelpers::LIB_DIR, '-e', script,
+                    in: File::NULL, out: File::NULL, err: err)
+        _, status = Process.wait2(pid)
+        expect([status.exitstatus, File.read(err)]).to eq([0, 'ok'])
+      end
+    end
+
+    it 'un close concorrente che non fa lo stop non rimette lo stdout prima dello stop dell\'altro' do
+      Dir.mktmpdir do |dir|
+        stdout = File.join(dir, 'stdout')
+        script = <<~RUBY
+          require 'notcurses'
+          d = Notcurses::Direct.new(output: #{File.join(dir, 'out').dump}, termtype: 'xterm-256color', drain_input: true)
+          paused = Queue.new
+          resume = Queue.new
+          tp = TracePoint.new(:return) do |t|
+            next unless t.method_id == :mute_stdout! && Thread.current[:pausa]
+            paused << true
+            resume.pop
+          end
+          tp.enable
+          a = Thread.new { Thread.current[:pausa] = true; d.close }
+          paused.pop
+          d.close
+          resume << true
+          a.join
+          tp.disable
+          STDOUT.write("after\\n")
+        RUBY
+        pid = spawn(RbConfig.ruby, '-I', DirectSpecHelpers::LIB_DIR, '-e', script,
+                    in: File::NULL, out: stdout, err: File::NULL)
+        _, status = Process.wait2(pid)
+        expect(status.exitstatus).to eq(0)
+        expect(File.binread(stdout)).to eq("after\n")
+      end
+    end
+
     it 'un Direct rimasto aperto viene chiuso all\'uscita del processo (at_exit)' do
       Dir.mktmpdir do |dir|
         path = File.join(dir, 'out')
@@ -625,6 +780,41 @@ RSpec.describe Notcurses::Direct do
         expect(sizes.size).to eq(2)
         expect(sizes.first[1]).to eq(d.dims[1])
         expect(ffi).to have_received(:ncdirect_cursor_up).once.with(anything, sizes.first[0])
+      end
+
+      # ICH-458: stream fa posto sotto il cursore (VT e CUU in più) solo per i bitmap. Qui il terminale non ha la
+      # grafica a pixel e il C degrada :pixel a un blitter di celle.
+      it 'stream con blitter: :pixel senza grafica a pixel sale come con le celle, senza fare posto' do
+        expect(d.can_pixel?).to be(false)
+        out = written { d.stream(write_tall_two_frame_gif(File.join(@dir, 'alta.gif')), blitter: :pixel, scale: :none) }
+        expect(out.scan(/\e\[\d+A/).size).to eq(1)
+        expect(out).not_to include("\v")
+      end
+
+      # Review della PR #29: prima i ritorni dei movimenti che fanno posto sotto il cursore erano ignorati, e lo
+      # stream continuava con i frame su righe diverse.
+      it 'stream con :pixel solleva DirectError se il cursore non si sposta per fare posto' do
+        tall = write_tall_two_frame_gif(File.join(@dir, 'alta.gif')) # 3 righe: meno dello schermo
+        allow(ffi).to receive(:ncdirect_check_pixel_support).and_return(1)
+        %i[ncdirect_cursor_down ncdirect_cursor_up].each do |move|
+          allow(ffi).to receive(move).and_return(-1)
+          expect { d.stream(tall, blitter: :pixel, scale: :none) }.to raise_error(Notcurses::DirectError, /#{move}/)
+          allow(ffi).to receive(move).and_call_original
+        end
+      end
+
+      # Review della PR #29 (round 2): la risalita fra un frame bitmap e il successivo ignorava il ritorno del C.
+      it 'stream con :pixel solleva DirectError se il cursore non risale sul frame precedente' do
+        tall = write_tall_two_frame_gif(File.join(@dir, 'alta.gif'))
+        allow(ffi).to receive(:ncdirect_check_pixel_support).and_return(1)
+        calls = 0
+        # 1: la risalita che fa posto al primo frame; 2: quella sul primo frame, prima del secondo
+        allow(ffi).to receive(:ncdirect_cursor_up).and_wrap_original do |original, *args|
+          calls += 1
+          (calls == 2) ? -1 : original.call(*args)
+        end
+        expect { d.stream(tall, blitter: :pixel, scale: :none) }.to raise_error(Notcurses::DirectError, /ncdirect_cursor_up/)
+        expect(calls).to eq(2)
       end
 
       it 'stream si ferma con break e chiude l\'immagine' do

@@ -22,6 +22,61 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Direct#stream` con il blitter `:pixel` ridisegna ogni frame sulle righe del primo anche in fondo allo schermo
+  (ICH-458). Prima un frame più basso dello schermo poteva finire sull'ultima riga (per esempio con il cursore in
+  fondo: il C sposta in alto un frame che non entra sotto il cursore, `direct.c:442-448`); il C mandava poi una CUP
+  alla riga sotto lo schermo (`direct.c:607-613`), e su un terminale che non fa scorrere lo schermo dopo un bitmap
+  sull'ultima riga i frame dopo il primo partivano una riga più in alto: l'ultima riga del primo frame restava
+  visibile. Ora, sui terminali con la grafica a pixel, prima di ogni frame `stream` fa posto sotto il cursore: il
+  cursore scende di tante righe quante ne ha il frame (lo schermo scorre se serve) e risale. Il frame parte dalla
+  riga del cursore e non finisce sull'ultima riga: sotto resta una riga libera, e l'esito è lo stesso sui terminali
+  che fanno scorrere lo schermo dopo un bitmap sull'ultima riga e su quelli che non lo fanno (la posizione del
+  cursore non li distingue: per questo `stream` non può lasciare un frame sull'ultima riga). `Direct#render_image` e
+  `Frame#raster` non cambiano: lì un frame che non entra sotto il cursore finisce ancora sull'ultima riga.
+  Il costo è di pochi byte per frame (un carattere VT per riga e una CUU), senza altre query al terminale.
+  Un frame alto quanto lo schermo parte dalla riga 0 come prima, e sui terminali che scorrono dopo un bitmap
+  sull'ultima riga lo schermo scorre ancora di una riga a ogni frame. Con i blitter a celle, e con `:pixel` su un
+  terminale senza grafica a pixel, l'output non cambia. Lo stream va avviato con il cursore a inizio riga: con
+  `align: :left` il primo frame parte dalla colonna del cursore e i successivi dalla colonna 0; in fondo allo schermo
+  prima il C, spostando in alto il primo frame, lo riportava alla colonna 0. Se il cursore non si sposta per fare
+  posto al frame o non risale sul frame precedente, `stream` solleva `DirectError`.
+- `Direct#close` (e `#stop`) con `output:` su un file o su un `FILE*` non scrive più il reset di `ncdirect_stop`
+  (`\e[39;49m\e(B\e[m`) sullo stdout del processo (ICH-222, `direct.c:841`): durante lo stop il fd 1 punta a
+  `/dev/null`, poi torna com'era, anche con il fd 1 chiuso all'avvio o con `FD_CLOEXEC`, e con `$stdout` di Ruby
+  chiuso o senza `flush`. Un altro thread che scrive sullo stdout durante lo stop perde quell'output, e lo perde anche
+  il testo scritto sullo stdout della libc (per esempio da un'estensione nativa) e non ancora svuotato (ICH-560); un
+  processo figlio creato da un altro thread durante lo stop eredita il fd 1 su `/dev/null`. Se il fd 1 non si può
+  spostare (per esempio senza descrittori liberi) il reset arriva sullo stdout come prima. Un fd 1 aperto in sola
+  lettura non si sposta: se il terminale ha un reset il C non riesce a scriverlo e `close` solleva `DirectError`, come
+  prima.
+  `Direct::Frame#close` continua a non liberare la memoria del frame: in 3.0.17 non esiste un free sicuro
+  (`free_plane` non è esportato, `ncplane_destroy` va in crash su un piano di `Direct`); lo YARD ne spiega il motivo.
+- `Plane#qrcode` sopra una metà di un glifo largo non lascia più l'altra metà orfana (ICH-488): il C disegna il
+  codice con il blitter `:half`, che scrive ogni cella da sola, come i blit di ICH-486. Controllato su una build di
+  notcurses 3.0.17 con libqrcodegen: un codice dal cursore in (0, 0) che copre la metà sinistra lasciava la metà
+  destra, e una scrittura larga successiva cancellava la prima cella della riga sotto. Ora l'altra metà diventa una
+  cella vuota. Sulla build senza qrcodegen (quella di Arch Linux) la spec viene saltata.
+- `Visual.from_palidx` ora dà ai pixel i colori della palette e `Visual#rotate` ai multipli di π/2 non perde più pixel
+  (ICH-223):
+  `ncvisual_from_palidx` di 3.0.17 ignora la palette, e `ncvisual_rotate` perde la prima riga e la prima colonna
+  (confronta con `>` invece di `>=`, visual.c:746, anche a 0 radianti) e, con bordi trasparenti diversi sui lati,
+  anche pixel opachi (ruota il riquadro dei pixel opachi attorno al suo centro e i pixel attorno al centro
+  dell'immagine, visual.c:658-705: un 4x4 con 4 pixel opachi in basso a destra diventava un 2x2 senza pixel opachi).
+  `from_palidx` costruisce i pixel RGBA in Ruby (RGB del canale, alpha 0 se `:transparent` altrimenti 255, bianco
+  per il colore di default) e crea il visual come `from_rgba`; un indice >= `palette.size` solleva ancora
+  `VisualError`, e una voce della palette con un indice di palette (`Channel.palindex`), che non ha un colore RGB,
+  solleva `ArgumentError` (ICH-551). `rotate` ripete in Ruby l'algoritmo del C con le due correzioni, senza cambiare
+  il puntatore del visual: il costo è proporzionale all'area, con una chiamata C per pixel. Un'eccezione asincrona
+  (per esempio `Thread#raise`) arriva dopo la scrittura dei pixel: il visual è tutto ruotato o com'era.
+- `Visual.blit_rgba`, `.blit_bgrx`, `.blit_rgb_loose`, `.blit_rgb_packed` e `Visual#blit` su un piano esistente
+  sopra una metà di un glifo largo non lasciano più l'altra metà orfana (ICH-486): il C scrive ogni cella da sola, e
+  una scrittura larga successiva vicino alla metà destra orfana cancellava la prima cella della riga sotto
+  (sull'ultima riga scriveva fuori dal framebuffer). Ora l'altra metà diventa una cella vuota, come nei riempimenti
+  di ICH-450, con ogni blitter di celle. Il controllo legge solo i glifi a cavallo dei lati del rettangolo del blit,
+  che il wrapper calcola con `ncvisual_geom` (ICH-549): il costo è proporzionale alle righe del blit, non all'area
+  del piano. Con `:braille`, che non tocca le celle con soli pixel trasparenti, legge anche i glifi dentro il
+  rettangolo. Con un blitter che diventa `:pixel` il C non scrive celle e il wrapper non fa il controllo (ICH-550):
+  i glifi larghi sotto il bitmap restano interi.
 - Un gestore `trap` che chiude il contesto o il `Direct` e poi torna al codice interrotto non fa più usare al C un
   puntatore già liberato (ICH-464). Il segnale poteva arrivare fra `to_ptr` e la chiamata C, o fra due chiamate C con
   lo stesso puntatore (per esempio `ncpile_render` e `ncpile_rasterize` dentro `Context#render`: 37 crash su 80
@@ -236,11 +291,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   Sulla console Linux (gpm, senza rilasci) ogni pressione resta un clic (ICH-283).
 - `Direct#stream` disegna ogni frame sopra il precedente: con i frame più stretti del terminale prima saliva di una
   riga in meno, ogni frame scendeva di una riga, la prima riga dei frame precedenti restava sullo schermo e in fondo
-  al terminale lo schermo scorreva a ogni frame. Con il blitter `:pixel`, per un frame più basso dello schermo che
-  finisce sull'ultima riga (per esempio con il cursore in fondo) l'esito dipende dal terminale. Se il terminale ferma
-  il cursore sull'ultima riga del frame, prima i frame più stretti del terminale si sovrapponevano, ora i frame dopo
-  il primo partono una riga più in alto e l'ultima riga del primo frame resta visibile. Se un sixel sull'ultima riga
-  fa scorrere lo schermo, prima lo schermo scorreva a ogni frame, ora i frame si sovrappongono (ICH-284).
+  al terminale lo schermo scorreva a ogni frame (ICH-284). Con il blitter `:pixel` e un frame più basso dello schermo
+  in fondo al terminale l'esito non dipende più dal terminale: vedi la voce di ICH-458.
 - `Notcurses.strwidth` misura anche il testo dopo una sequenza ZWJ (U+200D): `"👩‍🚀abc"` vale 5 colonne, non 2. Il
   workaround del bug di notcurses 3.0.17, prima solo in `Plane#putstr`, ora vale per `Direct#putegc` (scrive solo il
   primo EGC, non anche il resto del testo), `Direct#print_aligned` (colonna e valore restituito giusti; `ArgumentError`

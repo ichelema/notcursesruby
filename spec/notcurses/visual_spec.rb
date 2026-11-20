@@ -142,22 +142,41 @@ RSpec.describe Notcurses::Visual do
     describe '.from_palidx' do
       let(:palette) { [Notcurses::Channel.default, Notcurses::Channel.rgb(1, 2, 3)] }
 
-      it 'bug di 3.0.17: le voci di default diventano un colore sintetico, le altre trasparenti' do
-        described_class.from_palidx("\x00\x01".b, rows: 1, cols: 2, palette: palette) do |v|
-          expect(v.at(0, 0).to_a).to eq([0, 220, 0, 255])
-          expect(v.at(0, 1).value).to eq(0)
+      # Prima (bug di 3.0.17, il C ignorava la palette): una voce di default diventava il colore sintetico
+      # [i, 220 - i / 2, i, 255 - i] e qualsiasi altra voce un pixel trasparente (0).
+      # (la quarta voce è un default reso trasparente: per il C non è più di default, ma nero trasparente)
+      it 'i pixel hanno i colori della palette: RGB, trasparente, default = bianco' do
+        colors = [Notcurses::Channel.rgb(10, 20, 30), Notcurses::Channel.rgb(40, 50, 60).with_alpha(:transparent),
+                  Notcurses::Channel.default, Notcurses::Channel.default.with_alpha(:transparent),
+                  Notcurses::Channel.rgb(200, 100, 50).with_alpha(:blend)]
+        described_class.from_palidx([0, 1, 2, 3, 4, 2].pack('C*'), rows: 2, cols: 3, palette: colors) do |v|
+          expect(v.dims).to eq([2, 3])
+          expect((0..1).map { |y| (0..2).map { |x| v.at(y, x).to_a } }).to eq(
+            [[[10, 20, 30, 255], [40, 50, 60, 0], [255, 255, 255, 255]],
+             [[0, 0, 0, 0], [200, 100, 50, 255], [255, 255, 255, 255]]]
+          )
         end
       end
 
-      it 'legge solo il primo byte di ogni pixel con pstride > 1' do
+      it 'legge solo il primo byte di ogni pixel con pstride > 1 e salta il resto della riga con rowstride' do
         described_class.from_palidx("\x01\x00\x00\x07".b, rows: 1, cols: 2, palette: palette, pstride: 2) do |v|
-          expect(v.at(0, 0).value).to eq(0)
-          expect(v.at(0, 1).to_a).to eq([0, 220, 0, 255])
+          expect(v.at(0, 0).to_a).to eq([1, 2, 3, 255])
+          expect(v.at(0, 1).to_a).to eq([255, 255, 255, 255])
+        end
+        described_class.from_palidx("\x01\x00\x09\x09\x00\x01\x09\x09".b, rows: 2, cols: 2, palette: palette,
+                                                                              rowstride: 4) do |v|
+          expect(v.at(0, 0).to_a).to eq([1, 2, 3, 255])
+          expect(v.at(0, 1).to_a).to eq([255, 255, 255, 255])
+          expect(v.at(1, 0).to_a).to eq([255, 255, 255, 255])
+          expect(v.at(1, 1).to_a).to eq([1, 2, 3, 255])
         end
       end
 
-      it 'un indice fuori dalla palette è un errore del C' do
-        expect { described_class.from_palidx("\x05".b, rows: 1, cols: 1, palette: palette) }.to raise_error(Notcurses::VisualError)
+      it 'un indice fuori dalla palette solleva VisualError' do
+        expect { described_class.from_palidx("\x05".b, rows: 1, cols: 1, palette: palette) }
+          .to raise_error(Notcurses::VisualError, /indice 5/)
+        expect { described_class.from_palidx("\x00\x02".b, rows: 1, cols: 2, palette: palette) }
+          .to raise_error(Notcurses::VisualError, /indice 2/)
       end
 
       it 'valida la palette' do
@@ -172,6 +191,17 @@ RSpec.describe Notcurses::Visual do
         expect do
           described_class.from_palidx("\x00".b, rows: 1000, cols: 1000, palette: palette, pstride: 5000)
         end.to raise_error(ArgumentError, /troppi/)
+      end
+
+      # ICH-551: una voce con un indice di palette non ha un colore RGB (prima: l'indice 5 diventava il blu
+      # del pixel, [0, 0, 5, 255]).
+      it 'una voce con un indice di palette solleva ArgumentError' do
+        index = Notcurses::Channel.palindex(5)
+        expect { described_class.from_palidx("\x00".b, rows: 1, cols: 1, palette: [index]) }
+          .to raise_error(ArgumentError, /palette\[0\]/)
+        expect do
+          described_class.from_palidx("\x00".b, rows: 1, cols: 1, palette: [Notcurses::Channel.rgb(1, 2, 3), index])
+        end.to raise_error(ArgumentError, /palette\[1\]/)
       end
     end
 
@@ -378,6 +408,38 @@ RSpec.describe Notcurses::Visual do
     end
 
     describe '#rotate' do
+      # Review della PR #29 (round 2): un'eccezione asincrona durante la scrittura dei pixel lasciava il visual con
+      # le dimensioni nuove e i pixel in parte vecchi: ora è tutto ruotato o tutto com'era.
+      it 'un Thread#raise durante la scrittura dei pixel non lascia un visual a metà' do
+        pixels = [[1, 0, 0, 255], [2, 0, 0, 255], [3, 0, 0, 255], [4, 0, 0, 255], [5, 0, 0, 255], [6, 0, 0, 255]]
+        reds = ->(v) { (0...v.dims[0]).map { |y| (0...v.dims[1]).map { |x| v.at(y, x).to_a[0] } } }
+        whole = described_class.from_rgba(rgba(pixels), rows: 2, cols: 3) { |v| reds.call(v.rotate(Math::PI / 2)) }
+        described_class.from_rgba(rgba(pixels), rows: 2, cols: 3) do |v|
+          paused = Queue.new
+          resume = Queue.new
+          tp = TracePoint.new(:c_return) do |t|
+            next unless t.method_id == :ncvisual_set_yx && Thread.current[:pausa] && !Thread.current[:fatto]
+
+            Thread.current[:fatto] = true
+            paused << true
+            resume.pop
+          end
+          tp.enable
+          a = Thread.new do
+            Thread.current[:pausa] = true
+            v.rotate(Math::PI / 2)
+          rescue RuntimeError
+            nil
+          end
+          paused.pop
+          a.raise(RuntimeError, 'interrotto')
+          resume << true
+          a.join
+          tp.disable
+          expect(reds.call(v)).to eq(whole).or eq([[1, 2, 3], [4, 5, 6]])
+        end
+      end
+
       it 'ruota di π/2 in senso antiorario e restituisce self' do
         expect(visual.rotate(Math::PI / 2)).to equal(visual)
         expect(visual.dims).to eq([2, 4])
@@ -386,6 +448,105 @@ RSpec.describe Notcurses::Visual do
       it 'un\'immagine trasparente non si ruota' do
         described_class.from_rgba("\0" * 16, rows: 2, cols: 2) do |v|
           expect { v.rotate(Math::PI / 2) }.to raise_error(Notcurses::VisualError)
+        end
+      end
+
+      # 16 pixel opachi tutti diversi
+      def distinct_visual(rows, cols)
+        data = (0...rows).flat_map { |y| (0...cols).flat_map { |x| [10 + y, 20 + x, 30, 255] } }.pack('C*')
+        described_class.from_rgba(data, rows: rows, cols: cols)
+      end
+
+      def pixels_of(visual)
+        rows, cols = visual.dims
+        (0...rows).map { |y| (0...cols).map { |x| visual.at(y, x).value } }
+      end
+
+      # Prima (bug di 3.0.17, visual.c:746): la rotazione perdeva la prima riga e la prima colonna di pixel.
+      it 'quattro rotazioni di π/2 riportano un 4x4 all\'originale, pixel per pixel' do
+        v = distinct_visual(4, 4)
+        original = pixels_of(v)
+        4.times do
+          v.rotate(Math::PI / 2)
+          expect(v.dims).to eq([4, 4])
+        end
+        expect(pixels_of(v)).to eq(original)
+      ensure
+        v&.close
+      end
+
+      it 'una rotazione di π/2 in senso antiorario sposta la prima riga nella prima colonna senza perdere pixel' do
+        v = distinct_visual(4, 4)
+        before = pixels_of(v)
+        v.rotate(Math::PI / 2)
+        expect(v.dims).to eq([4, 4])
+        expect((0..3).map { |y| (0..3).map { |x| before[x][3 - y] } }).to eq(pixels_of(v))
+        expect((0..3).map { |y| v.at(y, 0).value }).to eq(before[0].reverse)
+        expect(pixels_of(v).flatten.sort).to eq(before.flatten.sort)
+      ensure
+        v&.close
+      end
+
+      it 'conserva la prima riga e la prima colonna anche a 0 radianti e con immagini di una riga o colonna' do
+        v = distinct_visual(3, 5)
+        before = pixels_of(v)
+        v.rotate(0)
+        expect(pixels_of(v)).to eq(before)
+        v.close
+        v = distinct_visual(1, 3)
+        before = pixels_of(v)
+        v.rotate(0)
+        expect(pixels_of(v)).to eq(before)
+        v.close
+        v = distinct_visual(3, 1)
+        before = pixels_of(v)
+        v.rotate(0)
+        expect(pixels_of(v)).to eq(before)
+      ensure
+        v&.close
+      end
+
+      it '-π/2 seguito da +π/2 riporta un\'immagine non quadrata all\'originale' do
+        v = distinct_visual(3, 5)
+        before = pixels_of(v)
+        v.rotate(-Math::PI / 2)
+        expect(v.dims).to eq([5, 3])
+        v.rotate(Math::PI / 2)
+        expect(v.dims).to eq([3, 5])
+        expect(pixels_of(v)).to eq(before)
+      ensure
+        v&.close
+      end
+
+      it 'taglia i bordi trasparenti: le dimensioni seguono i soli pixel opachi' do
+        data = ([0] * 16) + ([0] * 4) + [1, 2, 3, 255] + [4, 5, 6, 255] + ([0] * 4) + ([0] * 16)
+        described_class.from_rgba(data.pack('C*'), rows: 3, cols: 4) do |v|
+          v.rotate(Math::PI / 2)
+          expect(v.dims).to eq([2, 1])
+          expect([v.at(0, 0).to_a, v.at(1, 0).to_a]).to eq([[4, 5, 6, 255], [1, 2, 3, 255]])
+        end
+      end
+
+      # Prima (bug di 3.0.17, visual.c:658-705): il C ruota il riquadro dei pixel opachi attorno al suo centro e i
+      # pixel attorno al centro dell'immagine; con bordi trasparenti diversi sui lati i pixel finivano fuori.
+      it 'con bordi trasparenti diversi sui lati ruota il blocco opaco senza perdere pixel (prima: 0 pixel su 4)' do
+        data = (0...16).flat_map { |i| i.divmod(4).then { |y, x| y >= 2 && x >= 2 ? [10 + y, 20 + x, 30, 255] : Array.new(4, 0) } }
+        described_class.from_rgba(data.pack('C*'), rows: 4, cols: 4) do |v|
+          block = pixels_of(v)[2..3].map { |row| row[2..3] }
+          v.rotate(Math::PI / 2)
+          expect(v.dims).to eq([2, 2])
+          expect(pixels_of(v)).to eq([[block[0][1], block[1][1]], [block[0][0], block[1][0]]])
+        end
+      end
+
+      it "quattro rotazioni di π/2 con la prima riga trasparente danno le righe opache dell'originale " \
+         '(prima: nessun pixel dopo la terza, VisualError alla quarta)' do
+        data = (0...16).flat_map { |i| i.divmod(4).then { |y, x| y.zero? ? Array.new(4, 0) : [10 + y, 20 + x, 30, 255] } }
+        described_class.from_rgba(data.pack('C*'), rows: 4, cols: 4) do |v|
+          opaque = pixels_of(v)[1..]
+          4.times { v.rotate(Math::PI / 2) }
+          expect(v.dims).to eq([3, 4])
+          expect(pixels_of(v)).to eq(opaque)
         end
       end
 
@@ -646,6 +807,151 @@ RSpec.describe Notcurses::Visual do
         expect do
           described_class.blit_rgba(rgbw, plane: nc.stdplane, rows: 4, cols: 2, blitter: :pixel, no_degrade: true)
         end.to raise_error(Notcurses::VisualError)
+      end
+    end
+
+    # ICH-486: il blitter scrive ogni cella da sola, come ncplane_gradient prima di ICH-450.
+    context 'su metà di un glifo largo' do
+      red = [255, 0, 0, 255].pack('C*')
+      blits = {
+        'blit_rgba' => ->(p, x, b) { described_class.blit_rgba(red, plane: p, rows: 1, cols: 1, blitter: b, y: 0, x: x) },
+        'blit_bgrx' => ->(p, x, b) { described_class.blit_bgrx(red, plane: p, rows: 1, cols: 1, blitter: b, y: 0, x: x) },
+        'blit_rgb_loose' => lambda do |p, x, b|
+          described_class.blit_rgb_loose(red, plane: p, rows: 1, cols: 1, blitter: b, y: 0, x: x)
+        end,
+        'blit_rgb_packed' => lambda do |p, x, b|
+          described_class.blit_rgb_packed(red[0, 3], plane: p, rows: 1, cols: 1, blitter: b, y: 0, x: x)
+        end,
+        '#blit' => lambda do |p, x, b|
+          described_class.from_rgba(red, rows: 1, cols: 1) { |v| v.blit(plane: p, blitter: b, y: 0, x: x) }
+        end
+      }
+      cases = %i[ascii half quad sextant octant braille].product([2, 3])
+      blits.each do |name, blit|
+        it "#{name} lascia vuota l'altra metà con ogni blitter di celle (prima: \"XYZ\" nella riga sotto)" do
+          cases.each do |blitter, x|
+            nc.stdplane.create_child(rows: 2, cols: 4) do |p|
+              p.putstr('ab漢', y: 0, x: 0)
+              p.putstr('WXYZ', y: 1, x: 0)
+              blit.call(p, x, blitter)
+              other = x == 2 ? 3 : 2
+              expect(p.at(y: 0, x: other).egc).to eq(''), "#{blitter} x=#{x}"
+              p.putstr('中', y: 0, x: 2)
+              expect(p.contents(y: 1, rows: 1)).to eq('WXYZ'), "#{blitter} x=#{x}"
+            end
+          end
+        end
+      end
+
+      it 'lo script della issue stampa "WXYZ"' do
+        nc.stdplane.create_child(rows: 2, cols: 4) do |pl|
+          pl.putstr('ab漢', y: 0, x: 0)
+          pl.putstr('WXYZ', y: 1, x: 0)
+          described_class.blit_rgba("\xff\x00\x00\xff".b, plane: pl, rows: 1, cols: 1, blitter: :ascii, y: 0, x: 2)
+          pl.putstr('中', y: 0, x: 2)
+          expect(pl.contents(y: 1, rows: 1)).to eq('WXYZ')
+        end
+      end
+
+      it 'senza glifi larghi sotto il blit disegna come prima' do
+        nc.stdplane.create_child(rows: 1, cols: 4) do |p|
+          p.putstr('ab漢', y: 0, x: 0)
+          described_class.blit_rgba(rgba([0x11, 0x22, 0x33, 0xff]), plane: p, rows: 1, cols: 1, blitter: :ascii, y: 0, x: 1)
+          expect(p.contents).to eq('a 漢')
+          expect(cell(p, 0, 1)[1]).to eq(0x112233)
+        end
+      end
+
+      # ICH-549: il controllo legge i glifi sui lati del rettangolo del blit, non tutte le celle del piano
+      # (prima: 60x200 celle lette per un blit 1x1).
+      def cell_reads
+        reads = 0
+        allow(ffi).to receive(:ncplane_at_yx_cell).and_wrap_original do |original, *args|
+          reads += 1
+          original.call(*args)
+        end
+        yield
+        reads
+      end
+
+      it "le celle lette dipendono dall'area del blit, non dall'area del piano" do
+        reads = [[4, 8], [60, 200]].map do |rows, cols|
+          nc.stdplane.create_child(rows: rows, cols: cols) do |p|
+            one = cell_reads { described_class.blit_rgba(red, plane: p, rows: 1, cols: 1, blitter: :ascii, y: 0, x: 0) }
+            three = cell_reads do
+              described_class.blit_rgba(red * 9, plane: p, rows: 3, cols: 3, blitter: :ascii, y: 0, x: 0)
+            end
+            whole = cell_reads do
+              described_class.from_rgba(red, rows: 1, cols: 1) { |v| v.blit(plane: p, blitter: :half, scale: :stretch) }
+            end
+            [one, three, whole]
+          end
+        end
+        expect(reads[0][0, 2]).to eq(reads[1][0, 2])
+        expect(reads[1][0]).to be <= 4 # una riga, due lati
+        expect(reads[1][1]).to be <= 12
+        expect(reads[1][2]).to be <= 60 * 4 # il piano intero: le righe, non le celle
+      end
+
+      # braille_blit non tocca una cella con soli pixel trasparenti (blit.c:1203-1206): sotto un'immagine con
+      # trasparenze un glifo largo resta coperto a metà anche dentro il rettangolo, non solo sui lati.
+      it 'il blitter :braille con pixel trasparenti non lascia metà orfane dentro il rettangolo' do
+        on = [255, 0, 0, 255]
+        off = [0, 0, 0, 0]
+        # celle 0, 1 e 2 del blit (4 righe x 2 colonne di pixel per cella); il glifo sta nelle celle 1 e 2
+        { 2 => [on, on, off], 1 => [on, off, on] }.each do |orphan, cells|
+          nc.stdplane.create_child(rows: 2, cols: 5) do |p|
+            p.putstr('a漢bc', y: 0, x: 0)
+            p.putstr('VWXYZ', y: 1, x: 0)
+            pixels = rgba(cells.flat_map { |c| [c, c] } * 4)
+            described_class.blit_rgba(pixels, plane: p, rows: 4, cols: 6, blitter: :braille, y: 0, x: 0)
+            expect(p.at(y: 0, x: orphan).egc).to eq(''), "cella #{orphan}"
+            p.putstr('中', y: 0, x: 1)
+            expect(p.contents(y: 1, rows: 1)).to eq('VWXYZ'), "cella #{orphan}"
+          end
+        end
+      end
+
+      it 'il rettangolo segue y: e x: simbolici, lo scaling e la regione del visual' do
+        one = ->(p, **o) { described_class.blit_rgba(red, plane: p, rows: 1, cols: 1, blitter: :ascii, **o) }
+        region = lambda do |p|
+          described_class.from_rgba(red * 2, rows: 1, cols: 2) { |v| v.blit(plane: p, blitter: :ascii, begx: 1, lenx: 1, x: 2) }
+        end
+        # testo della riga con il glifo, riga del glifo, blit, cella che deve restare vuota
+        [
+          # x: :right e x: :center su piani dove la colonna non coincide con il valore di NCALIGN_RIGHT (3) e
+          # NCALIGN_CENTER (2): senza ncplane_halign il controllo guarderebbe la colonna sbagliata
+          ['abcde漢', 0, ->(p) { one.call(p, y: 0, x: :right) }, 5],
+          ['abcde漢fghij', 0, ->(p) { one.call(p, y: 0, x: :center) }, 6],
+          ['ab漢', 2, ->(p) { one.call(p, y: :bottom, x: 3) }, 2],
+          ['ab漢', 0, ->(p) { one.call(p, y: 0, x: 3, scale: :stretch) }, 2],
+          ['ab漢', 0, ->(p) { one.call(p, y: 0, x: 3, scale: :scale) }, 2],
+          ['ab漢', 0, region, 3]
+        ].each_with_index do |(text, row, blit, empty), i|
+          nc.stdplane.create_child(rows: 3, cols: text.length + 1) do |p|
+            p.putstr(text, y: row, x: 0)
+            blit.call(p)
+            expect(p.at(y: row, x: empty).egc).to eq(''), "caso #{i}"
+            expect(p.at(y: row, x: 0).egc).to eq('a'), "caso #{i}"
+          end
+        end
+      end
+
+      it "la scrittura larga sull'ultima riga non corrompe l'heap (prima: abort di glibc)" do
+        skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
+        script = <<~'RUBY'
+          require 'notcurses'
+          Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                                  drain_input: true) do |nc|
+            red = "\xff\x00\x00\xff".b
+            planes = Array.new(20) { nc.stdplane.create_child(rows: 1, cols: 4).tap { |q| q.putstr('ab漢', y: 0, x: 0) } }
+            planes.each { |q| Notcurses::Visual.blit_rgba(red, plane: q, rows: 1, cols: 1, blitter: :ascii, y: 0, x: 2) }
+            planes.each { |q| q.putstr('中', y: 0, x: 2) }
+            planes.each(&:close)
+          end
+          puts 'ok'
+        RUBY
+        expect(NcHelpers.heap_check(script)).to eq([0, "ok\n"])
       end
     end
 
