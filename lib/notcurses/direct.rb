@@ -1222,7 +1222,8 @@ module Notcurses
     # @yieldparam index [Integer] indice del frame appena disegnato, da 0
     # @return [self] (con +break+, il valore di break)
     # @raise [DirectError] se il file non si apre, se un frame non si
-    #   renderizza o non si decodifica, o se la scrittura fallisce
+    #   renderizza o non si decodifica, se la scrittura fallisce, o se con
+    #   :pixel il cursore non si sposta per fare posto al frame
     # @raise [TypeError, ArgumentError] se un argomento non è valido
     # @raise [ClosedError] se il contesto è chiuso
     def stream(path, align: :left, blitter: :default, scale: :scale)
@@ -1247,10 +1248,11 @@ module Notcurses
             # schermo scorre o no secondo il terminale, e il cursore è nello stesso punto nei due casi. Quindi il
             # bitmap non deve finire lì: il cursore scende di rows righe (VT: lo schermo scorre se serve, la colonna
             # resta) e risale, e sotto il frame resta una riga libera. Un frame alto quanto lo schermo non ha una riga
-            # libera: parte dalla riga 0 come prima (direct.c:444). Ritorni ignorati come sopra
+            # libera: parte dalla riga 0 come prima (direct.c:444). Un movimento fallito solleva DirectError: il
+            # frame partirebbe da un'altra riga
             if bitmap && rows < FFI.ncdirect_dim_y(ptr)
-              FFI.ncdirect_cursor_down(ptr, rows)
-              FFI.ncdirect_cursor_up(ptr, rows)
+              cursor_down(count: rows)
+              cursor_up(count: rows)
             end
             frame.raster(align: align)
             yield index if block_given?

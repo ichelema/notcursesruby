@@ -724,6 +724,18 @@ RSpec.describe Notcurses::Direct do
         expect(out).not_to include("\v")
       end
 
+      # Review della PR #29: prima i ritorni dei movimenti che fanno posto sotto il cursore erano ignorati, e lo
+      # stream continuava con i frame su righe diverse.
+      it 'stream con :pixel solleva DirectError se il cursore non si sposta per fare posto' do
+        tall = write_tall_two_frame_gif(File.join(@dir, 'alta.gif')) # 3 righe: meno dello schermo
+        allow(ffi).to receive(:ncdirect_check_pixel_support).and_return(1)
+        %i[ncdirect_cursor_down ncdirect_cursor_up].each do |move|
+          allow(ffi).to receive(move).and_return(-1)
+          expect { d.stream(tall, blitter: :pixel, scale: :none) }.to raise_error(Notcurses::DirectError, /#{move}/)
+          allow(ffi).to receive(move).and_call_original
+        end
+      end
+
       it 'stream si ferma con break e chiude l\'immagine' do
         allow(ffi).to receive(:ncdirect_raster_frame).and_call_original
         allow(ffi).to receive(:ncdirectf_free).and_call_original

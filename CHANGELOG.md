@@ -38,7 +38,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   sull'ultima riga lo schermo scorre ancora di una riga a ogni frame. Con i blitter a celle, e con `:pixel` su un
   terminale senza grafica a pixel, l'output non cambia. Lo stream va avviato con il cursore a inizio riga: con
   `align: :left` il primo frame parte dalla colonna del cursore e i successivi dalla colonna 0; in fondo allo schermo
-  prima il C, spostando in alto il primo frame, lo riportava alla colonna 0.
+  prima il C, spostando in alto il primo frame, lo riportava alla colonna 0. Se il cursore non si sposta per fare
+  posto al frame, `stream` solleva `DirectError`.
 - `Direct#close` (e `#stop`) con `output:` su un file o su un `FILE*` non scrive più il reset di `ncdirect_stop`
   (`\e[39;49m\e(B\e[m`) sullo stdout del processo (ICH-222, `direct.c:841`): durante lo stop il fd 1 punta a
   `/dev/null`, poi torna com'era, anche con il fd 1 chiuso all'avvio o con `FD_CLOEXEC`, e con `$stdout` di Ruby
