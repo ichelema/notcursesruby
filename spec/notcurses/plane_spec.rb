@@ -2336,12 +2336,13 @@ RSpec.describe Notcurses::Plane do
     # un'altra posizione ncplane_qrcode di 3.0.17 scrive fuori dal proprio buffer (fill.c:612-616).
     it "qrcode sulla metà sinistra di un glifo largo lascia vuota l'altra metà (prima: \"XYZ\" nella riga sotto)" do
       with_parent(rows: 12, cols: 22) do |c|
-        begin
-          c.qrcode('x', rows: 11, cols: 21)
-        rescue Notcurses::PlaneError
-          skip 'notcurses compilato senza qrcodegen (ncplane_qrcode è lo stub)'
+        # la prova chiama il C, non il wrapper: un errore del wrapper fa fallire la spec, non la salta
+        stub = c.create_child(rows: 11, cols: 21) do |probe|
+          ymax = ::FFI::MemoryPointer.new(:uint).tap { |m| m.write_uint(11) }
+          xmax = ::FFI::MemoryPointer.new(:uint).tap { |m| m.write_uint(21) }
+          Notcurses::FFI.ncplane_qrcode(probe.to_ptr, ymax, xmax, ::FFI::MemoryPointer.from_string('x'), 1).negative?
         end
-        c.erase
+        skip 'notcurses compilato senza qrcodegen (ncplane_qrcode è lo stub)' if stub
         11.times { |y| c.putstr('ab漢', y: y, x: 18) }
         c.putstr('WXYZ', y: 11, x: 0)
         c.move_cursor(0, 0)
