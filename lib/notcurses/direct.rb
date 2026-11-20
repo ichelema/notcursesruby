@@ -269,7 +269,11 @@ module Notcurses
     # svuota +$stdout+). Il fd 1 è del processo: un altro thread che scrive
     # sullo stdout durante lo stop perde quell'output. Con un FILE* passato
     # come output che scrive sul fd 1 il reset del C si perde, ma il wrapper
-    # ha già scritto il proprio sull'output.
+    # ha già scritto il proprio sull'output. Limite (ICH-560): il testo che
+    # codice C ha scritto sullo stdout della libc senza svuotarlo (per
+    # esempio printf di un'estensione nativa) si perde, perché lo stop lo
+    # svuota con il fd 1 già su /dev/null (fbuf.h:318). Il testo di +$stdout+
+    # non passa dalla libc e non si perde.
     #
     # Un'eccezione sollevata durante +ncdirect_stop+ (per esempio un Ctrl-C)
     # esce da close, ma lascia il contesto chiuso e il registro libero: un
@@ -341,10 +345,13 @@ module Notcurses
 
       claim = Object.new
       stopping = false
+      owner = false
       begin
         # una sola esecuzione, anche se il contesto è in coda più volte: come in Context#release_native!
         @claims << claim
         return nil unless @claims.first.equal?(claim)
+
+        owner = true # solo chi fa lo stop rimette lo stdout: un close concorrente non tocca il fd 1
 
         # ncdirect_stop non resetta il FILE* (solo stdout): lo fa il wrapper, prima, perché lo stop ne fa ancora
         # il flush
@@ -359,10 +366,11 @@ module Notcurses
         begin
           rc = FFI.ncdirect_stop(@ptr)
         ensure
+          unmute_stdout! # prima di fclose: con il fd 1 chiuso all'avvio, fopen ha dato all'output il fd 1
           mark_closed!(fclose: @own_fp)
         end
       ensure
-        unmute_stdout!
+        unmute_stdout! if owner
         if !stopping && @claims.first.equal?(claim) # interrotta prima dello stop (eccezione asincrona)
           # resta in attesa: lo stato prima della lista, la lista prima della coda
           @closed = false
@@ -1509,7 +1517,12 @@ module Notcurses
     # terminale o un file aperto con r+.
     def mute_stdout!
       stdout = IO.for_fd(1, autoclose: false)
-      $stdout.flush # il testo di Ruby non ancora scritto va sullo stdout vero
+      begin
+        $stdout.flush # il testo di Ruby non ancora scritto va sullo stdout vero
+      rescue
+        nil # $stdout può essere un IO chiuso o un oggetto senza flush: lo stop si fa lo stesso
+      end
+      @muted_cloexec = stdout.close_on_exec?
       @muted_stdout = stdout.dup
       File.open(File::NULL, 'w') { |null| stdout.reopen(null) }
     rescue SystemCallError, IOError
@@ -1522,7 +1535,9 @@ module Notcurses
         saved = @muted_stdout
         return unless saved
 
-        IO.for_fd(1, autoclose: false).reopen(saved)
+        stdout = IO.for_fd(1, autoclose: false)
+        stdout.reopen(saved)
+        stdout.close_on_exec = @muted_cloexec # reopen toglie FD_CLOEXEC
         @muted_stdout = nil
         saved.close
       end

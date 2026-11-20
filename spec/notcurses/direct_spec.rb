@@ -217,6 +217,72 @@ RSpec.describe Notcurses::Direct do
       end
     end
 
+    # Review della PR #29: lo stdout del processo dopo close con output: su un file, in casi limite del fd 1.
+    # Ogni caso: preparazione, controllo dopo close, stdout atteso (nil: non controllato), stderr atteso.
+    {
+      # $stdout di Ruby è un altro IO, chiuso: prima il flush sollevava IOError e il fd 1 non veniva silenziato
+      '$stdout chiuso' => ['$stdout = File.open(File::NULL, "w"); $stdout.close', 'STDOUT.write("after\\n")',
+                           "after\n", ''],
+      # $stdout senza flush: prima close sollevava NoMethodError
+      '$stdout senza flush' => ['w = Object.new; def w.write(*) = 0; $stdout = w', 'STDOUT.write("after\\n")',
+                                "after\n", ''],
+      # FD_CLOEXEC del fd 1: prima reopen lo toglieva
+      'close_on_exec' => ['STDOUT.close_on_exec = true', 'STDOUT.write("after " + STDOUT.close_on_exec?.to_s + "\\n")',
+                          "after true\n", ''],
+      # fd 1 chiuso (con close della libc: STDOUT.close non chiude i fd da 0 a 2): fopen dà all'output il fd 1, e
+      # prima il ripristino dopo fclose sollevava Errno::EBADF; dopo close il fd 1 è di nuovo chiuso
+      'fd 1 chiuso' => ['module C; extend FFI::Library; ffi_lib FFI::Library::LIBC; ' \
+                        'attach_function :close, [:int], :int; end; C.close(1)',
+                        'STDERR.write(File.exist?("/proc/self/fd/1") ? "aperto" : "chiuso")', nil, 'chiuso']
+    }.each do |name, (setup, check, out, err)|
+      it "close con output: su un file e #{name} non scrive il reset sullo stdout e non solleva" do
+        Dir.mktmpdir do |dir|
+          stdout = File.join(dir, 'stdout')
+          stderr = File.join(dir, 'stderr')
+          script = "require 'notcurses'; #{setup}; " \
+                   "d = Notcurses::Direct.new(output: #{File.join(dir, 'out').dump}, termtype: 'xterm-256color', " \
+                   "drain_input: true); d.close; #{check}"
+          pid = spawn(RbConfig.ruby, '-I', DirectSpecHelpers::LIB_DIR, '-e', script,
+                      in: File::NULL, out: stdout, err: stderr)
+          _, status = Process.wait2(pid)
+          expect([status.exitstatus, File.read(stderr)]).to eq([0, err]), name
+          expect(File.binread(stdout)).to eq(out), name if out
+        end
+      end
+    end
+
+    # Review della PR #29: un secondo close che non fa lo stop (claim perso) rimetteva il fd 1 mentre il primo stava
+    # per chiamare ncdirect_stop, e il reset arrivava sullo stdout.
+    it 'un close concorrente che non fa lo stop non rimette lo stdout prima dello stop dell\'altro' do
+      Dir.mktmpdir do |dir|
+        stdout = File.join(dir, 'stdout')
+        script = <<~RUBY
+          require 'notcurses'
+          d = Notcurses::Direct.new(output: #{File.join(dir, 'out').dump}, termtype: 'xterm-256color', drain_input: true)
+          paused = Queue.new
+          resume = Queue.new
+          tp = TracePoint.new(:return) do |t|
+            next unless t.method_id == :mute_stdout! && Thread.current[:pausa]
+            paused << true
+            resume.pop
+          end
+          tp.enable
+          a = Thread.new { Thread.current[:pausa] = true; d.close }
+          paused.pop
+          d.close
+          resume << true
+          a.join
+          tp.disable
+          STDOUT.write("after\\n")
+        RUBY
+        pid = spawn(RbConfig.ruby, '-I', DirectSpecHelpers::LIB_DIR, '-e', script,
+                    in: File::NULL, out: stdout, err: File::NULL)
+        _, status = Process.wait2(pid)
+        expect(status.exitstatus).to eq(0)
+        expect(File.binread(stdout)).to eq("after\n")
+      end
+    end
+
     it 'un Direct rimasto aperto viene chiuso all\'uscita del processo (at_exit)' do
       Dir.mktmpdir do |dir|
         path = File.join(dir, 'out')
