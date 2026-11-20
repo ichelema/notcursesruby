@@ -558,6 +558,38 @@ module Notcurses
       raise error
     end
 
+    # Thread interno dell'init di {Context} e {Direct}: chiama il C e, se il
+    # chiamante non adotta il contesto, esegue il rollback. Il thread è
+    # l'unico proprietario del rollback: un secondo Ctrl-C o un Thread#kill
+    # del chiamante non lo saltano (ICH-226). Il chiamante scrive in go true
+    # per partire (false: rinuncia prima dell'init), poi true se adotta il
+    # puntatore letto da ready. Il thread rimanda le interruzioni per tutta
+    # la sua vita: anche all'uscita del processo il rollback finisce.
+    # @param go [Thread::Queue] le decisioni del chiamante
+    # @param ready [Thread::Queue] il puntatore, o l'eccezione della chiamata C
+    # @param start [Proc] la chiamata C dell'init
+    # @param undo [Proc] il rollback: riceve il puntatore, o nil se l'init non
+    #   è partito
+    # @return [Thread]
+    def init_thread(go, ready, start, undo)
+      Thread.new do # rubocop:disable ThreadSafety/NewThread -- il thread è il proprietario del rollback
+        Thread.current.report_on_exception = false
+        Thread.handle_interrupt(Object => :never) do
+          ptr = nil
+          if go.pop
+            ptr = ::FFI::Pointer::NULL
+            begin
+              ready << (ptr = start.call)
+            rescue Exception => e # rubocop:disable Lint/RescueException
+              ready << e
+            end
+            next if go.pop
+          end
+          undo.call(ptr)
+        end
+      end
+    end
+
     # Blocco opzionale dei metodi che creano risorse: senza blocco restituisce
     # la risorsa, con il blocco la passa al blocco e la chiude alla fine.
     # @param resource [#close] risorsa da passare al blocco

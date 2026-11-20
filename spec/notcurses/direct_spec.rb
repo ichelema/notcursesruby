@@ -140,6 +140,16 @@ RSpec.describe Notcurses::Direct do
       open_direct { |d| expect(d).not_to be_closed }
     end
 
+    # ICH-226: il thread interno dell'init aveva report_on_exception attivo, e un errore della chiamata C finiva
+    # anche su stderr.
+    it "un errore nel thread di init arriva al chiamante senza scrivere su stderr e libera il registro" do
+      allow(ffi).to receive(:ncdirect_init).and_raise(RuntimeError, 'boom')
+      expect do
+        expect { open_direct }.to raise_error(RuntimeError, 'boom')
+      end.not_to output.to_stderr
+      expect(Notcurses.active_context).to be_nil
+    end
+
     it 'valida le opzioni prima di avviare notcurses' do
       allow(ffi).to receive(:ncdirect_init).and_call_original
       expect { open_direct(output: 42) }.to raise_error(TypeError)
@@ -322,24 +332,30 @@ RSpec.describe Notcurses::Direct do
     end
 
     # ICH-568: nel rollback di Direct.new un secondo Thread#raise consegnato alla fine del ripristino dello stdout
-    # saltava TERM, il rilascio del registro e fclose: ogni Direct.open successivo sollevava InitError.
+    # saltava TERM, il rilascio del registro e fclose: ogni Direct.open successivo sollevava InitError. Da ICH-226 il
+    # rollback è del thread di init: il secondo Interrupt fa uscire il chiamante dall'attesa, e il rollback finisce.
     it 'un secondo Thread#raise durante il ripristino dello stdout nel rollback dell\'init completa il rollback' do
       Dir.mktmpdir do |dir|
         out = File.join(dir, 'out')
         script = <<~RUBY
           require 'notcurses'
           ENV['TERM'] = 'vt100'
-          fd1 = File.stat('/proc/self/fd/1').ino
+          stdout_ino = -> { IO.for_fd(1, autoclose: false).stat.ino }
+          fd1 = stdout_ino.call
+          fds = Dir.children(#{NcHelpers::FD_DIR.dump}).size
           paused = Queue.new
           resume = Queue.new
-          tp = TracePoint.new(:c_return) do |t|
-            next unless Thread.current[:pausa]
+          caller_thread = nil
+          reopens = 0
+          popped = false
+          # Queue#pop è un metodo C su alcune versioni di Ruby e un metodo Ruby su altre
+          tp = TracePoint.new(:c_return, :return) do |t|
             case t.method_id
-            when :value # init.value: il puntatore c'è, l'Interrupt arriva nel corpo dell'init
-              next if Thread.current[:init]
-              Thread.current[:init] = true
-            when :reopen # il secondo reopen: quello di unmute_stdout!
-              next unless (Thread.current[:reopen] = Thread.current[:reopen].to_i + 1) == 2
+            when :pop # ready.pop nel chiamante: il puntatore c'è
+              next unless Thread.current.equal?(caller_thread) && !popped
+              popped = true
+            when :reopen # il secondo reopen: quello di unmute_stdout!, nel thread di init
+              next unless (reopens += 1) == 2
             else next
             end
             paused << true
@@ -347,23 +363,23 @@ RSpec.describe Notcurses::Direct do
           end
           tp.enable
           a = Thread.new do
-            Thread.current[:pausa] = true
+            caller_thread = Thread.current
             Notcurses::Direct.new(output: #{out.dump}, termtype: 'xterm-256color', drain_input: true)
             'nessuna'
           rescue Interrupt => e
             e.message
           end
-          # il primo Interrupt esce subito dall'attesa del TracePoint; il secondo, dentro handle_interrupt, arriva
-          # dopo il ripristino
-          paused.pop
-          a.raise(Interrupt, 'primo')
-          paused.pop
-          a.raise(Interrupt, 'secondo')
-          resume << true
+          paused.pop # il chiamante è al ritorno di ready.pop
+          a.raise(Interrupt, 'primo') # esce subito dall'attesa del TracePoint ed entra nell'ensure di new
+          paused.pop # il thread di init è fermo a metà rollback, il chiamante aspetta nel join
+          a.raise(Interrupt, 'secondo') # il chiamante esce dall'attesa
           result = a.value
+          busy = Notcurses.active_context.class
+          resume << true # il rollback riprende
+          200.times { Notcurses.active_context.nil? ? break : sleep(0.01) }
           tp.disable
-          open_out = Dir.children('/proc/self/fd').count { |fd| File.readlink("/proc/self/fd/\#{fd}") == #{out.dump} rescue false }
-          STDERR.write([result, Notcurses.active_context.inspect, ENV['TERM'], File.stat('/proc/self/fd/1').ino == fd1, open_out].inspect)
+          same_fds = Dir.children(#{NcHelpers::FD_DIR.dump}).size == fds # FILE* dell'output e copia del fd 1 chiusi
+          STDERR.write([result, busy, Notcurses.active_context.inspect, ENV['TERM'], stdout_ino.call == fd1, same_fds].inspect)
           Notcurses::Direct.open(output: #{File.join(dir, 'out2').dump}, termtype: 'xterm-256color', drain_input: true) { nil }
           STDERR.write(' riaperto')
         RUBY
@@ -377,7 +393,7 @@ RSpec.describe Notcurses::Direct do
           Process.wait(pid)
           nil
         end
-        expect([status&.exitstatus, File.read(err)]).to eq([0, '["secondo", "nil", "vt100", true, 0] riaperto'])
+        expect([status&.exitstatus, File.read(err)]).to eq([0, '["secondo", Notcurses::Direct, "nil", "vt100", true, true] riaperto'])
       end
     end
 

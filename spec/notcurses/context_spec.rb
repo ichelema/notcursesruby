@@ -65,6 +65,16 @@ RSpec.describe Notcurses::Context do
       NcHelpers.open_context { |nc| expect(nc).not_to be_closed }
     end
 
+    # ICH-226: il thread interno dell'init aveva report_on_exception attivo, e un errore della chiamata C finiva
+    # anche su stderr.
+    it "un errore nel thread di init arriva al chiamante senza scrivere su stderr e libera il registro" do
+      allow(Notcurses::FFI).to receive(:notcurses_init).and_raise(RuntimeError, 'boom')
+      expect do
+        expect { NcHelpers.open_context }.to raise_error(RuntimeError, 'boom')
+      end.not_to output.to_stderr
+      expect(Notcurses.active_context).to be_nil
+    end
+
     it 'valida le opzioni prima di avviare notcurses' do
       expect { NcHelpers.open_context(output: 42) }.to raise_error(TypeError)
       expect { NcHelpers.open_context(output: ::FFI::Pointer::NULL) }.to raise_error(ArgumentError)

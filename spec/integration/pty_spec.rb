@@ -128,6 +128,77 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(status.exitstatus).to eq(0), out
   end
 
+  # ICH-226: un secondo Ctrl-C mentre il rollback dell'init aspetta il terminale faceva uscire il rollback a metà
+  # (registro occupato per sempre, contesto C orfano), e un Thread#kill del chiamante saltava il rescue. Il
+  # terminale finto risponde a DA1 solo quando lo script lo dice: nessuna ipotesi sui tempi dell'init.
+  def init_abandon_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    answer = Queue.new
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        data.scan(/\e\[6n|\e\[c/) do |q|
+          answer.pop if q == "\e[c" # fino ad allora l'init attende nel C
+          master.write(q == "\e[6n" ? "\e[5;7R" : "\e[?62;22c")
+        end
+      end
+    rescue IOError, Errno::EIO
+    end
+    opts = { output: slave.path, termtype: 'xterm-256color' }
+    registry = lambda do
+      500.times { Notcurses.active_context.nil? ? break : sleep(0.01) }
+      Notcurses.active_context.inspect
+    end
+    [[Notcurses::Context, { suppress_banners: true }], [Notcurses::Direct, {}]].each do |klass, extra|
+      # il primo Ctrl-C porta new nell'attesa del rollback, il secondo ne esce
+      Thread.new { 2.times { sleep 0.2; Process.kill(:INT, Process.pid) } }
+      begin
+        klass.new(**opts, **extra)
+        puts "#{klass}: nessuna Interrupt"
+      rescue Interrupt
+        again = begin
+          klass.new(**opts, **extra)
+        rescue Notcurses::InitError
+          'InitError'
+        end
+        puts "#{klass}: secondo Interrupt, init in corso: nuovo init #{again}"
+      end
+      answer << true # il terminale risponde: il thread di init ferma il contesto e libera il registro
+      puts "#{klass}: registro dopo la risposta #{registry.call}"
+      answer << true
+      klass.open(**opts, **extra) { puts "#{klass}: riaperto dopo il secondo Ctrl-C" }
+
+      # Thread#kill salta i rescue: il rollback parte dall'ensure, e il join torna a contesto fermato
+      t = Thread.new { klass.new(**opts, **extra) }
+      sleep 0.2
+      t.kill
+      answer << true
+      t.join
+      puts "#{klass}: dopo kill e join active_context=#{Notcurses.active_context.inspect}"
+      answer << true
+      klass.open(**opts, **extra) { puts "#{klass}: riaperto dopo kill" }
+    end
+    puts 'fine'
+  RUBY
+
+  it "un secondo Ctrl-C o un Thread#kill durante l'init non lasciano il registro occupato né scrivono su stderr" do
+    out, status, timed_out = run_child(init_abandon_script, timeout: 30)
+    expect(timed_out).to be(false), out
+    lines = %w[Context Direct].flat_map do |k|
+      ["Notcurses::#{k}: secondo Interrupt, init in corso: nuovo init InitError",
+        "Notcurses::#{k}: registro dopo la risposta nil", "Notcurses::#{k}: riaperto dopo il secondo Ctrl-C",
+        "Notcurses::#{k}: dopo kill e join active_context=nil", "Notcurses::#{k}: riaperto dopo kill"]
+    end
+    expect(out.lines(chomp: true)).to eq(lines + ['fine']) # stdout e stderr insieme: niente altro
+    expect(status.exitstatus).to eq(0), out
+  end
+
   # ICH-441: Process.daemon fa il fork senza Process._fork, e il processo che ha creato il contesto esce con _exit
   # senza lo stop: il terminale restava senza echo e in modo non canonico. Con un contesto aperto Process.daemon
   # solleva un errore prima del fork, e il contesto resta aperto e usabile.

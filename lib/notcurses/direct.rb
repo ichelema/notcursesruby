@@ -174,10 +174,16 @@ module Notcurses
     # timeout) la risposta; query e report del cursore vanno al terminale di
     # controllo anche quando output è un file. Durante l'init il GVL è
     # rilasciato: gli altri thread Ruby girano, ma non devono usare ENV (con
-    # termtype: notcurses chiama setenv). L'init gira in un thread interno:
-    # un'eccezione asincrona durante l'attesa (Ctrl-C, Thread#raise, Timeout)
-    # arriva a init completato, e il wrapper ferma il contesto prima di
-    # rilanciarla.
+    # termtype: notcurses chiama setenv). L'init gira in un thread interno,
+    # che ferma anche il contesto quando new non va a buon fine:
+    # un'eccezione asincrona durante l'attesa (Ctrl-C, Thread#raise, Timeout,
+    # anche Thread#kill) arriva a init completato e a contesto fermato, con
+    # il registro libero. Un secondo Ctrl-C mentre new aspetta esce subito: il
+    # thread interno ferma il contesto quando l'init torna (con il fd 1 su
+    # /dev/null durante lo stop, come in {#close}), e fino ad allora il
+    # contesto resta registrato (un nuovo init solleva InitError). Con un
+    # terminale che non risponde mai l'init non torna, e il registro resta
+    # occupato.
     #
     # @param termtype [String, nil] voce terminfo del terminale; nil = variabile
     #   TERM. notcurses la scrive in ENV['TERM']
@@ -216,17 +222,35 @@ module Notcurses
       check_output!(output)
 
       @closed = true # fino alla fine dell'init: close e at_exit ignorano l'oggetto
-      Notcurses.acquire_context(self)
-      old_term = ENV.fetch('TERM', nil)
+      old_term = fp = init = nil
       own_fp = false
-      init = nil
+      go = Queue.new    # al thread di init: true per partire, poi true se il chiamante ha adottato il contesto
+      ready = Queue.new # dal thread di init: il puntatore, o l'eccezione della chiamata C
+      adopted = false
+      start = lambda do
+        old_term = ENV.fetch('TERM', nil)
+        core ? FFI.ncdirect_core_init(term, fp, flags) : FFI.ncdirect_init(term, fp, flags)
+      end
+      undo = lambda do |ptr| # nel thread di init; ptr è nil se l'init non è partito
+        if ptr && !ptr.null?
+          mute_stdout! if fp && !fp.null?
+          FFI.ncdirect_stop(ptr)
+        end
+      ensure
+        unmute_stdout!
+        # il C ha già scritto termtype in TERM: un init successivo senza termtype fallirebbe
+        ENV['TERM'] = old_term unless ptr.nil? || term.nil?
+        Notcurses.release_context(self)
+        FFI.fclose(fp) if own_fp
+      end
       begin
+        init = Util.init_thread(go, ready, start, undo)
+        Notcurses.acquire_context(self)
         fp, own_fp = open_output(output)
         $stdout.flush if output.nil?
-        # Un'eccezione asincrona (Ctrl-C, Thread#raise, Timeout) consegnata al ritorno della chiamata
-        # bloccante perderebbe il puntatore; nel thread resta, e il rescue ferma il contesto.
-        init = Thread.new { core ? FFI.ncdirect_core_init(term, fp, flags) : FFI.ncdirect_init(term, fp, flags) }
-        ptr = init.value
+        go << true
+        ptr = ready.pop
+        raise ptr if ptr.is_a?(Exception)
         if ptr.null?
           raise InitError, 'ncdirect_init ha restituito NULL (terminfo non trovata per TERM o termtype? stdin chiuso?)'
         end
@@ -242,25 +266,11 @@ module Notcurses
         @claims = [] # richieste di chiusura fisica: la esegue solo la prima (release_native!)
         @closing = false
         @closed = false
-      rescue Exception # rubocop:disable Lint/RescueException
-        ptr = init&.value
-        begin
-          if ptr && !ptr.null?
-            mute_stdout! if fp && !fp.null?
-            FFI.ncdirect_stop(ptr)
-          end
-        ensure
-          # in un solo blocco, come in release_native!: un'eccezione asincrona fra il ripristino del fd 1 e gli altri
-          # passi lascerebbe il registro occupato dopo lo stop del C
-          Thread.handle_interrupt(Object => :never) do
-            unmute_stdout!
-            # il C ha già scritto termtype in TERM: un init successivo senza termtype fallirebbe
-            ENV['TERM'] = old_term unless term.nil?
-            Notcurses.release_context(self)
-            FFI.fclose(fp) if own_fp
-          end
-        end
-        raise
+        adopted = true
+      ensure
+        go << adopted # per prima, una sola chiamata C: né un secondo Ctrl-C né Thread#kill la saltano
+        # il rollback è del thread di init: un secondo Ctrl-C esce dall'attesa, e il rollback continua
+        init&.join unless adopted
       end
     end
 

@@ -358,6 +358,13 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   il contesto usciva dentro `daemon(3)` senza lo stop (`Process.daemon` non passa da `Process._fork`), e il
   terminale restava senza echo e in modo non canonico, con `Context` anche sullo schermo alternativo e con il cursore
   nascosto. Senza un contesto aperto, o in un processo figlio creato con `fork`, `Process.daemon` non cambia.
+- `Context.new` e `Direct.new` interrotti durante l'init non lasciano più il registro occupato né il contesto C attivo
+  (ICH-226). Il thread interno dell'init esegue anche il rollback, e lo finisce dopo un secondo Ctrl-C e dopo un
+  `Thread#kill` del thread che chiama `new`. Prima un secondo Ctrl-C mentre il terminale non aveva ancora risposto
+  faceva uscire il rollback a metà: ogni init successivo sollevava `InitError`, e all'uscita il processo poteva
+  terminare con SIGSEGV. Ora il secondo Ctrl-C fa uscire subito `new`, e fino al ritorno dell'init un nuovo init
+  solleva ancora `InitError`; dopo il registro è libero. Un errore della chiamata C arriva al chiamante senza scrivere
+  niente su stderr (prima il thread scriveva il proprio report), e il registro resta libero (prima restava occupato).
 
 ### Limiti noti
 
