@@ -795,6 +795,47 @@ RSpec.describe Notcurses::Visual do
         end
       end
 
+      # ICH-569: un'eccezione asincrona al ritorno di ncvisual_from_rgba, prima dell'ensure, lasciava allocato il
+      # visual temporaneo della geometria.
+      it 'un Thread#raise al ritorno di ncvisual_from_rgba distrugge una volta il visual temporaneo' do
+        nc.stdplane.create_child(rows: 1, cols: 1) do |plane|
+          px = rgba([1, 2, 3, 255])
+          %i[blit_rgba blit_bgrx blit_rgb_loose].each do |blit|
+            created = []
+            destroyed = []
+            allow(ffi).to receive(:ncvisual_destroy).and_wrap_original do |m, ptr|
+              destroyed << ptr.address
+              m.call(ptr)
+            end
+            paused = Queue.new
+            resume = Queue.new
+            tp = TracePoint.new(:c_return) do |t|
+              next unless t.method_id == :ncvisual_from_rgba && Thread.current[:pausa] && !Thread.current[:fatto]
+
+              Thread.current[:fatto] = true
+              created << t.return_value.address
+              paused << true
+              resume.pop
+            end
+            tp.enable
+            a = Thread.new do
+              Thread.current[:pausa] = true
+              described_class.public_send(blit, px, plane: plane, rows: 1, cols: 1, blitter: :ascii)
+              :finito
+            rescue RuntimeError => e
+              e.message
+            end
+            paused.pop
+            a.raise(RuntimeError, 'interrotto')
+            resume << true
+            result = a.value
+            tp.disable
+            expect([blit, result, destroyed]).to eq([blit, 'interrotto', created])
+            expect(created.first).not_to eq(0)
+          end
+        end
+      end
+
       it 'validano gli argomenti' do
         expect { described_class.blit_rgba(rgbw, plane: nil, rows: 4, cols: 2) }.to raise_error(TypeError)
         expect { described_class.blit_rgb_packed(rgbw, plane: nil, rows: 1, cols: 2) }.to raise_error(TypeError)

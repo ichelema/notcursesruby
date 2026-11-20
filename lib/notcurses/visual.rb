@@ -576,13 +576,16 @@ module Notcurses
         vopts = Internal.options(ctx, plane, **options)
         vopts[:leny] = rows
         vopts[:lenx] = cols
-        src = visual || FFI.ncvisual_from_rgba(pixels, rows, cols * 4, cols)
-        raise VisualError, "#{what}: ncvisual_from_rgba ha restituito NULL" if src.null?
-
+        src = nil
         rc = begin
+          # un'eccezione asincrona al ritorno della chiamata C arriva dopo l'assegnazione, dentro il begin: solo la
+          # creazione è protetta, il blit resta interrompibile
+          Thread.handle_interrupt(Object => :never) { src = visual || FFI.ncvisual_from_rgba(pixels, rows, cols * 4, cols) }
+          raise VisualError, "#{what}: ncvisual_from_rgba ha restituito NULL" if src.null?
+
           Internal.keeping_glyphs_whole(ctx, plane, src, vopts) { yield vopts }
         ensure
-          FFI.ncvisual_destroy(src) unless visual
+          FFI.ncvisual_destroy(src) unless visual || src.nil? || src.null?
         end
         ctx.raise_callback_errors!
         Util.check!(rc, VisualError, what)
