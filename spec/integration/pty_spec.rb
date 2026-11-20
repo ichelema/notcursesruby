@@ -863,7 +863,10 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     STDOUT.write("mark\n")
     d.close
     STDOUT.write("fine\n")
-    sleep 0.01 until seen.include?('fine') # il pty scrive "\r\n" al posto di "\n" (ONLCR)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+    # il pty scrive "\r\n" al posto di "\n" (ONLCR)
+    sleep 0.01 until seen.include?('fine') || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+    abort 'stdout non ripristinato: il terminale non ha ricevuto "fine" dopo lo stop' unless seen.include?('fine')
     STDERR.puts "stop #{seen[/mark\r?\n(.*)fine/m, 1].inspect}"
   RUBY
 

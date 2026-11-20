@@ -1505,7 +1505,8 @@ module Notcurses
     # /dev/null, perché unmute_stdout! gira nell'ensure. Con il fd 1 chiuso
     # non c'è niente da proteggere. Il fd 1 si riapre da un IO aperto su
     # /dev/null, non dal path: reopen con un path va in segfault (Ruby da 3.1
-    # a 4.0) quando il fd 1 è un terminale.
+    # a 4.0) quando il fd 1 è aperto in lettura e scrittura, per esempio un
+    # terminale o un file aperto con r+.
     def mute_stdout!
       stdout = IO.for_fd(1, autoclose: false)
       $stdout.flush # il testo di Ruby non ancora scritto va sullo stdout vero
