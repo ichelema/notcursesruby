@@ -132,8 +132,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   raffica di 10000 tasti con il ciclo occupato, con la macchina scarica, non fa più perdere il Ctrl+C che la segue.
   Durante `run` `Context#get` e `#getvec` leggono gli eventi del thread, e `Key::EOF` resta disponibile a ogni
   lettura, come in notcurses. Un secondo Ctrl+C mentre `run` fa pulizia arriva alla fine della pulizia (`run` solleva
-  `Interrupt`); anche su Ruby 3.1 e 3.2, dove l'Interrupt di un segnale non si rimanda, perché la pulizia ricomincia e
-  finisce. Limiti: il thread ha bisogno del GVL, quindi un handler che lo tiene ritarda il segnale (con più di 8192
+  `Interrupt`); anche su Ruby 3.1, 3.2 e 3.3, dove l'Interrupt di un segnale non si rimanda, perché la pulizia
+  ricomincia e finisce (su queste versioni resta una finestra: vedi "Limiti noti", ICH-539). Limiti: il thread ha bisogno del GVL, quindi un handler che lo tiene ritarda il segnale (con più di 8192
   tasti nel frattempo notcurses scarta anche Ctrl+C); notcurses consegna gli eventi più lentamente di quanto li mette
   in coda: nelle prove, con la macchina scarica, 10000 tasti in un colpo non perdono niente; con altri processi che
   occupano la CPU anche il Ctrl+C dopo 10000 tasti si è perso, di rado, e con 20000-50000 tasti, sotto carico, in
@@ -366,6 +366,13 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   ritornano. Succede con stdin sul terminale (per esempio un incolla lungo di testo non ASCII) o rediretto senza
   `/dev/tty`. Il wrapper non lo può evitare: il limite è nello YARD e nel README, e la correzione è proposta a
   notcurses ([PR #2954](https://github.com/dankamongmen/notcurses/pull/2954)) (ICH-463).
+- Su Ruby 3.1, 3.2 e 3.3 `Thread.handle_interrupt` non rimanda l'Interrupt di un segnale (lo rimanda da Ruby 3.4).
+  Due segnali, il secondo consegnato in pochi passi di codice, possono saltare una parte della pulizia (ICH-539).
+  In `EventLoop#run`, un secondo segnale dopo l'interruzione della pulizia, prima che ricominci, fa uscire `run` con
+  i passi rimasti da fare: i trap di WINCH e CONT, i pipe di risveglio, ISIG o IXON e `running?`, che resta true (un
+  nuovo `run` dello stesso ciclo solleva `Error`). In `Context#close` durante `run`, lo stesso caso nell'attesa del
+  thread di input fa uscire `close` prima dello stop: il contesto resta aperto, e un `close` successivo completa lo
+  stop. Nelle prove con 200 segnali a 0,2 ms di distanza la finestra non si è mai vista. Il limite è nello YARD.
 
 ## [0.1.0] - 2026-10-27
 

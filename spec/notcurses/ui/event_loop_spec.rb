@@ -672,7 +672,7 @@ RSpec.describe Notcurses::UI::EventLoop do
       expect(out).to end_with("fine\n")
     end
 
-    # Ruby 3.1 e 3.2 non rimandano l'Interrupt di un segnale dentro Thread.handle_interrupt: lo stub lo simula.
+    # Ruby 3.1, 3.2 e 3.3 non rimandano l'Interrupt di un segnale dentro Thread.handle_interrupt: lo stub lo simula.
     [true, false].each do |deferred|
       it "un Interrupt durante la pulizia di run esce dopo: il contesto resta usabile da un altro ciclo " \
          "(handle_interrupt #{deferred ? "che rimanda" : "che non rimanda, come Ruby 3.1"})" do
@@ -739,7 +739,7 @@ RSpec.describe Notcurses::UI::EventLoop do
       end
     end
 
-    it 'un Interrupt che su Ruby 3.1 e 3.2 interrompe la pulizia di run la fa ricominciare: run lo solleva alla fine' do
+    it 'un Interrupt che prima di Ruby 3.4 interrompe la pulizia di run la fa ricominciare: run lo solleva alla fine' do
       NcHelpers.open_context do |c|
         feeding_input(c) do
           allow(Thread).to receive(:handle_interrupt) { |*, &block| block.call } # come Ruby 3.1: niente rinvio

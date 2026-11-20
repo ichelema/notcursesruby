@@ -62,7 +62,7 @@ module Notcurses
     #   con key? che il thread chiama per ogni evento)
     # @return [IO] il pipe {#ready_io}
     def start(filter, ids)
-      # un'eccezione asincrona arriva dopo, con filtro e thread registrati; su Ruby 3.1 e 3.2 l'Interrupt di un
+      # un'eccezione asincrona arriva dopo, con filtro e thread registrati; su Ruby 3.1, 3.2 e 3.3 l'Interrupt di un
       # segnale non si rimanda, e lo stop del chiamante trova comunque il filtro (vedi anche start_thread)
       Thread.handle_interrupt(Object => :never) do
         # il filtro prima del thread: il primo evento letto deve già passare dal filtro
@@ -76,13 +76,13 @@ module Notcurses
     # {#start} lo registri). Senza altri run ferma il thread e chiude i pipe;
     # il buffer resta.
     #
-    # Idempotente: su Ruby 3.1 e 3.2 l'Interrupt di un segnale non si rimanda
-    # e può interrompere stop a metà; chiamato di nuovo, stop finisce il
-    # lavoro.
+    # Idempotente: su Ruby 3.1, 3.2 e 3.3 l'Interrupt di un segnale non si
+    # rimanda e può interrompere stop a metà; chiamato di nuovo, stop finisce
+    # il lavoro.
     #
     # @param filter [Proc] il filtro passato a {#start}
     # @return [Exception, nil] l'Interrupt di un segnale arrivato mentre
-    #   aspettava il thread su Ruby 3.1 e 3.2 (vedi {#halt}), da sollevare
+    #   aspettava il thread su Ruby 3.1, 3.2 e 3.3 (vedi {#halt}), da sollevare
     #   dopo la pulizia del chiamante; un'eccezione rimandata arriva invece
     #   alla fine di stop
     def stop(filter)
@@ -117,8 +117,12 @@ module Notcurses
     # Un'eccezione asincrona durante l'attesa non la interrompe: halt la
     # rimanda, e alla fine del suo blocco la cattura e la restituisce (dentro
     # un Thread.handle_interrupt del chiamante arriva invece alla fine di
-    # quello). Ruby 3.1 e 3.2 non rimandano l'Interrupt di un segnale: halt lo
-    # cattura nell'attesa, aspetta di nuovo il thread e lo restituisce.
+    # quello). Ruby 3.1, 3.2 e 3.3 non rimandano l'Interrupt di un segnale:
+    # halt lo cattura nell'attesa, aspetta di nuovo il thread e lo
+    # restituisce. Limite di queste versioni (ICH-539): un secondo segnale
+    # consegnato dopo la cattura, prima che l'attesa ricominci, esce da halt
+    # con il thread ancora vivo (il thread si ferma da solo poco dopo, perché
+    # halt gli ha già chiesto di fermarsi).
     #
     # @return [Exception, nil] l'eccezione catturata
     def halt
@@ -211,7 +215,7 @@ module Notcurses
       drain(@stop_r)
       @stop = false
       @ready_w.write_nonblock("\0", exception: false) unless @pending.empty? # eventi del run precedente
-      # il thread legge solo dopo la registrazione in @thread: un'eccezione asincrona prima (su Ruby 3.1 e 3.2
+      # il thread legge solo dopo la registrazione in @thread: un'eccezione asincrona prima (su Ruby 3.1, 3.2 e 3.3
       # l'Interrupt di un segnale non si rimanda) non lascia un thread che nessun halt aspetta
       gate = @gate = Thread::Queue.new
       # rubocop:disable ThreadSafety/NewThread -- è lo scopo della classe

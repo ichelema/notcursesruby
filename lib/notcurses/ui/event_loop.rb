@@ -223,9 +223,17 @@ module Notcurses
       # Un secondo Ctrl+C (o un'altra eccezione asincrona) mentre run fa
       # pulizia arriva alla fine della pulizia: run solleva Interrupt invece di
       # restituire :interrupt, con il terminale, i trap e il thread di input
-      # già a posto. Su Ruby 3.1 e 3.2 l'Interrupt di un segnale non si
+      # già a posto. Su Ruby 3.1, 3.2 e 3.3 l'Interrupt di un segnale non si
       # rimanda: interrompe la pulizia, che ricomincia (i suoi passi sono
-      # idempotenti) e finisce prima che run lo sollevi.
+      # idempotenti) e finisce prima che run lo sollevi. Limite di queste
+      # versioni (ICH-539): un secondo segnale consegnato dopo l'interruzione,
+      # prima che la pulizia ricominci, fa uscire run con l'Interrupt e salta
+      # i passi rimasti. Secondo il passo interrotto, i trap di WINCH e CONT
+      # di run restano installati, i pipe di risveglio restano aperti, ISIG o
+      # IXON non tornano com'erano, e {#running?} resta true: un nuovo run
+      # dello stesso ciclo solleva Error, e serve un altro EventLoop. Servono
+      # due segnali, il secondo in pochi passi di codice: nelle prove con 200
+      # segnali a 0,2 ms di distanza la finestra non si è mai vista.
       #
       # Dopo run il flag di notcurses resta spento: fuori da run un Ctrl+C di
       # kitty non alza segnali e resta in coda, e il thread di input del run
@@ -355,7 +363,7 @@ module Notcurses
               done = true
             end
           rescue SignalException => e
-            # su Ruby 3.1 e 3.2 handle_interrupt non rimanda l'Interrupt di un segnale: la pulizia, fatta di passi
+            # su Ruby 3.1, 3.2 e 3.3 handle_interrupt non rimanda l'Interrupt di un segnale: la pulizia, fatta di passi
             # idempotenti, ricomincia
             interrupted ||= e
             retry unless done

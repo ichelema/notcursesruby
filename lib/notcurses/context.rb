@@ -421,7 +421,12 @@ module Notcurses
     # rinviato non avviene (terminale non ripristinato). Il registro si libera
     # allo stop, e un nuovo contesto si può aprire dopo. Durante
     # {UI::EventLoop#run} close ferma prima il thread di input; un Ctrl+C che
-    # arriva mentre lo aspetta si solleva dopo lo stop.
+    # arriva mentre lo aspetta si solleva dopo lo stop. Limite di Ruby 3.1,
+    # 3.2 e 3.3, dove l'Interrupt di un segnale non si rimanda (ICH-539): un
+    # secondo segnale consegnato dopo il primo, prima che l'attesa ricominci,
+    # esce da close prima dello stop, con il contesto aperto e il thread di
+    # input che si ferma da solo poco dopo; un close successivo (o l'hook
+    # +at_exit+) completa lo stop.
     #
     # @return [nil]
     # @raise [ContextError] se +notcurses_stop+ restituisce un errore (il
