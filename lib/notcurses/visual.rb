@@ -306,7 +306,9 @@ module Notcurses
     # crea il visual come {.from_rgba}. Ogni voce dà RGB = colore del canale e
     # alpha 0 se l'alpha del canale è +:transparent+, altrimenti 255 (blend e
     # highcontrast non hanno senso per un pixel: opaco); una voce con il colore
-    # di default diventa il bianco 0xffffff. Costo proporzionale all'area.
+    # di default diventa il bianco 0xffffff. Una voce con un indice di palette
+    # ({Channel.palindex}) non ha un colore RGB e solleva ArgumentError
+    # (ICH-551). Costo proporzionale all'area.
     #
     # @param data [String] indici, almeno rows * rowstride byte
     # @param rows [Integer] righe, >= 1
@@ -320,7 +322,8 @@ module Notcurses
     # @return [Visual] il visual; con un blocco, il valore del blocco
     # @raise [VisualError] se un indice di data è >= palette.size, o se
     #   +ncvisual_from_rgba+ restituisce NULL
-    # @raise [TypeError, ArgumentError] se un argomento non è valido
+    # @raise [TypeError, ArgumentError] se un argomento non è valido (anche una
+    #   voce di palette con un indice di palette)
     # @raise [ClosedError] se non c'è un Context attivo
     def self.from_palidx(data, rows:, cols:, palette:, rowstride: nil, pstride: 1, &block)
       Internal.context!
@@ -332,6 +335,7 @@ module Notcurses
 
       colors = palette.each_with_index.map do |channel, i|
         raise TypeError, "palette[#{i}] deve essere Notcurses::Channel, non #{channel.class}" unless channel.is_a?(Channel)
+        raise ArgumentError, "palette[#{i}] ha un indice di palette, non un colore RGB" if channel.palindex?
 
         r, g, b = channel.default? ? [255, 255, 255] : channel.rgb
         [r, g, b, channel.alpha == :transparent ? 0 : 255].pack('C4')

@@ -192,6 +192,17 @@ RSpec.describe Notcurses::Visual do
           described_class.from_palidx("\x00".b, rows: 1000, cols: 1000, palette: palette, pstride: 5000)
         end.to raise_error(ArgumentError, /troppi/)
       end
+
+      # ICH-551: una voce con un indice di palette non ha un colore RGB (prima: l'indice 5 diventava il blu
+      # del pixel, [0, 0, 5, 255]).
+      it 'una voce con un indice di palette solleva ArgumentError' do
+        index = Notcurses::Channel.palindex(5)
+        expect { described_class.from_palidx("\x00".b, rows: 1, cols: 1, palette: [index]) }
+          .to raise_error(ArgumentError, /palette\[0\]/)
+        expect do
+          described_class.from_palidx("\x00".b, rows: 1, cols: 1, palette: [Notcurses::Channel.rgb(1, 2, 3), index])
+        end.to raise_error(ArgumentError, /palette\[1\]/)
+      end
     end
 
     describe '.from_plane' do
