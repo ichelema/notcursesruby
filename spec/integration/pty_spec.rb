@@ -128,6 +128,61 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(status.exitstatus).to eq(0), out
   end
 
+  # ICH-441: Process.daemon fa il fork senza Process._fork, e il processo che ha creato il contesto esce con _exit
+  # senza lo stop: il terminale restava senza echo e in modo non canonico. Con un contesto aperto Process.daemon
+  # solleva un errore prima del fork, e il contesto resta aperto e usabile.
+  def daemon_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    log = String.new(encoding: Encoding::BINARY)
+    lock = Mutex.new
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        lock.synchronize { log << data }
+        data.scan(/\e\[6n|\e\[c/) { |q| master.write(q == "\e[6n" ? "\e[5;7R" : "\e[?62;22c") }
+      end
+    rescue IOError, Errno::EIO
+    end
+    opts = { output: slave.path, termtype: 'xterm-256color' }
+    [[Notcurses::Context, { suppress_banners: true }, Notcurses::ContextError],
+     [Notcurses::Direct, {}, Notcurses::DirectError]].each do |klass, extra, error|
+      c = klass.new(**opts, **extra)
+      c.putstr('TOKEN-441') if c.is_a?(Notcurses::Direct) # senza flush: resta nel buffer stdio
+      begin
+        Process.daemon(true, true)
+        puts "#{klass}: nessun errore pid=#{Process.pid}"
+        exit!(0)
+      rescue error => e
+        puts "#{klass}: #{e.class} echo=#{slave.echo?} closed=#{c.closed?} dims=#{c.dims.size}"
+      end
+      c.close
+      puts "#{klass}: chiuso echo=#{slave.echo?}"
+    end
+    sleep 0.2
+    puts "token #{lock.synchronize { log.scan('TOKEN-441').size }}"
+    $stdout.flush
+    parent = Process.pid
+    Process.daemon(true, true) # senza un contesto aperto: come prima
+    puts "daemon #{Process.pid != parent}"
+  RUBY
+
+  it 'Process.daemon con un Context o un Direct aperto solleva un errore e lascia il contesto usabile' do
+    out, status, timed_out = run_child(daemon_script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('Notcurses::Context: Notcurses::ContextError echo=false closed=false dims=2',
+                           'Notcurses::Context: chiuso echo=true',
+                           'Notcurses::Direct: Notcurses::DirectError echo=false closed=false dims=2',
+                           'Notcurses::Direct: chiuso echo=true', 'token 1', 'daemon true')
+    expect(out).not_to include('nessun errore')
+    expect(status.exitstatus).to eq(0), out
+  end
+
   # Context#get e #getvec con eventi veri scritti sul pty.
   def get_script = <<~'RUBY'
     require 'notcurses'

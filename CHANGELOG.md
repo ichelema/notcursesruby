@@ -353,6 +353,11 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   che esiste da ffi 1.16.0, e ffi 1.15.0 e 1.15.1 non cercano le librerie in `/opt/homebrew/lib` (ICH-305).
 - README, esempio `Notcurses::UI`: il risultato si stampa dopo il blocco di `Context.open`; prima la riga finiva
   sullo schermo alternativo e la chiusura la cancellava (ICH-304).
+- `Process.daemon` con un `Context` o un `Direct` aperto solleva `ContextError` o `DirectError` prima del fork, e il
+  contesto resta aperto e usabile (ICH-441): chiudilo prima di `Process.daemon`. Prima il processo che aveva creato
+  il contesto usciva dentro `daemon(3)` senza lo stop (`Process.daemon` non passa da `Process._fork`), e il
+  terminale restava senza echo e in modo non canonico, con `Context` anche sullo schermo alternativo e con il cursore
+  nascosto. Senza un contesto aperto, o in un processo figlio creato con `fork`, `Process.daemon` non cambia.
 
 ### Limiti noti
 

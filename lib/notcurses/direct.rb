@@ -14,7 +14,10 @@ module Notcurses
   # Un solo contesto ({Context} o Direct) può essere attivo nel processo: un
   # secondo solleva InitError prima di chiamare il C. {.open} con un blocco
   # chiude il contesto anche in caso di eccezione; un contesto rimasto aperto
-  # viene chiuso all'uscita del processo da un hook +at_exit+.
+  # viene chiuso all'uscita del processo da un hook +at_exit+. +Process.daemon+
+  # con il contesto aperto solleva DirectError prima del fork, e il contesto
+  # resta aperto: chiudilo prima di +Process.daemon+ (il processo che lo ha
+  # creato esce dentro daemon senza lo stop).
   #
   # Output: il testo ({#putstr}, {#putegc}, linee, box, movimenti del cursore)
   # passa dal buffer stdio del FILE* e diventa visibile con {#flush} o con la
@@ -294,11 +297,12 @@ module Notcurses
     # In un processo figlio creato con +fork+ lo stato C appartiene al padre:
     # close non chiama notcurses e non scrive sul terminale; segna solo il
     # contesto chiuso e libera il registro Ruby. Il testo non ancora svuotato
-    # non si duplica: +fork+ (anche +Process.fork+ e <tt>IO.popen('-')</tt>,
-    # non +Process.daemon+) svuota prima il buffer dell'output del Direct
-    # aperto, se il fork parte dal thread che usa il Direct. Nel figlio
-    # notcurses resta inutilizzabile anche dopo close (i segnali restano
-    # registrati per il contesto del padre, e un nuovo init solleva
+    # non si duplica: +fork+ (anche +Process.fork+ e <tt>IO.popen('-')</tt>)
+    # svuota prima il buffer dell'output del Direct aperto, se il fork parte
+    # dal thread che usa il Direct. +Process.daemon+ con il Direct aperto
+    # solleva DirectError prima del fork, e il Direct va chiuso prima. Nel
+    # figlio notcurses resta inutilizzabile anche dopo close (i segnali
+    # restano registrati per il contesto del padre, e un nuovo init solleva
     # InitError): il figlio può solo uscire o fare +exec+.
     #
     # close si può chiamare da un gestore +trap+ (per esempio
