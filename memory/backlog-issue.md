@@ -689,9 +689,10 @@ Implementazione il 2026-11-18 e 19 in una sessione, semplificazione e review il 
 ## Lotto 6 — ICH-458, ICH-486, ICH-222, ICH-223, ICH-488 (PR #29, aperta e bloccata)
 
 Implementazione il 2026-11-19 in una sessione, review e correzioni il 2026-11-20 in un'altra. Branch
-`bug/ICH-458-486-222-223-488-opus`, worktree `.claude/worktrees/bug+ICH-458-486-222-223-488-opus`. La PR #29 resta
-aperta e **non va mergiata** (scelta dell'utente del 2026-11-20) finché ICH-549, ICH-550, ICH-551 e ICH-552, nate
-dalla review, non sono fatte sullo stesso branch. Ognuna ha una relazione `blocks` verso la issue di origine.
+`bug/ICH-458-486-222-223-488-opus`, worktree `.claude/worktrees/bug+ICH-458-486-222-223-488-opus`. La PR #29 non
+andava mergiata (scelta dell'utente del 2026-11-20) finché ICH-549, ICH-550, ICH-551 e ICH-552, nate dalla review,
+non erano fatte sullo stesso branch. Ognuna ha una relazione `blocks` verso la issue di origine. Le 4 issue sono
+fatte dal 2026-11-20 (terza sessione, sezione "Terza sessione" qui sotto): manca la review indipendente.
 
 ### Fix
 
@@ -756,3 +757,72 @@ dalla review, non sono fatte sullo stesso branch. Ognuna ha una relazione `block
 - 1232 esempi, 0 fallimenti, 1 pending (`qrcode` sulla build con lo stub), solo in ordine normale; RuboCop 0 offense
   (107 file); YARD senza warning, 100 %. CI verde su `a64cc37` e `57e5668`; su `4ee2690` non ancora vista. I semi
   1234, 4242, 7 e la coverage non sono stati rifatti dopo le correzioni della review.
+
+### Terza sessione: ICH-549, ICH-550, ICH-551, ICH-552 (2026-11-20)
+
+Sviluppo dell'orchestratore nel worktree del lotto, con i passi di `2_work-issue` a mano: i command di Trinity
+trovano il worktree solo con i 5 ID originali. Un commit per issue, con `Refs`; il corpo della PR #29 ha ora 9 righe
+`Fixes`.
+
+#### Fix
+
+- `fbde2d8` (ICH-549): `Plane#keeping_glyphs_whole(top, left, height, width, all: false)` prende il rettangolo del
+  blit e lo taglia sul piano. `Visual::Internal.keeping_glyphs_whole` chiede il rettangolo a `ncvisual_geom`, la
+  funzione con cui `ncvisual_blit` lo calcola (`visual.c:1155`), e con `y:` o `x:` simbolici ripete
+  `visual.c:432-437` (`ncplane_valign(n, y, rpixy / scaley)`, `ncplane_halign(n, x, rpixx / scalex)`). I `blit_*`
+  dei buffer creano un ncvisual temporaneo con `ncvisual_from_rgba` solo per la geometria: in 3.0.17 ogni `ncblit_*`
+  passa da `ncvisual_from_rgba` e `ncvisual_blit` (`blit.c:1454-1470`). Con `all: true` `keep_glyphs_whole` legge
+  ora anche i glifi a cavallo dei lati (`(left - 1)...(left + width)`).
+- `6f32e46` (ICH-550): se `ncvisual_geom` risolve il blitter in `NCBLIT_PIXEL`, nessun controllo: come su `master`.
+- `e85d79f` (ICH-551): `from_palidx` solleva `ArgumentError` per una voce con `palindex?` vero.
+- `4409140` (ICH-552): `qrcode` chiama `keeping_glyphs_whole(0, 0, rows, cols, all: true)`.
+
+#### Decisioni (mie)
+
+- **`:braille` controlla anche l'interno del rettangolo** (`all: true`), contro il testo di ICH-549, che chiede i
+  soli lati. `braille_blit` non tocca una cella con soli pixel trasparenti (`blit.c:1203-1206`); `tria_blit_ascii`,
+  `tria_blit`, `quadrant_blit` e `hires_blit` la rilasciano con `nccell_release`. Con i soli lati un glifo largo
+  dentro il rettangolo, coperto a metà da pixel opachi, resta con una metà orfana (spec nuova, rossa con i soli
+  lati). Costo rimasto: un blit `:braille` di tutto un piano 60x200 costa 20 ms (0,19 ms su `master`). Da
+  riportare all'utente: una issue nuova è una sua scelta (regola 16).
+- Geometria dal C e non ricalcolata in Ruby: `scale_visual` (`:scale`) usa aritmetica `float`, che in Ruby non si
+  ripete in modo sicuro.
+- ICH-549 prima di ICH-550: nel commit di ICH-549 il blitter `:pixel` tiene il controllo di tutto il piano, così la
+  spec di ICH-550 fallisce sul codice precedente al suo fix (regola 11).
+- CHANGELOG: nessuna voce nuova. Le voci di ICH-486 e ICH-223, non ancora rilasciate, descrivono il comportamento
+  finale e citano ICH-549, ICH-550 e ICH-551. ICH-552 è un refactor senza voce.
+- `qrcode`: il C disegna il codice sempre da (0, 0) (`fill.c:625-629`, `vopts` senza `y` e `x`), non dal cursore;
+  il cursore serve solo come offset nel buffer (ICH-542). Il rettangolo del controllo è quindi (0, 0), `rows`,
+  `cols`.
+
+#### Dati misurati (media di 50 blit, `xterm-256color`, `output: '/dev/null'`)
+
+| Piano | Blit | Prima (dati della issue, `941042a`) | Dopo (`4409140`) | `master` |
+| --- | --- | --- | --- | --- |
+| 24x80 | `blit_rgba` 1x1 | 3,3 ms | 0,019 ms | 0,005 ms |
+| 60x200 | `blit_rgba` 1x1 | 19,1 ms | 0,017 ms | 0,004 ms |
+| 60x200 | `Visual#blit` di tutto il piano, `:half` | 19,3 ms | 0,11-0,17 ms | 0,061 ms |
+| 100x300 | `blit_rgba` 1x1 | 48,4 ms | 0,019 ms | 0,004 ms |
+| 60x200 | `Visual#blit` di tutto il piano, `:braille` | non misurato | 20 ms | 0,19 ms |
+
+Letture di `ncplane_at_yx_cell` per un blit 1x1: 28 su un piano 4x8 e 11940 su un piano 60x200 prima, 1 dopo.
+
+#### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| La spec del rettangolo falliva nel caso `y: :bottom` | errore della spec: `:bottom` disegna sull'ultima riga, il glifo era sulla riga 1 | glifo sull'ultima riga |
+| Nello scenario di ICH-550 la riga sotto non si rompeva | una metà destra orfana cancella la cella dopo il glifo scritto (`notcurses.c:1956-1962`): arriva alla riga sotto solo dall'ultima colonna, e lì `clear_cut_glyphs!` la ripara già al resize | la spec controlla le metà della riga 0 e una scrittura larga in colonna 2, che prima cancellava anche la cella 4 |
+| 11 fallimenti di `visual_spec.rb` sulla build con qrcodegen | la build nello scratchpad ha `USE_MULTIMEDIA=none`; gli stessi 11 su `master` | ignorati: ambiente |
+| Seme 4242: 1 fallimento in `ui_pty_spec.rb:786` (`coda piena: stop 4.0 s`) | perdita rara del Ctrl+C con la coda di input piena sotto carico (nota di ICH-536) | 2 ripetizioni con lo stesso seme: 0 fallimenti |
+
+#### Verifica (branch su `4409140`, 2026-11-20)
+
+- 1237 esempi, 0 fallimenti, 1 pending, in ordine normale e con i semi 1234, 4242 (vedi sopra) e 7; coverage 98,15 %
+  di righe; RuboCop 0 offense (107 file); YARD senza warning, 100 %; `ruby -w` pulito; gem costruita;
+  `git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto. CI della PR #29 verde su `4409140`, tutta la
+  matrice (da Ruby 3.1.7 a 4.0.9) e Codecov.
+- Build con qrcodegen (`.../597b2d0b-c353-44ad-8f58-de12afe02961/scratchpad/ncqr`, ancora presente): le 2 spec di
+  `qrcode` passano, quella di ICH-488 gira.
+- Review indipendente non ancora fatta: `/trinity:workflow:3_independent-review ICH-458 ICH-486 ICH-222 ICH-223
+  ICH-488 opus`.

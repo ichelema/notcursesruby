@@ -6,7 +6,7 @@
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
 > `git show ad0315b:RIPRESA.md`; quello dei lotti della revisione in `git show 8a4b5f7:RIPRESA.md`.
 
-## Stato e prossimo step (aggiornato il 2026-11-20, lotto 6 in corso, PR #29 bloccata)
+## Stato e prossimo step (aggiornato il 2026-11-20, lotto 6 in corso, PR #29 in attesa della review)
 
 - Lotto 1 fatto: PR #22, merge `74deb80`. Lotto 2 fatto: PR #23, merge `cb90c4f`. Lotto 2b fatto: PR #24, merge
   `6374e41`. Lotto 2c fatto: PR #25, merge `d2c5f7c`. Lotto 3 fatto: PR #26, merge `e15b40a` (ICH-454, ICH-456,
@@ -24,21 +24,25 @@
   issue a In Progress e a Done anche con `Refs` (il nome del branch contiene l'ID): dopo ogni evento della PR
   controlla lo stato.
 - **Lotto 6 in corso** (`bug`): ICH-458, ICH-486, ICH-222, ICH-223, ICH-488. PR #29 aperta, branch
-  `bug/ICH-458-486-222-223-488-opus` su `4ee2690`, worktree `.claude/worktrees/bug+ICH-458-486-222-223-488-opus`.
+  `bug/ICH-458-486-222-223-488-opus` su `4409140`, worktree `.claude/worktrees/bug+ICH-458-486-222-223-488-opus`.
   La review del 2026-11-20 ha trovato 9 finding: F1 (BLOCKER, segfault di `Direct#close` con lo stdout su un
   terminale) e F2 (HIGH, `rotate` perdeva pixel) sono corretti nel branch, con i LOW delle due review mirate. Log
   completo in `memory/backlog-issue.md`, sezione "Lotto 6".
-- **La PR #29 è bloccata: non mergiarla** (scelta dell'utente del 2026-11-20) finché non sono fatte, sullo stesso
-  branch, le 4 issue nate dalla review, in Backlog: ICH-549 (Medium, i blit leggono tutto il piano), ICH-550 (Medium,
-  blit `:pixel` sopra glifi larghi), ICH-551 (Low, `from_palidx` con una voce `Channel.palindex` solleva
-  `ArgumentError`: scelta dell'utente), ICH-552 (Low, `qrcode` usa `keeping_glyphs_whole`). Ognuna ha una
-  relazione `blocks` verso ICH-486, ICH-223 o ICH-488.
-- **Prossimo step:** sviluppa ICH-549, ICH-550, ICH-551 e ICH-552 nel worktree del lotto 6, in una sessione nuova.
-  I command di Trinity trovano il worktree dal nome del branch, quindi solo con i 5 ID originali: per le issue nuove
-  segui a mano i passi di `2_work-issue` (spec che fallisce, fix, suite completa, un commit per issue con
-  `Refs ICH-5xx`, push). Poi aggiungi `Fixes ICH-549` ... `Fixes ICH-552` al corpo della PR #29 e lancia
-  `/trinity:workflow:3_independent-review ICH-458 ICH-486 ICH-222 ICH-223 ICH-488 opus`. Prima del merge: suite con i
-  semi 1234, 4242, 7, coverage e CI verde (non rifatti dopo la review).
+- **Le 4 issue nate dalla review sono fatte sul branch** (2026-11-20, In Progress, un commit ciascuna): ICH-549
+  (`fbde2d8`, il controllo dei blit legge i glifi sui lati del rettangolo di `ncvisual_geom`), ICH-550 (`6f32e46`,
+  nessun controllo con un blitter che diventa `:pixel`), ICH-551 (`e85d79f`, `from_palidx` solleva `ArgumentError`
+  per una voce `Channel.palindex`), ICH-552 (`4409140`, `qrcode` usa `keeping_glyphs_whole`). Il corpo della PR #29
+  ha le righe `Fixes ICH-549` ... `Fixes ICH-552`. Verifica locale completa sul commit `4409140`: 1237 esempi, 0
+  fallimenti, semi 1234, 4242 e 7, coverage 98,15 %, RuboCop 0, YARD 100 %; CI della PR verde su tutta la matrice.
+- **Scostamento da ICH-549, da far vedere al reviewer:** con `:braille` il controllo legge anche i glifi dentro il
+  rettangolo, perché `braille_blit` non tocca le celle con soli pixel trasparenti (`blit.c:1203-1206`). Un blit
+  `:braille` di tutto un piano 60x200 costa ancora 20 ms (0,19 ms su `master`). Una issue nuova per questo costo è
+  una scelta dell'utente (regola 16), non ancora fatta.
+- **Prossimo step:** lancia `/trinity:workflow:3_independent-review ICH-458 ICH-486 ICH-222 ICH-223 ICH-488 opus`
+  (il changeset comprende i 4 commit nuovi; di' al reviewer di controllare anche ICH-549, ICH-550, ICH-551 e
+  ICH-552). Se la review trova problemi: `/trinity:workflow:4_review-fix-loop` con gli stessi argomenti. **Non
+  mergiare la PR #29 prima della review.** Poi CI verde, merge dell'utente (`gh pr merge 29 --merge`) e chiusura del
+  lotto (passo 7).
 - Nata dal lotto 6, in Backlog, Low, da assegnare a un lotto successivo (non blocca la PR #29): ICH-554 (`Visual#rotate`
   chiama il C una volta per pixel, circa 0,9 s su 1024x1024; accelerarlo può servire un cambio del layer FFI, regola 1).
 - Alla chiusura del lotto 6: 3 bug di notcurses nuovi nelle tabelle di `RICONSEGNA.md` (elenco in
