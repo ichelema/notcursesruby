@@ -241,18 +241,22 @@ module Notcurses
         @closed = false
       rescue Exception # rubocop:disable Lint/RescueException
         ptr = init&.value
-        if ptr && !ptr.null?
-          begin
+        begin
+          if ptr && !ptr.null?
             mute_stdout! if fp && !fp.null?
             FFI.ncdirect_stop(ptr)
-          ensure
+          end
+        ensure
+          # in un solo blocco, come in release_native!: un'eccezione asincrona fra il ripristino del fd 1 e gli altri
+          # passi lascerebbe il registro occupato dopo lo stop del C
+          Thread.handle_interrupt(Object => :never) do
             unmute_stdout!
+            # il C ha già scritto termtype in TERM: un init successivo senza termtype fallirebbe
+            ENV['TERM'] = old_term unless term.nil?
+            Notcurses.release_context(self)
+            FFI.fclose(fp) if own_fp
           end
         end
-        # il C ha già scritto termtype in TERM: un init successivo senza termtype fallirebbe
-        ENV['TERM'] = old_term unless term.nil?
-        Notcurses.release_context(self)
-        FFI.fclose(fp) if own_fp
         raise
       end
     end

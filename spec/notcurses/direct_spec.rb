@@ -5,6 +5,7 @@
 require 'fileutils'
 require 'rbconfig'
 require 'tmpdir'
+require 'timeout'
 require_relative '../support/nc_helpers'
 
 # Helper delle spec di Notcurses::Direct: contesti su /dev/null o su un file
@@ -317,6 +318,66 @@ RSpec.describe Notcurses::Direct do
                     in: File::NULL, out: File::NULL, err: err)
         _, status = Process.wait2(pid)
         expect([status.exitstatus, File.read(err)]).to eq([0, 'ok'])
+      end
+    end
+
+    # ICH-568: nel rollback di Direct.new un secondo Thread#raise consegnato alla fine del ripristino dello stdout
+    # saltava TERM, il rilascio del registro e fclose: ogni Direct.open successivo sollevava InitError.
+    it 'un secondo Thread#raise durante il ripristino dello stdout nel rollback dell\'init completa il rollback' do
+      Dir.mktmpdir do |dir|
+        out = File.join(dir, 'out')
+        script = <<~RUBY
+          require 'notcurses'
+          ENV['TERM'] = 'vt100'
+          fd1 = File.stat('/proc/self/fd/1').ino
+          paused = Queue.new
+          resume = Queue.new
+          tp = TracePoint.new(:c_return) do |t|
+            next unless Thread.current[:pausa]
+            case t.method_id
+            when :value # init.value: il puntatore c'è, l'Interrupt arriva nel corpo dell'init
+              next if Thread.current[:init]
+              Thread.current[:init] = true
+            when :reopen # il secondo reopen: quello di unmute_stdout!
+              next unless (Thread.current[:reopen] = Thread.current[:reopen].to_i + 1) == 2
+            else next
+            end
+            paused << true
+            resume.pop
+          end
+          tp.enable
+          a = Thread.new do
+            Thread.current[:pausa] = true
+            Notcurses::Direct.new(output: #{out.dump}, termtype: 'xterm-256color', drain_input: true)
+            'nessuna'
+          rescue Interrupt => e
+            e.message
+          end
+          # il primo Interrupt esce subito dall'attesa del TracePoint; il secondo, dentro handle_interrupt, arriva
+          # dopo il ripristino
+          paused.pop
+          a.raise(Interrupt, 'primo')
+          paused.pop
+          a.raise(Interrupt, 'secondo')
+          resume << true
+          result = a.value
+          tp.disable
+          open_out = Dir.children('/proc/self/fd').count { |fd| File.readlink("/proc/self/fd/\#{fd}") == #{out.dump} rescue false }
+          STDERR.write([result, Notcurses.active_context.inspect, ENV['TERM'], File.stat('/proc/self/fd/1').ino == fd1, open_out].inspect)
+          Notcurses::Direct.open(output: #{File.join(dir, 'out2').dump}, termtype: 'xterm-256color', drain_input: true) { nil }
+          STDERR.write(' riaperto')
+        RUBY
+        err = File.join(dir, 'stderr')
+        pid = spawn(RbConfig.ruby, '-I', DirectSpecHelpers::LIB_DIR, '-e', script,
+                    in: File::NULL, out: File.join(dir, 'stdout'), err: err)
+        status = begin
+          Timeout.timeout(30) { Process.wait2(pid)[1] }
+        rescue Timeout::Error
+          Process.kill(:KILL, pid)
+          Process.wait(pid)
+          nil
+        end
+        expect([status&.exitstatus, File.read(err)]).to eq([0, '["secondo", "nil", "vt100", true, 0] riaperto'])
       end
     end
 
