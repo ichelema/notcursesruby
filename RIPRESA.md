@@ -44,7 +44,7 @@
   Commento con i dettagli: https://github.com/ichelema/notcursesruby/pull/29#issuecomment-7037947324. Issue nuove in
   Backlog: ICH-560 (`fflush` nel layer FFI, regola 1), ICH-561, ICH-562, ICH-567, ICH-568, ICH-569.
 - **Lotto 6 fatto:** PR #29, merge `0730865` (2026-11-20). Chiuso: verifiche, `RICONSEGNA.md`, log. Retain in
-  Hindsight non fatto (limite d'uso raggiunto): da fare all'inizio della prossima sessione.
+  Hindsight fatto il 2026-11-20 (cause radice e decisioni del lotto, tag `repo:notcursesruby`).
 - **Prossimo step:** lotto 7 (`bug`): ICH-441, ICH-226, ICH-474, ICH-539; chiedi all'utente se aggiungere ICH-568 e
   ICH-569 (eccezioni asincrone, nate dal lotto 6). Spiega le issue, poi
   `/trinity:workflow:1_create-worktree master <ID...> opus`.
