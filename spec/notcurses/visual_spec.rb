@@ -302,33 +302,12 @@ RSpec.describe Notcurses::Visual do
       # ICH-474: un'eccezione asincrona al ritorno di ncvisual_from_file arrivava prima che il wrapper incapsulasse
       # il puntatore: il visual restava allocato, con il file aperto.
       it 'un Thread#raise al ritorno di ncvisual_from_file distrugge il visual creato dal C' do
-        created = []
         destroyed = []
         allow(ffi).to receive(:ncvisual_destroy).and_wrap_original do |m, ptr|
           destroyed << ptr.address
           m.call(ptr)
         end
-        paused = Queue.new
-        resume = Queue.new
-        tp = TracePoint.new(:c_return) do |t|
-          next unless t.method_id == :ncvisual_from_file && Thread.current[:pausa]
-
-          created << t.return_value.address
-          paused << true
-          resume.pop
-        end
-        tp.enable
-        a = Thread.new do
-          Thread.current[:pausa] = true
-          described_class.from_file(png) { :blocco }
-        rescue RuntimeError => e
-          e.message
-        end
-        paused.pop
-        a.raise(RuntimeError, 'interrotto')
-        resume << true
-        result = a.value
-        tp.disable
+        result, created = NcHelpers.raise_at_c_return(:ncvisual_from_file) { described_class.from_file(png) { :blocco } }
         expect([result, destroyed]).to eq(['interrotto', created])
         expect(created.first).not_to eq(0)
       end
@@ -835,35 +814,15 @@ RSpec.describe Notcurses::Visual do
         nc.stdplane.create_child(rows: 1, cols: 1) do |plane|
           px = rgba([1, 2, 3, 255])
           %i[blit_rgba blit_bgrx blit_rgb_loose].each do |blit|
-            created = []
             destroyed = []
             allow(ffi).to receive(:ncvisual_destroy).and_wrap_original do |m, ptr|
               destroyed << ptr.address
               m.call(ptr)
             end
-            paused = Queue.new
-            resume = Queue.new
-            tp = TracePoint.new(:c_return) do |t|
-              next unless t.method_id == :ncvisual_from_rgba && Thread.current[:pausa] && !Thread.current[:fatto]
-
-              Thread.current[:fatto] = true
-              created << t.return_value.address
-              paused << true
-              resume.pop
-            end
-            tp.enable
-            a = Thread.new do
-              Thread.current[:pausa] = true
+            result, created = NcHelpers.raise_at_c_return(:ncvisual_from_rgba) do
               described_class.public_send(blit, px, plane: plane, rows: 1, cols: 1, blitter: :ascii)
               :finito
-            rescue RuntimeError => e
-              e.message
             end
-            paused.pop
-            a.raise(RuntimeError, 'interrotto')
-            resume << true
-            result = a.value
-            tp.disable
             expect([blit, result, destroyed]).to eq([blit, 'interrotto', created])
             expect(created.first).not_to eq(0)
           end

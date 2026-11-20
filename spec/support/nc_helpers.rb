@@ -67,6 +67,41 @@ module NcHelpers
   def open_context(**opts, &block)
     Notcurses::Context.open(**CONTEXT_OPTIONS, **opts, &block)
   end
+
+  # Esegue il blocco in un thread nuovo, lo ferma al primo ritorno del metodo
+  # C method_id (dove Ruby consegna le eccezioni asincrone) e gli manda
+  # Thread#raise(RuntimeError, 'interrotto'), poi lo lascia ripartire.
+  #
+  # @param method_id [Symbol] metodo C, per esempio :ncvisual_from_file
+  # @return [Array(Object, Array<Integer>)] il valore del blocco (il messaggio
+  #   del RuntimeError, se lo solleva) e l'indirizzo restituito dal metodo C
+  def raise_at_c_return(method_id)
+    returned = []
+    paused = Queue.new
+    resume = Queue.new
+    trace = TracePoint.new(:c_return) do |tp|
+      next unless tp.method_id == method_id && Thread.current[:raise_at_c_return] && returned.empty?
+
+      returned << tp.return_value.address
+      paused << true
+      resume.pop
+    end
+    trace.enable
+    # rubocop:disable ThreadSafety/NewThread -- il thread da interrompere
+    thread = Thread.new do
+      Thread.current[:raise_at_c_return] = true
+      yield
+    rescue RuntimeError => e
+      e.message
+    end
+    # rubocop:enable ThreadSafety/NewThread
+    paused.pop
+    thread.raise(RuntimeError, 'interrotto')
+    resume << true
+    [thread.value, returned]
+  ensure
+    trace&.disable
+  end
 end
 
 # Gruppo con un Context condiviso: @nc in before(:all), chiuso in after(:all).

@@ -823,33 +823,14 @@ RSpec.describe Notcurses::Direct do
       # ICH-474: un'eccezione asincrona al ritorno di ncdirectf_from_file arrivava prima che il wrapper incapsulasse
       # il puntatore: l'immagine restava allocata, con il file aperto.
       it 'un Thread#raise al ritorno di ncdirectf_from_file libera l\'immagine creata dal C' do
-        created = []
         freed = []
         allow(ffi).to receive(:ncdirectf_free).and_wrap_original do |m, ptr|
           freed << ptr.address
           m.call(ptr)
         end
-        paused = Queue.new
-        resume = Queue.new
-        tp = TracePoint.new(:c_return) do |t|
-          next unless t.method_id == :ncdirectf_from_file && Thread.current[:pausa]
-
-          created << t.return_value.address
-          paused << true
-          resume.pop
-        end
-        tp.enable
-        a = Thread.new do # rubocop:disable ThreadSafety/NewThread -- il thread da interrompere
-          Thread.current[:pausa] = true
+        result, created = NcHelpers.raise_at_c_return(:ncdirectf_from_file) do
           d.load_image(data_file('onedot.png')) { :blocco }
-        rescue RuntimeError => e
-          e.message
         end
-        paused.pop
-        a.raise(RuntimeError, 'interrotto')
-        resume << true
-        result = a.value
-        tp.disable
         expect([result, freed]).to eq(['interrotto', created])
         expect(created.first).not_to eq(0)
       end
