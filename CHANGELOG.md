@@ -62,7 +62,10 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   sopra una metà di un glifo largo non lasciano più l'altra metà orfana (ICH-486): il C scrive ogni cella da sola, e
   una scrittura larga successiva vicino alla metà destra orfana cancellava la prima cella della riga sotto
   (sull'ultima riga scriveva fuori dal framebuffer). Ora l'altra metà diventa una cella vuota, come nei riempimenti
-  di ICH-450, con ogni blitter di celle. Il controllo legge tutto il piano: il costo è proporzionale alla sua area.
+  di ICH-450, con ogni blitter di celle. Il controllo legge solo i glifi a cavallo dei lati del rettangolo del blit,
+  che il wrapper calcola con `ncvisual_geom` (ICH-549): il costo è proporzionale alle righe del blit, non all'area
+  del piano. Con `:braille`, che non tocca le celle con soli pixel trasparenti, legge anche i glifi dentro il
+  rettangolo.
 - Un gestore `trap` che chiude il contesto o il `Direct` e poi torna al codice interrotto non fa più usare al C un
   puntatore già liberato (ICH-464). Il segnale poteva arrivare fra `to_ptr` e la chiamata C, o fra due chiamate C con
   lo stesso puntatore (per esempio `ncpile_render` e `ncpile_rasterize` dentro `Context#render`: 37 crash su 80

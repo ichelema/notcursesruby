@@ -819,6 +819,79 @@ RSpec.describe Notcurses::Visual do
         end
       end
 
+      # ICH-549: il controllo legge i glifi sui lati del rettangolo del blit, non tutte le celle del piano
+      # (prima: 60x200 celle lette per un blit 1x1).
+      def cell_reads
+        reads = 0
+        allow(ffi).to receive(:ncplane_at_yx_cell).and_wrap_original do |original, *args|
+          reads += 1
+          original.call(*args)
+        end
+        yield
+        reads
+      end
+
+      it "le celle lette dipendono dall'area del blit, non dall'area del piano" do
+        reads = [[4, 8], [60, 200]].map do |rows, cols|
+          nc.stdplane.create_child(rows: rows, cols: cols) do |p|
+            one = cell_reads { described_class.blit_rgba(red, plane: p, rows: 1, cols: 1, blitter: :ascii, y: 0, x: 0) }
+            three = cell_reads do
+              described_class.blit_rgba(red * 9, plane: p, rows: 3, cols: 3, blitter: :ascii, y: 0, x: 0)
+            end
+            whole = cell_reads do
+              described_class.from_rgba(red, rows: 1, cols: 1) { |v| v.blit(plane: p, blitter: :half, scale: :stretch) }
+            end
+            [one, three, whole]
+          end
+        end
+        expect(reads[0][0, 2]).to eq(reads[1][0, 2])
+        expect(reads[1][0]).to be <= 4 # una riga, due lati
+        expect(reads[1][1]).to be <= 12
+        expect(reads[1][2]).to be <= 60 * 4 # il piano intero: le righe, non le celle
+      end
+
+      # braille_blit non tocca una cella con soli pixel trasparenti (blit.c:1203-1206): sotto un'immagine con
+      # trasparenze un glifo largo resta coperto a metà anche dentro il rettangolo, non solo sui lati.
+      it 'il blitter :braille con pixel trasparenti non lascia metà orfane dentro il rettangolo' do
+        on = [255, 0, 0, 255]
+        off = [0, 0, 0, 0]
+        # celle 0, 1 e 2 del blit (4 righe x 2 colonne di pixel per cella); il glifo sta nelle celle 1 e 2
+        { 2 => [on, on, off], 1 => [on, off, on] }.each do |orphan, cells|
+          nc.stdplane.create_child(rows: 2, cols: 5) do |p|
+            p.putstr('a漢bc', y: 0, x: 0)
+            p.putstr('VWXYZ', y: 1, x: 0)
+            pixels = rgba(cells.flat_map { |c| [c, c] } * 4)
+            described_class.blit_rgba(pixels, plane: p, rows: 4, cols: 6, blitter: :braille, y: 0, x: 0)
+            expect(p.at(y: 0, x: orphan).egc).to eq(''), "cella #{orphan}"
+            p.putstr('中', y: 0, x: 1)
+            expect(p.contents(y: 1, rows: 1)).to eq('VWXYZ'), "cella #{orphan}"
+          end
+        end
+      end
+
+      it 'il rettangolo segue y: e x: simbolici, lo scaling e la regione del visual' do
+        one = ->(p, **o) { described_class.blit_rgba(red, plane: p, rows: 1, cols: 1, blitter: :ascii, **o) }
+        region = lambda do |p|
+          described_class.from_rgba(red * 2, rows: 1, cols: 2) { |v| v.blit(plane: p, blitter: :ascii, begx: 1, lenx: 1, x: 2) }
+        end
+        # testo della riga con il glifo, riga del glifo, blit, cella che deve restare vuota
+        [
+          ['ab漢', 0, ->(p) { one.call(p, y: 0, x: :right) }, 2],
+          ['ab漢cd', 0, ->(p) { one.call(p, y: 0, x: :center) }, 3],
+          ['ab漢', 2, ->(p) { one.call(p, y: :bottom, x: 3) }, 2],
+          ['ab漢', 0, ->(p) { one.call(p, y: 0, x: 3, scale: :stretch) }, 2],
+          ['ab漢', 0, ->(p) { one.call(p, y: 0, x: 3, scale: :scale) }, 2],
+          ['ab漢', 0, region, 3]
+        ].each_with_index do |(text, row, blit, empty), i|
+          nc.stdplane.create_child(rows: 3, cols: text.length + 1) do |p|
+            p.putstr(text, y: row, x: 0)
+            blit.call(p)
+            expect(p.at(y: row, x: empty).egc).to eq(''), "caso #{i}"
+            expect(p.at(y: row, x: 0).egc).to eq('a'), "caso #{i}"
+          end
+        end
+      end
+
       it "la scrittura larga sull'ultima riga non corrompe l'heap (prima: abort di glibc)" do
         skip 'serve libc_malloc_debug di glibc' unless File.exist?(NcHelpers::MALLOC_DEBUG)
         script = <<~'RUBY'

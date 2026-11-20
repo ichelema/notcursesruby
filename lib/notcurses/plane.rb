@@ -2682,20 +2682,34 @@ module Notcurses
       @resize = keep[:resize]
     end
 
-    # Esegue il blocco (un blit C che scrive celle in questo piano, in una
-    # regione che il wrapper non calcola) e poi svuota l'altra metà dei glifi
-    # larghi del piano che il blit ha coperto solo a metà, come i riempimenti
-    # (ICH-450, ICH-486). Il controllo legge tutto il piano: il costo è
-    # proporzionale alla sua area.
+    # Esegue il blocco (un blit C che scrive celle di questo piano nel
+    # rettangolo dato) e poi svuota l'altra metà dei glifi larghi che il blit
+    # ha coperto solo a metà, come i riempimenti (ICH-450, ICH-486). Il
+    # controllo legge solo i glifi a cavallo dei lati del rettangolo (ICH-549):
+    # il costo è proporzionale alle sue righe. Con all: true legge anche quelli
+    # dentro, per un blit che non scrive ogni cella del rettangolo: il costo è
+    # proporzionale alla sua area. La parte del rettangolo fuori dal piano non
+    # conta.
     # @api private
+    # @param top [Integer] prima riga del rettangolo
+    # @param left [Integer] prima colonna del rettangolo
+    # @param height [Integer] righe del rettangolo
+    # @param width [Integer] colonne del rettangolo
+    # @param all [Boolean] true = controlla anche i glifi dentro il rettangolo
     # @yieldreturn [Object] il risultato del blit
     # @return [Object] il valore del blocco
     # @raise [ClosedError] se il piano è chiuso
-    def keeping_glyphs_whole(&block)
+    def keeping_glyphs_whole(top, left, height, width, all: false, &block)
       Guard.run do
         ptr = to_ptr
         rows, cols = dims
-        keep_glyphs_whole(ptr, 0, 0, rows, cols, all: true, &block)
+        bottom = [top + height, rows].min
+        right = [left + width, cols].min
+        top = [top, 0].max
+        left = [left, 0].max
+        next yield if bottom <= top || right <= left # il blit non scrive celle del piano
+
+        keep_glyphs_whole(ptr, top, left, bottom - top, right - left, all: all, &block)
       end
     end
 
@@ -3090,8 +3104,8 @@ module Notcurses
     # Esegue il blocco (un riempimento C che cambia le celle una per una nel
     # rettangolo dato) e poi svuota l'altra metà dei glifi larghi che ha
     # coperto solo a metà. I glifi da controllare si leggono prima della
-    # chiamata: quelli a cavallo dei lati del rettangolo, o con all: true tutti
-    # quelli del piano. Una metà sinistra che half_at non riesce a leggere
+    # chiamata: quelli a cavallo dei lati del rettangolo, e con all: true anche
+    # quelli dentro. Una metà sinistra che half_at non riesce a leggere
     # (nil: da ICH-487 non più per l'egcpool pieno) conta come glifo se la
     # metà destra c'è. Dopo la chiamata la stessa cella illeggibile è ancora
     # quella di prima, salvo con long_fill (il riempimento scrive un EGC di più
@@ -3101,7 +3115,7 @@ module Notcurses
     # rettangolo.
     def keep_glyphs_whole(ptr, top, left, height, width, all: false, long_fill: false)
       ys = top...(top + height)
-      xs = all ? (left...(left + width - 1)) : [left - 1, left + width - 1]
+      xs = all ? ((left - 1)...(left + width)) : [left - 1, left + width - 1]
       glyphs = ys.flat_map { |y| xs.select { |x| glyph_at?(ptr, y, x) }.map { |x| [y, x] } }
       done = false
       rc = yield

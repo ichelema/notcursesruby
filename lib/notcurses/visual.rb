@@ -438,7 +438,10 @@ module Notcurses
     # Glifi larghi (ICH-486): il C scrive ogni cella da sola, e un blit su una
     # metà di un glifo largo lascerebbe l'altra metà orfana. Il wrapper svuota
     # l'altra metà, che diventa una cella vuota, come {Plane#polyfill}. Il
-    # controllo legge tutto il piano: il costo è proporzionale alla sua area.
+    # controllo legge solo i glifi a cavallo dei lati del rettangolo del blit
+    # (ICH-549): il costo è proporzionale alle righe del blit. Con :braille,
+    # che non tocca le celle con soli pixel trasparenti, legge anche i glifi
+    # dentro il rettangolo: il costo è proporzionale all'area del blit.
     #
     # @param data [String] pixel R, G, B, A; almeno rows * rowstride byte
     # @param plane [Plane] piano su cui disegnare (non se ne crea uno nuovo)
@@ -454,7 +457,7 @@ module Notcurses
     # @raise [ClosedError] se il piano è chiuso
     def self.blit_rgba(data, plane:, rows:, cols:, rowstride: nil, **options)
       buf = Internal.pixel_buffer(data, rows, cols, 4, rowstride)
-      blit_buffer(plane, rows, cols, 'ncblit_rgba', options) { |vopts| FFI.ncblit_rgba(buf, cols * 4, vopts) }
+      blit_buffer(plane, rows, cols, 'ncblit_rgba', options, pixels: buf) { |vopts| FFI.ncblit_rgba(buf, cols * 4, vopts) }
     end
 
     # Disegna pixel BGRx su un piano (+ncblit_bgrx+): 4 byte per pixel, B, G,
@@ -475,7 +478,7 @@ module Notcurses
     # @raise [ClosedError] se il piano è chiuso
     def self.blit_bgrx(data, plane:, rows:, cols:, rowstride: nil, **options)
       buf = Internal.pixel_buffer(data, rows, cols, 4, rowstride)
-      blit_buffer(plane, rows, cols, 'ncblit_bgrx', options) { |vopts| FFI.ncblit_bgrx(buf, cols * 4, vopts) }
+      blit_buffer(plane, rows, cols, 'ncblit_bgrx', options, pixels: buf) { |vopts| FFI.ncblit_bgrx(buf, cols * 4, vopts) }
     end
 
     # Disegna pixel RGBx su un piano (+ncblit_rgb_loose+): 4 byte per pixel,
@@ -498,7 +501,7 @@ module Notcurses
     def self.blit_rgb_loose(data, plane:, rows:, cols:, rowstride: nil, alpha: 255, **options)
       Util.uint8!(alpha, 'alpha')
       buf = Internal.pixel_buffer(data, rows, cols, 4, rowstride)
-      blit_buffer(plane, rows, cols, 'ncblit_rgb_loose', options) do |vopts|
+      blit_buffer(plane, rows, cols, 'ncblit_rgb_loose', options, pixels: buf) do |vopts|
         FFI.ncblit_rgb_loose(buf, cols * 4, vopts, alpha)
       end
     end
@@ -529,7 +532,7 @@ module Notcurses
         raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
 
         from_rgb_packed(data, rows: rows, cols: cols, rowstride: rowstride, alpha: alpha) do |visual|
-          blit_buffer(plane, rows, cols, 'ncvisual_blit', options) do |vopts|
+          blit_buffer(plane, rows, cols, 'ncvisual_blit', options, visual: visual.to_ptr) do |vopts|
             FFI.ncvisual_blit(plane.context.to_ptr, visual.to_ptr, vopts).null? ? -1 : 0
           end
         end
@@ -547,26 +550,40 @@ module Notcurses
       Util.with_resource(new(ptr, ctx), &block)
     end
 
-    # Esegue una ncblit_* sul piano: leny/lenx = l'immagine intera.
+    # Esegue una ncblit_* sul piano: leny/lenx = l'immagine intera. Il
+    # rettangolo del blit si calcola su visual, o senza visual su un ncvisual
+    # temporaneo con i byte di pixels: conta solo la sua dimensione, uguale a
+    # quella del ncvisual che la ncblit_* crea nel C (blit.c:1463).
     # @param plane [Plane] piano su cui disegnare
     # @param rows [Integer] righe dell'immagine
     # @param cols [Integer] colonne dell'immagine
     # @param what [String] nome della funzione C, per il messaggio d'errore
     # @param options [Hash] come in {.blit_rgba}
+    # @param pixels [::FFI::Pointer, nil] rows * cols pixel di 4 byte
+    # @param visual [::FFI::Pointer, nil] ncvisual* che il blocco disegna
     # @return [Plane] plane
     # @raise [TypeError] se plane non è un Plane
     # @raise [VisualError] se la funzione C fallisce
-    def self.blit_buffer(plane, rows, cols, what, options)
+    def self.blit_buffer(plane, rows, cols, what, options, pixels: nil, visual: nil)
       raise TypeError, "plane deve essere Notcurses::Plane, non #{plane.class}" unless plane.is_a?(Plane)
 
-      ctx = plane.context
-      vopts = Internal.options(ctx, plane, **options)
-      vopts[:leny] = rows
-      vopts[:lenx] = cols
-      rc = plane.keeping_glyphs_whole { yield vopts }
-      ctx.raise_callback_errors!
-      Util.check!(rc, VisualError, what)
-      plane
+      Guard.run do
+        ctx = plane.context
+        vopts = Internal.options(ctx, plane, **options)
+        vopts[:leny] = rows
+        vopts[:lenx] = cols
+        src = visual || FFI.ncvisual_from_rgba(pixels, rows, cols * 4, cols)
+        raise VisualError, "#{what}: ncvisual_from_rgba ha restituito NULL" if src.null?
+
+        rc = begin
+          Internal.keeping_glyphs_whole(ctx, plane, src, vopts) { yield vopts }
+        ensure
+          FFI.ncvisual_destroy(src) unless visual
+        end
+        ctx.raise_callback_errors!
+        Util.check!(rc, VisualError, what)
+        plane
+      end
     end
     private_class_method :wrap, :blit_buffer
 
@@ -928,8 +945,10 @@ module Notcurses
         vopts = Internal.options(ctx, plane, **options)
         Internal.child!(vopts, plane, child)
         created = plane.nil? || child
-        draw = -> { with_region(begy, begx, leny, lenx) { |src, _| FFI.ncvisual_blit(ctx.to_ptr, src, vopts) } }
-        ptr = created ? draw.call : plane.keeping_glyphs_whole(&draw)
+        ptr = with_region(begy, begx, leny, lenx) do |src, _|
+          draw = -> { FFI.ncvisual_blit(ctx.to_ptr, src, vopts) }
+          created ? draw.call : Internal.keeping_glyphs_whole(ctx, plane, src, vopts, &draw)
+        end
         if ptr.null?
           ctx.planes_destroyed! if created # il C distrugge il piano che aveva creato
           ctx.raise_callback_errors!
@@ -1233,6 +1252,34 @@ module Notcurses
         raise ArgumentError, 'child: true richiede plane: (il genitore del piano nuovo)' if plane.nil?
 
         vopts[:flags] |= FFI::NCVISUAL_OPTION_CHILDPLANE
+      end
+
+      # Esegue il blocco, che disegna il ncvisual* src su plane con vopts,
+      # dentro {Plane#keeping_glyphs_whole} sul rettangolo di celle del blit
+      # (ICH-549). Il rettangolo viene da ncvisual_geom, la funzione con cui
+      # ncvisual_blit lo calcola (visual.c:1155): se fallisce qui, il blit
+      # fallisce prima di scrivere. Con y: o x: simbolici la posizione è quella
+      # di visual.c:432-437. I blitter di celle riscrivono ogni cella del
+      # rettangolo, anche quelle trasparenti; :braille invece non tocca una
+      # cella con soli pixel trasparenti (blit.c:1203-1206), e il controllo
+      # copre anche l'interno. Con :pixel il controllo copre tutto il piano.
+      def keeping_glyphs_whole(ctx, plane, src, vopts, &block)
+        Guard.run do
+          geom = FFI::NcVgeom.new
+          next yield if FFI.ncvisual_geom(ctx.to_ptr, src, vopts, geom).negative?
+          next plane.keeping_glyphs_whole(0, 0, *plane.dims, all: true, &block) if geom[:blitter] == FFI::NCBLIT_PIXEL
+
+          y = vopts[:y]
+          x = vopts[:x]
+          if (vopts[:flags] & FFI::NCVISUAL_OPTION_VERALIGNED) != 0
+            y = FFI.ncplane_valign(vopts[:n], y, geom[:rpixy] / geom[:scaley])
+          end
+          if (vopts[:flags] & FFI::NCVISUAL_OPTION_HORALIGNED) != 0
+            x = FFI.ncplane_halign(vopts[:n], x, geom[:rpixx] / geom[:scalex])
+          end
+          braille = geom[:blitter] == FFI::NCBLIT_BRAILLE
+          plane.keeping_glyphs_whole(y, x, geom[:rcelly], geom[:rcellx], all: braille, &block)
+        end
       end
 
       # Dimensioni in pixel tali che ogni dimensione in byte del C (righe di
