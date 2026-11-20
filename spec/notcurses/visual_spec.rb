@@ -887,8 +887,10 @@ RSpec.describe Notcurses::Visual do
         end
         # testo della riga con il glifo, riga del glifo, blit, cella che deve restare vuota
         [
-          ['ab漢', 0, ->(p) { one.call(p, y: 0, x: :right) }, 2],
-          ['ab漢cd', 0, ->(p) { one.call(p, y: 0, x: :center) }, 3],
+          # x: :right e x: :center su piani dove la colonna non coincide con il valore di NCALIGN_RIGHT (3) e
+          # NCALIGN_CENTER (2): senza ncplane_halign il controllo guarderebbe la colonna sbagliata
+          ['abcde漢', 0, ->(p) { one.call(p, y: 0, x: :right) }, 5],
+          ['abcde漢fghij', 0, ->(p) { one.call(p, y: 0, x: :center) }, 6],
           ['ab漢', 2, ->(p) { one.call(p, y: :bottom, x: 3) }, 2],
           ['ab漢', 0, ->(p) { one.call(p, y: 0, x: 3, scale: :stretch) }, 2],
           ['ab漢', 0, ->(p) { one.call(p, y: 0, x: 3, scale: :scale) }, 2],
