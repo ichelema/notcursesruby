@@ -881,6 +881,62 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(status.exitstatus).to eq(0), out
   end
 
+  # Review della PR #29 (ICH-486, ICH-549): con xterm-256color :quad, :sextant e :octant degradano a :half, e la
+  # matrice di visual_spec.rb non li esercita. Il terminale finto si presenta come foot (XTVERSION): notcurses
+  # attiva i tre blitter, e no_degrade: true fa fallire il blit se il blitter non c'è.
+  def foot_blitters_script(mutate: false) = "MUTATE = #{mutate}\n" + <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    if MUTATE # senza il controllo dei glifi larghi: la spec deve fallire
+      Notcurses::Plane.prepend(Module.new { def keeping_glyphs_whole(*, **) = yield })
+    end
+    master, slave = PTY.open
+    slave.winsize = [24, 80, 640, 384]
+    STDIN.reopen(slave)
+    replies = { "\e[6n" => "\e[5;1R", "\e[c" => "\eP>|foot(1.20.0)\e\\\e[?62;22c" }
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        data.scan(Regexp.union(replies.keys)) { |q| master.write(replies[q]) }
+      end
+    rescue IOError, Errno::EIO
+    end
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      red = [255, 0, 0, 255].pack('C*')
+      blits = {
+        blit_rgba: ->(p, b, x) { Notcurses::Visual.blit_rgba(red, plane: p, rows: 1, cols: 1, blitter: b, no_degrade: true, y: 0, x: x) },
+        blit: ->(p, b, x) { Notcurses::Visual.from_rgba(red, rows: 1, cols: 1) { |v| v.blit(plane: p, blitter: b, no_degrade: true, y: 0, x: x) } }
+      }
+      blits.each do |name, blit|
+        %i[quad sextant octant].product([2, 3]).each do |b, x|
+          nc.stdplane.create_child(rows: 2, cols: 4) do |p|
+            p.putstr('ab漢', y: 0, x: 0)
+            p.putstr('WXYZ', y: 1, x: 0)
+            blit.call(p, b, x)
+            other = p.at(y: 0, x: x == 2 ? 3 : 2).egc
+            p.putstr('中', y: 0, x: 2)
+            puts "#{name} #{b} x=#{x}: #{other.inspect} #{p.contents(y: 1, rows: 1)}"
+          end
+        end
+      end
+    end
+    puts 'fine'
+  RUBY
+
+  it ':quad, :sextant e :octant sopra metà di un glifo largo lasciano vuota l\'altra metà (terminale foot)' do
+    out, status, timed_out = run_child(foot_blitters_script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(status.exitstatus).to eq(0), out
+    lines = out.lines.grep(/x=/)
+    expect(lines.size).to eq(12), out
+    expect(lines).to all(end_with(": \"\" WXYZ\n"))
+    # la spec fallisce senza il controllo: altrimenti non proteggerebbe niente
+    mutated, = run_child(foot_blitters_script(mutate: true), timeout: 30)
+    expect(mutated.lines.grep(/x=/).grep_v(/: "" WXYZ$/)).not_to be_empty
+  end
+
   it 'il controllo dei bordi vale per il piano C: un glifo scritto da un secondo wrapper e tagliato non rompe la riga sotto' do
     out, status, timed_out = run_child(two_wrappers_script(1), timeout: 30)
     expect(timed_out).to be(false), out
