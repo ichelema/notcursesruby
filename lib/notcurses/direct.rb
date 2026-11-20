@@ -2,6 +2,7 @@
 # Source: notcurses/include/notcurses/direct.h
 # frozen_string_literal: true
 
+require 'fcntl'
 # IO#wait_readable è nel core da Ruby 3.2: su 4.0 require 'io/wait' stampa un avviso.
 require 'io/wait' unless IO.method_defined?(:wait_readable)
 
@@ -277,7 +278,9 @@ module Notcurses
     # altro thread (spawn, fork) durante lo stop eredita il fd 1 su /dev/null
     # per tutta la sua vita. Se il fd 1 non si può spostare (per esempio senza
     # descrittori liberi) lo stop avviene lo stesso, e il reset arriva sullo
-    # stdout come senza il wrapper.
+    # stdout come senza il wrapper. Un fd 1 aperto in sola lettura non si
+    # sposta: il C non riesce a scriverci il reset e close solleva
+    # DirectError, come senza il wrapper.
     #
     # Un'eccezione sollevata durante +ncdirect_stop+ (per esempio un Ctrl-C)
     # esce da close, ma lascia il contesto chiuso e il registro libero: un
@@ -1528,9 +1531,12 @@ module Notcurses
     # non c'è niente da proteggere. Il fd 1 si riapre da un IO aperto su
     # /dev/null, non dal path: reopen con un path va in segfault (Ruby da 3.1
     # a 4.0) quando il fd 1 è aperto in lettura e scrittura, per esempio un
-    # terminale o un file aperto con r+.
+    # terminale o un file aperto con r+. Un fd 1 in sola lettura resta com'è:
+    # il ripristino fra modi d'accesso diversi va in segfault anche con un IO,
+    # e il C non riesce comunque a scriverci il reset.
     def mute_stdout!
       stdout = IO.for_fd(1, autoclose: false)
+      return if (stdout.fcntl(Fcntl::F_GETFL) & Fcntl::O_ACCMODE) == Fcntl::O_RDONLY
       begin
         $stdout.flush # il testo di Ruby non ancora scritto va sullo stdout vero
       rescue

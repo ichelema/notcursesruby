@@ -252,6 +252,33 @@ RSpec.describe Notcurses::Direct do
       end
     end
 
+    # Review della PR #29 (round 3): con il fd 1 aperto in sola lettura il ripristino (IO#reopen fra modi d'accesso
+    # diversi) mandava Ruby in SIGSEGV. Come prima del mute: il reset del C non si scrive, close solleva DirectError
+    # e il registro si libera; il fd 1 resta in sola lettura.
+    it 'close con output: su un file e il fd 1 in sola lettura solleva DirectError senza crash (prima: SIGSEGV)' do
+      Dir.mktmpdir do |dir|
+        script = <<~RUBY
+          require 'notcurses'
+          require 'fcntl'
+          d = Notcurses::Direct.new(output: #{File.join(dir, 'out').dump}, termtype: 'xterm-256color', drain_input: true)
+          begin
+            d.close
+            STDERR.write('nessun errore ')
+          rescue Notcurses::DirectError
+            STDERR.write('DirectError ')
+          end
+          mode = IO.for_fd(1, autoclose: false).fcntl(Fcntl::F_GETFL) & Fcntl::O_ACCMODE
+          STDERR.write("\#{Notcurses.active_context.nil? ? 'libero' : 'occupato'} \#{mode == Fcntl::O_RDONLY ? 'rdonly' : mode}")
+        RUBY
+        err = File.join(dir, 'stderr')
+        readonly = File.open(File::NULL, 'r')
+        pid = spawn(RbConfig.ruby, '-I', DirectSpecHelpers::LIB_DIR, '-e', script, in: File::NULL, out: readonly, err: err)
+        readonly.close
+        _, status = Process.wait2(pid)
+        expect([status.termsig, status.exitstatus, File.read(err).lines.last]).to eq([nil, 0, 'DirectError libero rdonly'])
+      end
+    end
+
     # Review della PR #29: un secondo close che non fa lo stop (claim perso) rimetteva il fd 1 mentre il primo stava
     # per chiamare ncdirect_stop, e il reset arrivava sullo stdout.
     # Review della PR #29 (round 2): un'eccezione asincrona consegnata fra il ripristino del fd 1 e mark_closed!
