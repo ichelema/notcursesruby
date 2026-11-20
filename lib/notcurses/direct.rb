@@ -273,7 +273,11 @@ module Notcurses
     # codice C ha scritto sullo stdout della libc senza svuotarlo (per
     # esempio printf di un'estensione nativa) si perde, perché lo stop lo
     # svuota con il fd 1 già su /dev/null (fbuf.h:318). Il testo di +$stdout+
-    # non passa dalla libc e non si perde.
+    # non passa dalla libc e non si perde. Un processo figlio creato da un
+    # altro thread (spawn, fork) durante lo stop eredita il fd 1 su /dev/null
+    # per tutta la sua vita. Se il fd 1 non si può spostare (per esempio senza
+    # descrittori liberi) lo stop avviene lo stesso, e il reset arriva sullo
+    # stdout come senza il wrapper.
     #
     # Un'eccezione sollevata durante +ncdirect_stop+ (per esempio un Ctrl-C)
     # esce da close, ma lascia il contesto chiuso e il registro libero: un
@@ -366,8 +370,12 @@ module Notcurses
         begin
           rc = FFI.ncdirect_stop(@ptr)
         ensure
-          unmute_stdout! # prima di fclose: con il fd 1 chiuso all'avvio, fopen ha dato all'output il fd 1
-          mark_closed!(fclose: @own_fp)
+          # prima di fclose: con il fd 1 chiuso all'avvio, fopen ha dato all'output il fd 1. Senza eccezioni
+          # asincrone fra i due: dopo lo stop del C il registro va liberato comunque
+          Thread.handle_interrupt(Object => :never) do
+            unmute_stdout!
+            mark_closed!(fclose: @own_fp)
+          end
         end
       ensure
         unmute_stdout! if owner

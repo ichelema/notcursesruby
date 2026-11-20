@@ -233,7 +233,8 @@ RSpec.describe Notcurses::Direct do
       # prima il ripristino dopo fclose sollevava Errno::EBADF; dopo close il fd 1 è di nuovo chiuso
       'fd 1 chiuso' => ['module C; extend FFI::Library; ffi_lib FFI::Library::LIBC; ' \
                         'attach_function :close, [:int], :int; end; C.close(1)',
-                        'STDERR.write(File.exist?("/proc/self/fd/1") ? "aperto" : "chiuso")', nil, 'chiuso']
+                        'STDERR.write(begin; IO.for_fd(1, autoclose: false).stat; "aperto"; rescue Errno::EBADF; "chiuso"; end)',
+                        nil, 'chiuso']
     }.each do |name, (setup, check, out, err)|
       it "close con output: su un file e #{name} non scrive il reset sullo stdout e non solleva" do
         Dir.mktmpdir do |dir|
@@ -253,6 +254,45 @@ RSpec.describe Notcurses::Direct do
 
     # Review della PR #29: un secondo close che non fa lo stop (claim perso) rimetteva il fd 1 mentre il primo stava
     # per chiamare ncdirect_stop, e il reset arrivava sullo stdout.
+    # Review della PR #29 (round 2): un'eccezione asincrona consegnata fra il ripristino del fd 1 e mark_closed!
+    # lasciava il registro occupato dopo lo stop del C: ogni Direct.open successivo sollevava InitError.
+    it 'un Thread#raise durante il ripristino dello stdout non lascia occupato il registro' do
+      Dir.mktmpdir do |dir|
+        script = <<~RUBY
+          require 'notcurses'
+          d = Notcurses::Direct.new(output: #{File.join(dir, 'out').dump}, termtype: 'xterm-256color', drain_input: true)
+          paused = Queue.new
+          resume = Queue.new
+          tp = TracePoint.new(:c_return) do |t|
+            next unless t.method_id == :reopen && Thread.current[:pausa] && !Thread.current[:fatto]
+            Thread.current[:fatto] = true if (Thread.current[:reopen] = Thread.current[:reopen].to_i + 1) == 2
+            next unless Thread.current[:fatto] # il secondo reopen: quello di unmute_stdout!
+            paused << true
+            resume.pop
+          end
+          tp.enable
+          a = Thread.new do
+            Thread.current[:pausa] = true
+            d.close
+          rescue RuntimeError
+            nil
+          end
+          paused.pop
+          a.raise(RuntimeError, 'interrotto')
+          resume << true
+          a.join
+          tp.disable
+          Notcurses::Direct.open(output: #{File.join(dir, 'out2').dump}, termtype: 'xterm-256color', drain_input: true) { nil }
+          STDERR.write('ok')
+        RUBY
+        err = File.join(dir, 'stderr')
+        pid = spawn(RbConfig.ruby, '-I', DirectSpecHelpers::LIB_DIR, '-e', script,
+                    in: File::NULL, out: File::NULL, err: err)
+        _, status = Process.wait2(pid)
+        expect([status.exitstatus, File.read(err)]).to eq([0, 'ok'])
+      end
+    end
+
     it 'un close concorrente che non fa lo stop non rimette lo stdout prima dello stop dell\'altro' do
       Dir.mktmpdir do |dir|
         stdout = File.join(dir, 'stdout')

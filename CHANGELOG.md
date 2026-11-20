@@ -44,7 +44,9 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   (`\e[39;49m\e(B\e[m`) sullo stdout del processo (ICH-222, `direct.c:841`): durante lo stop il fd 1 punta a
   `/dev/null`, poi torna com'era, anche con il fd 1 chiuso all'avvio o con `FD_CLOEXEC`, e con `$stdout` di Ruby
   chiuso o senza `flush`. Un altro thread che scrive sullo stdout durante lo stop perde quell'output, e lo perde anche
-  il testo scritto sullo stdout della libc (per esempio da un'estensione nativa) e non ancora svuotato (ICH-560).
+  il testo scritto sullo stdout della libc (per esempio da un'estensione nativa) e non ancora svuotato (ICH-560); un
+  processo figlio creato da un altro thread durante lo stop eredita il fd 1 su `/dev/null`. Se il fd 1 non si può
+  spostare (per esempio senza descrittori liberi) il reset arriva sullo stdout come prima.
   `Direct::Frame#close` continua a non liberare la memoria del frame: in 3.0.17 non esiste un free sicuro
   (`free_plane` non è esportato, `ncplane_destroy` va in crash su un piano di `Direct`); lo YARD ne spiega il motivo.
 - `Plane#qrcode` sopra una metà di un glifo largo non lascia più l'altra metà orfana (ICH-488): il C disegna il
