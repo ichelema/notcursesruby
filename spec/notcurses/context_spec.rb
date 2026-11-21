@@ -88,7 +88,8 @@ RSpec.describe Notcurses::Context do
     end
 
     # Review della PR #30: un errore dentro il rollback del thread di init (qui dopo lo stop vero del C) saltava
-    # release_context e fclose: il registro restava occupato.
+    # release_context e fclose: il registro restava occupato. Anche TERM, che notcurses ha già cambiato con termtype:,
+    # torna com'era.
     it "un errore nel rollback del thread di init libera comunque il registro e non scrive su stderr" do
       allow(Notcurses::FFI).to receive(:notcurses_stop).and_wrap_original do |m, ptr|
         m.call(ptr)
@@ -96,6 +97,8 @@ RSpec.describe Notcurses::Context do
       end
       # il chiamante rinuncia al contesto al ritorno di ready.pop (metodo C fino a Ruby 3.x, metodo Ruby da 4.0)
       pop = Thread::Queue.instance_method(:pop).source_location ? :return : :c_return
+      term = ENV.fetch('TERM', nil)
+      ENV['TERM'] = 'vt100' # diverso dal termtype: di open_context
       Dir.mktmpdir do |dir|
         fds = NcHelpers.open_fd_count
         result = nil
@@ -104,9 +107,11 @@ RSpec.describe Notcurses::Context do
             NcHelpers.open_context(output: File.join(dir, 'out'))
           end
         end.not_to output.to_stderr
-        expect([%w[interrotto stop].include?(result), NcHelpers.open_fd_count, Notcurses.active_context])
-          .to eq([true, fds, nil])
+        expect([%w[interrotto stop].include?(result), NcHelpers.open_fd_count, Notcurses.active_context, ENV['TERM']])
+          .to eq([true, fds, nil, 'vt100'])
       end
+    ensure
+      ENV['TERM'] = term
     end
 
     it 'valida le opzioni prima di avviare notcurses' do
