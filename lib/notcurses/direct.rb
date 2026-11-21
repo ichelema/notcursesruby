@@ -186,7 +186,10 @@ module Notcurses
     # occupato. Resta una finestra: un'eccezione arrivata proprio al ritorno
     # di new, a contesto già adottato, lo lascia aperto e registrato senza
     # che il chiamante lo riceva; lo chiudono
-    # <tt>Notcurses.active_context.close</tt> o l'hook +at_exit+.
+    # <tt>Notcurses.active_context.close</tt> o l'hook +at_exit+. Durante
+    # l'init (anche nel rollback dopo un secondo Ctrl-C) il contesto è già
+    # registrato: +Process.daemon+ da un altro thread solleva DirectError,
+    # come con un contesto aperto.
     #
     # @param termtype [String, nil] voce terminfo del terminale; nil = variabile
     #   TERM. notcurses la scrive in ENV['TERM']

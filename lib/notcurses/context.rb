@@ -292,7 +292,9 @@ module Notcurses
     # finestra: un'eccezione arrivata proprio al ritorno di new, a contesto già
     # adottato, lo lascia aperto e registrato senza che il chiamante lo
     # riceva; lo chiudono <tt>Notcurses.active_context.close</tt> o l'hook
-    # +at_exit+.
+    # +at_exit+. Durante l'init (anche nel rollback dopo un secondo Ctrl-C)
+    # il contesto è già registrato: +Process.daemon+ da un altro thread
+    # solleva ContextError, come con un contesto aperto.
     #
     # @raise [InitError] se un altro contesto è attivo, se l'output non si apre,
     #   o se +notcurses_init+ restituisce NULL (per esempio terminfo non
