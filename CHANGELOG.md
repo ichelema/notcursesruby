@@ -22,6 +22,11 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Plane#putstr`, `#putegc` e `#puttext`: con l'egcpool del piano pieno (16 MiB) un EGC di più di 4 byte solleva
+  `PlaneError` con un messaggio che nomina l'egcpool, prima di scrivere, e il piano non cambia (ICH-533). Prima un
+  EGC con segni combinanti sollevava `ArgumentError` ("notcurses non accetta"), come un testo non valido; senza segni
+  combinanti `putstr` e `puttext` sollevavano `PlaneError` senza nominare il pool, e `putegc` `CellError` ("divide
+  in più caratteri"). I messaggi d'errore mostrano solo l'inizio e i byte di un EGC lungo, non tutto l'EGC.
 - `Reader#offer_input`: Backspace, Ctrl+U e Ctrl+W cancellano anche il carattere della colonna 0, ASCII o glifo
   largo (ICH-218). Prima il carattere restava, perché il C cancella scrivendo `""` e in colonna 0 la scrittura
   fallisce (`notcurses.c:1883`); il carattere successivo lo sovrascriveva. Ctrl+W si ferma ancora, come nel C, su un
