@@ -57,9 +57,10 @@
   `spec/notcurses/ui/event_loop_spec.rb:716` (lotto 3, `Thread#kill` durante la pulizia di `run`), con un `F` iniziale
   in `spec/ci_workflow_spec.rb:8` senza messaggio (rspec fermato prima del riepilogo). Non riprodotto: l'esempio
   passa da solo 5 volte su 5 e la suite in ordine definito passa. Lo script di verifica ora ha un timeout per suite.
-- **Prossimo step:** lotto 8 (`bug`): ICH-218, ICH-217, ICH-232, ICH-484, ICH-533 (tabella sotto). Chiedi
-  all'utente se aggiungere ICH-576 e ICH-577 a un lotto. Spiega le issue, poi
-  `/trinity:workflow:1_create-worktree master <ID...> opus`.
+- **Prossimo step:** lotto 8 (`bug`): ICH-218, ICH-217, ICH-232, ICH-484, ICH-533 (tabella sotto), issue già
+  spiegate all'utente il 2026-11-21. Poi `/trinity:workflow:1_create-worktree master ICH-218 ICH-217 ICH-232 ICH-484
+  ICH-533 opus`. ICH-576 e ICH-577 vanno nel lotto 8b, dopo il lotto 8 (scelta dell'utente del 2026-11-21: toccano
+  `Util.init_thread`, non il codice del lotto 8).
 - Nata dal lotto 6, in Backlog, Low, da assegnare a un lotto successivo (non blocca la PR #29): ICH-554 (`Visual#rotate`
   chiama il C una volta per pixel, circa 0,9 s su 1024x1024; accelerarlo può servire un cambio del layer FFI, regola 1).
 - Alla chiusura del lotto 6: 3 bug di notcurses nuovi nelle tabelle di `RICONSEGNA.md` (elenco in
@@ -270,6 +271,8 @@ Le issue nate dai lotti 1, 2, 2b, 2c e 3 sono state aggiunte dopo (lotti 2, 2b, 
 | 8 | `bug` | ICH-232 | Low | Reject graphemes that notcurses splits differently in UI widget text checks |
 | 8 | `bug` | ICH-484 | Low | Keep the width of wide-glyph right halves in the Reader view after Backspace, Ctrl+U and Ctrl+W (nata dal lotto 1) |
 | 8 | `bug` | ICH-533 | Low | Raise PlaneError, not ArgumentError, when the egcpool has no room for an EGC with combining marks in Plane#putstr, #putegc and #puttext (nata dal lotto 2c) |
+| 8b | `bug` | ICH-576 | Medium | Let SIGTERM and Ctrl-C end the process while Context.new or Direct.new waits for a terminal that never answers (nata dal lotto 7; verify manuale prima della review) |
+| 8b | `bug` | ICH-577 | Low | Keep the original exception when the rollback of Context.new or Direct.new raises (nata dal lotto 7) |
 | 9 | `bug` | ICH-230 | Medium | Bound the unfinished line in LogView#append by bytes |
 | 10 | `bug` | ICH-220 | Medium | Make the Tabbed header follow plane resizes |
 | 10 | `bug` | ICH-221 | Medium | Fix Tree focus drift with items of different heights |
