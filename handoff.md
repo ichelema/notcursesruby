@@ -58,8 +58,8 @@
   in `spec/ci_workflow_spec.rb:8` senza messaggio (rspec fermato prima del riepilogo). Non riprodotto: l'esempio
   passa da solo 5 volte su 5 e la suite in ordine definito passa. Lo script di verifica ora ha un timeout per suite.
 - **Lotto 8 diviso in due** (scelta dell'utente del 2026-11-21, per tenere il contesto di ogni sessione piccolo):
-  lotto 8 (`Reader`: ICH-218, ICH-484), lotto 8b (grapheme: ICH-217, ICH-232, ICH-533), ICH-576 e ICH-577 nel lotto
-  8c. Lo scoping del 2026-11-21 ha diviso il codice in due gruppi: `Reader` (`widgets/reader.rb`, cursore in
+  lotto 8 (`Reader`: ICH-218, ICH-484), lotto 8b (grapheme: ICH-217, ICH-232, ICH-533), ICH-576, ICH-577 e ICH-580
+  nel lotto 8c (ICH-580 aggiunta dall'utente il 2026-11-21). Lo scoping del 2026-11-21 ha diviso il codice in due gruppi: `Reader` (`widgets/reader.rb`, cursore in
   `context.rb`) e grapheme (`zero_width_egc!` in `plane.rb`, `Cell#load_into` in `cell.rb`, `Text.check!` in
   `ui/component.rb` e i suoi chiamanti in `ui/`).
 - **Lotto 8 fatto:** PR #31, merge `ee509e1` (2026-11-21), ICH-218 e ICH-484 a Done. Merge fatto dall'orchestratore
@@ -67,17 +67,15 @@
   su tutta la matrice. Il verify con `ncvt` ha dato FAIL su un bordo, aperto come **ICH-580** (Backlog, Medium,
   `related` a ICH-218): dopo un reader con `cursor: true` i reader con `cursor: false` lasciano acceso il cursore.
   Log in `memory/backlog-issue.md`, esito in `RICONSEGNA.md`.
-- **Da fare all'inizio della prossima sessione:**
-  - chiedi all'utente in quale lotto mettere ICH-580 (tocca `Context#restore_cursor!` e `cursor_state_unknown!`, non
-    il codice dei lotti 8b e 8c);
-  - chiedi all'utente se aprire una issue per un comportamento del C fuori scope: un Backspace dopo un glifo largo lo
-    cancella intero, ma sposta il cursore di una sola colonna (con `"漢"` e il cursore in colonna 2 finisce in
-    colonna 1).
+- **Scelte dell'utente del 2026-11-21, dopo il lotto 8:** ICH-580 nel lotto 8c (tocca `Context#restore_cursor!` e
+  `cursor_state_unknown!` in `context.rb`, come ICH-576 e ICH-577). Il Backspace dopo un glifo largo, che cancella il
+  glifo intero ma sposta il cursore di una sola colonna (bug di notcurses, `do_backspace`, `reader.c:252-266`), è
+  **ICH-581** (Low, Backlog, `related` a ICH-218), da assegnare a un lotto (chiedi all'utente).
 - **Verify con un terminale vero:** `.claude/skills/verify/` ha la ricetta di `ncvt` (libghostty-vt 1.0.1, stabile
   dalla 1.0), il sorgente `ncvt.c` e l'esempio `verify_reader.rb`. La libreria compilata e `ncvt` sono in
   `~/.claude/tmp/libghostty-vt/` (prefix e `harness/ncvt`); se mancano, la ricetta li ricostruisce. Per ICH-576 usa
   `ncvt -m` (terminale muto).
-- **Prossimo step:** dopo i punti sopra, lotto 8b (`bug`): ICH-217, ICH-232, ICH-533, issue già spiegate all'utente
+- **Prossimo step:** lotto 8b (`bug`): ICH-217, ICH-232, ICH-533, issue già spiegate all'utente
   il 2026-11-21; non serve spiegarle di nuovo.
   Comando: `/trinity:workflow:1_create-worktree master ICH-217 ICH-232 ICH-533 opus`. Prima di `2_work-issue`
   chiedi all'utente l'approvazione del cambio dell'API della Fase 2 per ICH-232 (un helper `@api private` su
@@ -297,6 +295,7 @@ Le issue nate dai lotti 1, 2, 2b, 2c e 3 sono state aggiunte dopo (lotti 2, 2b, 
 | 8b | `bug` | ICH-232 | Low | Reject graphemes that notcurses splits differently in UI widget text checks |
 | 8b | `bug` | ICH-533 | Low | Raise PlaneError, not ArgumentError, when the egcpool has no room for an EGC with combining marks in Plane#putstr, #putegc and #puttext (nata dal lotto 2c) |
 | 8c | `bug` | ICH-576 | Medium | Let SIGTERM and Ctrl-C end the process while Context.new or Direct.new waits for a terminal that never answers (nata dal lotto 7; verify manuale prima della review) |
+| 8c | `bug` | ICH-580 | Medium | Restore the last cursor_enable or cursor_disable in cursor: false readers after a cursor: true reader (nata dal lotto 8; nel lotto 8c per scelta dell'utente) |
 | 8c | `bug` | ICH-577 | Low | Keep the original exception when the rollback of Context.new or Direct.new raises (nata dal lotto 7) |
 | 9 | `bug` | ICH-230 | Medium | Bound the unfinished line in LogView#append by bytes |
 | 10 | `bug` | ICH-220 | Medium | Make the Tabbed header follow plane resizes |

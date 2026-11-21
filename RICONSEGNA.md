@@ -1294,7 +1294,7 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
 | 5 | [#28](https://github.com/ichelema/notcursesruby/pull/28) | `3d3e0e9` | ICH-475, ICH-464; ICH-540 e ICH-541 nate dalla review, in Backlog | nessuno |
 | 6 | [#29](https://github.com/ichelema/notcursesruby/pull/29) | `0730865` | ICH-458, ICH-486, ICH-222, ICH-223, ICH-488; ICH-549, ICH-550, ICH-551, ICH-552 (nate dalla review, sullo stesso branch per scelta dell'utente); ICH-542 (`Refs`) resta in Backlog | `ncplane_qrcode` con il cursore fuori da (0, 0) scrive fuori dal buffer di pixel (`fill.c:612-616`, ICH-542, non aggirato); `rotate_bounding_box` ruota il riquadro attorno al proprio centro e i pixel attorno al centro dell'immagine (`visual.c:658-705`): `ncvisual_rotate` perde pixel opachi con bordi trasparenti asimmetrici; `ncvisual_bounding_box` a volte calcola un riquadro più stretto (`visual.c:537-628`); tabelle "Visual" e "Piani" di `memory/fase2-wrapper-idiomatico.md` |
 | 7 | [#30](https://github.com/ichelema/notcursesruby/pull/30) | `e6b51e0` | ICH-569, ICH-568, ICH-226, ICH-474, ICH-441, ICH-539 (solo documentazione, scelta dell'utente); ICH-576 e ICH-577 nate dal lotto, in Backlog | nessuno |
-| 8 | [#31](https://github.com/ichelema/notcursesruby/pull/31) | `ee509e1` | ICH-218, ICH-484 (il lotto 8 della tabella diviso in due, scelta dell'utente: ICH-217, ICH-232 e ICH-533 nel lotto 8b); ICH-580 nata dal verify, in Backlog | `ncreader_redraw` copia una cella della copia nascosta nella vista solo se EGC, stile o canali sono diversi, senza confrontare la width (`cellcmp_and_dupfar`, `internal.h:1510-1523`, `reader.c:100`): dopo Backspace, Ctrl+U e Ctrl+W le metà destre restano con width 0 (aggirato); già noti e ora aggirati: la cancellazione della colonna 0 (`notcurses.c:1883`) e il cursore acceso a ogni ridisegno (`reader.c:105`); tabella "Widget A" di `memory/fase2-wrapper-idiomatico.md` |
+| 8 | [#31](https://github.com/ichelema/notcursesruby/pull/31) | `ee509e1` | ICH-218, ICH-484 (il lotto 8 della tabella diviso in due, scelta dell'utente: ICH-217, ICH-232 e ICH-533 nel lotto 8b); ICH-580 nata dal verify e ICH-581 nata dal lavoro sul lotto, in Backlog | `ncreader_redraw` copia una cella della copia nascosta nella vista solo se EGC, stile o canali sono diversi, senza confrontare la width (`cellcmp_and_dupfar`, `internal.h:1510-1523`, `reader.c:100`): dopo Backspace, Ctrl+U e Ctrl+W le metà destre restano con width 0 (aggirato); già noti e ora aggirati: la cancellazione della colonna 0 (`notcurses.c:1883`) e il cursore acceso a ogni ridisegno (`reader.c:105`); nuovo e non aggirato: Backspace dopo un glifo largo lascia il cursore sulla colonna della metà destra (`do_backspace`, `reader.c:252-266`, ICH-581); tabella "Widget A" di `memory/fase2-wrapper-idiomatico.md` |
 
 ### Cambi dell'API pubblica
 
@@ -1526,4 +1526,8 @@ del lotto 3. Comportamenti nuovi:
   lotto 7, review; Low, in Backlog).
 - ICH-580 — dopo un `Reader` con `cursor: true`, che rende sconosciuto lo stato del cursore, i reader con
   `cursor: false` lasciano acceso il cursore anche dopo `Context#cursor_disable` (lotto 8, verify con `ncvt`; Medium,
-  in Backlog; correzione probabile: tenere separati lo stato chiesto dall'applicazione e quello noto del C).
+  in Backlog, nel lotto 8c per scelta dell'utente; correzione probabile: tenere separati lo stato chiesto
+  dall'applicazione e quello noto del C).
+- ICH-581 — Backspace dopo un glifo largo nel `Reader` cancella il glifo intero ma lascia il cursore sulla colonna
+  della metà destra: la scrittura dopo lascia una cella vuota nel campo (bug di notcurses, `reader.c:252-266`; lotto 8;
+  Low, in Backlog, `related` a ICH-218).

@@ -992,8 +992,12 @@ al lotto 8c.
 - FAIL: dopo un reader con `cursor: true`, che segna lo stato come sconosciuto, `restore_cursor!` non fa nulla e i
   reader con `cursor: false` lasciano acceso il cursore anche se l'ultima chiamata è stata `cursor_disable`
   (ICH-580).
-- Comportamento del C fuori scope, senza issue (da chiedere all'utente): un Backspace dopo un glifo largo lo cancella
-  intero ma sposta il cursore di una sola colonna.
+- Comportamento del C fuori scope: un Backspace dopo un glifo largo lo cancella intero ma sposta il cursore di una
+  sola colonna. Il 2026-11-21, dopo il merge, l'utente ha scelto di aprire una issue: ICH-581 (Low, Backlog,
+  `related` a ICH-218). Misura su `master` `cb1a15b`: `"a漢"`, Backspace, `"c"` danno le celle `a`, vuota, `c` e
+  `contents == "ac"`; causa in `do_backspace` (`reader.c:252-266`).
+- Scelta dell'utente del 2026-11-21, dopo il merge: ICH-580 nel lotto 8c, con ICH-576 e ICH-577 (stesso file
+  `context.rb`).
 
 ### Verifica finale
 
@@ -1007,4 +1011,5 @@ al lotto 8c.
   instabilità già nota sotto carico), codice non toccato dal lotto; rilanciato il job, verde al tentativo 2 su
   tutta la matrice (run `44874487684`).
 - Linear: ICH-218 e ICH-484 a Done; ICH-580 in Backlog. Worktree e branch non rimossi: `5_remove-worktree` si avvia
-  solo a mano (passo per l'utente, scritto in `handoff.md`).
+  solo a mano (passo per l'utente, scritto in `handoff.md`). Rimossi il 2026-11-21 con
+  `/trinity:workflow:5_remove-worktree` (`--force` per il submodule `notcurses`), anche il branch remoto.
