@@ -87,6 +87,28 @@ RSpec.describe Notcurses::Context do
       end
     end
 
+    # Review della PR #30: un errore dentro il rollback del thread di init (qui dopo lo stop vero del C) saltava
+    # release_context e fclose: il registro restava occupato.
+    it "un errore nel rollback del thread di init libera comunque il registro e non scrive su stderr" do
+      allow(Notcurses::FFI).to receive(:notcurses_stop).and_wrap_original do |m, ptr|
+        m.call(ptr)
+        raise 'stop'
+      end
+      # il chiamante rinuncia al contesto al ritorno di ready.pop (metodo C fino a Ruby 3.x, metodo Ruby da 4.0)
+      pop = Thread::Queue.instance_method(:pop).source_location ? :return : :c_return
+      Dir.mktmpdir do |dir|
+        fds = NcHelpers.open_fd_count
+        result = nil
+        expect do
+          result, = NcHelpers.raise_at_c_return(:pop, event: pop) do
+            NcHelpers.open_context(output: File.join(dir, 'out'))
+          end
+        end.not_to output.to_stderr
+        expect([%w[interrotto stop].include?(result), NcHelpers.open_fd_count, Notcurses.active_context])
+          .to eq([true, fds, nil])
+      end
+    end
+
     it 'valida le opzioni prima di avviare notcurses' do
       expect { NcHelpers.open_context(output: 42) }.to raise_error(TypeError)
       expect { NcHelpers.open_context(output: ::FFI::Pointer::NULL) }.to raise_error(ArgumentError)

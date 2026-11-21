@@ -96,11 +96,14 @@ module NcHelpers
       yield
     rescue RuntimeError => e
       e.message
+    ensure
+      paused << false # il blocco è finito senza passare dal metodo: niente attesa infinita
     end
     # rubocop:enable ThreadSafety/NewThread
-    paused.pop
-    thread.raise(RuntimeError, 'interrotto')
-    resume << true
+    if paused.pop
+      thread.raise(RuntimeError, 'interrotto')
+      resume << true
+    end
     [thread.value, returned]
   ensure
     trace&.disable

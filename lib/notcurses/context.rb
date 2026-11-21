@@ -334,11 +334,11 @@ module Notcurses
         core ? FFI.notcurses_core_init(opts, fp) : FFI.notcurses_init(opts, fp)
       end
       undo = lambda do |ptr| # nel thread di init; ptr è nil se l'init non è partito
-        if ptr
-          stop_notcurses(ptr) unless ptr.null?
-          # notcurses ha già scritto termtype in TERM: un init successivo senza termtype fallirebbe
-          ENV['TERM'] = old_term unless termtype.nil?
-        end
+        stop_notcurses(ptr) if ptr && !ptr.null?
+      ensure
+        # anche se lo stop solleva, come in Direct: il registro va liberato comunque
+        # notcurses ha già scritto termtype in TERM: un init successivo senza termtype fallirebbe
+        ENV['TERM'] = old_term unless ptr.nil? || termtype.nil?
         Notcurses.release_context(self)
         FFI.fclose(fp) if @own_fp
       end
