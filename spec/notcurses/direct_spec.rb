@@ -162,6 +162,26 @@ RSpec.describe Notcurses::Direct do
       end
     end
 
+    # Review della PR #30: un errore dentro il rollback del thread di init (qui dopo lo stop vero del C) non deve
+    # lasciare il registro occupato né il file dell'output aperto.
+    it "un errore nel rollback del thread di init libera comunque il registro e non scrive su stderr" do
+      allow(ffi).to receive(:ncdirect_stop).and_wrap_original do |m, ptr|
+        m.call(ptr)
+        raise 'stop'
+      end
+      # il chiamante rinuncia al contesto al ritorno di ready.pop (metodo C fino a Ruby 3.x, metodo Ruby da 4.0)
+      pop = Thread::Queue.instance_method(:pop).source_location ? :return : :c_return
+      Dir.mktmpdir do |dir|
+        fds = NcHelpers.open_fd_count
+        result = nil
+        expect do
+          result, = NcHelpers.raise_at_c_return(:pop, event: pop) { open_direct(output: File.join(dir, 'out')) }
+        end.not_to output.to_stderr
+        expect([%w[interrotto stop].include?(result), NcHelpers.open_fd_count, Notcurses.active_context])
+          .to eq([true, fds, nil])
+      end
+    end
+
     it 'valida le opzioni prima di avviare notcurses' do
       allow(ffi).to receive(:ncdirect_init).and_call_original
       expect { open_direct(output: 42) }.to raise_error(TypeError)
@@ -844,6 +864,17 @@ RSpec.describe Notcurses::Direct do
           d.load_image(data_file('onedot.png')) { :blocco }
         end
         expect([result, freed]).to eq(['interrotto', created])
+        expect(created.first).not_to eq(0)
+      end
+
+      # Review della PR #30: render_frame non aveva una spec sotto eccezione asincrona. Il frame non si può liberare
+      # (3.0.17 non ha un free sicuro): render_frame lo abbandona come Frame#close.
+      it 'un Thread#raise al ritorno di ncdirect_render_frame abbandona il frame creato dal C' do
+        frames = []
+        allow(Notcurses::Direct::Frame).to receive(:new).and_wrap_original { |m, *args| m.call(*args).tap { |f| frames << f } }
+        png = File.expand_path('../fixtures/visual/rgbw.png', __dir__)
+        result, created = NcHelpers.raise_at_c_return(:ncdirect_render_frame) { d.render_frame(png, blitter: :half) }
+        expect([result, frames.map { |f| [f.instance_variable_get(:@ptr).address, f.closed?] }]).to eq(['interrotto', [[created.first, true]]])
         expect(created.first).not_to eq(0)
       end
 
