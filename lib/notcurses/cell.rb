@@ -16,9 +16,25 @@ module Notcurses
   # {Plane#at}, {Plane#base} e {Context#at} restituiscono una Cell.
   #
   # Cell.new controlla l'EGC con le regole di Ruby (un solo grapheme cluster,
-  # nessun carattere di controllo). notcurses 3.0.17 segmenta alcuni grapheme
-  # in modo diverso (bandiere, sillabe hangul composte, coniugati devanagari):
-  # quelle celle fanno sollevare CellError quando vengono scritte su un piano.
+  # nessun carattere di controllo). Non può usare quelle di notcurses: una Cell
+  # non ha un piano, e notcurses divide un grapheme solo con un piano
+  # (+nccell_load+). notcurses 3.0.17 divide in più caratteri alcuni grapheme
+  # che per Ruby sono uno solo, e le scritture di quelle celle ({Plane#putc},
+  # {Plane#set_base}; {Plane#polyfill}, {Plane#hline}, {Plane#vline},
+  # {Plane#box} e {Plane#gradient} per quelli larghi 1 colonna) sollevano
+  # CellError con i pezzi e con che cosa usare ({Plane#putegc} solleva
+  # CellError per i primi due casi qui sotto, ArgumentError per gli altri,
+  # come {Plane#putstr}):
+  # - bandiere ("🇮🇹", due indicatori regionali) e coniugati devanagari
+  #   ("क्ष"): due caratteri larghi 1 colonna; {Plane#putstr} li scrive in due
+  #   celle vicine;
+  # - sillabe hangul scritte con i jamo L, V e T ("한"): il
+  #   jamo T è largo 0 colonne; la forma composta ("한",
+  #   String#unicode_normalize(:nfc)) si scrive;
+  # - keycap ("1️⃣"): U+20E3 è largo 0 colonne, e anche {Plane#putstr} lo
+  #   rifiuta.
+  # Le sillabe hangul composte, gli emoji con ZWJ e i segni combinanti ("é")
+  # si scrivono in una cella.
   #
   # @example
   #   red = Notcurses::Channels.rgb(255, 0, 0, 0, 0, 0)
@@ -83,6 +99,41 @@ module Notcurses
       text.frozen? ? text : text.dup.freeze
     end
 
+    # CellError per un EGC che notcurses 3.0.17 divide in più caratteri: il
+    # messaggio dice in quali pezzi e che cosa usare (vedi {Cell}).
+    # @api private
+    # @param plane_ptr [::FFI::Pointer] ncplane* per +nccell_load+
+    # @param egc [String] EGC UTF-8
+    # @return [CellError, nil] nil se notcurses legge egc come un solo
+    #   carattere, o se un pezzo non si carica (per esempio con l'egcpool pieno)
+    def self.split_error(plane_ptr, egc)
+      pieces = []
+      cell = FFI::NcCell.new
+      off = 0
+      while off < egc.bytesize
+        len = FFI.nccell_load(plane_ptr, cell, egc.byteslice(off..))
+        return nil unless len.positive?
+
+        pieces << [egc.byteslice(off, len), cell[:width]]
+        off += len
+      end
+      return nil if pieces.size < 2
+
+      head = "notcurses 3.0.17 divide #{Util.egc_label(egc)} in #{pieces.size} caratteri " \
+             "(#{pieces.map { |s, _| Util.egc_label(s) }.join(", ")})"
+      zero, = pieces.find { |_, width| width.zero? }
+      return CellError.new("#{head} e una cella ne tiene uno solo: usa Plane#putstr, che li scrive in celle vicine") unless zero
+
+      message = "#{head}, e #{Util.egc_label(zero)} è largo 0 colonne: non entra in una cella e Plane#putstr lo rifiuta"
+      composed = egc.unicode_normalize(:nfc)
+      if composed != egc && split_error(plane_ptr, composed).nil?
+        message += "; usa la forma composta #{Util.egc_label(composed)} (String#unicode_normalize(:nfc))"
+      end
+      CellError.new(message)
+    ensure
+      FFI.nccell_release(plane_ptr, cell) if cell
+    end
+
     # @return [Boolean] true per un glifo largo (2 colonne)
     def wide? = @width > 1
 
@@ -107,6 +158,7 @@ module Notcurses
     # @param nccell [FFI::NcCell] cella azzerata o già legata a plane_ptr
     # @return [FFI::NcCell] nccell
     # @raise [CellError] se notcurses non legge l'EGC come un solo carattere
+    #   (il messaggio dice in quali pezzi lo divide, vedi {Cell})
     def load_into(plane_ptr, nccell)
       mask = Util.styles_value(@styles)
       rc = FFI.nccell_prime(plane_ptr, nccell, @egc, mask, @channels.value & Util::CHANNELS_MASK)
@@ -114,6 +166,9 @@ module Notcurses
 
       # dopo un errore la cella può sembrare la metà destra di un glifo largo
       FFI.nccell_release(plane_ptr, nccell)
+      split = Cell.split_error(plane_ptr, @egc) if rc.positive?
+      raise split if split
+
       raise CellError, "notcurses non accetta #{@egc.inspect} come un solo carattere (nccell_prime: #{rc})"
     end
 

@@ -1432,6 +1432,8 @@ module Notcurses
     # @param channels [Channels, Integer] colori
     # @return [self]
     # @raise [PlaneError] se notcurses rifiuta l'EGC
+    # @raise [CellError] se notcurses divide il grapheme in più caratteri (vedi
+    #   {Cell}): il C terrebbe solo il primo
     # @raise [TypeError, ArgumentError] se un argomento non è valido (più di un
     #   grapheme cluster, caratteri di controllo, ...)
     # @raise [ClosedError] se il piano è chiuso
@@ -1441,6 +1443,10 @@ module Notcurses
         text = Cell.egc!(egc)
         mask = Util.styles_value(styles)
         chans = Util.channels_value(channels)
+        # ncplane_set_base tiene il primo pezzo di un grapheme diviso, senza errore (ICH-217)
+        split = Cell.split_error(ptr, text) unless text.ascii_only?
+        raise split if split
+
         Util.check!(FFI.ncplane_set_base(ptr, text, mask, chans), PlaneError, 'ncplane_set_base')
         self
       end
@@ -3207,13 +3213,14 @@ module Notcurses
         while off < g.bytesize
           len = FFI.nccell_load(ptr, cell, g.byteslice(off..))
           unless len.positive?
-            raise ArgumentError, "#{name}: notcurses non accetta #{egc_label(g)}" if g.bytesize - off <= 4
+            raise ArgumentError, "#{name}: notcurses non accetta #{Util.egc_label(g)}" if g.bytesize - off <= 4
 
-            raise PlaneError, "#{name}: l'egcpool del piano (16 MiB) non ha spazio per #{egc_label(g)}; il piano non è cambiato"
+            raise PlaneError, "#{name}: l'egcpool del piano (16 MiB) non ha spazio per #{Util.egc_label(g)}; " \
+                              'il piano non è cambiato'
           end
           if cell[:width].zero?
-            raise ArgumentError, "#{name}: notcurses 3.0.17 scrive #{egc_label(g.byteslice(off, len))} (in #{egc_label(g)}) " \
-                                 'come un carattere di larghezza zero, in una cella propria'
+            raise ArgumentError, "#{name}: notcurses 3.0.17 scrive #{Util.egc_label(g.byteslice(off, len))} " \
+                                 "(in #{Util.egc_label(g)}) come un carattere di larghezza zero, in una cella propria"
           end
 
           off += len
@@ -3222,10 +3229,6 @@ module Notcurses
     ensure
       FFI.nccell_release(ptr, cell) if cell
     end
-
-    # EGC per un messaggio d'errore: l'inizio e i byte di un EGC lungo (un EGC
-    # può avere milioni di segni combinanti).
-    def egc_label(egc) = egc.bytesize > 32 ? "#{egc[0, 3].inspect}... (#{egc.bytesize} byte)" : egc.inspect
 
     # Controlla dove scrivere un testo di total colonne, con il primo
     # carattere largo first, e restituisce [y, x] per il C (-1 = cursore). Con
@@ -3267,7 +3270,9 @@ module Notcurses
     def single_egc!(ptr, text)
       probe = FFI::NcCell.new
       len = FFI.nccell_load(ptr, probe, text)
-      raise CellError, "notcurses divide #{text.inspect} in più caratteri" unless len == text.bytesize
+      return if len == text.bytesize
+
+      raise Cell.split_error(ptr, text) || CellError.new("notcurses divide #{text.inspect} in più caratteri")
     ensure
       FFI.nccell_release(ptr, probe) if probe
     end
