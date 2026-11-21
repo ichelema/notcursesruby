@@ -74,6 +74,18 @@ module Notcurses
     ZERO_WIDTH_CANDIDATES = /[\p{Mn}\p{Me}\p{Cf}ᅠ-ᇿힰ-퟿]/
     private_constant :ZERO_WIDTH_CANDIDATES
 
+    # Caratteri che si legano al carattere vicino nello stesso grapheme
+    # cluster (UAX #29). Un EGC di più di 4 byte, che notcurses copia
+    # nell'egcpool, ha più di un codepoint e quindi ne contiene almeno uno:
+    # un testo senza questi caratteri e senza ZERO_WIDTH_CANDIDATES non ha
+    # grapheme da controllare con +nccell_load+.
+    GRAPHEME_JOINERS = /\p{Grapheme_Cluster_Break=Extend} | \p{Grapheme_Cluster_Break=ZWJ}
+                       | \p{Grapheme_Cluster_Break=SpacingMark} | \p{Grapheme_Cluster_Break=Prepend}
+                       | \p{Grapheme_Cluster_Break=Regional_Indicator} | \p{Grapheme_Cluster_Break=L}
+                       | \p{Grapheme_Cluster_Break=V} | \p{Grapheme_Cluster_Break=T}
+                       | \p{Grapheme_Cluster_Break=LV} | \p{Grapheme_Cluster_Break=LVT}/x
+    private_constant :GRAPHEME_JOINERS
+
     # Spazi tra le parole per {#puttext} (senza gli spazi non separabili).
     WORD_SPACES = /[\p{Zs}&&[^   ]]+/
     private_constant :WORD_SPACES
@@ -3203,7 +3215,7 @@ module Notcurses
       raise ArgumentError, "#{name} contiene un carattere di controllo" if str.match?(/(?!\n)\p{Cc}/)
       raise ArgumentError, "#{name} contiene U+2028 o U+2029, che notcurses tronca a un byte" if str.match?(/[  ]/)
 
-      zero_width_egc!(ptr, str, name) unless str.ascii_only?
+      zero_width_egc!(ptr, str, name) if str.match?(ZERO_WIDTH_CANDIDATES) || str.match?(GRAPHEME_JOINERS)
       str
     end
 
