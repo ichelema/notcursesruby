@@ -68,10 +68,6 @@
   `related` a ICH-218): dopo un reader con `cursor: true` i reader con `cursor: false` lasciano acceso il cursore.
   Log in `memory/backlog-issue.md`, esito in `RICONSEGNA.md`.
 - **Da fare all'inizio della prossima sessione:**
-  - worktree e branch del lotto 8 non sono rimossi: `5_remove-worktree` si avvia solo a mano (l'invocazione da parte
-    del modello è disabilitata). Esegui `/trinity:workflow:5_remove-worktree bug+ICH-218-484-opus`; il worktree ha in
-    più il submodule `notcurses` inizializzato, e con `git status` vuoto `--force` è approvato. Va tolto anche il
-    branch remoto `bug/ICH-218-484-opus`;
   - chiedi all'utente in quale lotto mettere ICH-580 (tocca `Context#restore_cursor!` e `cursor_state_unknown!`, non
     il codice dei lotti 8b e 8c);
   - chiedi all'utente se aprire una issue per un comportamento del C fuori scope: un Backspace dopo un glifo largo lo
