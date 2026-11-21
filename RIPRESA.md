@@ -6,7 +6,7 @@
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
 > `git show ad0315b:RIPRESA.md`; quello dei lotti della revisione in `git show 8a4b5f7:RIPRESA.md`.
 
-## Stato e prossimo step (aggiornato il 2026-11-21, lotto 7 fatto, prossimo lotto 8)
+## Stato e prossimo step (aggiornato il 2026-11-21, lotto 7 fatto, lotto 8 in corso, prossimo lotto 8b)
 
 - Lotto 1 fatto: PR #22, merge `74deb80`. Lotto 2 fatto: PR #23, merge `cb90c4f`. Lotto 2b fatto: PR #24, merge
   `6374e41`. Lotto 2c fatto: PR #25, merge `d2c5f7c`. Lotto 3 fatto: PR #26, merge `e15b40a` (ICH-454, ICH-456,
@@ -57,10 +57,22 @@
   `spec/notcurses/ui/event_loop_spec.rb:716` (lotto 3, `Thread#kill` durante la pulizia di `run`), con un `F` iniziale
   in `spec/ci_workflow_spec.rb:8` senza messaggio (rspec fermato prima del riepilogo). Non riprodotto: l'esempio
   passa da solo 5 volte su 5 e la suite in ordine definito passa. Lo script di verifica ora ha un timeout per suite.
-- **Prossimo step:** lotto 8 (`bug`): ICH-218, ICH-217, ICH-232, ICH-484, ICH-533 (tabella sotto), issue già
-  spiegate all'utente il 2026-11-21. Poi `/trinity:workflow:1_create-worktree master ICH-218 ICH-217 ICH-232 ICH-484
-  ICH-533 opus`. ICH-576 e ICH-577 vanno nel lotto 8b, dopo il lotto 8 (scelta dell'utente del 2026-11-21: toccano
-  `Util.init_thread`, non il codice del lotto 8).
+- **Lotto 8 diviso in due** (scelta dell'utente del 2026-11-21, per tenere il contesto di ogni sessione piccolo): il
+  lotto 8 (`Reader`: ICH-218, ICH-484) è in corso nella sessione del 2026-11-21, branch `bug/ICH-218-484-opus`; le
+  3 issue dei grapheme passano al lotto 8b; ICH-576 e ICH-577 passano al lotto 8c (la scelta dell'utente era «dopo
+  il lotto 8»). Lo scoping del 2026-11-21 (effort High per le 5 issue insieme) ha diviso il codice in due gruppi:
+  `Reader` (`widgets/reader.rb`, stato del cursore in `context.rb`, `reader_spec.rb`,
+  `wide_glyph_copies_spec.rb:86`) e grapheme (`zero_width_egc!` in `plane.rb`, `Cell#load_into` in `cell.rb`,
+  `Text.check!` in `ui/component.rb` e i suoi chiamanti in `ui/`).
+- **Prossimo step:** se il lotto 8 non è chiuso, riprendilo dal suo stato (PR, review, merge, chiusura). Poi lotto
+  8b (`bug`): ICH-217, ICH-232, ICH-533, issue già spiegate all'utente il 2026-11-21; non serve spiegarle di nuovo.
+  Comando: `/trinity:workflow:1_create-worktree master ICH-217 ICH-232 ICH-533 opus`. Prima di `2_work-issue`
+  chiedi all'utente l'approvazione del cambio dell'API della Fase 2 per ICH-232 (un helper `@api private` su
+  `Plane` che espone il controllo di `zero_width_egc!` a `Notcurses::UI`). Note dello scoping: ICH-533 e ICH-232
+  toccano lo stesso metodo (`zero_width_egc!`, `nccell_load` con -1 per il pool pieno: `poolused` e `poolsize`
+  sono in `Plane::Internals`); `Cell#load_into` ha lo stesso problema per `putc` (`CellError`); precedente in
+  `reader.rb:209` (`nccell_load` -1 diventa `WidgetError`); `spec/notcurses/ui/label_spec.rb:71-73` oggi si
+  aspetta `"?"` per il keycap e va cambiata; nessuna spec per Hangul e devanagari.
 - Nata dal lotto 6, in Backlog, Low, da assegnare a un lotto successivo (non blocca la PR #29): ICH-554 (`Visual#rotate`
   chiama il C una volta per pixel, circa 0,9 s su 1024x1024; accelerarlo può servire un cambio del layer FFI, regola 1).
 - Alla chiusura del lotto 6: 3 bug di notcurses nuovi nelle tabelle di `RICONSEGNA.md` (elenco in
@@ -93,7 +105,7 @@
   eseguono gli script da stdin, senza file e senza `.review-tmp` (non è in `.gitignore`), e rspec in una subshell con
   cwd nel worktree di review; i worktree di review puliti si rimuovono con `git worktree remove`.
 - Nata dal lotto 2c: ICH-533 (`putstr`, `putegc` e `puttext` sollevano `ArgumentError` invece di `PlaneError` con
-  l'egcpool pieno e un EGC con segni combinanti), nel lotto 8 con ICH-217 e ICH-232: stesso codice
+  l'egcpool pieno e un EGC con segni combinanti), nel lotto 8b con ICH-217 e ICH-232: stesso codice
   (`zero_width_egc!`), scelta dell'utente del 2026-11-17.
 - Note dal lotto 2c: i workaround di `keeping_base_cell` (ICH-531) e `blank_orphan_lefts!` (ICH-532) scrivono le
   celle grezze nei campi privati (`Plane::Internals`) e non girano senza; un bug di notcurses nuovo (`rotate_2x1_cw`
@@ -267,12 +279,12 @@ Le issue nate dai lotti 1, 2, 2b, 2c e 3 sono state aggiunte dopo (lotti 2, 2b, 
 | 7 | `bug` | ICH-474 | Low | Keep the C resource when an async exception arrives during Visual.from_file, Direct#load_image or Direct#render_frame |
 | 7 | `bug` | ICH-539 | Low | Close the signal windows left in the cleanup of EventLoop#run and in InputReader#halt on Ruby 3.1 and 3.2 (nata dal lotto 3) |
 | 8 | `bug` | ICH-218 | Medium | Make Reader delete the character in column 0 |
-| 8 | `bug` | ICH-217 | Low | Handle graphemes that notcurses segments differently from Ruby |
-| 8 | `bug` | ICH-232 | Low | Reject graphemes that notcurses splits differently in UI widget text checks |
 | 8 | `bug` | ICH-484 | Low | Keep the width of wide-glyph right halves in the Reader view after Backspace, Ctrl+U and Ctrl+W (nata dal lotto 1) |
-| 8 | `bug` | ICH-533 | Low | Raise PlaneError, not ArgumentError, when the egcpool has no room for an EGC with combining marks in Plane#putstr, #putegc and #puttext (nata dal lotto 2c) |
-| 8b | `bug` | ICH-576 | Medium | Let SIGTERM and Ctrl-C end the process while Context.new or Direct.new waits for a terminal that never answers (nata dal lotto 7; verify manuale prima della review) |
-| 8b | `bug` | ICH-577 | Low | Keep the original exception when the rollback of Context.new or Direct.new raises (nata dal lotto 7) |
+| 8b | `bug` | ICH-217 | Low | Handle graphemes that notcurses segments differently from Ruby |
+| 8b | `bug` | ICH-232 | Low | Reject graphemes that notcurses splits differently in UI widget text checks |
+| 8b | `bug` | ICH-533 | Low | Raise PlaneError, not ArgumentError, when the egcpool has no room for an EGC with combining marks in Plane#putstr, #putegc and #puttext (nata dal lotto 2c) |
+| 8c | `bug` | ICH-576 | Medium | Let SIGTERM and Ctrl-C end the process while Context.new or Direct.new waits for a terminal that never answers (nata dal lotto 7; verify manuale prima della review) |
+| 8c | `bug` | ICH-577 | Low | Keep the original exception when the rollback of Context.new or Direct.new raises (nata dal lotto 7) |
 | 9 | `bug` | ICH-230 | Medium | Bound the unfinished line in LogView#append by bytes |
 | 10 | `bug` | ICH-220 | Medium | Make the Tabbed header follow plane resizes |
 | 10 | `bug` | ICH-221 | Medium | Fix Tree focus drift with items of different heights |
