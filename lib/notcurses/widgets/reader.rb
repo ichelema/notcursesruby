@@ -61,6 +61,12 @@ module Notcurses
     end
     private_constant :Internals
 
+    # Bit dello stylemask che notcurses 3.0.17 non usa (gli stili NCSTYLE_*
+    # arrivano a 0x0010): segna le celle della copia nascosta durante
+    # Backspace, Ctrl+U e Ctrl+W (vedi {#offer_input}).
+    RECOPY_STYLE = 0x8000
+    private_constant :RECOPY_STYLE
+
     # Crea il reader sul piano (+ncreader_create+), che viene svuotato.
     #
     # @param plane [Plane] piano posseduto dal wrapper, non lo stdplane, non
@@ -142,7 +148,12 @@ module Notcurses
     # e Ctrl+W su un glifo largo lasciavano nella vista la sua metà destra, e il
     # glifo largo successivo in fondo alla riga scriveva oltre il piano
     # (notcurses.c:1957-1961): il wrapper svuota la vista prima di questi tasti
-    # e il ridisegno del C la ricopia dalla copia nascosta. Infine Backspace,
+    # e il ridisegno del C la ricopia dalla copia nascosta. Il ridisegno però
+    # non copiava la larghezza delle metà destre dei glifi larghi rimasti
+    # (+cellcmp_and_dupfar+ non la confronta, internal.h:1510-1523), e
+    # {Plane#at} su quelle celle non restituiva il glifo: il wrapper segna le
+    # celle della copia nascosta durante la chiamata, così il ridisegno copia
+    # ogni cella cambiata con la sua larghezza. Infine Backspace,
     # Ctrl+U e Ctrl+W non cancellavano il carattere della colonna 0: il C
     # cancella scrivendo "" con +ncplane_putegc_yx+, che in colonna 0 fallisce
     # ((unsigned)x + cols - 1 con cols 0, notcurses.c:1883). Il wrapper svuota
@@ -174,18 +185,31 @@ module Notcurses
           backspace = plain && input.id == Key::BACKSPACE
           wrap = backspace && x.zero? && y.positive?
           # Backspace, Ctrl+U e Ctrl+W cancellano solo nella copia nascosta, e il
-          # ridisegno non confronta la width (internal.h:1512-1519): una metà destra
-          # larga resterebbe nella vista. Svuotata, la vista viene ricopiata intera.
+          # ridisegno copia una cella solo se EGC, stile o canali sono diversi, senza
+          # confrontare la width (cellcmp_and_dupfar, internal.h:1510-1523): una metà
+          # destra larga resterebbe nella vista. Svuotata, la vista viene ricopiata,
+          # ma le sue celle vuote hanno EGC "" come le metà destre della copia
+          # nascosta, che il ridisegno lascerebbe con width 0 (ICH-484). Con
+          # RECOPY_STYLE su ogni cella della copia nascosta, che il C cancella con
+          # stile 0, il ridisegno copia ogni cella cambiata, anche ai ridisegni
+          # successivi di Ctrl+U e Ctrl+W; poi lo stile torna 0 nei due piani.
           ctrl = !@no_cmd_keys && !input.release? && input.modifiers.anybits?(FFI::NCKEY_MOD_CTRL)
           deletion = backspace ? :backspace : (ctrl && x.positive? && {0x55 => :line, 0x57 => :word}[input.id])
           if deletion
+            text = text_area(ptr)
             FFI.ncplane_erase(@plane.to_ptr)
+            FFI.ncplane_format(text, 0, 0, 0, 0, RECOPY_STYLE) if text
             move_view_cursor!(y, x)
           end
-          consumed = FFI.ncreader_offer_input(ptr, ni)
+          consumed =
+            begin
+              FFI.ncreader_offer_input(ptr, ni)
+            ensure
+              [text, @plane.to_ptr].each { |plane| FFI.ncplane_format(plane, 0, 0, 0, 0, 0) } if text
+            end
           wrap_backspace(y - 1) if wrap
           @cursor = @plane.cursor
-          clear_column_zero!(ptr, deletion, y, x) if deletion
+          clear_column_zero!(text, deletion, y, x) if text
           consumed
         end
       end
@@ -398,11 +422,8 @@ module Notcurses
     # toglie anche le due metà di un glifo largo (notcurses.c:1915-1927). Il
     # wrapper scrive nella copia nascosta e nella vista, poi riporta in colonna
     # 0 i loro cursori.
-    def clear_column_zero!(ptr, deletion, y, x)
+    def clear_column_zero!(text, deletion, y, x)
       Guard.run do
-        text = text_area(ptr)
-        next unless text
-
         attempted =
           case deletion
           when :backspace then x == 1

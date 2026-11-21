@@ -223,6 +223,26 @@ RSpec.describe Notcurses::Reader do
       end
     end
 
+    it 'dopo Backspace, Ctrl+U e Ctrl+W le metà destre dei glifi larghi della vista restano larghe (prima: width 0)' do
+      [ev(key::BACKSPACE), ctrl('U'), ctrl('W')].each do |input|
+        new_reader(rows: 1, cols: 8) do |reader|
+          reader.write('漢漢漢')
+          2.times { reader.move_left } # colonna 4: glifi prima e dopo il cursore
+          expect(reader.offer_input(input)).to be true
+          cell = Notcurses::FFI::NcCell.new
+          widths = (0...8).map do |x|
+            Notcurses::FFI.ncplane_at_yx_cell(reader.plane.to_ptr, 0, x, cell)
+            cell[:width].tap { Notcurses::FFI.nccell_release(reader.plane.to_ptr, cell) }
+          end
+          lefts = (0...8).step(2).select { |x| reader.plane.at(y: 0, x: x).egc == '漢' } # metà sinistre
+          expect(lefts).not_to be_empty, input.inspect
+          lefts.each do |x|
+            expect([widths[x + 1], reader.plane.at(y: 0, x: x + 1).egc]).to eq([2, '漢']), "#{input.inspect} x=#{x + 1}"
+          end
+        end
+      end
+    end
+
     it 'il glifo largo scritto in fondo alla riga dopo quei tasti resta nel piano (prima: heap corrotto, abort)' do
       skip 'serve libc_malloc_debug di glibc' unless File.exist?('/usr/lib/libc_malloc_debug.so.0')
       script = <<~'RUBY'
