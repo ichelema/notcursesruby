@@ -319,6 +319,7 @@ module Notcurses
                      Util.flag(scrolling, FFI::NCOPTION_SCROLLING, 'scrolling') |
                      Util.flag(cli_mode, FFI::NCOPTION_CLI_MODE, 'cli_mode')
       @closed = true # fino alla fine dell'init: close e at_exit ignorano l'oggetto
+      @pid = Process.pid # già durante l'init: la guardia di Process.daemon riconosce il contesto di questo processo
       old_term = fp = init = nil
       @own_fp = false
       go = Queue.new    # al thread di init: true per partire, poi true se il chiamante ha adottato il contesto
@@ -354,7 +355,6 @@ module Notcurses
         @ptr = ptr
         @fp = fp
         @owner = nil
-        @pid = Process.pid
         @generation = 0
         @planes = {}
         @children = {}.compare_by_identity

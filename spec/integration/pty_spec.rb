@@ -254,6 +254,55 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(status.exitstatus).to eq(0), out
   end
 
+  # Review della PR #30: durante l'init il contesto è già registrato e il terminale è già nel modo dell'init, ma
+  # pid era nil fino all'adozione: Process.daemon da un altro thread partiva e lasciava il terminale senza echo.
+  def daemon_during_init_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    answer = Queue.new
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        data.scan(/\e\[6n|\e\[c/) do |q|
+          answer.pop if q == "\e[c" # l'init attende nel C finché lo script non lo sblocca
+          master.write(q == "\e[6n" ? "\e[5;7R" : "\e[?62;22c")
+        end
+      end
+    rescue IOError, Errno::EIO
+    end
+    opts = { output: slave.path, termtype: 'xterm-256color' }
+    [[Notcurses::Context, { suppress_banners: true }, Notcurses::ContextError],
+     [Notcurses::Direct, {}, Notcurses::DirectError]].each do |klass, extra, error|
+      init = Thread.new { klass.new(**opts, **extra) }
+      sleep 0.01 until Notcurses.active_context # registrato, init in attesa del terminale
+      begin
+        Process.daemon(true, true)
+        puts "#{klass}: nessun errore pid=#{Process.pid}"
+        exit!(0)
+      rescue error => e
+        puts "#{klass}: #{e.class} durante l'init"
+      end
+      answer << true
+      init.value.close
+      puts "#{klass}: chiuso echo=#{slave.echo?}"
+    end
+  RUBY
+
+  it "Process.daemon solleva un errore anche mentre un altro thread è dentro l'init di Context o Direct" do
+    out, status, timed_out = run_child(daemon_during_init_script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out.lines(chomp: true)).to eq(["Notcurses::Context: Notcurses::ContextError durante l'init",
+      'Notcurses::Context: chiuso echo=true',
+      "Notcurses::Direct: Notcurses::DirectError durante l'init",
+      'Notcurses::Direct: chiuso echo=true'])
+    expect(status.exitstatus).to eq(0), out
+  end
+
   # Context#get e #getvec con eventi veri scritti sul pty.
   def get_script = <<~'RUBY'
     require 'notcurses'

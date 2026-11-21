@@ -222,6 +222,7 @@ module Notcurses
       check_output!(output)
 
       @closed = true # fino alla fine dell'init: close e at_exit ignorano l'oggetto
+      @pid = Process.pid # già durante l'init: la guardia di Process.daemon riconosce il contesto di questo processo
       old_term = fp = init = nil
       own_fp = false
       go = Queue.new    # al thread di init: true per partire, poi true se il chiamante ha adottato il contesto
@@ -259,7 +260,6 @@ module Notcurses
         @fp = fp
         @own_fp = own_fp
         @owner = nil
-        @pid = Process.pid
         @drain_input = drain_input
         @eof_input = nil
         @input_io = nil
