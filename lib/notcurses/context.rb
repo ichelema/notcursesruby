@@ -780,14 +780,16 @@ module Notcurses
         Util.integer!(x, 'x', 0...cols)
         Util.check!(FFI.notcurses_cursor_enable(to_ptr, y, x), ContextError, 'notcurses_cursor_enable')
         @cursor_enabled = true
+        @cursor_at = [y, x]
         self
       end
     end
 
     # Nasconde il cursore del terminale (+notcurses_cursor_disable+).
     # Idempotente: con il cursore già nascosto non chiama il C (che
-    # restituirebbe un errore). Dopo un'operazione di un {Reader}, che accende
-    # e spegne il cursore da sé, chiama il C e tollera un cursore già nascosto.
+    # restituirebbe un errore). Dopo un'operazione di un {Reader} con
+    # cursor: true, che accende e spegne il cursore da sé, chiama il C e
+    # tollera un cursore già nascosto.
     #
     # @return [self]
     # @raise [ContextError] se il terminale non nasconde il cursore acceso con
@@ -806,13 +808,31 @@ module Notcurses
     end
 
     # Segna come sconosciuto lo stato del cursore del terminale. Lo chiama il
-    # {Reader}: il suo ridisegno accende il cursore e la sua chiusura (con
-    # cursor: true) lo spegne, senza passare da {#cursor_enable} e
+    # {Reader} con cursor: true: il suo ridisegno accende il cursore e la sua
+    # chiusura lo spegne, senza passare da {#cursor_enable} e
     # {#cursor_disable}.
     # @return [void]
     # @api private
     def cursor_state_unknown!
       @cursor_enabled = nil
+    end
+
+    # Rimette il cursore del terminale come l'ha lasciato l'ultima chiamata a
+    # {#cursor_enable} o {#cursor_disable}; con lo stato sconosciuto non fa
+    # nulla. Lo chiama il {Reader} con cursor: false dopo ogni ridisegno del
+    # C, che accende e sposta il cursore. L'esito del C non conta, come nel
+    # ridisegno: senza un tty il C non spegne il cursore.
+    # @return [void]
+    # @api private
+    def restore_cursor!
+      Guard.run do
+        ptr = to_ptr
+        if @cursor_enabled
+          FFI.notcurses_cursor_enable(ptr, *@cursor_at)
+        elsif @cursor_enabled == false
+          FFI.notcurses_cursor_disable(ptr)
+        end
+      end
     end
 
     # Posizione di scrittura del terminale dopo l'ultimo frame

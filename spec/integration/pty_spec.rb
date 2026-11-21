@@ -1238,4 +1238,52 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
       expect(out).not_to include('\e[39;49m')
     end
   end
+
+  # ICH-218: il ridisegno di ncreader accende il cursore del terminale (reader.c:105). Il terminale finto registra
+  # le sequenze; per ogni operazione del reader il figlio stampa l'ultima fra \e[?25h (mostra) e \e[?25l (nasconde).
+  def reader_cursor_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    log = String.new(encoding: Encoding::BINARY)
+    lock = Mutex.new
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        lock.synchronize { log << data }
+        data.scan(/\e\[6n|\e\[c/) { |q| master.write(q == "\e[6n" ? "\e[1;1R" : "\e[?62;22c") }
+      end
+    rescue IOError, Errno::EIO
+    end
+    last = lambda do |&op|
+      mark = lock.synchronize { log.bytesize }
+      op.call
+      sleep 0.2
+      lock.synchronize { log.byteslice(mark..) }.scan(/\e\[\?25[hl]/).last.inspect
+    end
+    backspace = Notcurses::Input.synthesize(Notcurses::Key::BACKSPACE)
+    Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
+      [false, true].each do |managed|
+        Notcurses::Reader.open(nc.stdplane.create_child(rows: 1, cols: 10, y: 2, x: 2), cursor: managed) do |reader|
+          puts "cursor: #{managed} write #{last.call { reader.write('ab') }}"
+          puts "cursor: #{managed} backspace #{last.call { reader.offer_input(backspace) }}"
+          puts "cursor: #{managed} move_left #{last.call { reader.move_left }}"
+        end
+      end
+    end
+    puts 'fine'
+  RUBY
+
+  it 'con cursor: false il reader lascia nascosto il cursore del terminale; con cursor: true lo mostra (prima: sempre acceso)' do
+    out, status, timed_out = run_child(reader_cursor_script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(status.exitstatus).to eq(0), out
+    expect(out.lines.grep(/^cursor: false/)).to eq(%w[write backspace move_left].map { |op| "cursor: false #{op} \"\\e[?25l\"\n" })
+    expect(out).to include('cursor: true write "\e[?25h"', 'fine')
+    expect(out.lines.grep(/^cursor: true/)).not_to include(a_string_including('25l'))
+  end
 end

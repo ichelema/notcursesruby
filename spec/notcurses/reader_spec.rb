@@ -114,20 +114,72 @@ RSpec.describe Notcurses::Reader do
       end
     end
 
-    it 'Backspace non cancella la colonna 0 (bug di 3.0.17 non aggirato): la scrittura successiva la sovrascrive' do
-      new_reader do |reader|
+    it 'Backspace subito dopo il carattere della colonna 0 lo cancella, anche sotto la prima riga (prima: restava)' do
+      new_reader(rows: 2, cols: 6) do |reader|
         reader.write('ab')
         2.times { expect(reader.offer_input(ev(key::BACKSPACE))).to be true }
-        expect(reader.contents).to eq('a')
-        expect(reader.plane.cursor).to eq([0, 0])
+        expect([reader.contents, reader.plane.at(y: 0, x: 0).egc, reader.plane.cursor]).to eq(['', '', [0, 0]])
         expect(reader.offer_input(ev(key::BACKSPACE))).to be true # in (0, 0) non fa nulla
         reader.write('c')
-        expect(reader.contents).to eq('c')
+        reader.move_down
+        reader.offer_input(ctrl('A'))
+        reader.write('d')
+        expect(reader.offer_input(ev(key::BACKSPACE))).to be true
+        expect([reader.contents, reader.plane.cursor]).to eq(['c', [1, 0]])
+        reader.write('e')
+        expect(reader.contents).to eq('ce')
+      end
+    end
+
+    it 'Backspace cancella il glifo largo della colonna 0, anche con il cursore a metà glifo, senza metà orfane' do
+      [2, 1].each do |col|
+        new_reader(rows: 1, cols: 6) do |reader|
+          reader.write('漢')
+          reader.move_left if col == 1 # la freccia sinistra sposta di una colonna
+          expect(reader.offer_input(ev(key::BACKSPACE))).to be true
+          expect([reader.contents, reader.plane.at(y: 0, x: 0).egc]).to eq(['', '']), "cursore in colonna #{col}"
+          expect(orphan_wide_right?(reader.plane, 0)).to be(false)
+          reader.offer_input(ctrl('A')) # dalla colonna 2 il C lascia il cursore in colonna 1
+          reader.write('漢漢漢')
+          expect(reader.contents).to eq('漢漢漢')
+        end
+      end
+    end
+
+    it 'Ctrl+U cancella anche il carattere della colonna 0, ASCII o glifo largo (prima: restava)' do
+      new_reader(rows: 1, cols: 6) do |reader|
+        reader.write('abc')
+        reader.move_left
+        expect(reader.offer_input(ctrl('U'))).to be true
+        expect([reader.contents, reader.plane.cursor]).to eq(['c', [0, 0]])
+        reader.clear.write('漢')
+        reader.move_left
+        expect(reader.offer_input(ctrl('U'))).to be true
+        expect([reader.contents, orphan_wide_right?(reader.plane, 0)]).to eq(['', false])
+      end
+    end
+
+    it 'Ctrl+W cancella la parola che parte dalla colonna 0 e lascia lo spazio della colonna 0 (prima: restava)' do
+      new_reader(rows: 1, cols: 8) do |reader|
+        reader.write('ab')
+        expect(reader.offer_input(ctrl('W'))).to be true
+        expect([reader.contents, reader.plane.cursor]).to eq(['', [0, 0]])
+        reader.write('ab cd')
+        3.times { reader.move_left }
+        expect(reader.offer_input(ctrl('W'))).to be true
+        expect(reader.contents).to eq(' cd')
+        reader.clear.write(' ab') # uno spazio in colonna 0 ferma la parola, come per il C
+        expect(reader.offer_input(ctrl('W'))).to be true
+        expect([reader.contents, reader.plane.cursor]).to eq([' ', [0, 0]])
+        reader.clear.write('漢')
+        reader.move_left
+        expect(reader.offer_input(ctrl('W'))).to be true
+        expect([reader.contents, orphan_wide_right?(reader.plane, 0)]).to eq(['', false])
       end
     end
 
     it 'Backspace a inizio riga torna alla riga sopra con vista e testo allineati (prima: abort con la freccia sinistra)' do
-      new_reader(rows: 3, cols: 5) do |reader|
+      new_reader(rows: 3, cols: 5, cursor: true) do |reader| # cursor: true, il reader sposta il cursore del terminale
         reader.write('abcde')
         reader.move_down
         reader.offer_input(ctrl('A'))
@@ -171,6 +223,26 @@ RSpec.describe Notcurses::Reader do
       end
     end
 
+    it 'dopo Backspace, Ctrl+U e Ctrl+W le metà destre dei glifi larghi della vista restano larghe (prima: width 0)' do
+      [ev(key::BACKSPACE), ctrl('U'), ctrl('W')].each do |input|
+        new_reader(rows: 1, cols: 8) do |reader|
+          reader.write('漢漢漢')
+          2.times { reader.move_left } # colonna 4: glifi prima e dopo il cursore
+          expect(reader.offer_input(input)).to be true
+          cell = Notcurses::FFI::NcCell.new
+          widths = (0...8).map do |x|
+            Notcurses::FFI.ncplane_at_yx_cell(reader.plane.to_ptr, 0, x, cell)
+            cell[:width].tap { Notcurses::FFI.nccell_release(reader.plane.to_ptr, cell) }
+          end
+          lefts = (0...8).step(2).select { |x| reader.plane.at(y: 0, x: x).egc == '漢' } # metà sinistre
+          expect(lefts).not_to be_empty, input.inspect
+          lefts.each do |x|
+            expect([widths[x + 1], reader.plane.at(y: 0, x: x + 1).egc]).to eq([2, '漢']), "#{input.inspect} x=#{x + 1}"
+          end
+        end
+      end
+    end
+
     it 'il glifo largo scritto in fondo alla riga dopo quei tasti resta nel piano (prima: heap corrotto, abort)' do
       skip 'serve libc_malloc_debug di glibc' unless File.exist?('/usr/lib/libc_malloc_debug.so.0')
       script = <<~'RUBY'
@@ -185,6 +257,35 @@ RSpec.describe Notcurses::Reader do
               reader.offer_input(input)
               reader.move_right while reader.plane.cursor[1] < 4
               reader.write('漢') # in colonna 4: con la metà destra orfana in 5 il C scriveva oltre la riga
+            end
+          end
+        end
+        puts 'ok'
+      RUBY
+      env = { 'TERM' => 'xterm-256color', 'LD_PRELOAD' => '/usr/lib/libc_malloc_debug.so.0', 'MALLOC_CHECK_' => '3' }
+      lib = File.expand_path('../../lib', __dir__)
+      out, status = Open3.capture2e(env, NcHelpers::TIMEOUT, '-k', '5', '-s', 'KILL', '30', RbConfig.ruby, '-I', lib, '-e', script,
+                                    stdin_data: '')
+      expect([status.exitstatus, out]).to eq([0, "ok\n"])
+    end
+
+    it 'Backspace, Ctrl+U e Ctrl+W sulla colonna 0 la svuotano senza corrompere l\'heap' do
+      skip 'serve libc_malloc_debug di glibc' unless File.exist?('/usr/lib/libc_malloc_debug.so.0')
+      script = <<~'RUBY'
+        require 'notcurses'
+        ev = ->(id, **o) { Notcurses::Input.synthesize(id, **o) }
+        keys = [ev.(Notcurses::Key::BACKSPACE), ev.('U'.ord, modifiers: [:ctrl]), ev.('W'.ord, modifiers: [:ctrl])]
+        Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true) do |nc|
+          keys.product(%w[a 漢]).each do |input, glyph|
+            Notcurses::Reader.open(nc.stdplane.create_child(rows: 1, cols: 6)) do |reader|
+              reader.write(glyph)
+              reader.move_left # sul glifo largo: cursore a metà, in colonna 1
+              reader.move_right if glyph == 'a'
+              reader.offer_input(input)
+              raise "#{input.id} #{glyph}: #{reader.contents.inspect}" unless reader.contents.empty?
+              reader.write('漢漢漢')
+              reader.move_right while reader.plane.cursor[1] < 4
+              reader.write('漢')
             end
           end
         end
@@ -339,7 +440,7 @@ RSpec.describe Notcurses::Reader do
         expect(reader.offer_input(ctrl('W'))).to be true
         expect(reader.contents).to eq('uno ')
         expect(reader.offer_input(ctrl('U'))).to be true
-        expect(reader.contents).to eq('u ') # la colonna 0 non si cancella (3.0.17)
+        expect(reader.contents).to eq(' ') # anche la colonna 0 (3.0.17 la lasciava: 'u ')
         expect(reader.plane.cursor).to eq([0, 0])
         expect(reader.offer_input(ctrl('a'))).to be false # le lettere con Ctrl arrivano maiuscole
         expect(reader.offer_input(ctrl('Z'))).to be false
@@ -430,12 +531,38 @@ RSpec.describe Notcurses::Reader do
       new_reader(cursor: true) { |reader| reader.write('a') }
     end
 
-    it 'dopo il ridisegno, che accende il cursore del terminale, Context#cursor_disable chiama il C' do
+    it 'con cursor: false ogni ridisegno rispegne il cursore del terminale, che il C accende (prima: restava acceso)' do
+      nc.cursor_disable # stato noto (il contesto è dell'intero file): nascosto
       new_reader do |reader|
+        expect(Notcurses::FFI).to receive(:notcurses_cursor_disable).exactly(4).times.and_call_original
         reader.write('a')
-        expect(Notcurses::FFI).to receive(:notcurses_cursor_disable).once.and_call_original
-        expect(nc.cursor_disable).to equal(nc) # senza un tty il C fallisce: il cursore era forse già nascosto
-        expect(nc.cursor_disable).to equal(nc) # di nuovo idempotente, senza chiamare il C
+        reader.offer_input(ev(key::BACKSPACE))
+        reader.move_right
+        reader.offer_input(ev('b'.ord))
+      end
+      expect(Notcurses::FFI).not_to receive(:notcurses_cursor_disable)
+      expect(nc.cursor_disable).to equal(nc) # resta nascosto per il wrapper: idempotente, senza chiamare il C
+    end
+
+    it 'con cursor: false il ridisegno rimette il cursore acceso nella posizione di Context#cursor_enable' do
+      nc.cursor_enable(y: 1, x: 2)
+      new_reader do |reader|
+        expect(Notcurses::FFI).to receive(:notcurses_cursor_enable).with(nc.to_ptr, 1, 2).twice.and_call_original
+        reader.write('a')
+        reader.move_left
+      end
+      # senza un tty il C non spegne il cursore acceso, e cursor_disable solleva: un reader con cursor: true rende
+      # lo stato sconosciuto, e cursor_disable lo tollera
+      new_reader(cursor: true) { |reader| reader.write('a') }
+      expect(nc.cursor_disable).to equal(nc)
+    end
+
+    it 'con cursor: true il reader lascia acceso il cursore del terminale nel campo, come vuole notcurses' do
+      new_reader(cursor: true) do |reader|
+        expect(Notcurses::FFI).not_to receive(:notcurses_cursor_disable)
+        expect(Notcurses::FFI).not_to receive(:notcurses_cursor_enable)
+        reader.write('a')
+        reader.move_left
       end
     end
 

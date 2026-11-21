@@ -23,10 +23,14 @@ module Notcurses
   # nascosta: è un figlio dello stdplane che si raggiunge navigando la pila
   # (per esempio con {Plane#below}), e il wrapper non la protegge.
   #
+  # Ogni ridisegno del C accende il cursore del terminale e lo porta nel campo
+  # (+notcurses_cursor_enable+), anche senza NCREADER_OPTION_CURSOR. Con
+  # cursor: false il wrapper lo rimette subito come l'ha lasciato l'ultima
+  # chiamata a {Context#cursor_enable} o {Context#cursor_disable} (senza un
+  # tty il C non lo spegne); con cursor: true il reader lo mostra nel campo e
+  # la chiusura lo spegne.
+  #
   # Bug di 3.0.17 da conoscere:
-  # - ogni ridisegno accende e sposta il cursore del terminale (con
-  #   +notcurses_cursor_enable+), anche con cursor: false; con cursor: true la
-  #   chiusura lo spegne. {Context#cursor_disable} lo spegne;
   # - NCREADER_OPTION_HORSCROLL non è offerto: con lo scorrimento orizzontale
   #   due glifi larghi bastano a far terminare il processo (asserzione
   #   +xproject >= 0+, reader.c:90) e {#contents} perde il testo uscito dalla
@@ -46,14 +50,33 @@ module Notcurses
     include Widget
     extend Resource::ClassMethods
 
+    # Campi privati di +struct ncreader+ fino a textarea (notcurses 3.0.17,
+    # src/lib/internal.h:213-222): l'API pubblica non dà il piano nascosto del
+    # testo. Il workaround della colonna 0 li usa solo attraverso text_area,
+    # che controlla la versione della libreria e i campi.
+    #
+    # @api private
+    class Internals < ::FFI::Struct
+      layout :ncp, :pointer, :tchannels, :uint64, :tattrs, :uint32, :textarea, :pointer
+    end
+    private_constant :Internals
+
+    # Bit dello stylemask che notcurses 3.0.17 non usa (gli stili NCSTYLE_*
+    # arrivano a 0x0010): segna le celle della copia nascosta durante
+    # Backspace, Ctrl+U e Ctrl+W (vedi {#offer_input}).
+    RECOPY_STYLE = 0x8000
+    private_constant :RECOPY_STYLE
+
     # Crea il reader sul piano (+ncreader_create+), che viene svuotato.
     #
     # @param plane [Plane] piano posseduto dal wrapper, non lo stdplane, non
     #   già di un widget, senza scrolling né autogrow: passa al reader
     # @param no_cmd_keys [Boolean] NCREADER_OPTION_NOCMDKEYS: non gestire le
     #   scorciatoie con Ctrl e Alt (le lascia all'applicazione)
-    # @param cursor [Boolean] NCREADER_OPTION_CURSOR: spegnere il cursore del
-    #   terminale alla chiusura (vedi la descrizione della classe)
+    # @param cursor [Boolean] NCREADER_OPTION_CURSOR: il reader mostra il
+    #   cursore del terminale nel campo e lo spegne alla chiusura; con false il
+    #   cursore resta come l'ha lasciato l'applicazione (vedi la descrizione
+    #   della classe)
     # @raise [WidgetError] se +ncreader_create+ fallisce (il piano risulta
     #   distrutto); se il piano è lo stdplane, è già di un widget, non è
     #   posseduto, scorre o cresce da solo; dentro un callback chiamato da
@@ -69,6 +92,7 @@ module Notcurses
         opts[:flags] = Util.flag(no_cmd_keys, FFI::NCREADER_OPTION_NOCMDKEYS, 'no_cmd_keys') |
                        Util.flag(cursor, FFI::NCREADER_OPTION_CURSOR, 'cursor')
         @no_cmd_keys = no_cmd_keys
+        @manage_cursor = cursor
         # ncplane_put farebbe scorrere o crescere solo la vista (reader.c:90-104)
         raise WidgetError, 'il piano di un reader non può avere lo scrolling attivo' if plane.scrolling?
         raise WidgetError, "il piano di un reader non può avere l'autogrow attivo" if plane.autogrow?
@@ -124,48 +148,70 @@ module Notcurses
     # e Ctrl+W su un glifo largo lasciavano nella vista la sua metà destra, e il
     # glifo largo successivo in fondo alla riga scriveva oltre il piano
     # (notcurses.c:1957-1961): il wrapper svuota la vista prima di questi tasti
-    # e il ridisegno del C la ricopia dalla copia nascosta.
-    #
-    # Bug di 3.0.17 non aggirato: Backspace, Ctrl+U e Ctrl+W non cancellano il
-    # carattere della colonna 0. Il C cancella scrivendo "" con
-    # +ncplane_putegc_yx+, che in colonna 0 fallisce ((unsigned)x + cols - 1
-    # con cols 0, notcurses.c:1883); il carattere successivo lo sovrascrive.
-    # Per svuotare il campo usa {#clear}.
+    # e il ridisegno del C la ricopia dalla copia nascosta. Il ridisegno però
+    # non copiava la larghezza delle metà destre dei glifi larghi rimasti
+    # (+cellcmp_and_dupfar+ non la confronta, internal.h:1510-1523), e
+    # {Plane#at} su quelle celle non restituiva il glifo: il wrapper segna le
+    # celle della copia nascosta durante la chiamata, così il ridisegno copia
+    # ogni cella cambiata con la sua larghezza. Infine Backspace,
+    # Ctrl+U e Ctrl+W non cancellavano il carattere della colonna 0: il C
+    # cancella scrivendo "" con +ncplane_putegc_yx+, che in colonna 0 fallisce
+    # ((unsigned)x + cols - 1 con cols 0, notcurses.c:1883). Il wrapper svuota
+    # quella cella nella vista e nella copia nascosta, con le due metà di un
+    # glifo largo; Ctrl+W si ferma prima, come nel C, su un separatore (per
+    # esempio uno spazio) in colonna 0.
     #
     # @param input [Input] evento, per esempio da {Context#get}
     # @return [Boolean] true se il reader ha consumato l'evento; false anche
     #   per un evento vuoto (id 0 o 0xffffffff)
     # @raise [WidgetError] se il piano del reader è stato modificato dall'esterno;
     #   se il cursore della vista non torna al suo posto (+ncplane_cursor_move_yx+
-    #   fallisce), prima della chiamata C
+    #   fallisce), prima della chiamata C; se la cella della colonna 0 non si
+    #   svuota (+ncplane_putc_yx+ fallisce)
     # @raise [TypeError] se input non è un Input
     # @raise [ClosedError] se il reader è chiuso
     def offer_input(input)
       Guard.run do
-        ptr = prepare!
-        ni = input_struct(input)
-        return false if ni.nil?
+        redraw do |ptr|
+          ni = input_struct(input)
+          return false if ni.nil?
 
-        plain = !input.release? && !input.modifiers.anybits?(FFI::NCKEY_MOD_CTRL | FFI::NCKEY_MOD_ALT)
-        if plain && !Key.synthesized?(input.id)
-          input.eff_text.each_char { |egc| put_egc(ptr, egc) }
-          return true
+          plain = !input.release? && !input.modifiers.anybits?(FFI::NCKEY_MOD_CTRL | FFI::NCKEY_MOD_ALT)
+          if plain && !Key.synthesized?(input.id)
+            input.eff_text.each_char { |egc| put_egc(ptr, egc) }
+            return true
+          end
+          y, x = @cursor
+          backspace = plain && input.id == Key::BACKSPACE
+          wrap = backspace && x.zero? && y.positive?
+          # Backspace, Ctrl+U e Ctrl+W cancellano solo nella copia nascosta, e il
+          # ridisegno copia una cella solo se EGC, stile o canali sono diversi, senza
+          # confrontare la width (cellcmp_and_dupfar, internal.h:1510-1523): una metà
+          # destra larga resterebbe nella vista. Svuotata, la vista viene ricopiata,
+          # ma le sue celle vuote hanno EGC "" come le metà destre della copia
+          # nascosta, che il ridisegno lascerebbe con width 0 (ICH-484). Con
+          # RECOPY_STYLE su ogni cella della copia nascosta, che il C cancella con
+          # stile 0, il ridisegno copia ogni cella cambiata, anche ai ridisegni
+          # successivi di Ctrl+U e Ctrl+W; poi lo stile torna 0 nei due piani.
+          ctrl = !@no_cmd_keys && !input.release? && input.modifiers.anybits?(FFI::NCKEY_MOD_CTRL)
+          deletion = backspace ? :backspace : (ctrl && x.positive? && {0x55 => :line, 0x57 => :word}[input.id])
+          text = deletion && text_area(ptr)
+          if deletion
+            FFI.ncplane_erase(@plane.to_ptr)
+            FFI.ncplane_format(text, 0, 0, 0, 0, RECOPY_STYLE) if text
+            move_view_cursor!(y, x)
+          end
+          consumed =
+            begin
+              FFI.ncreader_offer_input(ptr, ni)
+            ensure
+              [text, @plane.to_ptr].each { |plane| FFI.ncplane_format(plane, 0, 0, 0, 0, 0) } if text
+            end
+          wrap_backspace(y - 1) if wrap
+          @cursor = @plane.cursor
+          clear_column_zero!(text, deletion, y, x) if text
+          consumed
         end
-        y, x = @cursor
-        backspace = plain && input.id == Key::BACKSPACE
-        wrap = backspace && x.zero? && y.positive?
-        # Backspace, Ctrl+U e Ctrl+W cancellano solo nella copia nascosta, e il
-        # ridisegno non confronta la width (internal.h:1512-1519): una metà destra
-        # larga resterebbe nella vista. Svuotata, la vista viene ricopiata intera.
-        ctrl = !@no_cmd_keys && !input.release? && input.modifiers.anybits?(FFI::NCKEY_MOD_CTRL)
-        if backspace || (ctrl && x.positive? && [0x55, 0x57].include?(input.id)) # 'U', 'W'
-          FFI.ncplane_erase(@plane.to_ptr)
-          move_view_cursor!(y, x)
-        end
-        consumed = FFI.ncreader_offer_input(ptr, ni)
-        wrap_backspace(y - 1) if wrap
-        @cursor = @plane.cursor
-        consumed
       end
     end
 
@@ -195,26 +241,27 @@ module Notcurses
     # @raise [ClosedError] se il reader è chiuso
     def write(text)
       Guard.run do
-        ptr = prepare!
-        str = Util.string!(text, 'text')
-        raise ArgumentError, "text = #{text.inspect} contiene caratteri di controllo" if str.match?(/[\p{Cc}&&[^\t]]/)
+        redraw do |ptr|
+          str = Util.string!(text, 'text')
+          raise ArgumentError, "text = #{text.inspect} contiene caratteri di controllo" if str.match?(/[\p{Cc}&&[^\t]]/)
 
-        view = @plane.to_ptr
-        cell = FFI::NcCell.new
-        str.each_grapheme_cluster do |g|
-          off = 0
-          while off < g.bytesize
-            len = FFI.nccell_load(view, cell, g.byteslice(off..))
-            FFI.nccell_release(view, cell) # serve solo la lunghezza: libera subito lo stash nel pool della vista
-            Util.check!(len, WidgetError, "nccell_load(#{g.byteslice(off..).inspect})") # -1: per esempio pool pieno
-            # un pezzo che taglia un codepoint (U+2028 dà 1 byte): il resto va al C, che lo rifiuta
-            egc = g.byteslice(off, len)
-            egc = g.byteslice(off..) if egc.empty? || !egc.valid_encoding?
-            Util.check!(put_egc(ptr, egc), WidgetError, "ncreader_write_egc(#{egc.inspect})")
-            off += egc.bytesize
+          view = @plane.to_ptr
+          cell = FFI::NcCell.new
+          str.each_grapheme_cluster do |g|
+            off = 0
+            while off < g.bytesize
+              len = FFI.nccell_load(view, cell, g.byteslice(off..))
+              FFI.nccell_release(view, cell) # serve solo la lunghezza: libera subito lo stash nel pool della vista
+              Util.check!(len, WidgetError, "nccell_load(#{g.byteslice(off..).inspect})") # -1: per esempio pool pieno
+              # un pezzo che taglia un codepoint (U+2028 dà 1 byte): il resto va al C, che lo rifiuta
+              egc = g.byteslice(off, len)
+              egc = g.byteslice(off..) if egc.empty? || !egc.valid_encoding?
+              Util.check!(put_egc(ptr, egc), WidgetError, "ncreader_write_egc(#{egc.inspect})")
+              off += egc.bytesize
+            end
           end
+          self
         end
-        self
       end
     end
 
@@ -257,7 +304,7 @@ module Notcurses
     # @raise [WidgetError] se il piano del reader è stato modificato dall'esterno;
     #   o se il cursore della vista non torna al suo posto
     # @raise [ClosedError] se il reader è chiuso
-    def move_left = moved?(FFI.ncreader_move_left(prepare!))
+    def move_left = moved?(redraw { |ptr| FFI.ncreader_move_left(ptr) })
 
     # Sposta il cursore di una colonna a destra (+ncreader_move_right+),
     # anche su celle vuote; dall'ultima colonna va all'inizio della riga
@@ -267,7 +314,7 @@ module Notcurses
     # @raise [WidgetError] se il piano del reader è stato modificato dall'esterno;
     #   o se il cursore della vista non torna al suo posto
     # @raise [ClosedError] se il reader è chiuso
-    def move_right = moved?(FFI.ncreader_move_right(prepare!))
+    def move_right = moved?(redraw { |ptr| FFI.ncreader_move_right(ptr) })
 
     # Sposta il cursore di una riga in alto, nella stessa colonna
     # (+ncreader_move_up+). Ridisegna.
@@ -276,7 +323,7 @@ module Notcurses
     # @raise [WidgetError] se il piano del reader è stato modificato dall'esterno;
     #   o se il cursore della vista non torna al suo posto
     # @raise [ClosedError] se il reader è chiuso
-    def move_up = moved?(FFI.ncreader_move_up(prepare!))
+    def move_up = moved?(redraw { |ptr| FFI.ncreader_move_up(ptr) })
 
     # Sposta il cursore di una riga in basso, nella stessa colonna
     # (+ncreader_move_down+). Ridisegna.
@@ -285,7 +332,7 @@ module Notcurses
     # @raise [WidgetError] se il piano del reader è stato modificato dall'esterno;
     #   o se il cursore della vista non torna al suo posto
     # @raise [ClosedError] se il reader è chiuso
-    def move_down = moved?(FFI.ncreader_move_down(prepare!))
+    def move_down = moved?(redraw { |ptr| FFI.ncreader_move_down(ptr) })
 
     private
 
@@ -294,7 +341,7 @@ module Notcurses
     def destroy_native
       Guard.run do
         FFI.ncreader_destroy(to_ptr, nil)
-        @context.cursor_state_unknown!
+        @context.cursor_state_unknown! if @manage_cursor
       end
     end
 
@@ -314,8 +361,23 @@ module Notcurses
         end
 
         move_view_cursor!(*@cursor)
-        @context.cursor_state_unknown! # il ridisegno del C accende il cursore del terminale
+        @context.cursor_state_unknown! if @manage_cursor # il ridisegno del C accende il cursore del terminale
         ptr
+      end
+    end
+
+    # Passa al blocco, che chiama il C, il puntatore del reader controllato da
+    # prepare!. Con cursor: false poi rimette il cursore del terminale come
+    # l'ha lasciato l'applicazione: ogni ridisegno del C lo accende e lo sposta
+    # (reader.c:105).
+    def redraw
+      Guard.run do
+        ptr = prepare!
+        begin
+          yield ptr
+        ensure
+          @context.restore_cursor! unless @manage_cursor
+        end
       end
     end
 
@@ -336,15 +398,73 @@ module Notcurses
       rc
     end
 
-    # Dopo il Backspace a inizio riga porta il cursore della vista, e quello
-    # del terminale che il ridisegno del C ha lasciato in colonna 0, a fine
-    # della riga y, dove il C ha portato la copia nascosta (reader.c:265).
+    # Dopo il Backspace a inizio riga porta il cursore della vista, e con
+    # cursor: true quello del terminale che il ridisegno del C ha lasciato in
+    # colonna 0, a fine della riga y, dove il C ha portato la copia nascosta
+    # (reader.c:265).
     def wrap_backspace(y)
       Guard.run do
         x = @dims[1] - 1
         FFI.ncplane_cursor_move_yx(@plane.to_ptr, y, x)
+        next unless @manage_cursor
+
         ay, ax = @plane.abs_yx
         FFI.notcurses_cursor_enable(@context.to_ptr, ay + y, ax + x) # come ncreader_redraw, esito ignorato
+      end
+    end
+
+    # Dopo Backspace, Ctrl+U o Ctrl+W (deletion :backspace, :line o :word, dal
+    # cursore in (y, x)) svuota la colonna 0 della riga y dove il C ha provato
+    # a cancellarla senza riuscirci (+ncplane_putegc_yx+ di "" fallisce in
+    # colonna 0, notcurses.c:1883): Backspace dalla colonna 1, Ctrl+U sempre,
+    # Ctrl+W se è arrivato alla colonna 0. Una cella vuota scritta con
+    # +ncplane_putc_yx+ ha una colonna e passa il controllo; +ncplane_put+
+    # toglie anche le due metà di un glifo largo (notcurses.c:1915-1927). Il
+    # wrapper scrive nella copia nascosta e nella vista, poi riporta in colonna
+    # 0 i loro cursori.
+    def clear_column_zero!(text, deletion, y, x)
+      Guard.run do
+        attempted =
+          case deletion
+          when :backspace then x == 1
+          when :line then true
+          else word_reaches_column_zero?(text, y)
+          end
+        next unless attempted
+
+        cell = FFI::NcCell.new
+        [text, @plane.to_ptr].each do |plane|
+          Util.check!(FFI.ncplane_putc_yx(plane, y, 0, cell), WidgetError, "ncplane_putc_yx(#{y}, 0)")
+          FFI.ncplane_cursor_move_yx(plane, y, 0)
+        end
+      end
+    end
+
+    # true se Ctrl+W ha portato il cursore alla colonna 0 della riga y per
+    # cancellarne il carattere. Il C si ferma prima su un separatore, che
+    # resta: un carattere della categoria Unicode Z (iswordbreak,
+    # internal.h:1500-1504), letto nella copia nascosta come
+    # is_egc_wordbreak (reader.c:271-288); un EGC che non legge ferma il C.
+    def word_reaches_column_zero?(text, y)
+      Guard.run do
+        next false unless @cursor == [y, 0]
+
+        egc = Util.take_string(FFI.ncplane_at_yx(text, y, 0, nil, nil))
+        !egc.nil? && !egc.match?(/\A\p{Z}/)
+      end
+    end
+
+    # Piano nascosto del testo, dal campo privato textarea (vedi Internals);
+    # nil, e niente workaround, se la libreria non è la 3.0.17 o i campi non
+    # coincidono con l'API pubblica (ncreader_plane, dimensioni della vista).
+    def text_area(ptr)
+      Guard.run do
+        next unless Notcurses.lib_version_components.first(3) == [3, 0, 17]
+
+        st = Internals.new(ptr)
+        text = st[:textarea]
+        text if st[:ncp] == FFI.ncreader_plane(ptr) && !text.null? &&
+                FFI.ncplane_dim_y(text) == @dims[0] && FFI.ncplane_dim_x(text) == @dims[1]
       end
     end
 
