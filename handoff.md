@@ -1,6 +1,6 @@
-# RIPRESA — prompt per la prossima sessione
+# Handoff — prompt per la prossima sessione
 
-> Avvio: incolla questo file nella nuova sessione di Claude Code, oppure scrivi «Leggi RIPRESA.md ed esegui il
+> Avvio: incolla questo file nella nuova sessione di Claude Code, oppure scrivi «Leggi handoff.md ed esegui il
 > prompt». Scritto il 2026-11-15 su Linux, dopo la chiusura della Fase 5 (`ad0315b`). Il lavoro da fare è la
 > **fase delle issue in Backlog** (scelta dell'utente del 2026-11-15): le 35 issue aperte del progetto, a lotti, con
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
@@ -214,7 +214,7 @@ successivi.
 14. Una scelta con due letture valide spetta all'utente: chiedi con AskUserQuestion. Se hai dubbi, fermati e
     chiarisci con l'utente.
 15. Lingua: commit, titolo e corpo delle PR e commenti su Linear in inglese (`lang:en`, per esempio
-    `fix(plane): ...`). `RICONSEGNA.md`, `RIPRESA.md` e `memory/` restano in italiano.
+    `fix(plane): ...`). `RICONSEGNA.md`, `handoff.md` e `memory/` restano in italiano.
 16. Un lotto tocca solo il codice delle sue issue. Se un fix richiede un cambio che appartiene a un altro lotto o a
     un'altra issue, fermati e chiedi all'utente. Un difetto nuovo trovato in review diventa una issue nuova in
     Backlog, con la conferma dell'utente.

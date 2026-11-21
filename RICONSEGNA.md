@@ -1234,7 +1234,7 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
 
 ## Issue in Backlog
 
-- **Inizio:** 2026-11-15. Modello passato ai comandi del workflow: `opus`. Lotti: la proposta di `RIPRESA.md` con 4
+- **Inizio:** 2026-11-15. Modello passato ai comandi del workflow: `opus`. Lotti: la proposta di `handoff.md` con 4
   cambi approvati dall'utente (ICH-225 nel lotto 1, ICH-214 nel lotto 2, ICH-464 nel lotto 5, ICH-474 nel lotto 7).
   ICH-231 e ICH-457 restano nella fase; ICH-225 con audit e fix. Log lotto per lotto in `memory/backlog-issue.md`.
 - **Review di ogni lotto:** `/trinity:workflow:4_review-fix-loop`, due reviewer in parallelo (Fable e GPT via

@@ -1,6 +1,6 @@
 # Correzioni della revisione del 2026-11-06 — log
 
-Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `RIPRESA.md`; esito in
+Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `handoff.md`; esito in
 `RICONSEGNA.md`, sezione "Correzioni della revisione del 2026-11-06".
 
 ## Decisioni iniziali (2026-11-08)
@@ -307,7 +307,7 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
   di notcurses non è esposto e il ripristino di `run` cambierebbe), quindi ICH-454.
 - Ctrl+C in coda consegnato a un `run(no_linesigs: true)` successivo (LOW del round 3): serve uno stato fra i run,
   quindi ICH-455 invece di un fix senza review.
-- Controllo di "Da controllare, senza issue" di `RIPRESA.md`: vero (il rilascio `\e[99;5:3u` da solo fa uscire
+- Controllo di "Da controllare, senza issue" di `handoff.md`: vero (il rilascio `\e[99;5:3u` da solo fa uscire
   `run` con `:interrupt`; pressione, ripetizione e rilascio danno 3 SIGINT). Issue ICH-456, aperta su richiesta
   dell'utente.
 
@@ -327,7 +327,7 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 
 | Problema | Causa | Soluzione |
 | --- | --- | --- |
-| 10 fallimenti nella suite del worktree | submodule `notcurses` non inizializzato: mancano `notcurses/data/*.png` | `git submodule update --init --depth 1 notcurses` (nota già in `RIPRESA.md`) |
+| 10 fallimenti nella suite del worktree | submodule `notcurses` non inizializzato: mancano `notcurses/data/*.png` | `git submodule update --init --depth 1 notcurses` (nota già in `handoff.md`) |
 | `bundle exec rspec` su Ruby 3.1.7 fallisce nel resolver | `Gemfile.lock` con Bundler 4.0.22 | `mise exec ruby@3.1.7 -- rspec`, senza `bundle` |
 | Script che sceglie gli hunk perdeva l'intestazione di un file | `id()` di una lista Python liberata viene riusato | contatore dei file al posto di `id()` |
 | Un reviewer ha messo in coda un mutation test con `Process.kill(signal, 0)` e `rm -rf` | hook Blast Radius sui comandi con `rm` | nei prompt dei reviewer: niente segnali al process group, comandi con `rm` separati e brevi |
@@ -389,7 +389,7 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 | --- | --- | --- |
 | `yard doc --fail-on-warning` fallisce | `@held` in un commento è letto come tag YARD sconosciuto | commento senza `@` |
 | `git apply --cached` di un solo hunk del CHANGELOG mette in stage entrambi i cambi | con `-U1` i due cambi vicini formano un hunk | `git diff -U0` e `git apply --cached --unidiff-zero` |
-| `git worktree remove` dei worktree di review rifiutato | worktree con il submodule `notcurses` | `--force` con `status` vuoto (approvato in `RIPRESA.md`) |
+| `git worktree remove` dei worktree di review rifiutato | worktree con il submodule `notcurses` | `--force` con `status` vuoto (approvato in `handoff.md`) |
 | La review GPT del round 2 finisce senza report | il subagente non ha chiamato l'hand-back | `SendMessage` con la richiesta del report |
 | La skill `linear` avviata dal tool Skill parte in background senza compito | la skill ha `context: fork` | skill fermata; issue creata con `scripts/linear.py` |
 
@@ -453,8 +453,8 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 | Problema | Causa | Soluzione |
 | --- | --- | --- |
 | I worktree di review del round 1 esistevano già, il submodule solo in uno | il comando che li creava è stato interrotto dall'utente dopo la creazione | l'utente ha scelto di riusarli; submodule inizializzato nell'altro |
-| `git worktree remove` dei worktree di review e di quello del lotto rifiutato | worktree con il submodule `notcurses` | `--force` con `status` vuoto (approvato in `RIPRESA.md`) |
-| Il branch remoto del lotto esisteva ancora dopo il merge | GitHub non lo cancella | `git push origin --delete` dopo la conferma chiesta da `5_remove-worktree` (la decisione è già in `RIPRESA.md`) |
+| `git worktree remove` dei worktree di review e di quello del lotto rifiutato | worktree con il submodule `notcurses` | `--force` con `status` vuoto (approvato in `handoff.md`) |
+| Il branch remoto del lotto esisteva ancora dopo il merge | GitHub non lo cancella | `git push origin --delete` dopo la conferma chiesta da `5_remove-worktree` (la decisione è già in `handoff.md`) |
 | I passi di chiusura del lotto non partivano dopo il merge | la procedura li elencava solo nella sezione "Stato" | su richiesta dell'utente, il passo 7 della "Procedura per ogni lotto" dice di eseguirli subito dopo ogni merge |
 
 ### Verifica finale
@@ -512,7 +512,7 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 | Problema | Causa | Soluzione |
 | --- | --- | --- |
 | Le spec delle immagini di `direct_spec` fallivano nel worktree | `git submodule update -q` con `-q` dopo il sottocomando: git lo legge come un percorso | `git submodule -q update --init --depth 1 notcurses` |
-| Seme e coverage senza output | `$E` con più parole in zsh non si divide | una funzione `E() { ...; }` (nota già in `RIPRESA.md`) |
+| Seme e coverage senza output | `$E` con più parole in zsh non si divide | una funzione `E() { ...; }` (nota già in `handoff.md`) |
 | La prima prova su `master` della spec di `Dialog` passava | il numero di riga indicava lo spec precedente: il nuovo è alla riga 41 | rilanciata con la riga giusta: fallisce |
 | Il comando di pulizia della review è andato in coda | contiene `rm -r` | l'utente l'ha confermato |
 
@@ -758,7 +758,7 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 - Round 1 (`71b90a0`): GPT APPROVABILE, nessun finding; Fable APPROVABILE CON RISERVE, due LOW: con `base: 1000.0` o
   `1024.0` (accettati da `[1000, 1024].include?`) il controllo girava in aritmetica Float, rifiutava la coppia valida
   `(2**54 - 1, 2**60, 1024.0)` (regressione rispetto a `master`) e lasciava passare l'overflow
-  `(313413999946230, 313413999946230001, 1000.0)`; mancavano le voci del CHANGELOG (regola di `RIPRESA.md`).
+  `(313413999946230, 313413999946230001, 1000.0)`; mancavano le voci del CHANGELOG (regola di `handoff.md`).
   Corretti in `7cf2632` e `40fbdf8`.
 - Round 2 (`40fbdf8`): nessun finding da entrambi; fuzz del controllo contro `FFI.ncnmetric` (300 000 e 200 000
   coppie, basi intere e Float) senza discrepanze. Commento riassuntivo sulla PR.
@@ -833,7 +833,7 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
 | 10 esempi falliti nel worktree | submodule `notcurses` non inizializzato | `git submodule update --init --depth 1 notcurses` nel worktree; poi `git worktree remove --force` (il `deinit` non basta: Git guarda `.git/worktrees/<nome>/modules`) |
 | Un comando con `rm -rf` in coda, eseguito dall'utente dopo la rimozione del worktree di review | il comando ricreava con `mkdir -p` la directory già rimossa | tre directory vuote tolte con `rmdir`; nei comandi di prova niente `rm` |
 | `linear.py` senza il bit di esecuzione | permessi del file della skill | `chmod +x` su richiesta dell'utente |
-| Chiusura (passo 7) non eseguita dopo il merge e dopo `5_remove-worktree` | la sessione ha seguito solo i command del workflow, senza leggere `RIPRESA.md` | chiusura fatta su richiesta dell'utente; `5_remove-worktree` ora la ricorda |
+| Chiusura (passo 7) non eseguita dopo il merge e dopo `5_remove-worktree` | la sessione ha seguito solo i command del workflow, senza leggere `handoff.md` | chiusura fatta su richiesta dell'utente; `5_remove-worktree` ora la ricorda |
 
 ### Verifica finale
 
@@ -863,7 +863,7 @@ Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `
   criterio della issue aggiornato su Linear.
 - Le citazioni di `ffi ~> 1.15` nelle tabelle delle fasi 1, 4 e 5 di `RICONSEGNA.md` e in `memory/` restano: sono
   lo stato di allora.
-- ICH-304 ha una voce nel CHANGELOG anche se la issue non la chiede (nota di `RIPRESA.md`: ogni fix ha una voce).
+- ICH-304 ha una voce nel CHANGELOG anche se la issue non la chiede (nota di `handoff.md`: ogni fix ha una voce).
 - Il commento `# :stop, :eof o :interrupt (Ctrl+C)` resta identico sulla riga di `[app.run, name.text]`, come chiede
   il criterio.
 - Implementazione fatta dalla sessione (Fable), non delegata: sette file, modifiche già definite dalle issue.

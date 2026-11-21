@@ -1,15 +1,15 @@
 # Issue in Backlog — log
 
-Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `RIPRESA.md`; esito in
+Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole in `handoff.md`; esito in
 `RICONSEGNA.md`, sezione "Issue in Backlog".
 
 ## Prima di iniziare (2026-11-15)
 
-- Hindsight, bank `notcursesruby`: il recall risponde (41 memorie, coerenti con `RIPRESA.md`).
+- Hindsight, bank `notcursesruby`: il recall risponde (41 memorie, coerenti con `handoff.md`).
 - `master` su `06ddb73`, working tree pulito, submodule `notcurses` inizializzato. Il checkout è in
-  `/mnt/data/Sviluppo/...`; `/Dati` è un link a `/mnt/data`, quindi i comandi di `RIPRESA.md` valgono.
+  `/mnt/data/Sviluppo/...`; `/Dati` è un link a `/mnt/data`, quindi i comandi di `handoff.md` valgono.
 - Suite completa: 1048 esempi, 0 fallimenti (38,8 s); `bundle exec rubocop`: 99 file, 0 offense.
-- Linear: 35 issue aperte, tutte in Backlog, le stesse della tabella di `RIPRESA.md`. ICH-214…ICH-232 hanno già
+- Linear: 35 issue aperte, tutte in Backlog, le stesse della tabella di `handoff.md`. ICH-214…ICH-232 hanno già
   `Acceptance criteria`: il passo 7 di "Prima di iniziare" non serve.
 
 ### File per issue
@@ -73,7 +73,7 @@ Cambi proposti all'utente (criterio 2: le issue che toccano lo stesso codice sta
 
 ## Decisioni iniziali (2026-11-15)
 
-- Lotti: approvati con i 4 cambi sopra (scelta dell'utente). Tabella aggiornata in `RIPRESA.md`.
+- Lotti: approvati con i 4 cambi sopra (scelta dell'utente). Tabella aggiornata in `handoff.md`.
 - Modello dei comandi del workflow: `opus`, come nei lotti della revisione.
 - ICH-231 e ICH-457 (funzionalità nuove, `Improvement`): restano nella fase, lotto 13.
 - ICH-225 (spike): audit e fix nello stesso lotto dei casi confermati, non solo l'audit.
@@ -249,7 +249,7 @@ Lavoro in due sessioni: implementazione e primo review-fix loop il 2026-11-15 (f
     nessun lotto rimasto tocca quel codice;
   - criterio 1: quattro Medium e una Low, come i lotti 3-10; a parità di priorità passano prima perché quattro sono
     crash o heap corrotto (il lotto 3 corregge comportamenti dei segnali) e `plane.rb` è appena stato rivisto;
-  - "2b" e non una rinumerazione, per non cambiare i numeri dei lotti 3-15 già citati in `RIPRESA.md` e nei log.
+  - "2b" e non una rinumerazione, per non cambiare i numeri dei lotti 3-15 già citati in `handoff.md` e nei log.
 - Ordine nel lotto: priorità, poi codice vicino: ICH-529, ICH-530 (`merge_down`), ICH-489 (resize), ICH-493
   (`at`), ICH-490 (`contents`, Low).
 
@@ -674,7 +674,7 @@ Implementazione il 2026-11-18 e 19 in una sessione, semplificazione e review il 
 | Il commit della documentazione del round 1 conteneva la spec sbagliata | gli indici degli hunk cambiano dopo ogni commit | `git reset --soft` del commit locale, prima del push |
 | 9 spec di `direct_spec.rb` fallivano nel worktree di review | il submodule `notcurses/data` non è inizializzato nei worktree di review | ignorati: ambiente, non la PR |
 | Una prova di `ensure` doppio con `Thread#kill` non terminava su Ruby 3.1.7 e 3.2.11 | il thread non si fermava | fermata; non decideva nessun finding |
-| Ruby 3.1.7 senza `rspec` e `ffi` | installazione di mise | `GEM_HOME` nello scratchpad, come scritto in `RIPRESA.md` |
+| Ruby 3.1.7 senza `rspec` e `ffi` | installazione di mise | `GEM_HOME` nello scratchpad, come scritto in `handoff.md` |
 
 ### Verifica finale
 

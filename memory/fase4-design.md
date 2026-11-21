@@ -39,7 +39,7 @@ File `notcursesruby.gemspec`, con l'intestazione di due righe del progetto.
 
 **Perché `Dir.glob` e non `git ls-files`:** la gem si costruisce anche da un tarball o da una copia senza `.git`, e
 `git ls-files` includerebbe anche file tracciati che non servono. Un pattern esplicito esclude per costruzione i
-submodule, `spec/`, `memory/`, `RICONSEGNA.md`, `RIPRESA.md` e i file `CLAUDE_*.md`.
+submodule, `spec/`, `memory/`, `RICONSEGNA.md`, `handoff.md` e i file `CLAUDE_*.md`.
 
 **`examples/demo.rb` (58 righe):** incluso (utente). Il README lo cita con `gem contents notcursesruby`.
 
@@ -48,14 +48,14 @@ configurazione del repository.
 
 **`Notcurses::VERSION`:** cambia da `'0.2.0'` a `'0.1.0'` in `lib/notcurses/version.rb`. È l'unico cambio di
 comportamento in `lib/`, approvato dall'utente con la scelta della versione. Nessuna spec confronta la stringa
-`0.2.0`; `RIPRESA.md` e `RICONSEGNA.md` la citano e vanno aggiornati.
+`0.2.0`; `handoff.md` e `RICONSEGNA.md` la citano e vanno aggiornati.
 
 ### Controllo automatico del pacchetto
 
 Spec nuova `spec/gemspec_spec.rb`, con `Gem::Specification.load`:
 
 1. `files` contiene ogni `lib/**/*.rb` e nessun file sotto `spec/`, `memory/`, `notcurses/`, `libnotcurses-sys/`, né
-   `RICONSEGNA.md` o `RIPRESA.md`;
+   `RICONSEGNA.md` o `handoff.md`;
 2. le dipendenze runtime sono solo `ffi ~> 1.15`, uguale al `Gemfile`, e `required_ruby_version` è `>= 3.1`;
 3. `version` è uguale a `Notcurses::VERSION` e alla prima versione di `CHANGELOG.md`.
 

@@ -112,7 +112,7 @@ rimozione: suite completa, coverage, `yard stats --list-undoc` al 100 %.
 5. Prove grafiche: `NC_GRAPHICS=1 bundle exec rspec spec/graphics` in Kitty e Ghostty; controllo a vista con
    `NC_GRAPHICS_HOLD`; i controlli manuali del lotto 7 (Shift+1) con gli script della Parte 1.
 6. Suite completa con `gtimeout` (o il `PATH` di coreutils); le spec legate a Linux (tabella della Parte 3 di
-   `RIPRESA.md`) vanno in skip con il motivo o diventano portabili (regola 17).
+   `handoff.md`) vanno in skip con il motivo o diventano portabili (regola 17).
 
 Rischio noto per macOS: notcurses spegne sestanti e ottanti se `wcwidth` della libc non conosce i glifi
 (`termdesc.c:1065-1075`). Se la libc di macOS non conosce U+1FB38, i sestanti risultano assenti anche in Kitty e
