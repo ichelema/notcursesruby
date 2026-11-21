@@ -173,9 +173,14 @@ module Notcurses
     # durante la lettura (da un altro thread o dall'hook at_exit) ferma subito
     # notcurses, e al ritorno from_file distrugge il visual appena creato e
     # solleva ClosedError. Un'eccezione asincrona (Ctrl-C, Thread#raise,
-    # Timeout, il kill di {FdPlane#close}) arriva al ritorno della chiamata C:
-    # il visual creato dal C resta allocato, con il file aperto, fino alla fine
-    # del processo.
+    # Timeout, il kill di {FdPlane#close}) sveglia la chiamata C (per esempio
+    # l'apertura di una FIFO senza writer) e arriva al suo ritorno: from_file
+    # distrugge il visual eventualmente creato, che chiude il file, prima di
+    # sollevarla. Limite: su Ruby 3.1, 3.2 e 3.3 l'Interrupt di un segnale
+    # (Ctrl-C) non si rimanda, e il visual creato dal C può restare allocato,
+    # con il file aperto, fino alla fine del processo. Su ogni versione
+    # un'eccezione arrivata proprio al ritorno di from_file, dopo la consegna
+    # del visual, lo lascia al contesto, che lo distrugge con {Context#close}.
     #
     # @param path [String, #to_path] percorso del file
     # @yieldparam visual [Visual] (facoltativo) il visual, chiuso alla fine del blocco
@@ -190,20 +195,21 @@ module Notcurses
       file = Util.string!(File.path(path), 'path')
       raise ArgumentError, 'path è vuoto' if file.empty?
 
-      # la chiamata C non usa il contesto: un close durante la lettura lo ferma subito
-      ptr = FFI.ncvisual_from_file(file)
-      if ptr.null?
-        raise VisualError, "ncvisual_from_file(#{file.inspect}) ha restituito NULL (file inesistente, non " \
-                           'multimediale o senza stream video? contesto aperto con core: true?)'
+      Util.create_resource(block) do
+        # la chiamata C non usa il contesto: un close durante la lettura lo ferma subito
+        ptr = FFI.ncvisual_from_file(file)
+        if ptr.null?
+          raise VisualError, "ncvisual_from_file(#{file.inspect}) ha restituito NULL (file inesistente, non " \
+                             'multimediale o senza stream video? contesto aperto con core: true?)'
+        end
+        Guard.run do
+          ctx.to_ptr # contesto chiuso durante la lettura: il visual non ha più un contesto a cui appartenere
+          new(ptr, ctx, file: true)
+        rescue ClosedError
+          FFI.ncvisual_destroy(ptr)
+          raise
+        end
       end
-      visual = Guard.run do
-        ctx.to_ptr # contesto chiuso durante la lettura: il visual non ha più un contesto a cui appartenere
-        new(ptr, ctx, file: true)
-      rescue ClosedError
-        FFI.ncvisual_destroy(ptr)
-        raise
-      end
-      Util.with_resource(visual, &block)
     end
 
     # Visual da pixel RGBA (+ncvisual_from_rgba+): 4 byte per pixel, R, G, B,
@@ -576,13 +582,16 @@ module Notcurses
         vopts = Internal.options(ctx, plane, **options)
         vopts[:leny] = rows
         vopts[:lenx] = cols
-        src = visual || FFI.ncvisual_from_rgba(pixels, rows, cols * 4, cols)
-        raise VisualError, "#{what}: ncvisual_from_rgba ha restituito NULL" if src.null?
-
+        src = nil
         rc = begin
+          # un'eccezione asincrona al ritorno della chiamata C arriva dopo l'assegnazione, dentro il begin: solo la
+          # creazione è protetta, il blit resta interrompibile
+          Thread.handle_interrupt(Object => :never) { src = visual || FFI.ncvisual_from_rgba(pixels, rows, cols * 4, cols) }
+          raise VisualError, "#{what}: ncvisual_from_rgba ha restituito NULL" if src.null?
+
           Internal.keeping_glyphs_whole(ctx, plane, src, vopts) { yield vopts }
         ensure
-          FFI.ncvisual_destroy(src) unless visual
+          FFI.ncvisual_destroy(src) unless visual || src.nil? || src.null?
         end
         ctx.raise_callback_errors!
         Util.check!(rc, VisualError, what)

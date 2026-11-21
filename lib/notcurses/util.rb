@@ -558,6 +558,38 @@ module Notcurses
       raise error
     end
 
+    # Thread interno dell'init di {Context} e {Direct}: chiama il C e, se il
+    # chiamante non adotta il contesto, esegue il rollback. Il thread è
+    # l'unico proprietario del rollback: un secondo Ctrl-C o un Thread#kill
+    # del chiamante non lo saltano (ICH-226). Il chiamante scrive in go true
+    # per partire (false: rinuncia prima dell'init), poi true se adotta il
+    # puntatore letto da ready. Il thread rimanda le interruzioni per tutta
+    # la sua vita: anche all'uscita del processo il rollback finisce.
+    # @param go [Thread::Queue] le decisioni del chiamante
+    # @param ready [Thread::Queue] il puntatore, o l'eccezione della chiamata C
+    # @param start [Proc] la chiamata C dell'init
+    # @param undo [Proc] il rollback: riceve il puntatore, o nil se l'init non
+    #   è partito
+    # @return [Thread]
+    def init_thread(go, ready, start, undo)
+      Thread.new do # rubocop:disable ThreadSafety/NewThread -- il thread è il proprietario del rollback
+        Thread.current.report_on_exception = false
+        Thread.handle_interrupt(Object => :never) do
+          ptr = nil
+          if go.pop
+            ptr = ::FFI::Pointer::NULL
+            begin
+              ready << (ptr = start.call)
+            rescue Exception => e # rubocop:disable Lint/RescueException
+              ready << e
+            end
+            next if go.pop
+          end
+          undo.call(ptr)
+        end
+      end
+    end
+
     # Blocco opzionale dei metodi che creano risorse: senza blocco restituisce
     # la risorsa, con il blocco la passa al blocco e la chiude alla fine.
     # @param resource [#close] risorsa da passare al blocco
@@ -570,6 +602,37 @@ module Notcurses
       ensure
         resource.close
       end
+    end
+
+    # Crea una risorsa con una chiamata C bloccante (+blocking: true+) e la
+    # incapsula con le eccezioni asincrone rimandate (ICH-474): un
+    # Thread#raise, un Timeout o un Thread#kill arrivano a risorsa già
+    # assegnata, e l'ensure la chiude. Durante la chiamata Ruby sveglia
+    # comunque il C (+open+ di una FIFO senza writer esce con EINTR). Su
+    # Ruby 3.1, 3.2 e 3.3 l'Interrupt di un segnale non si rimanda e può
+    # ancora perdere la risorsa. Resta una finestra anche dopo la consegna:
+    # un'eccezione arrivata al ritorno di questo metodo (o del chiamante),
+    # con la risorsa già passata al chiamante, la lascia senza proprietario.
+    # Con user si comporta come {with_resource}.
+    # @param user [Proc, nil] il blocco del chiamante
+    # @yieldreturn [#close] la risorsa creata
+    # @return [Object] la risorsa, o il valore di user
+    def create_resource(user = nil)
+      resource = nil
+      keep = false
+      begin
+        Thread.handle_interrupt(Object => :never) { resource = yield }
+      ensure
+        # punto di consegna dopo la chiamata C: in un thread con :on_blocking (FdPlane) il kill di close
+        # arriverebbe solo all'attesa successiva
+        sleep 0 if Thread.pending_interrupt?
+      end
+      return user.call(resource) if user
+
+      keep = true
+      resource
+    ensure
+      resource&.close unless keep
     end
   end
 end

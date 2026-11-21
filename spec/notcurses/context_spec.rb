@@ -65,6 +65,55 @@ RSpec.describe Notcurses::Context do
       NcHelpers.open_context { |nc| expect(nc).not_to be_closed }
     end
 
+    # ICH-226: il thread interno dell'init aveva report_on_exception attivo, e un errore della chiamata C finiva
+    # anche su stderr.
+    it "un errore nel thread di init arriva al chiamante senza scrivere su stderr e libera il registro" do
+      allow(Notcurses::FFI).to receive(:notcurses_init).and_raise(RuntimeError, 'boom')
+      expect do
+        expect { NcHelpers.open_context }.to raise_error(RuntimeError, 'boom')
+      end.not_to output.to_stderr
+      expect(Notcurses.active_context).to be_nil
+    end
+
+    # Review della PR #30: un'eccezione asincrona al ritorno di open_output, prima dell'assegnazione del FILE*,
+    # lasciava aperto il file dell'output.
+    it "un Thread#raise al ritorno di open_output non lascia aperto il file dell'output" do
+      Dir.mktmpdir do |dir|
+        fds = NcHelpers.open_fd_count
+        result, = NcHelpers.raise_at_c_return(:open_output, event: :return) do
+          NcHelpers.open_context(output: File.join(dir, 'out'))
+        end
+        expect([result, NcHelpers.open_fd_count, Notcurses.active_context]).to eq(['interrotto', fds, nil])
+      end
+    end
+
+    # Review della PR #30: un errore dentro il rollback del thread di init (qui dopo lo stop vero del C) saltava
+    # release_context e fclose: il registro restava occupato. Anche TERM, che notcurses ha già cambiato con termtype:,
+    # torna com'era.
+    it "un errore nel rollback del thread di init libera comunque il registro e non scrive su stderr" do
+      allow(Notcurses::FFI).to receive(:notcurses_stop).and_wrap_original do |m, ptr|
+        m.call(ptr)
+        raise 'stop'
+      end
+      # il chiamante rinuncia al contesto al ritorno di ready.pop (metodo C fino a Ruby 3.x, metodo Ruby da 4.0)
+      pop = Thread::Queue.instance_method(:pop).source_location ? :return : :c_return
+      term = ENV.fetch('TERM', nil)
+      ENV['TERM'] = 'vt100' # diverso dal termtype: di open_context
+      Dir.mktmpdir do |dir|
+        fds = NcHelpers.open_fd_count
+        result = nil
+        expect do
+          result, = NcHelpers.raise_at_c_return(:pop, event: pop) do
+            NcHelpers.open_context(output: File.join(dir, 'out'))
+          end
+        end.not_to output.to_stderr
+        expect([%w[interrotto stop].include?(result), NcHelpers.open_fd_count, Notcurses.active_context, ENV['TERM']])
+          .to eq([true, fds, nil, 'vt100'])
+      end
+    ensure
+      ENV['TERM'] = term
+    end
+
     it 'valida le opzioni prima di avviare notcurses' do
       expect { NcHelpers.open_context(output: 42) }.to raise_error(TypeError)
       expect { NcHelpers.open_context(output: ::FFI::Pointer::NULL) }.to raise_error(ArgumentError)

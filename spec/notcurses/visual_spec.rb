@@ -299,6 +299,19 @@ RSpec.describe Notcurses::Visual do
     end
 
     describe '.from_file e .open' do
+      # ICH-474: un'eccezione asincrona al ritorno di ncvisual_from_file arrivava prima che il wrapper incapsulasse
+      # il puntatore: il visual restava allocato, con il file aperto.
+      it 'un Thread#raise al ritorno di ncvisual_from_file distrugge il visual creato dal C' do
+        destroyed = []
+        allow(ffi).to receive(:ncvisual_destroy).and_wrap_original do |m, ptr|
+          destroyed << ptr.address
+          m.call(ptr)
+        end
+        result, created = NcHelpers.raise_at_c_return(:ncvisual_from_file) { described_class.from_file(png) { :blocco } }
+        expect([result, destroyed]).to eq(['interrotto', created])
+        expect(created.first).not_to eq(0)
+      end
+
       it 'carica un\'immagine e ne decodifica il primo frame' do
         v = described_class.from_file(png)
         expect(v.dims).to eq([4, 2])
@@ -792,6 +805,27 @@ RSpec.describe Notcurses::Visual do
           expect do
             described_class.blit_rgba(px, plane: plane, rows: 2, cols: 1, linesize: 8, blitter: :ascii)
           end.to raise_error(ArgumentError, /linesize/)
+        end
+      end
+
+      # ICH-569: un'eccezione asincrona al ritorno di ncvisual_from_rgba, prima dell'ensure, lasciava allocato il
+      # visual temporaneo della geometria.
+      it 'un Thread#raise al ritorno di ncvisual_from_rgba distrugge una volta il visual temporaneo' do
+        nc.stdplane.create_child(rows: 1, cols: 1) do |plane|
+          px = rgba([1, 2, 3, 255])
+          %i[blit_rgba blit_bgrx blit_rgb_loose].each do |blit|
+            destroyed = []
+            allow(ffi).to receive(:ncvisual_destroy).and_wrap_original do |m, ptr|
+              destroyed << ptr.address
+              m.call(ptr)
+            end
+            result, created = NcHelpers.raise_at_c_return(:ncvisual_from_rgba) do
+              described_class.public_send(blit, px, plane: plane, rows: 1, cols: 1, blitter: :ascii)
+              :finito
+            end
+            expect([blit, result, destroyed]).to eq([blit, 'interrotto', created])
+            expect(created.first).not_to eq(0)
+          end
         end
       end
 

@@ -14,7 +14,10 @@ module Notcurses
   # Un solo contesto ({Context} o Direct) può essere attivo nel processo: un
   # secondo solleva InitError prima di chiamare il C. {.open} con un blocco
   # chiude il contesto anche in caso di eccezione; un contesto rimasto aperto
-  # viene chiuso all'uscita del processo da un hook +at_exit+.
+  # viene chiuso all'uscita del processo da un hook +at_exit+. +Process.daemon+
+  # con il contesto aperto solleva DirectError prima del fork, e il contesto
+  # resta aperto: chiudilo prima di +Process.daemon+ (il processo che lo ha
+  # creato esce dentro daemon senza lo stop).
   #
   # Output: il testo ({#putstr}, {#putegc}, linee, box, movimenti del cursore)
   # passa dal buffer stdio del FILE* e diventa visibile con {#flush} o con la
@@ -171,10 +174,22 @@ module Notcurses
     # timeout) la risposta; query e report del cursore vanno al terminale di
     # controllo anche quando output è un file. Durante l'init il GVL è
     # rilasciato: gli altri thread Ruby girano, ma non devono usare ENV (con
-    # termtype: notcurses chiama setenv). L'init gira in un thread interno:
-    # un'eccezione asincrona durante l'attesa (Ctrl-C, Thread#raise, Timeout)
-    # arriva a init completato, e il wrapper ferma il contesto prima di
-    # rilanciarla.
+    # termtype: notcurses chiama setenv). L'init gira in un thread interno,
+    # che ferma anche il contesto quando new non va a buon fine:
+    # un'eccezione asincrona durante l'attesa (Ctrl-C, Thread#raise, Timeout,
+    # anche Thread#kill) arriva a init completato e a contesto fermato, con
+    # il registro libero. Un secondo Ctrl-C mentre new aspetta esce subito: il
+    # thread interno ferma il contesto quando l'init torna (con il fd 1 su
+    # /dev/null durante lo stop, come in {#close}), e fino ad allora il
+    # contesto resta registrato (un nuovo init solleva InitError). Con un
+    # terminale che non risponde mai l'init non torna, e il registro resta
+    # occupato. Resta una finestra: un'eccezione arrivata proprio al ritorno
+    # di new, a contesto già adottato, lo lascia aperto e registrato senza
+    # che il chiamante lo riceva; lo chiudono
+    # <tt>Notcurses.active_context.close</tt> o l'hook +at_exit+. Durante
+    # l'init (anche nel rollback dopo un secondo Ctrl-C) il contesto è già
+    # registrato: +Process.daemon+ da un altro thread solleva DirectError,
+    # come con un contesto aperto.
     #
     # @param termtype [String, nil] voce terminfo del terminale; nil = variabile
     #   TERM. notcurses la scrive in ENV['TERM']
@@ -213,17 +228,37 @@ module Notcurses
       check_output!(output)
 
       @closed = true # fino alla fine dell'init: close e at_exit ignorano l'oggetto
-      Notcurses.acquire_context(self)
-      old_term = ENV.fetch('TERM', nil)
+      @pid = Process.pid # già durante l'init: la guardia di Process.daemon riconosce il contesto di questo processo
+      old_term = fp = init = nil
       own_fp = false
-      init = nil
+      go = Queue.new    # al thread di init: true per partire, poi true se il chiamante ha adottato il contesto
+      ready = Queue.new # dal thread di init: il puntatore, o l'eccezione della chiamata C
+      adopted = false
+      start = lambda do
+        old_term = ENV.fetch('TERM', nil)
+        core ? FFI.ncdirect_core_init(term, fp, flags) : FFI.ncdirect_init(term, fp, flags)
+      end
+      undo = lambda do |ptr| # nel thread di init; ptr è nil se l'init non è partito
+        if ptr && !ptr.null?
+          mute_stdout! if fp && !fp.null?
+          FFI.ncdirect_stop(ptr)
+        end
+      ensure
+        unmute_stdout!
+        # il C ha già scritto termtype in TERM: un init successivo senza termtype fallirebbe
+        ENV['TERM'] = old_term unless ptr.nil? || term.nil?
+        Notcurses.release_context(self)
+        FFI.fclose(fp) if own_fp
+      end
       begin
-        fp, own_fp = open_output(output)
+        init = Util.init_thread(go, ready, start, undo)
+        Notcurses.acquire_context(self)
+        # con le eccezioni asincrone rimandate: arrivano a FILE* assegnato, e undo lo chiude
+        Thread.handle_interrupt(Object => :never) { fp, own_fp = open_output(output) }
         $stdout.flush if output.nil?
-        # Un'eccezione asincrona (Ctrl-C, Thread#raise, Timeout) consegnata al ritorno della chiamata
-        # bloccante perderebbe il puntatore; nel thread resta, e il rescue ferma il contesto.
-        init = Thread.new { core ? FFI.ncdirect_core_init(term, fp, flags) : FFI.ncdirect_init(term, fp, flags) }
-        ptr = init.value
+        go << true
+        ptr = ready.pop
+        raise ptr if ptr.is_a?(Exception)
         if ptr.null?
           raise InitError, 'ncdirect_init ha restituito NULL (terminfo non trovata per TERM o termtype? stdin chiuso?)'
         end
@@ -232,28 +267,17 @@ module Notcurses
         @fp = fp
         @own_fp = own_fp
         @owner = nil
-        @pid = Process.pid
         @drain_input = drain_input
         @eof_input = nil
         @input_io = nil
         @claims = [] # richieste di chiusura fisica: la esegue solo la prima (release_native!)
         @closing = false
         @closed = false
-      rescue Exception # rubocop:disable Lint/RescueException
-        ptr = init&.value
-        if ptr && !ptr.null?
-          begin
-            mute_stdout! if fp && !fp.null?
-            FFI.ncdirect_stop(ptr)
-          ensure
-            unmute_stdout!
-          end
-        end
-        # il C ha già scritto termtype in TERM: un init successivo senza termtype fallirebbe
-        ENV['TERM'] = old_term unless term.nil?
-        Notcurses.release_context(self)
-        FFI.fclose(fp) if own_fp
-        raise
+        adopted = true
+      ensure
+        go << adopted # per prima, una sola chiamata C: né un secondo Ctrl-C né Thread#kill la saltano
+        # il rollback è del thread di init: un secondo Ctrl-C esce dall'attesa, e il rollback continua
+        init&.join unless adopted
       end
     end
 
@@ -290,11 +314,12 @@ module Notcurses
     # In un processo figlio creato con +fork+ lo stato C appartiene al padre:
     # close non chiama notcurses e non scrive sul terminale; segna solo il
     # contesto chiuso e libera il registro Ruby. Il testo non ancora svuotato
-    # non si duplica: +fork+ (anche +Process.fork+ e <tt>IO.popen('-')</tt>,
-    # non +Process.daemon+) svuota prima il buffer dell'output del Direct
-    # aperto, se il fork parte dal thread che usa il Direct. Nel figlio
-    # notcurses resta inutilizzabile anche dopo close (i segnali restano
-    # registrati per il contesto del padre, e un nuovo init solleva
+    # non si duplica: +fork+ (anche +Process.fork+ e <tt>IO.popen('-')</tt>)
+    # svuota prima il buffer dell'output del Direct aperto, se il fork parte
+    # dal thread che usa il Direct. +Process.daemon+ con il Direct aperto
+    # solleva DirectError prima del fork, e il Direct va chiuso prima. Nel
+    # figlio notcurses resta inutilizzabile anche dopo close (i segnali
+    # restano registrati per il contesto del padre, e un nuovo init solleva
     # InitError): il figlio può solo uscire o fare +exec+.
     #
     # close si può chiamare da un gestore +trap+ (per esempio
@@ -1143,8 +1168,9 @@ module Notcurses
     # finché la chiamata non torna. Un {#close} durante la chiamata (da un
     # altro thread o dall'hook at_exit) rinvia lo stop al suo ritorno: il frame
     # restituito risulta già chiuso. Un'eccezione asincrona (Ctrl-C,
-    # Thread#raise, Timeout) arriva al ritorno della chiamata C: il frame creato
-    # dal C resta allocato fino alla fine del processo.
+    # Thread#raise, Timeout) sveglia la chiamata C e arriva al suo ritorno:
+    # render_frame abbandona il frame eventualmente creato, come {Frame#close}
+    # (la memoria C resta allocata: in 3.0.17 non esiste un free sicuro).
     #
     # @param path [String] file immagine
     # @param blitter [Symbol, Integer] come in {#render_image}
@@ -1165,10 +1191,12 @@ module Notcurses
         s = Util.scale_value(scale)
         Util.nonneg_int!(max_rows, 'max_rows')
         Util.nonneg_int!(max_cols, 'max_cols')
-        v = FFI.ncdirect_render_frame(ptr, file, b, s, max_rows, max_cols)
-        raise DirectError, "ncdirect_render_frame(#{file.inspect}) ha restituito NULL" if v.null?
+        Util.create_resource do
+          v = FFI.ncdirect_render_frame(ptr, file, b, s, max_rows, max_cols)
+          raise DirectError, "ncdirect_render_frame(#{file.inspect}) ha restituito NULL" if v.null?
 
-        Frame.new(v, self)
+          Frame.new(v, self)
+        end
       end
     end
 
@@ -1176,9 +1204,14 @@ module Notcurses
     # (+ncdirectf_from_file+). La chiamata C apre e legge il file senza il GVL:
     # gli altri thread Ruby girano, ma non devono usare lo stesso contesto
     # finché la chiamata non torna. Un'eccezione asincrona (Ctrl-C,
-    # Thread#raise, Timeout) arriva al ritorno della chiamata C: l'immagine
-    # creata dal C resta allocata, con il file aperto, fino alla fine del
-    # processo.
+    # Thread#raise, Timeout) sveglia la chiamata C (per esempio l'apertura di
+    # una FIFO senza writer) e arriva al suo ritorno: load_image libera
+    # l'immagine eventualmente creata, che chiude il file, prima di
+    # sollevarla. Limite: su Ruby 3.1, 3.2 e 3.3 l'Interrupt di un segnale
+    # (Ctrl-C) non si rimanda, e l'immagine creata dal C può restare
+    # allocata, con il file aperto, fino alla fine del processo. Su ogni
+    # versione un'eccezione arrivata proprio al ritorno di load_image, dopo
+    # la consegna dell'immagine, la lascia allocata allo stesso modo.
     #
     # @param path [String] file immagine o video
     # @return [Image] senza blocco; con un blocco, il valore del blocco
@@ -1187,7 +1220,7 @@ module Notcurses
     #   processo non ha il multimedia
     # @raise [TypeError, ArgumentError] se path non è valido
     # @raise [ClosedError] se il contesto è chiuso
-    def load_image(path, &block) = Util.with_resource(Image.new(self, path), &block)
+    def load_image(path, &block) = Util.create_resource(block) { Image.new(self, path) }
 
     # Disegna tutti i frame di un video (o di una GIF animata) uno sopra
     # l'altro, alla velocità della decodifica: per rallentare, attendi nel
@@ -1364,9 +1397,13 @@ module Notcurses
       # Carica il file (+ncdirectf_from_file+). Usa di solito {Direct#load_image}.
       # La chiamata C apre e legge il file senza il GVL: gli altri thread Ruby
       # girano, ma non devono usare lo stesso contesto finché la chiamata non
-      # torna. Un'eccezione asincrona (Ctrl-C, Thread#raise, Timeout) arriva al
-      # ritorno della chiamata C: l'immagine creata dal C resta allocata, con il
-      # file aperto, fino alla fine del processo.
+      # torna. Un'eccezione asincrona (Ctrl-C, Thread#raise, Timeout) sveglia
+      # la chiamata C e arriva al suo ritorno: new libera l'immagine
+      # eventualmente creata, che chiude il file, prima di sollevarla. Limite:
+      # su Ruby 3.1, 3.2 e 3.3 l'Interrupt di un segnale (Ctrl-C) non si
+      # rimanda, e l'immagine creata dal C può restare allocata, con il file
+      # aperto, fino alla fine del processo. Su ogni versione un'eccezione
+      # arrivata proprio al ritorno di new la lascia allocata allo stesso modo.
       #
       # @param direct [Direct] contesto aperto
       # @param path [String] file immagine o video
@@ -1378,15 +1415,18 @@ module Notcurses
         Guard.run do
           dptr = Util.ptr_of(direct, Direct, 'direct')
           file = Args.path(path)
-          ptr = FFI.ncdirectf_from_file(dptr, file)
-          if ptr.null?
-            raise DirectError, "ncdirectf_from_file(#{file.inspect}) ha restituito NULL (file mancante o non " \
-                               'decodificabile? contesto senza multimedia?)'
-          end
+          Util.create_resource do
+            ptr = FFI.ncdirectf_from_file(dptr, file)
+            if ptr.null?
+              raise DirectError, "ncdirectf_from_file(#{file.inspect}) ha restituito NULL (file mancante o non " \
+                                 'decodificabile? contesto senza multimedia?)'
+            end
 
-          @ptr = ptr
-          @closed = false
-          @owner = nil
+            @ptr = ptr
+            @closed = false
+            @owner = nil
+            self
+          end
         end
       end
 

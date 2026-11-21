@@ -5,6 +5,7 @@
 require 'fileutils'
 require 'rbconfig'
 require 'tmpdir'
+require 'timeout'
 require_relative '../support/nc_helpers'
 
 # Helper delle spec di Notcurses::Direct: contesti su /dev/null o su un file
@@ -137,6 +138,53 @@ RSpec.describe Notcurses::Direct do
       expect(ENV.fetch('TERM', nil)).to eq(before)
       expect(Notcurses.active_context).to be_nil
       open_direct { |d| expect(d).not_to be_closed }
+    end
+
+    # ICH-226: il thread interno dell'init aveva report_on_exception attivo, e un errore della chiamata C finiva
+    # anche su stderr.
+    it "un errore nel thread di init arriva al chiamante senza scrivere su stderr e libera il registro" do
+      allow(ffi).to receive(:ncdirect_init).and_raise(RuntimeError, 'boom')
+      expect do
+        expect { open_direct }.to raise_error(RuntimeError, 'boom')
+      end.not_to output.to_stderr
+      expect(Notcurses.active_context).to be_nil
+    end
+
+    # Review della PR #30: un'eccezione asincrona al ritorno di open_output, prima dell'assegnazione del FILE*,
+    # lasciava aperto il file dell'output.
+    it "un Thread#raise al ritorno di open_output non lascia aperto il file dell'output" do
+      Dir.mktmpdir do |dir|
+        fds = NcHelpers.open_fd_count
+        result, = NcHelpers.raise_at_c_return(:open_output, event: :return) do
+          open_direct(output: File.join(dir, 'out'))
+        end
+        expect([result, NcHelpers.open_fd_count, Notcurses.active_context]).to eq(['interrotto', fds, nil])
+      end
+    end
+
+    # Review della PR #30: un errore dentro il rollback del thread di init (qui dopo lo stop vero del C) non deve
+    # lasciare il registro occupato né il file dell'output aperto. Anche TERM, che il C ha già cambiato con
+    # termtype:, torna com'era.
+    it "un errore nel rollback del thread di init libera comunque il registro e non scrive su stderr" do
+      allow(ffi).to receive(:ncdirect_stop).and_wrap_original do |m, ptr|
+        m.call(ptr)
+        raise 'stop'
+      end
+      # il chiamante rinuncia al contesto al ritorno di ready.pop (metodo C fino a Ruby 3.x, metodo Ruby da 4.0)
+      pop = Thread::Queue.instance_method(:pop).source_location ? :return : :c_return
+      term = ENV.fetch('TERM', nil)
+      ENV['TERM'] = 'vt100' # diverso dal termtype: di open_direct
+      Dir.mktmpdir do |dir|
+        fds = NcHelpers.open_fd_count
+        result = nil
+        expect do
+          result, = NcHelpers.raise_at_c_return(:pop, event: pop) { open_direct(output: File.join(dir, 'out')) }
+        end.not_to output.to_stderr
+        expect([%w[interrotto stop].include?(result), NcHelpers.open_fd_count, Notcurses.active_context, ENV['TERM']])
+          .to eq([true, fds, nil, 'vt100'])
+      end
+    ensure
+      ENV['TERM'] = term
     end
 
     it 'valida le opzioni prima di avviare notcurses' do
@@ -317,6 +365,72 @@ RSpec.describe Notcurses::Direct do
                     in: File::NULL, out: File::NULL, err: err)
         _, status = Process.wait2(pid)
         expect([status.exitstatus, File.read(err)]).to eq([0, 'ok'])
+      end
+    end
+
+    # ICH-568: nel rollback di Direct.new un secondo Thread#raise consegnato alla fine del ripristino dello stdout
+    # saltava TERM, il rilascio del registro e fclose: ogni Direct.open successivo sollevava InitError. Da ICH-226 il
+    # rollback è del thread di init: il secondo Interrupt fa uscire il chiamante dall'attesa, e il rollback finisce.
+    it 'un secondo Thread#raise durante il ripristino dello stdout nel rollback dell\'init completa il rollback' do
+      Dir.mktmpdir do |dir|
+        out = File.join(dir, 'out')
+        script = <<~RUBY
+          require 'notcurses'
+          ENV['TERM'] = 'vt100'
+          stdout_ino = -> { IO.for_fd(1, autoclose: false).stat.ino }
+          fd1 = stdout_ino.call
+          fds = Dir.children(#{NcHelpers::FD_DIR.dump}).size
+          paused = Queue.new
+          resume = Queue.new
+          caller_thread = nil
+          reopens = 0
+          popped = false
+          # Queue#pop è un metodo C su alcune versioni di Ruby e un metodo Ruby su altre
+          tp = TracePoint.new(:c_return, :return) do |t|
+            case t.method_id
+            when :pop # ready.pop nel chiamante: il puntatore c'è
+              next unless Thread.current.equal?(caller_thread) && !popped
+              popped = true
+            when :reopen # il secondo reopen: quello di unmute_stdout!, nel thread di init
+              next unless (reopens += 1) == 2
+            else next
+            end
+            paused << true
+            resume.pop
+          end
+          tp.enable
+          a = Thread.new do
+            caller_thread = Thread.current
+            Notcurses::Direct.new(output: #{out.dump}, termtype: 'xterm-256color', drain_input: true)
+            'nessuna'
+          rescue Interrupt => e
+            e.message
+          end
+          paused.pop # il chiamante è al ritorno di ready.pop
+          a.raise(Interrupt, 'primo') # esce subito dall'attesa del TracePoint ed entra nell'ensure di new
+          paused.pop # il thread di init è fermo a metà rollback, il chiamante aspetta nel join
+          a.raise(Interrupt, 'secondo') # il chiamante esce dall'attesa
+          result = a.value
+          busy = Notcurses.active_context.class
+          resume << true # il rollback riprende
+          200.times { Notcurses.active_context.nil? ? break : sleep(0.01) }
+          tp.disable
+          same_fds = Dir.children(#{NcHelpers::FD_DIR.dump}).size == fds # FILE* dell'output e copia del fd 1 chiusi
+          STDERR.write([result, busy, Notcurses.active_context.inspect, ENV['TERM'], stdout_ino.call == fd1, same_fds].inspect)
+          Notcurses::Direct.open(output: #{File.join(dir, 'out2').dump}, termtype: 'xterm-256color', drain_input: true) { nil }
+          STDERR.write(' riaperto')
+        RUBY
+        err = File.join(dir, 'stderr')
+        pid = spawn(RbConfig.ruby, '-I', DirectSpecHelpers::LIB_DIR, '-e', script,
+                    in: File::NULL, out: File.join(dir, 'stdout'), err: err)
+        status = begin
+          Timeout.timeout(30) { Process.wait2(pid)[1] }
+        rescue Timeout::Error
+          Process.kill(:KILL, pid)
+          Process.wait(pid)
+          nil
+        end
+        expect([status&.exitstatus, File.read(err)]).to eq([0, '["secondo", Notcurses::Direct, "nil", "vt100", true, true] riaperto'])
       end
     end
 
@@ -741,6 +855,32 @@ RSpec.describe Notcurses::Direct do
         expect(kept).to be_closed
         result = Notcurses::Direct::Image.open(d, data_file('onedot.png')) { |image| image.geometry(d).pixx }
         expect(result).to eq(1)
+      end
+
+      # ICH-474: un'eccezione asincrona al ritorno di ncdirectf_from_file arrivava prima che il wrapper incapsulasse
+      # il puntatore: l'immagine restava allocata, con il file aperto.
+      it 'un Thread#raise al ritorno di ncdirectf_from_file libera l\'immagine creata dal C' do
+        freed = []
+        allow(ffi).to receive(:ncdirectf_free).and_wrap_original do |m, ptr|
+          freed << ptr.address
+          m.call(ptr)
+        end
+        result, created = NcHelpers.raise_at_c_return(:ncdirectf_from_file) do
+          d.load_image(data_file('onedot.png')) { :blocco }
+        end
+        expect([result, freed]).to eq(['interrotto', created])
+        expect(created.first).not_to eq(0)
+      end
+
+      # Review della PR #30: render_frame non aveva una spec sotto eccezione asincrona. Il frame non si può liberare
+      # (3.0.17 non ha un free sicuro): render_frame lo abbandona come Frame#close.
+      it 'un Thread#raise al ritorno di ncdirect_render_frame abbandona il frame creato dal C' do
+        frames = []
+        allow(Notcurses::Direct::Frame).to receive(:new).and_wrap_original { |m, *args| m.call(*args).tap { |f| frames << f } }
+        png = File.expand_path('../fixtures/visual/rgbw.png', __dir__)
+        result, created = NcHelpers.raise_at_c_return(:ncdirect_render_frame) { d.render_frame(png, blitter: :half) }
+        expect([result, frames.map { |f| [f.instance_variable_get(:@ptr).address, f.closed?] }]).to eq(['interrotto', [[created.first, true]]])
+        expect(created.first).not_to eq(0)
       end
 
       it 'Image segnala gli errori e valida gli argomenti' do

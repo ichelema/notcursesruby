@@ -73,6 +73,29 @@ module Notcurses
     warn "notcurses: chiusura del contesto all'uscita fallita: #{e.message}"
   end
 
+  # Process.daemon fa il fork senza Process._fork, e il processo che ha creato
+  # il contesto esce con _exit dentro daemon(3), senza lo stop: il terminale
+  # resterebbe nel modo dell'init (niente echo, modo non canonico). Con un
+  # contesto aperto in questo processo daemon solleva un errore prima del fork.
+  # In un figlio creato con fork il contesto è del padre: daemon non cambia.
+  # @api private
+  module DaemonGuard
+    # @raise [ContextError, DirectError] se un {Context} o un {Direct} creato
+    #   da questo processo è ancora registrato (anche con lo stop in attesa)
+    def daemon(...)
+      ctx = Notcurses.active_context
+      if ctx&.pid == Process.pid
+        raise ctx.is_a?(Direct) ? DirectError : ContextError,
+              "Process.daemon con un #{ctx.class.name} aperto: il processo che lo ha creato uscirebbe senza " \
+              'ripristinare il terminale (chiudi il contesto prima di Process.daemon)'
+      end
+
+      super
+    end
+  end
+  private_constant :DaemonGuard
+  Process.singleton_class.prepend(DaemonGuard)
+
   # Capacità del terminale (+nccapabilities+), copiate al momento della lettura.
   class Capabilities
     # @return [Integer] numero di colori della palette
@@ -131,7 +154,10 @@ module Notcurses
   # di eccezione. All'uscita del processo un contesto rimasto aperto viene chiuso
   # da un hook +at_exit+, solo nel processo che l'ha creato. In un figlio creato
   # con +fork+ il contesto copiato resta del padre: {#close} lo segna chiuso
-  # senza chiamare notcurses e senza toccare il terminale.
+  # senza chiamare notcurses e senza toccare il terminale. +Process.daemon+
+  # con il contesto aperto solleva ContextError prima del fork, e il contesto
+  # resta aperto: chiudilo prima di +Process.daemon+ (il processo che lo ha
+  # creato esce dentro daemon senza lo stop).
   #
   # Ciclo di vita degli oggetti collegati: i piani ({Plane}), i widget e gli
   # altri oggetti creati dal contesto diventano inutilizzabili (ClosedError)
@@ -255,9 +281,20 @@ module Notcurses
     # Con un terminale vero l'init attende (senza timeout) la risposta del
     # terminale alle query iniziali, con il GVL rilasciato: gli altri thread
     # Ruby girano, ma non devono usare ENV (con termtype: notcurses chiama
-    # setenv). L'init gira in un thread interno: un'eccezione asincrona durante
-    # l'attesa (Ctrl-C, Thread#raise, Timeout) arriva a init completato, e il
-    # wrapper ferma il contesto prima di rilanciarla.
+    # setenv). L'init gira in un thread interno, che ferma anche il contesto
+    # quando new non va a buon fine: un'eccezione asincrona durante l'attesa
+    # (Ctrl-C, Thread#raise, Timeout, anche Thread#kill) arriva a init
+    # completato e a contesto fermato, con il registro libero. Un secondo
+    # Ctrl-C mentre new aspetta esce subito: il thread interno ferma il
+    # contesto quando l'init torna, e fino ad allora il contesto resta
+    # registrato (un nuovo init solleva InitError). Con un terminale che non
+    # risponde mai l'init non torna, e il registro resta occupato. Resta una
+    # finestra: un'eccezione arrivata proprio al ritorno di new, a contesto già
+    # adottato, lo lascia aperto e registrato senza che il chiamante lo
+    # riceva; lo chiudono <tt>Notcurses.active_context.close</tt> o l'hook
+    # +at_exit+. Durante l'init (anche nel rollback dopo un secondo Ctrl-C)
+    # il contesto è già registrato: +Process.daemon+ da un altro thread
+    # solleva ContextError, come con un contesto aperto.
     #
     # @raise [InitError] se un altro contesto è attivo, se l'output non si apre,
     #   o se +notcurses_init+ restituisce NULL (per esempio terminfo non
@@ -288,19 +325,35 @@ module Notcurses
                      Util.flag(scrolling, FFI::NCOPTION_SCROLLING, 'scrolling') |
                      Util.flag(cli_mode, FFI::NCOPTION_CLI_MODE, 'cli_mode')
       @closed = true # fino alla fine dell'init: close e at_exit ignorano l'oggetto
-      Notcurses.acquire_context(self)
-      old_term = ENV.fetch('TERM', nil)
-      fp = nil
-      init = nil
+      @pid = Process.pid # già durante l'init: la guardia di Process.daemon riconosce il contesto di questo processo
+      old_term = fp = init = nil
       @own_fp = false
+      go = Queue.new    # al thread di init: true per partire, poi true se il chiamante ha adottato il contesto
+      ready = Queue.new # dal thread di init: il puntatore, o l'eccezione della chiamata C
+      adopted = false
+      start = lambda do
+        old_term = ENV.fetch('TERM', nil)
+        core ? FFI.notcurses_core_init(opts, fp) : FFI.notcurses_init(opts, fp)
+      end
+      undo = lambda do |ptr| # nel thread di init; ptr è nil se l'init non è partito
+        stop_notcurses(ptr) if ptr && !ptr.null?
+      ensure
+        # anche se lo stop solleva, come in Direct: il registro va liberato comunque
+        # notcurses ha già scritto termtype in TERM: un init successivo senza termtype fallirebbe
+        ENV['TERM'] = old_term unless ptr.nil? || termtype.nil?
+        Notcurses.release_context(self)
+        FFI.fclose(fp) if @own_fp
+      end
       begin
-        # dopo acquire_context: con un altro contesto attivo il FILE* resterebbe aperto
-        fp, @own_fp = open_output(output)
+        init = Util.init_thread(go, ready, start, undo)
+        Notcurses.acquire_context(self)
+        # dopo acquire_context: con un altro contesto attivo il FILE* resterebbe aperto. Con le eccezioni asincrone
+        # rimandate: arrivano a FILE* assegnato, e undo lo chiude
+        Thread.handle_interrupt(Object => :never) { fp, @own_fp = open_output(output) }
         $stdout.flush if output.nil?
-        # Un'eccezione asincrona (Ctrl-C, Thread#raise, Timeout) consegnata al ritorno della chiamata
-        # bloccante perderebbe il puntatore; nel thread resta, e il rescue ferma il contesto.
-        init = Thread.new { core ? FFI.notcurses_core_init(opts, fp) : FFI.notcurses_init(opts, fp) }
-        ptr = init.value
+        go << true
+        ptr = ready.pop
+        raise ptr if ptr.is_a?(Exception)
         if ptr.null?
           raise InitError, 'notcurses_init ha restituito NULL (terminfo non trovata per TERM o termtype? ' \
                            'locale non UTF-8? margini troppo grandi?)'
@@ -309,7 +362,6 @@ module Notcurses
         @ptr = ptr
         @fp = fp
         @owner = nil
-        @pid = Process.pid
         @generation = 0
         @planes = {}
         @children = {}.compare_by_identity
@@ -331,14 +383,11 @@ module Notcurses
         @input_reader = nil
         @stdplane = Plane.new(FFI.notcurses_stdplane(ptr), owned: false, context: self)
         @closed = false
-      rescue Exception # rubocop:disable Lint/RescueException
-        ptr = init&.value
-        stop_notcurses(ptr) if ptr && !ptr.null?
-        # notcurses ha già scritto termtype in TERM: un init successivo senza termtype fallirebbe
-        ENV['TERM'] = old_term unless termtype.nil?
-        Notcurses.release_context(self)
-        FFI.fclose(fp) if @own_fp
-        raise
+        adopted = true
+      ensure
+        go << adopted # per prima, una sola chiamata C: né un secondo Ctrl-C né Thread#kill la saltano
+        # il rollback è del thread di init: un secondo Ctrl-C esce dall'attesa, e il rollback continua
+        init&.join unless adopted
       end
     end
 
@@ -380,7 +429,9 @@ module Notcurses
     # invalida i piani e libera il registro Ruby. Nel figlio notcurses resta
     # inutilizzabile anche dopo close (i segnali restano registrati per il
     # contesto del padre, e un nuovo init solleva InitError): il figlio può
-    # solo uscire o fare +exec+.
+    # solo uscire o fare +exec+. +Process.daemon+ non crea un figlio così: con
+    # il contesto aperto solleva ContextError prima del fork, e il contesto va
+    # chiuso prima.
     #
     # close si può chiamare da un gestore +trap+ (per esempio
     # <tt>trap('TERM') { nc.close; exit }</tt>), anche se il gestore poi
@@ -393,7 +444,12 @@ module Notcurses
     # rinviato non avviene (terminale non ripristinato). Il registro si libera
     # allo stop, e un nuovo contesto si può aprire dopo. Durante
     # {UI::EventLoop#run} close ferma prima il thread di input; un Ctrl+C che
-    # arriva mentre lo aspetta si solleva dopo lo stop.
+    # arriva mentre lo aspetta si solleva dopo lo stop. Limite di Ruby 3.1,
+    # 3.2 e 3.3, dove l'Interrupt di un segnale non si rimanda (ICH-539): un
+    # secondo segnale consegnato dopo il primo, prima che l'attesa ricominci,
+    # esce da close prima dello stop, con il contesto aperto e il thread di
+    # input che si ferma da solo poco dopo; un close successivo (o l'hook
+    # +at_exit+) completa lo stop.
     #
     # @return [nil]
     # @raise [ContextError] se +notcurses_stop+ restituisce un errore (il

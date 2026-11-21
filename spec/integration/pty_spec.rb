@@ -128,6 +128,181 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     expect(status.exitstatus).to eq(0), out
   end
 
+  # ICH-226: un secondo Ctrl-C mentre il rollback dell'init aspetta il terminale faceva uscire il rollback a metà
+  # (registro occupato per sempre, contesto C orfano), e un Thread#kill del chiamante saltava il rescue. Il
+  # terminale finto risponde a DA1 solo quando lo script lo dice: nessuna ipotesi sui tempi dell'init.
+  def init_abandon_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    answer = Queue.new
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        data.scan(/\e\[6n|\e\[c/) do |q|
+          answer.pop if q == "\e[c" # fino ad allora l'init attende nel C
+          master.write(q == "\e[6n" ? "\e[5;7R" : "\e[?62;22c")
+        end
+      end
+    rescue IOError, Errno::EIO
+    end
+    opts = { output: slave.path, termtype: 'xterm-256color' }
+    registry = lambda do
+      500.times { Notcurses.active_context.nil? ? break : sleep(0.01) }
+      Notcurses.active_context.inspect
+    end
+    [[Notcurses::Context, { suppress_banners: true }], [Notcurses::Direct, {}]].each do |klass, extra|
+      # il primo Ctrl-C porta new nell'attesa del rollback, il secondo ne esce
+      Thread.new { 2.times { sleep 0.2; Process.kill(:INT, Process.pid) } }
+      begin
+        klass.new(**opts, **extra)
+        puts "#{klass}: nessuna Interrupt"
+      rescue Interrupt
+        again = begin
+          klass.new(**opts, **extra)
+        rescue Notcurses::InitError
+          'InitError'
+        end
+        puts "#{klass}: secondo Interrupt, init in corso: nuovo init #{again}"
+      end
+      answer << true # il terminale risponde: il thread di init ferma il contesto e libera il registro
+      puts "#{klass}: registro dopo la risposta #{registry.call}"
+      answer << true
+      klass.open(**opts, **extra) { puts "#{klass}: riaperto dopo il secondo Ctrl-C" }
+
+      # Thread#kill salta i rescue: il rollback parte dall'ensure, e il join torna a contesto fermato
+      t = Thread.new { klass.new(**opts, **extra) }
+      sleep 0.2
+      t.kill
+      answer << true
+      t.join
+      puts "#{klass}: dopo kill e join active_context=#{Notcurses.active_context.inspect}"
+      answer << true
+      klass.open(**opts, **extra) { puts "#{klass}: riaperto dopo kill" }
+    end
+    puts 'fine'
+  RUBY
+
+  it "un secondo Ctrl-C o un Thread#kill durante l'init non lasciano il registro occupato né scrivono su stderr" do
+    out, status, timed_out = run_child(init_abandon_script, timeout: 30)
+    expect(timed_out).to be(false), out
+    lines = %w[Context Direct].flat_map do |k|
+      ["Notcurses::#{k}: secondo Interrupt, init in corso: nuovo init InitError",
+        "Notcurses::#{k}: registro dopo la risposta nil", "Notcurses::#{k}: riaperto dopo il secondo Ctrl-C",
+        "Notcurses::#{k}: dopo kill e join active_context=nil", "Notcurses::#{k}: riaperto dopo kill"]
+    end
+    expect(out.lines(chomp: true)).to eq(lines + ['fine']) # stdout e stderr insieme: niente altro
+    expect(status.exitstatus).to eq(0), out
+  end
+
+  # ICH-441: Process.daemon fa il fork senza Process._fork, e il processo che ha creato il contesto esce con _exit
+  # senza lo stop: il terminale restava senza echo e in modo non canonico. Con un contesto aperto Process.daemon
+  # solleva un errore prima del fork, e il contesto resta aperto e usabile.
+  def daemon_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    log = String.new(encoding: Encoding::BINARY)
+    lock = Mutex.new
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        lock.synchronize { log << data }
+        data.scan(/\e\[6n|\e\[c/) { |q| master.write(q == "\e[6n" ? "\e[5;7R" : "\e[?62;22c") }
+      end
+    rescue IOError, Errno::EIO
+    end
+    opts = { output: slave.path, termtype: 'xterm-256color' }
+    [[Notcurses::Context, { suppress_banners: true }, Notcurses::ContextError],
+     [Notcurses::Direct, {}, Notcurses::DirectError]].each do |klass, extra, error|
+      c = klass.new(**opts, **extra)
+      c.putstr('TOKEN-441') if c.is_a?(Notcurses::Direct) # senza flush: resta nel buffer stdio
+      begin
+        Process.daemon(true, true)
+        puts "#{klass}: nessun errore pid=#{Process.pid}"
+        exit!(0)
+      rescue error => e
+        puts "#{klass}: #{e.class} echo=#{slave.echo?} closed=#{c.closed?} dims=#{c.dims.size}"
+      end
+      c.close
+      puts "#{klass}: chiuso echo=#{slave.echo?}"
+    end
+    sleep 0.2
+    puts "token #{lock.synchronize { log.scan('TOKEN-441').size }}"
+    $stdout.flush
+    parent = Process.pid
+    Process.daemon(true, true) # senza un contesto aperto: come prima
+    puts "daemon #{Process.pid != parent}"
+  RUBY
+
+  it 'Process.daemon con un Context o un Direct aperto solleva un errore e lascia il contesto usabile' do
+    out, status, timed_out = run_child(daemon_script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('Notcurses::Context: Notcurses::ContextError echo=false closed=false dims=2',
+                           'Notcurses::Context: chiuso echo=true',
+                           'Notcurses::Direct: Notcurses::DirectError echo=false closed=false dims=2',
+                           'Notcurses::Direct: chiuso echo=true', 'token 1', 'daemon true')
+    expect(out).not_to include('nessun errore')
+    expect(status.exitstatus).to eq(0), out
+  end
+
+  # Review della PR #30: durante l'init il contesto è già registrato e il terminale è già nel modo dell'init, ma
+  # pid era nil fino all'adozione: Process.daemon da un altro thread partiva e lasciava il terminale senza echo.
+  def daemon_during_init_script = <<~'RUBY'
+    require 'notcurses'
+    require 'io/console'
+    require 'pty'
+    $stdout.sync = true
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    STDIN.reopen(slave)
+    answer = Queue.new
+    Thread.new do
+      loop do
+        data = master.readpartial(65_536)
+        data.scan(/\e\[6n|\e\[c/) do |q|
+          answer.pop if q == "\e[c" # l'init attende nel C finché lo script non lo sblocca
+          master.write(q == "\e[6n" ? "\e[5;7R" : "\e[?62;22c")
+        end
+      end
+    rescue IOError, Errno::EIO
+    end
+    opts = { output: slave.path, termtype: 'xterm-256color' }
+    [[Notcurses::Context, { suppress_banners: true }, Notcurses::ContextError],
+     [Notcurses::Direct, {}, Notcurses::DirectError]].each do |klass, extra, error|
+      init = Thread.new { klass.new(**opts, **extra) }
+      sleep 0.01 until Notcurses.active_context # registrato, init in attesa del terminale
+      begin
+        Process.daemon(true, true)
+        puts "#{klass}: nessun errore pid=#{Process.pid}"
+        exit!(0)
+      rescue error => e
+        puts "#{klass}: #{e.class} durante l'init"
+      end
+      answer << true
+      init.value.close
+      puts "#{klass}: chiuso echo=#{slave.echo?}"
+    end
+  RUBY
+
+  it "Process.daemon solleva un errore anche mentre un altro thread è dentro l'init di Context o Direct" do
+    out, status, timed_out = run_child(daemon_during_init_script, timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out.lines(chomp: true)).to eq(["Notcurses::Context: Notcurses::ContextError durante l'init",
+      'Notcurses::Context: chiuso echo=true',
+      "Notcurses::Direct: Notcurses::DirectError durante l'init",
+      'Notcurses::Direct: chiuso echo=true'])
+    expect(status.exitstatus).to eq(0), out
+  end
+
   # Context#get e #getvec con eventi veri scritti sul pty.
   def get_script = <<~'RUBY'
     require 'notcurses'
@@ -522,6 +697,75 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     out, status, timed_out = run_child("PNG = #{png.dump}\n#{fifo_script}", timeout: 20)
     expect(timed_out).to be(false), "processo figlio bloccato (GVL tenuto durante l'apertura del file?):\n#{out}"
     expect(out).to include('from_file ok', 'render_frame ok', 'load_image ok')
+    expect(status.exitstatus).to eq(0), out
+  end
+
+  # ICH-474: un'eccezione asincrona consegnata al ritorno di ncvisual_from_file o ncdirectf_from_file, prima che il
+  # wrapper incapsulasse il puntatore, lasciava allocato il visual con il file aperto. Il writer è un processo
+  # esterno: apre subito la FIFO e scrive l'immagine dopo 0,6 s; l'eccezione parte a 0,2 s.
+  def fifo_raise_script = <<~'RUBY'
+    require 'notcurses'
+    require 'rbconfig'
+    require 'tmpdir'
+    $stdout.sync = true
+    dir = Dir.mktmpdir
+    fd_dir = File.directory?('/proc/self/fd') ? '/proc/self/fd' : '/dev/fd'
+    # il blocco riceve la FIFO e restituisce l'esito, o solleva l'eccezione asincrona
+    interrupted = lambda do |name, &block|
+      fifo = File.join(dir, "#{name}.png")
+      File.mkfifo(fifo)
+      writer = spawn(RbConfig.ruby, '-e', 'File.open(ARGV[0], "w") { |f| sleep 0.6; f.write(File.binread(ARGV[1])) }',
+                     fifo, PNG)
+      result = begin
+        block.call(fifo)
+      rescue RuntimeError => e
+        e.message
+      end
+      Process.wait(writer)
+      puts "#{name}: #{result}"
+    end
+    raise_in = ->(thread) { Thread.new { sleep 0.2; thread.raise(RuntimeError, 'interrotto') } }
+    fds = nil
+    Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
+                            drain_input: true) do |nc|
+      fds = Dir.children(fd_dir).size
+      interrupted.call('from_file') do |fifo|
+        raise_in.call(Thread.current)
+        Notcurses::Visual.from_file(fifo) { }
+        'nessuna eccezione'
+      end
+      interrupted.call('fdplane') do |fifo|
+        started = Queue.new
+        r, w = IO.pipe
+        nc.stdplane.create_child(rows: 2, cols: 10) do |plane|
+          f = Notcurses::FdPlane.new(plane, r, on_data: ->(_, _) { started << true; Notcurses::Visual.from_file(fifo) { } })
+          w.write('x')
+          started.pop
+          sleep 0.2
+          f.close # il kill del thread di lettura arriva al ritorno della chiamata C
+          w.close
+          'close'
+        end
+      end
+      puts "Context: descrittori in più #{Dir.children(fd_dir).size - fds}"
+    end
+    Notcurses::Direct.open(output: '/dev/null', termtype: 'xterm-256color') do |d|
+      fds = Dir.children(fd_dir).size
+      interrupted.call('load_image') do |fifo|
+        raise_in.call(Thread.current)
+        d.load_image(fifo) { }
+        'nessuna eccezione'
+      end
+      puts "Direct: descrittori in più #{Dir.children(fd_dir).size - fds}"
+    end
+  RUBY
+
+  it "un'eccezione asincrona durante Visual.from_file o Direct#load_image non lascia il file aperto" do
+    png = File.expand_path('../fixtures/visual/rgbw.png', __dir__)
+    out, status, timed_out = run_child("PNG = #{png.dump}\n#{fifo_raise_script}", timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(out).to include('from_file: interrotto', 'fdplane: close', 'Context: descrittori in più 0',
+                           'load_image: interrotto', 'Direct: descrittori in più 0')
     expect(status.exitstatus).to eq(0), out
   end
 

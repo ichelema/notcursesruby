@@ -135,7 +135,7 @@ RSpec.describe "Notcurses::InputReader" do
     reader.stop(inner)
   end
 
-  # Ruby 3.1 e 3.2 non rimandano l'Interrupt di un segnale dentro Thread.handle_interrupt: lo stub lo simula.
+  # Ruby 3.1, 3.2 e 3.3 non rimandano l'Interrupt di un segnale dentro Thread.handle_interrupt: lo stub lo simula.
   [true, false].each do |deferred|
     it "un'eccezione asincrona durante stop arriva dopo la pulizia: filtro tolto, thread fermo, pipe chiusi " \
        "(handle_interrupt #{deferred ? "che rimanda" : "che non rimanda, come Ruby 3.1"})" do

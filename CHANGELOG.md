@@ -132,8 +132,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   raffica di 10000 tasti con il ciclo occupato, con la macchina scarica, non fa più perdere il Ctrl+C che la segue.
   Durante `run` `Context#get` e `#getvec` leggono gli eventi del thread, e `Key::EOF` resta disponibile a ogni
   lettura, come in notcurses. Un secondo Ctrl+C mentre `run` fa pulizia arriva alla fine della pulizia (`run` solleva
-  `Interrupt`); anche su Ruby 3.1 e 3.2, dove l'Interrupt di un segnale non si rimanda, perché la pulizia ricomincia e
-  finisce. Limiti: il thread ha bisogno del GVL, quindi un handler che lo tiene ritarda il segnale (con più di 8192
+  `Interrupt`); anche su Ruby 3.1, 3.2 e 3.3, dove l'Interrupt di un segnale non si rimanda, perché la pulizia
+  ricomincia e finisce (su queste versioni resta una finestra: vedi "Limiti noti", ICH-539). Limiti: il thread ha bisogno del GVL, quindi un handler che lo tiene ritarda il segnale (con più di 8192
   tasti nel frattempo notcurses scarta anche Ctrl+C); notcurses consegna gli eventi più lentamente di quanto li mette
   in coda: nelle prove, con la macchina scarica, 10000 tasti in un colpo non perdono niente; con altri processi che
   occupano la CPU anche il Ctrl+C dopo 10000 tasti si è perso, di rado, e con 20000-50000 tasti, sotto carico, in
@@ -231,7 +231,11 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 - `Visual.from_file`, `Visual#decode`, `Visual#decode_loop`, `Direct#render_frame`, `Direct#load_image`,
   `Direct::Image.new` e `Direct#stream` aprono e leggono il file con ffmpeg senza il GVL: con una FIFO, un URL o un
   file system lento gli altri thread Ruby girano. Prima una FIFO riempita da un thread dello stesso processo
-  bloccava la chiamata per sempre (ICH-312).
+  bloccava la chiamata per sempre (ICH-312). Un'eccezione asincrona (`Thread#raise`, `Timeout`, il kill di
+  `FdPlane#close`) sveglia la chiamata e arriva al suo ritorno: `Visual.from_file`, `Direct#load_image` e
+  `Direct::Image.new` liberano prima il visual o l'immagine creati dal C, con il file aperto (ICH-474); su Ruby 3.1,
+  3.2 e 3.3 un Ctrl-C può ancora lasciarli allocati, e su ogni versione resta una finestra di un'istruzione al
+  ritorno del metodo, a risorsa già consegnata.
 - `require 'notcurses'` funziona anche dove il `types.conf` della gem ffi non ha `wchar_t` o `uintmax_t` (FreeBSD,
   NetBSD, OpenBSD, Linux i386, ppc64, riscv64 e s390x): prima sollevava `TypeError`. Anche `Direct#box` non dipende
   più dalla mappa globale dei tipi di ffi (ICH-313).
@@ -353,6 +357,22 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   che esiste da ffi 1.16.0, e ffi 1.15.0 e 1.15.1 non cercano le librerie in `/opt/homebrew/lib` (ICH-305).
 - README, esempio `Notcurses::UI`: il risultato si stampa dopo il blocco di `Context.open`; prima la riga finiva
   sullo schermo alternativo e la chiusura la cancellava (ICH-304).
+- `Process.daemon` con un `Context` o un `Direct` aperto solleva `ContextError` o `DirectError` prima del fork, e il
+  contesto resta aperto e usabile (ICH-441): chiudilo prima di `Process.daemon`. Prima il processo che aveva creato
+  il contesto usciva dentro `daemon(3)` senza lo stop (`Process.daemon` non passa da `Process._fork`), e il
+  terminale restava senza echo e in modo non canonico, con `Context` anche sullo schermo alternativo e con il cursore
+  nascosto. L'errore arriva anche mentre un altro thread è dentro `Context.new` o `Direct.new`, con il terminale già
+  nel modo dell'init. Senza un contesto aperto, o in un processo figlio creato con `fork`, `Process.daemon` non cambia.
+- `Context.new` e `Direct.new` interrotti durante l'init non lasciano più il registro occupato né il contesto C attivo
+  (ICH-226). Il thread interno dell'init esegue anche il rollback, e lo finisce dopo un secondo Ctrl-C e dopo un
+  `Thread#kill` del thread che chiama `new`. Prima un secondo Ctrl-C mentre il terminale non aveva ancora risposto
+  faceva uscire il rollback a metà: ogni init successivo sollevava `InitError`, e all'uscita il processo poteva
+  terminare con SIGSEGV. Ora il secondo Ctrl-C fa uscire subito `new`, e fino al ritorno dell'init un nuovo init
+  solleva ancora `InitError`; dopo il registro è libero. Un errore della chiamata C arriva al chiamante senza scrivere
+  niente su stderr (prima il thread scriveva il proprio report), e il registro resta libero (prima restava occupato).
+  Un'eccezione asincrona subito dopo l'apertura di `output:` non lascia più aperto il file. Resta una finestra di
+  un'istruzione al ritorno di `new`, a contesto già adottato: il contesto resta aperto e registrato, e lo chiude
+  l'hook `at_exit`.
 
 ### Limiti noti
 
@@ -361,6 +381,13 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   ritornano. Succede con stdin sul terminale (per esempio un incolla lungo di testo non ASCII) o rediretto senza
   `/dev/tty`. Il wrapper non lo può evitare: il limite è nello YARD e nel README, e la correzione è proposta a
   notcurses ([PR #2954](https://github.com/dankamongmen/notcurses/pull/2954)) (ICH-463).
+- Su Ruby 3.1, 3.2 e 3.3 `Thread.handle_interrupt` non rimanda l'Interrupt di un segnale (lo rimanda da Ruby 3.4).
+  Due segnali, il secondo consegnato in pochi passi di codice, possono saltare una parte della pulizia (ICH-539).
+  In `EventLoop#run`, un secondo segnale dopo l'interruzione della pulizia, prima che ricominci, fa uscire `run` con
+  i passi rimasti da fare: i trap di WINCH e CONT, i pipe di risveglio, ISIG o IXON e `running?`, che resta true (un
+  nuovo `run` dello stesso ciclo solleva `Error`). In `Context#close` durante `run`, lo stesso caso nell'attesa del
+  thread di input fa uscire `close` prima dello stop: il contesto resta aperto, e un `close` successivo completa lo
+  stop. Nelle prove con 200 segnali a 0,2 ms di distanza la finestra non si è mai vista. Il limite è nello YARD.
 
 ## [0.1.0] - 2026-10-27
 
