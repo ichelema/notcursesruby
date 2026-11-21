@@ -178,7 +178,9 @@ module Notcurses
     # distrugge il visual eventualmente creato, che chiude il file, prima di
     # sollevarla. Limite: su Ruby 3.1, 3.2 e 3.3 l'Interrupt di un segnale
     # (Ctrl-C) non si rimanda, e il visual creato dal C può restare allocato,
-    # con il file aperto, fino alla fine del processo.
+    # con il file aperto, fino alla fine del processo. Su ogni versione
+    # un'eccezione arrivata proprio al ritorno di from_file, dopo la consegna
+    # del visual, lo lascia al contesto, che lo distrugge con {Context#close}.
     #
     # @param path [String, #to_path] percorso del file
     # @yieldparam visual [Visual] (facoltativo) il visual, chiuso alla fine del blocco

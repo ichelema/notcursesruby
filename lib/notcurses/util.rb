@@ -610,7 +610,10 @@ module Notcurses
     # assegnata, e l'ensure la chiude. Durante la chiamata Ruby sveglia
     # comunque il C (+open+ di una FIFO senza writer esce con EINTR). Su
     # Ruby 3.1, 3.2 e 3.3 l'Interrupt di un segnale non si rimanda e può
-    # ancora perdere la risorsa. Con user si comporta come {with_resource}.
+    # ancora perdere la risorsa. Resta una finestra anche dopo la consegna:
+    # un'eccezione arrivata al ritorno di questo metodo (o del chiamante),
+    # con la risorsa già passata al chiamante, la lascia senza proprietario.
+    # Con user si comporta come {with_resource}.
     # @param user [Proc, nil] il blocco del chiamante
     # @yieldreturn [#close] la risorsa creata
     # @return [Object] la risorsa, o il valore di user

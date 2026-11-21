@@ -234,7 +234,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   bloccava la chiamata per sempre (ICH-312). Un'eccezione asincrona (`Thread#raise`, `Timeout`, il kill di
   `FdPlane#close`) sveglia la chiamata e arriva al suo ritorno: `Visual.from_file`, `Direct#load_image` e
   `Direct::Image.new` liberano prima il visual o l'immagine creati dal C, con il file aperto (ICH-474); su Ruby 3.1,
-  3.2 e 3.3 un Ctrl-C può ancora lasciarli allocati.
+  3.2 e 3.3 un Ctrl-C può ancora lasciarli allocati, e su ogni versione resta una finestra di un'istruzione al
+  ritorno del metodo, a risorsa già consegnata.
 - `require 'notcurses'` funziona anche dove il `types.conf` della gem ffi non ha `wchar_t` o `uintmax_t` (FreeBSD,
   NetBSD, OpenBSD, Linux i386, ppc64, riscv64 e s390x): prima sollevava `TypeError`. Anche `Direct#box` non dipende
   più dalla mappa globale dei tipi di ffi (ICH-313).
@@ -360,7 +361,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   contesto resta aperto e usabile (ICH-441): chiudilo prima di `Process.daemon`. Prima il processo che aveva creato
   il contesto usciva dentro `daemon(3)` senza lo stop (`Process.daemon` non passa da `Process._fork`), e il
   terminale restava senza echo e in modo non canonico, con `Context` anche sullo schermo alternativo e con il cursore
-  nascosto. Senza un contesto aperto, o in un processo figlio creato con `fork`, `Process.daemon` non cambia.
+  nascosto. L'errore arriva anche mentre un altro thread è dentro `Context.new` o `Direct.new`, con il terminale già
+  nel modo dell'init. Senza un contesto aperto, o in un processo figlio creato con `fork`, `Process.daemon` non cambia.
 - `Context.new` e `Direct.new` interrotti durante l'init non lasciano più il registro occupato né il contesto C attivo
   (ICH-226). Il thread interno dell'init esegue anche il rollback, e lo finisce dopo un secondo Ctrl-C e dopo un
   `Thread#kill` del thread che chiama `new`. Prima un secondo Ctrl-C mentre il terminale non aveva ancora risposto
@@ -368,6 +370,9 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   terminare con SIGSEGV. Ora il secondo Ctrl-C fa uscire subito `new`, e fino al ritorno dell'init un nuovo init
   solleva ancora `InitError`; dopo il registro è libero. Un errore della chiamata C arriva al chiamante senza scrivere
   niente su stderr (prima il thread scriveva il proprio report), e il registro resta libero (prima restava occupato).
+  Un'eccezione asincrona subito dopo l'apertura di `output:` non lascia più aperto il file. Resta una finestra di
+  un'istruzione al ritorno di `new`, a contesto già adottato: il contesto resta aperto e registrato, e lo chiude
+  l'hook `at_exit`.
 
 ### Limiti noti
 

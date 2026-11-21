@@ -183,7 +183,10 @@ module Notcurses
     # /dev/null durante lo stop, come in {#close}), e fino ad allora il
     # contesto resta registrato (un nuovo init solleva InitError). Con un
     # terminale che non risponde mai l'init non torna, e il registro resta
-    # occupato.
+    # occupato. Resta una finestra: un'eccezione arrivata proprio al ritorno
+    # di new, a contesto già adottato, lo lascia aperto e registrato senza
+    # che il chiamante lo riceva; lo chiudono
+    # <tt>Notcurses.active_context.close</tt> o l'hook +at_exit+.
     #
     # @param termtype [String, nil] voce terminfo del terminale; nil = variabile
     #   TERM. notcurses la scrive in ENV['TERM']
@@ -1203,7 +1206,9 @@ module Notcurses
     # l'immagine eventualmente creata, che chiude il file, prima di
     # sollevarla. Limite: su Ruby 3.1, 3.2 e 3.3 l'Interrupt di un segnale
     # (Ctrl-C) non si rimanda, e l'immagine creata dal C può restare
-    # allocata, con il file aperto, fino alla fine del processo.
+    # allocata, con il file aperto, fino alla fine del processo. Su ogni
+    # versione un'eccezione arrivata proprio al ritorno di load_image, dopo
+    # la consegna dell'immagine, la lascia allocata allo stesso modo.
     #
     # @param path [String] file immagine o video
     # @return [Image] senza blocco; con un blocco, il valore del blocco
@@ -1394,7 +1399,8 @@ module Notcurses
       # eventualmente creata, che chiude il file, prima di sollevarla. Limite:
       # su Ruby 3.1, 3.2 e 3.3 l'Interrupt di un segnale (Ctrl-C) non si
       # rimanda, e l'immagine creata dal C può restare allocata, con il file
-      # aperto, fino alla fine del processo.
+      # aperto, fino alla fine del processo. Su ogni versione un'eccezione
+      # arrivata proprio al ritorno di new la lascia allocata allo stesso modo.
       #
       # @param direct [Direct] contesto aperto
       # @param path [String] file immagine o video

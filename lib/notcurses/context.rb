@@ -288,7 +288,11 @@ module Notcurses
     # Ctrl-C mentre new aspetta esce subito: il thread interno ferma il
     # contesto quando l'init torna, e fino ad allora il contesto resta
     # registrato (un nuovo init solleva InitError). Con un terminale che non
-    # risponde mai l'init non torna, e il registro resta occupato.
+    # risponde mai l'init non torna, e il registro resta occupato. Resta una
+    # finestra: un'eccezione arrivata proprio al ritorno di new, a contesto già
+    # adottato, lo lascia aperto e registrato senza che il chiamante lo
+    # riceva; lo chiudono <tt>Notcurses.active_context.close</tt> o l'hook
+    # +at_exit+.
     #
     # @raise [InitError] se un altro contesto è attivo, se l'output non si apre,
     #   o se +notcurses_init+ restituisce NULL (per esempio terminfo non
