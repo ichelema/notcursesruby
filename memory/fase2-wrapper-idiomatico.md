@@ -280,6 +280,8 @@ copertura.
 | Un evento con id 0 apre la prima sezione senza scorciatoia (`menu.c:746`) | in tutti i widget gli eventi con id 0 e `0xffffffff` non vanno al C |
 | `ncreader_offer_input` con 4 codepoint legge oltre `eff_text` (`reader.c:404-410`) | il testo dell'evento lo scrive il wrapper, come farebbe il C |
 | Backspace a inizio riga sposta solo la copia nascosta, poi abort (`reader.c:265`, `90`) | il wrapper riallinea vista e cursore del terminale |
+| Backspace, Ctrl+U e Ctrl+W non cancellano la colonna 0: il C scrive `""` con `ncplane_putegc_yx` (`reader.c:263`), che in colonna 0 fallisce (`(unsigned)x + cols - 1` con cols 0, `notcurses.c:1883`) | il wrapper svuota la cella nella copia nascosta (campo privato `textarea`, `Reader::Internals`, solo con la libreria 3.0.17 e se i campi coincidono con l'API pubblica) e nella vista, con `ncplane_putc_yx` di una cella vuota, che toglie anche le due metà di un glifo largo; Ctrl+W solo se arriva alla colonna 0 senza fermarsi su un separatore, come il C (lotto 8 delle issue in Backlog, ICH-218) |
+| Ogni ridisegno accende il cursore del terminale e lo porta nel campo, anche senza `NCREADER_OPTION_CURSOR` (`reader.c:105`) | con `cursor: false` il wrapper rimette dopo ogni operazione lo stato dell'ultimo `Context#cursor_enable` o `#cursor_disable` (`Context#restore_cursor!`, esito del C ignorato: senza un tty il C non spegne il cursore); con `cursor: true` il reader mostra il cursore, come vuole notcurses (ICH-218) |
 | `NCREADER_OPTION_HORSCROLL` con glifi larghi: abort (`reader.c:90`, `222-246`) | opzione non offerta |
 | Cursore, dimensioni o scrolling della vista cambiati dall'esterno: letture fuori dal piano (`reader.c:134-136`) | cursore riallineato prima di ogni operazione, altrimenti `WidgetError` |
 | EGC di larghezza zero sull'ultima colonna: vista e copia nascosta a x == colonne (`reader.c:240-246`, clamp con cols 0); poi ogni scrittura fallisce e Backspace + freccia sinistra fa abort (`reader.c:90`) | scartato in `put_egc`; il ritorno di `ncplane_cursor_move_yx` diventa `WidgetError` (lotto 4, ICH-273) |
@@ -345,8 +347,8 @@ fino al ridisegno successivo. Bordi arrotondati, ASCII senza UTF-8; niente PgUp/
   Un workaround servirebbe un flag "ha fatto scroll" impostato da ogni output: non fatto.
 - `Cell`: notcurses segmenta alcuni grapheme in modo diverso da Ruby (bandiere, sillabe hangul composte, coniugati
   devanagari); scrivere quelle celle solleva `CellError`.
-- Reader: Backspace, Ctrl+U e Ctrl+W non cancellano la colonna 0 (`notcurses.c:1883`); `tchannels` e `tattrword` non
-  hanno effetto (non offerti); ogni ridisegno accende il cursore del terminale. `ncreader_redraw` copia le celle
+- Reader: `tchannels` e `tattrword` non hanno effetto (non offerti). La colonna 0 e il cursore del terminale sono
+  aggirati dal lotto 8 delle issue in Backlog (ICH-218, tabella "Widget A"). `ncreader_redraw` copia le celle
   dell'area di testo nella vista con l'offset `xproject` (`reader.c:94-100`): può lasciare la metà destra di un
   glifo largo in colonna 0 della vista senza un resize, e il controllo di ICH-271 (basato sulle dimensioni) non la
   vede in una scrittura su `Reader#plane`.

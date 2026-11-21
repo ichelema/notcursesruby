@@ -274,9 +274,9 @@ corto e sicuro, altrimenti si documenta nel YARD. I più importanti:
 
 Bug noti **non** aggirati (documentati nel YARD): dopo il primo scroll di un piano `duplicate`, i resize (anche
 l'autogrow), `rotate_*`, il merge sulla destinazione e `FadeContext` permutano o perdono righe (`logrow`);
-Backspace del reader non cancella la colonna 0; l'intestazione di `Tabbed` non segue il resize. `ncvisual_from_palidx`
-(non usa i colori della palette) e `ncvisual_rotate` (perde la prima riga e la prima colonna) sono aggirati dal lotto 6
-delle issue in Backlog.
+l'intestazione di `Tabbed` non segue il resize. `ncvisual_from_palidx` (non usa i colori della palette) e
+`ncvisual_rotate` (perde la prima riga e la prima colonna) sono aggirati dal lotto 6 delle issue in Backlog; il
+Backspace del reader che non cancella la colonna 0 dal lotto 8.
 
 ### API volutamente non wrappate
 

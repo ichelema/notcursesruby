@@ -22,6 +22,13 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Reader#offer_input`: Backspace, Ctrl+U e Ctrl+W cancellano anche il carattere della colonna 0, ASCII o glifo
+  largo (ICH-218). Prima il carattere restava, perché il C cancella scrivendo `""` e in colonna 0 la scrittura
+  fallisce (`notcurses.c:1883`); il carattere successivo lo sovrascriveva. Ctrl+W si ferma ancora, come nel C, su un
+  separatore in colonna 0 (per esempio uno spazio). Con `cursor: false` un reader non lascia più acceso il cursore
+  del terminale: dopo ogni ridisegno, che il C fa accendendo il cursore nel campo, il wrapper rimette lo stato
+  dell'ultima chiamata a `Context#cursor_enable` (anche la posizione) o `#cursor_disable`. Senza un tty il C non
+  spegne il cursore. Con `cursor: true` il reader mostra il cursore nel campo, come prima.
 - `Direct#stream` con il blitter `:pixel` ridisegna ogni frame sulle righe del primo anche in fondo allo schermo
   (ICH-458). Prima un frame più basso dello schermo poteva finire sull'ultima riga (per esempio con il cursore in
   fondo: il C sposta in alto un frame che non entra sotto il cursore, `direct.c:442-448`); il C mandava poi una CUP
