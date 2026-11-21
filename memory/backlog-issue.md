@@ -870,3 +870,69 @@ Letture di `ncplane_at_yx_cell` per un blit 1x1: 28 su un piano 4x8 e 11940 su u
   `git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto. CI verde sulla PR e su `master`.
 - Linear: le 9 issue del lotto a Done; ICH-542 riportata da In Progress a Backlog (automazione). Worktree e branch,
   anche remoto, rimossi.
+
+## Lotto 7 — ICH-569, ICH-568, ICH-226, ICH-474, ICH-441, ICH-539 (PR #30, merge `e6b51e0`)
+
+Due sessioni, il 2026-11-20 e il 2026-11-21. Branch `bug/ICH-441-226-474-539-568-569-opus`, worktree
+`.claude/worktrees/bug+ICH-441-226-474-539-568-569-opus`. ICH-568 e ICH-569 aggiunte dall'utente all'inizio del lotto.
+
+### Fix
+
+- `2c9dabd` (ICH-569): in `Visual.blit_buffer` la creazione del `ncvisual` temporaneo è dentro
+  `Thread.handle_interrupt(Object => :never)` e dentro il `begin` dell'`ensure` che lo distrugge.
+- `6052c6e` (ICH-568): ripristino dello stdout, `TERM`, registro e `fclose` del rollback di `Direct.new` in un solo
+  blocco protetto, come `2cbeb95` in `Direct#close`. Superato da `996e65a`.
+- `e770f89` (ICH-441): `DaemonGuard` prepended su `Process.singleton_class`: `Process.daemon` solleva `ContextError`
+  o `DirectError` con un contesto aperto di questo processo.
+- `a47a39e` (ICH-539): solo documentazione (YARD di `run`, `Context#close`, `InputReader#halt`; CHANGELOG).
+- `996e65a` (ICH-226): `Util.init_thread`. Il thread di init nasce prima di `acquire_context`, aspetta su una Queue
+  `go` ed esegue il rollback se il chiamante non adotta il puntatore; il chiamante scrive la decisione come prima
+  istruzione dell'`ensure` (`go << adopted`), poi `init&.join unless adopted`. `report_on_exception = false`; il
+  thread rimanda le interruzioni per tutta la vita.
+- `c08d17a` (ICH-474): `Util.create_resource` (chiamata C e incapsulamento dentro `:never`, poi
+  `sleep 0 if Thread.pending_interrupt?` come punto di consegna per il thread di `FdPlane` in `:on_blocking`) in
+  `Visual.from_file`, `Direct#load_image`, `Direct::Image#initialize`, `Direct#render_frame`.
+- Simplify: `b8a504b`, `d799c74` (`NcHelpers.raise_at_c_return`). Verify: `065a15f` (ricetta
+  `.claude/skills/verify/SKILL.md`).
+- Review: `57c34b5` (`@pid` prima di `acquire_context`: la guardia di `Process.daemon` scatta anche durante l'init),
+  `df873df` (`open_output` dentro `:never`), `725bc44` (finestra di un'istruzione dopo la consegna, nello YARD),
+  `1125323` (`ensure` nell'`undo` di `Context`), `b45fc80` (spec di `render_frame`), `daf8f8d` (spec di `TERM`),
+  `8a34478` (YARD di `new`).
+
+### Decisioni
+
+- Dell'utente: ICH-441 con l'errore prima del fork, non lo stop prima del fork (uno stop rinviato non partirebbe
+  mai, perché `daemon(3)` chiama `_exit`). ICH-539 chiusa con la sola documentazione. ICH-576 e ICH-577 aperte in
+  Backlog. Review `soft` (Sonnet) e review mirata dei due commit sull'init.
+- Mie: design di ICH-226 e ICH-474 confrontato fra `trinity:deep-reasoner` e `gpt-bridge:deep-reasoner`; scelto il
+  prototipo del primo (registro e `open_output` nel chiamante, maschera `:never` per tutta la vita del thread), già
+  provato con uno sweep (0 difetti su 209 punti contro 10 prima). Per ICH-474 scartato il thread interno: il Ctrl-C
+  interromperebbe l'attesa del chiamante, non `open()`. Per il finding #3 della review `@pid` assegnato prima del
+  registro invece di `pid.nil?` (che solleverebbe a torto in un figlio di `fork` creato durante l'init del padre).
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| Le finestre di ICH-539 esistono anche su Ruby 3.3 | `handle_interrupt(:never)` rinvia SIGINT solo da Ruby 3.4 (misurato su 3.1.7, 3.2.11, 3.3.13, 3.4.12, 4.0.7) | testi corretti in "3.1, 3.2 e 3.3" |
+| Nel worktree il submodule `notcurses/` non si clona dalla rete | rete | `git clone --shared --no-checkout <checkout principale>/notcurses notcurses` e checkout di `b26048e` |
+| Spec con `TracePoint` in pausa: il secondo `Thread#raise` arrivava al posto sbagliato | un `Thread#raise` non mascherato interrompe subito `resume.pop`, e il `resume << true` dopo resta in coda | due `paused.pop` separati, un solo `resume` |
+| Una spec sulla lib vecchia passava | rspec mette `lib/` del worktree in testa al load path | script a parte con `ruby -I<lib di git archive>` |
+| `Queue#pop` nel `TracePoint` | metodo C fino a Ruby 3.x, metodo Ruby da 4.0 | evento scelto con `source_location` |
+| Con il vecchio `undo` la spec di `Direct` si bloccava invece di fallire | l'helper aspettava per sempre una pausa che non arrivava | `NcHelpers.raise_at_c_return` segnala la fine del blocco |
+| tmux non risponde alle query di notcurses; `kill -INT` ignorato | bash avvia i job con `&` con SIGINT ignorato | terminale finto su pty, `set -m` (ricetta di verify) |
+| Liste di file in una variabile in zsh | zsh non divide le parole | file scritti per esteso |
+| Un `rm` nel comando | un hook mette in coda ogni `rm` | nessun `rm` |
+| Il `cd` nello scratchpad ha riportato la sessione nel checkout principale | il `cd` fuori dal worktree | `EnterWorktree` di nuovo |
+
+### Verifica finale
+
+- `master` su `e6b51e0`, 2026-11-21: 1263 esempi, 0 fallimenti, 1 pending (`qrcode` sullo stub), in ordine definito e
+  con i semi 1234, 4242 e 7; coverage 98,17 % di righe; RuboCop 0 offense; YARD senza warning, 100 %; `ruby -w`
+  pulito; gem costruita; `git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto. CI verde sulla PR e su
+  `master`. Su Ruby 3.1.7 le spec di init (`context_spec`, `direct_spec`, `pty_spec`): 146 esempi, 0 fallimenti.
+- La prima corsa su `master` si è bloccata in `spec/notcurses/ui/event_loop_spec.rb:716` (lotto 3), con un `F`
+  iniziale in `spec/ci_workflow_spec.rb:8` di cui rspec, fermato, non ha stampato il messaggio. Non riprodotto:
+  l'esempio passa da solo 5 volte su 5, la spec della CI passa da sola, e le quattro corse dopo passano. Lo script di
+  verifica ora ha `timeout -s KILL 600` per suite.
+- Linear: le 6 issue del lotto a Done; ICH-576 e ICH-577 in Backlog. Worktree e branch, anche remoto, rimossi.

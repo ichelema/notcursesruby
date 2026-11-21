@@ -1272,6 +1272,14 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
   issue); round 3: 4 (1 LOW corretto, 2 issue, 1 HIGH). Il HIGH (segfault di `Direct#stop` con il fd 1 in sola
   lettura) è corretto dopo il loop in `7ae8438`, con una review mirata di GPT (approvabile con riserve, il LOW in
   `4f6af76`). I fix li ha scritti l'orchestratore.
+  Lotto 7: il design di ICH-226 e ICH-474 è stato confrontato fra due analisi (`trinity:deep-reasoner` e
+  `gpt-bridge:deep-reasoner`), con le stesse conclusioni. Poi `/trinity:workflow:2_work-simplify` (2 semplificazioni),
+  `/trinity:workflow:2_work-verify` (PASS sul terminale finto; la ricetta è in `.claude/skills/verify/SKILL.md`) e una
+  `/trinity:workflow:3_independent-review` in modo `soft` (un `trinity:reviewer` Sonnet, interrotto e ripreso per il
+  limite d'uso): approvabile con riserve, 3 finding LOW, tutti corretti (`57c34b5`, `df873df`, `725bc44`). Due buchi
+  di test segnalati dalla review hanno trovato un bug (l'`undo` di `Context` senza `ensure`, `1125323`). Una review
+  mirata `soft` di `57c34b5` e `1125323` è approvabile; le sue due note (spec di `TERM`, YARD) sono in `daf8f8d` e
+  `8a34478`. I fix li ha scritti l'orchestratore.
 
 ### Lotti
 
@@ -1285,6 +1293,7 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
 | 4 | [#27](https://github.com/ichelema/notcursesruby/pull/27) | `494ffe0` | ICH-463, in Blocked: la PR documenta il limite e non chiude la issue | un carattere UTF-8 di più byte spezzato fra due letture fa girare per sempre il thread di input: `process_input` restituisce 0 (servono altri byte) e `process_melange` esce dal ciclo solo con un valore negativo (`in.c:2427`); `get` non riceve più eventi e `notcurses_stop` non ritorna (`in.c:2662`). Non aggirato; correzione di una riga proposta upstream (issue [#2947](https://github.com/dankamongmen/notcurses/issues/2947), PR [#2954](https://github.com/dankamongmen/notcurses/pull/2954)); tabella "Bug e limiti di notcurses 3.0.17 trovati nella Fase 3" |
 | 5 | [#28](https://github.com/ichelema/notcursesruby/pull/28) | `3d3e0e9` | ICH-475, ICH-464; ICH-540 e ICH-541 nate dalla review, in Backlog | nessuno |
 | 6 | [#29](https://github.com/ichelema/notcursesruby/pull/29) | `0730865` | ICH-458, ICH-486, ICH-222, ICH-223, ICH-488; ICH-549, ICH-550, ICH-551, ICH-552 (nate dalla review, sullo stesso branch per scelta dell'utente); ICH-542 (`Refs`) resta in Backlog | `ncplane_qrcode` con il cursore fuori da (0, 0) scrive fuori dal buffer di pixel (`fill.c:612-616`, ICH-542, non aggirato); `rotate_bounding_box` ruota il riquadro attorno al proprio centro e i pixel attorno al centro dell'immagine (`visual.c:658-705`): `ncvisual_rotate` perde pixel opachi con bordi trasparenti asimmetrici; `ncvisual_bounding_box` a volte calcola un riquadro più stretto (`visual.c:537-628`); tabelle "Visual" e "Piani" di `memory/fase2-wrapper-idiomatico.md` |
+| 7 | [#30](https://github.com/ichelema/notcursesruby/pull/30) | `e6b51e0` | ICH-569, ICH-568, ICH-226, ICH-474, ICH-441, ICH-539 (solo documentazione, scelta dell'utente); ICH-576 e ICH-577 nate dal lotto, in Backlog | nessuno |
 
 ### Cambi dell'API pubblica
 
@@ -1354,7 +1363,8 @@ del lotto 3. Comportamenti nuovi:
   con un timeout, non `Context#inputready_fd`; dopo `run`, prima di attendere sul descrittore, serve
   `get(timeout: 0)`. `Key::EOF` resta disponibile a ogni lettura (lotto 3, ICH-536).
 - Un secondo Ctrl+C durante la pulizia di `run` arriva dopo la pulizia: `run` solleva `Interrupt` invece di
-  restituire `:interrupt`. Su Ruby 3.1 e 3.2 la pulizia ricomincia; restano due finestre strette (ICH-539).
+  restituire `:interrupt`. Su Ruby 3.1, 3.2 e 3.3 la pulizia ricomincia; restano due finestre strette, documentate
+  nel lotto 7 (ICH-539).
   `Context#close` ferma il thread di input prima di `notcurses_stop` e solleva l'`Interrupt` arrivato mentre lo
   aspettava (lotto 3, ICH-536).
 - Nuovi metodi `@api private` di `Context`: `held_signal_keys`, `linesigs_flag?`, `isig_enable`, `isig_disable`,
@@ -1407,6 +1417,21 @@ del lotto 3. Comportamenti nuovi:
 - `Plane#qrcode` sopra metà di un glifo largo svuota l'altra metà; con il cursore fuori da (0, 0) il C corrompe la heap
   (documentato, ICH-542) (lotto 6, ICH-488, ICH-552).
 - Nuovo metodo `@api private`: `Plane#keeping_glyphs_whole(top, left, height, width, all: false)` (lotto 6).
+- `Process.daemon` con un `Context` o un `Direct` aperto, anche durante l'init in un altro thread, solleva
+  `ContextError` o `DirectError` prima del fork, e il contesto resta usabile (scelta dell'utente). Senza un contesto
+  aperto, o in un figlio di `fork`, non cambia (lotto 7, ICH-441).
+- Il thread interno dell'init di `Context.new` e `Direct.new` esegue anche il rollback: un secondo Ctrl-C fa uscire
+  subito `new`, e finché l'init non torna un nuovo init solleva `InitError`; un `Thread#kill` del chiamante arriva a
+  contesto fermato e registro libero. Un errore della chiamata C o del rollback non scrive su stderr e non lascia il
+  registro occupato; l'errore del rollback sostituisce l'eccezione originale (ICH-577). Un terminale che non risponde
+  mai lascia il processo fermo nell'init anche con SIGTERM e SIGINT (ICH-576) (lotto 7, ICH-226, ICH-568).
+- `Visual.from_file`, `Direct#load_image`, `Direct::Image.new` e `Direct#render_frame` non perdono la risorsa C con
+  un'eccezione asincrona al ritorno della chiamata C; i blit di buffer non perdono il `ncvisual` temporaneo. Su Ruby
+  3.1, 3.2 e 3.3 un Ctrl-C può ancora perderla; resta una finestra di un'istruzione al ritorno, a risorsa consegnata
+  (lotto 7, ICH-474, ICH-569).
+- Su Ruby 3.1, 3.2 e 3.3 (non solo 3.1 e 3.2) `Thread.handle_interrupt` non rimanda l'Interrupt di un segnale: le due
+  finestre della pulizia di `run` e di `InputReader#halt` sono nello YARD e nel CHANGELOG (lotto 7, ICH-539).
+- Nuovi metodi `@api private` di `Util`: `init_thread` e `create_resource` (lotto 7).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
@@ -1418,6 +1443,7 @@ del lotto 3. Comportamenti nuovi:
 - Lotto 4: nessuno.
 - Lotto 5: nessuno.
 - Lotto 6: nessuno. `lib/notcurses/direct.rb` usa `fcntl` della libreria standard (regola 10).
+- Lotto 7: nessuno.
 
 ### Issue aperte nate dai lotti
 
@@ -1458,8 +1484,9 @@ del lotto 3. Comportamenti nuovi:
   round 3; Done nel lotto 3).
 - ICH-538 — `run` chiamava `notcurses_linesigs_disable` anche con il flag già spento (lotto 3, primo loop; Done nel
   lotto 3).
-- ICH-539 — su Ruby 3.1 e 3.2 un secondo segnale nel `rescue` della pulizia di `run` o di `InputReader#halt` salta il
-  resto della pulizia (lotto 3, secondo loop, review; Low, in Backlog per scelta dell'utente).
+- ICH-539 — su Ruby 3.1, 3.2 e 3.3 un secondo segnale nel `rescue` della pulizia di `run` o di `InputReader#halt`
+  salta il resto della pulizia (lotto 3, secondo loop, review; Done nel lotto 7 con la sola documentazione, scelta
+  dell'utente).
 - ICH-540 — `Plane#close`, `#family_destroy`, `Widget#close` e `Context#drop_planes` da un gestore `trap` che torna al
   codice interrotto non rinviano la distruzione: il C usa un piano già liberato (lotto 5, review round 1; Low, in
   Backlog, limite nello YARD).
@@ -1478,6 +1505,11 @@ del lotto 3. Comportamenti nuovi:
 - ICH-567 — `Direct#stream` con `:pixel` e frame di altezze diverse, uno alto quanto lo schermo (lotto 6, review-fix
   loop; Medium, in Backlog).
 - ICH-568 — il rollback di `Direct.new` con un secondo `Thread#raise` durante il ripristino dello stdout lascia il
-  registro occupato (lotto 6, review-fix loop; Medium, in Backlog; con ICH-226 nel lotto 7).
+  registro occupato (lotto 6, review-fix loop; Done nel lotto 7).
 - ICH-569 — un'eccezione asincrona dopo la creazione del `ncvisual` temporaneo di `Visual.blit_rgba` lo perde (lotto 6,
-  review-fix loop; Medium, in Backlog; con ICH-474 nel lotto 7).
+  review-fix loop; Done nel lotto 7).
+- ICH-576 — con un terminale che non risponde mai alle query dell'init, SIGTERM e Ctrl-C non fermano il processo dentro
+  `Context.new` o `Direct.new` (anche su `master` prima del lotto; lotto 7, verify; Medium, in Backlog; da provare
+  anche con `/trinity:workflow:2_work-verify`).
+- ICH-577 — un errore nel rollback dell'init sostituisce l'eccezione originale del chiamante (anche prima del lotto;
+  lotto 7, review; Low, in Backlog).
