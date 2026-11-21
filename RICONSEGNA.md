@@ -1294,6 +1294,7 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
 | 5 | [#28](https://github.com/ichelema/notcursesruby/pull/28) | `3d3e0e9` | ICH-475, ICH-464; ICH-540 e ICH-541 nate dalla review, in Backlog | nessuno |
 | 6 | [#29](https://github.com/ichelema/notcursesruby/pull/29) | `0730865` | ICH-458, ICH-486, ICH-222, ICH-223, ICH-488; ICH-549, ICH-550, ICH-551, ICH-552 (nate dalla review, sullo stesso branch per scelta dell'utente); ICH-542 (`Refs`) resta in Backlog | `ncplane_qrcode` con il cursore fuori da (0, 0) scrive fuori dal buffer di pixel (`fill.c:612-616`, ICH-542, non aggirato); `rotate_bounding_box` ruota il riquadro attorno al proprio centro e i pixel attorno al centro dell'immagine (`visual.c:658-705`): `ncvisual_rotate` perde pixel opachi con bordi trasparenti asimmetrici; `ncvisual_bounding_box` a volte calcola un riquadro più stretto (`visual.c:537-628`); tabelle "Visual" e "Piani" di `memory/fase2-wrapper-idiomatico.md` |
 | 7 | [#30](https://github.com/ichelema/notcursesruby/pull/30) | `e6b51e0` | ICH-569, ICH-568, ICH-226, ICH-474, ICH-441, ICH-539 (solo documentazione, scelta dell'utente); ICH-576 e ICH-577 nate dal lotto, in Backlog | nessuno |
+| 8 | [#31](https://github.com/ichelema/notcursesruby/pull/31) | `ee509e1` | ICH-218, ICH-484 (il lotto 8 della tabella diviso in due, scelta dell'utente: ICH-217, ICH-232 e ICH-533 nel lotto 8b); ICH-580 nata dal verify, in Backlog | `ncreader_redraw` copia una cella della copia nascosta nella vista solo se EGC, stile o canali sono diversi, senza confrontare la width (`cellcmp_and_dupfar`, `internal.h:1510-1523`, `reader.c:100`): dopo Backspace, Ctrl+U e Ctrl+W le metà destre restano con width 0 (aggirato); già noti e ora aggirati: la cancellazione della colonna 0 (`notcurses.c:1883`) e il cursore acceso a ogni ridisegno (`reader.c:105`); tabella "Widget A" di `memory/fase2-wrapper-idiomatico.md` |
 
 ### Cambi dell'API pubblica
 
@@ -1432,6 +1433,16 @@ del lotto 3. Comportamenti nuovi:
 - Su Ruby 3.1, 3.2 e 3.3 (non solo 3.1 e 3.2) `Thread.handle_interrupt` non rimanda l'Interrupt di un segnale: le due
   finestre della pulizia di `run` e di `InputReader#halt` sono nello YARD e nel CHANGELOG (lotto 7, ICH-539).
 - Nuovi metodi `@api private` di `Util`: `init_thread` e `create_resource` (lotto 7).
+- `Reader#offer_input`: Backspace, Ctrl+U e Ctrl+W cancellano anche il carattere della colonna 0 (Ctrl+W si ferma
+  ancora su un separatore in colonna 0, come nel C); le metà destre dei glifi larghi rimasti tengono la width, e
+  `reader.plane.at` su di loro restituisce il glifo. I workaround leggono il piano nascosto del testo dal campo
+  privato `textarea` (`Reader::Internals`, solo con la libreria 3.0.17) (lotto 8, ICH-218, ICH-484).
+- Un `Reader` con `cursor: false` dopo ogni ridisegno rimette il cursore del terminale come l'ha lasciato l'ultima
+  chiamata a `Context#cursor_enable` (con la posizione) o `#cursor_disable`; prima restava acceso nel campo. Con
+  `cursor: true` il reader mostra il cursore nel campo, come prima. Con `cursor: false` il Backspace a inizio riga non
+  sposta più il cursore del terminale. Limite aperto: dopo un reader con `cursor: true` lo stato è sconosciuto e i
+  reader con `cursor: false` non lo rimettono (ICH-580) (lotto 8, ICH-218).
+- Nuovo metodo `@api private` di `Context`: `restore_cursor!` (lotto 8).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
@@ -1451,7 +1462,7 @@ del lotto 3. Comportamenti nuovi:
 - ICH-483 — `FFI.ncplane_putwegc` libera la stringa con la `free` di glibc, lo stesso difetto di ICH-449 nel layer FFI
   (Fase 1, regola 1) (lotto 1, audit di ICH-225).
 - ICH-484 — nella vista del `Reader`, dopo Backspace, Ctrl+U e Ctrl+W, le metà destre dei glifi larghi hanno width 0
-  (lotto 1, audit di ICH-225).
+  (lotto 1, audit di ICH-225; Done nel lotto 8).
 - ICH-485 — con l'egcpool pieno `merge_down` non riesce a riscrivere i glifi larghi e la loro metà destra resta a
   width 0 (lotto 1, review round 3; MEDIUM).
 - ICH-486 — `Visual.blit_*` sopra metà di un glifo largo lascia una metà orfana (lotto 1, review; esiste già su
@@ -1513,3 +1524,6 @@ del lotto 3. Comportamenti nuovi:
   anche con `/trinity:workflow:2_work-verify`).
 - ICH-577 — un errore nel rollback dell'init sostituisce l'eccezione originale del chiamante (anche prima del lotto;
   lotto 7, review; Low, in Backlog).
+- ICH-580 — dopo un `Reader` con `cursor: true`, che rende sconosciuto lo stato del cursore, i reader con
+  `cursor: false` lasciano acceso il cursore anche dopo `Context#cursor_disable` (lotto 8, verify con `ncvt`; Medium,
+  in Backlog; correzione probabile: tenere separati lo stato chiesto dall'applicazione e quello noto del C).

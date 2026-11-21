@@ -936,3 +936,75 @@ Due sessioni, il 2026-11-20 e il 2026-11-21. Branch `bug/ICH-441-226-474-539-568
   l'esempio passa da solo 5 volte su 5, la spec della CI passa da sola, e le quattro corse dopo passano. Lo script di
   verifica ora ha `timeout -s KILL 600` per suite.
 - Linear: le 6 issue del lotto a Done; ICH-576 e ICH-577 in Backlog. Worktree e branch, anche remoto, rimossi.
+
+## Lotto 8 — ICH-218, ICH-484 (PR #31, merge `ee509e1`)
+
+Una sessione, il 2026-11-21. Branch `bug/ICH-218-484-opus`, worktree `.claude/worktrees/bug+ICH-218-484-opus`. Il
+lotto 8 della tabella aveva 5 issue: l'utente l'ha diviso in due per tenere piccolo il contesto di ogni sessione
+(lotto 8 `Reader`: ICH-218, ICH-484; lotto 8b grapheme: ICH-217, ICH-232, ICH-533). ICH-576 e ICH-577 sono passate
+al lotto 8c.
+
+### Fix
+
+- `298f0fc` (ICH-218): dopo la chiamata C, `Reader#offer_input` svuota la cella (y, 0) nella copia nascosta e nella
+  vista con `ncplane_putc_yx` di una cella vuota (una colonna: passa il controllo che fa fallire `""`,
+  `notcurses.c:1883`; `ncplane_put` toglie anche le due metà di un glifo largo), solo dove il C ha provato e
+  fallito: Backspace dalla colonna 1, Ctrl+U oltre la colonna 0, Ctrl+W arrivato alla colonna 0 senza un
+  separatore (categoria Unicode Z, come `iswordbreak`, letto dalla copia nascosta). La copia nascosta viene dal
+  campo `textarea` di `struct ncreader` (`Reader::Internals`, privata, solo con la 3.0.17 e se `ncp` coincide con
+  `ncreader_plane` e le dimensioni con la vista). Cursore: `Context#cursor_enable` ricorda la posizione;
+  `Context#restore_cursor!` (`@api private`) rimette lo stato dell'ultima chiamata dopo ogni ridisegno di un reader
+  con `cursor: false` (helper privato `redraw` con `ensure`); con `cursor: true` il reader mostra il cursore nel
+  campo. Criterio del cursore aggiornato su Linear con la scelta dell'utente.
+- `afc57ec` (ICH-484): durante Backspace, Ctrl+U e Ctrl+W ogni cella della copia nascosta ha il bit di stile
+  `0x8000` (`RECOPY_STYLE`, che notcurses 3.0.17 non usa), messo con `ncplane_format`; il C cancella con stile 0,
+  quindi ogni ridisegno copia ogni cella cambiata con la sua width; un `ensure` rimette lo stile a 0 nei due piani.
+- Simplify: `9fbd5c2` (`text = deletion && text_area(ptr)` prima del ramo). Verify: `9af985b` (ricetta con `ncvt`).
+
+### Decisioni
+
+- Dell'utente: lotto 8 diviso in due (8 e 8b), ICH-576 e ICH-577 nel lotto 8c; criterio del cursore di ICH-218 solo
+  con `cursor: false` (con `cursor: true` il reader resta responsabile del cursore, come vuole notcurses); verify con
+  un terminale headless in C su libghostty-vt 1.0.1 (`ncvt`) invece di pyghostty, poi rimosso; ricetta e sorgenti di
+  `ncvt` nel repository; il FAIL del verify diventa una issue nuova (ICH-580); merge fatto dall'orchestratore senza
+  review indipendente, su autorizzazione dell'utente.
+- Mie: colonna 0 corretta dopo la chiamata C (prima della chiamata Ctrl+W non si può decidere senza rifare il ciclo
+  del C); risultato del C ignorato nel ripristino del cursore, come fa il ridisegno; con `cursor: false` il Backspace
+  a inizio riga non sposta più il cursore del terminale (la spec di `reader_spec.rb` passa a `cursor: true`).
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| Primo fix di ICH-484 (stile sulla vista) e spec di A4-01 rosse | Ctrl+U e Ctrl+W ridisegnano più volte: lo stile sulla vista vale solo per il primo ridisegno, poi una metà destra cancellata nella copia nascosta torna uguale a quella della vista | stile sulla copia nascosta, che il C cancella con stile 0 |
+| Spec del cursore rosse in ordine casuale | il contesto delle spec è dell'intero file (`before(:all)`) e uno stato del cursore resta da un altro esempio | stato noto all'inizio, reader con `cursor: true` alla fine per uno stato sconosciuto |
+| `guard_coverage_spec` rossa | `offer_input` e `write` iniziavano con `redraw`, non con `Guard.run` | `Guard.run` fuori da `redraw` |
+| Spec delle immagini rosse nel worktree | submodule `notcurses` non inizializzato (`notcurses/data`) | `git submodule update --init --depth 1 notcurses` |
+| Spec del glifo largo: `"漢漢"` al posto di `"漢漢漢"` | dopo il Backspace dalla colonna 2 il C lascia il cursore in colonna 1 | Ctrl+A prima della scrittura |
+| `sudo -n pacman` fallisce | nessuna credenziale in cache | `sudo pacman` senza `-n`, su richiesta dell'utente |
+| Verify: il cursore con `cursor: true` sembrava spento | lo snapshot era preso dopo la chiusura del reader, che spegne il cursore | snapshot a reader aperto |
+
+### Verify (`ncvt`, 2026-11-21): FAIL su un bordo
+
+- Passano: colonna 0 (Backspace, anche con il cursore a metà di un glifo largo e sulla seconda riga; Ctrl+U; Ctrl+W,
+  che lascia uno spazio in colonna 0), metà destre di ICH-484 lette con `Plane#at`, cursore nascosto con
+  `cursor: false`, rimesso in (5, 10) dopo `cursor_enable(y: 10, x: 5)`, mostrato nel campo con `cursor: true`.
+- FAIL: dopo un reader con `cursor: true`, che segna lo stato come sconosciuto, `restore_cursor!` non fa nulla e i
+  reader con `cursor: false` lasciano acceso il cursore anche se l'ultima chiamata è stata `cursor_disable`
+  (ICH-580).
+- Comportamento del C fuori scope, senza issue (da chiedere all'utente): un Backspace dopo un glifo largo lo cancella
+  intero ma sposta il cursore di una sola colonna.
+
+### Verifica finale
+
+- `master` su `ee509e1`, 2026-11-21: 1271 esempi, 0 fallimenti, 1 pending (`qrcode` sullo stub), in ordine definito e
+  con i semi 1234, 4242 e 7; coverage 98,18 % di righe; RuboCop 0 offense; YARD senza warning, 100 %; `ruby -w`
+  pulito; gem costruita; `git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto. CI della PR verde su
+  tutta la matrice. Su Ruby 3.1.7 (branch) `reader_spec`, `context_spec`, `wide_glyph_copies_spec` e `pty_spec`: 116
+  esempi, 0 fallimenti.
+- CI di `master` dopo il merge: il job Ruby 3.4.12 è fallito in `spec/integration/ui_pty_spec.rb:786` (ICH-536,
+  lotto 3: "coda piena: stop 4.0 s" invece di "coda piena: interrupt", il Ctrl+C perso con la coda di input piena,
+  instabilità già nota sotto carico), codice non toccato dal lotto; rilanciato il job, verde al tentativo 2 su
+  tutta la matrice (run `44874487684`).
+- Linear: ICH-218 e ICH-484 a Done; ICH-580 in Backlog. Worktree e branch non rimossi: `5_remove-worktree` si avvia
+  solo a mano (passo per l'utente, scritto in `handoff.md`).
