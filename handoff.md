@@ -6,7 +6,7 @@
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
 > `git show ad0315b:RIPRESA.md`; quello dei lotti della revisione in `git show 8a4b5f7:RIPRESA.md`.
 
-## Stato e prossimo step (aggiornato il 2026-11-21, lotto 7 fatto, lotto 8 in corso, prossimo lotto 8b)
+## Stato e prossimo step (aggiornato il 2026-11-21, lotto 8 fatto, prossimo lotto 8b)
 
 - Lotto 1 fatto: PR #22, merge `74deb80`. Lotto 2 fatto: PR #23, merge `cb90c4f`. Lotto 2b fatto: PR #24, merge
   `6374e41`. Lotto 2c fatto: PR #25, merge `d2c5f7c`. Lotto 3 fatto: PR #26, merge `e15b40a` (ICH-454, ICH-456,
@@ -57,15 +57,32 @@
   `spec/notcurses/ui/event_loop_spec.rb:716` (lotto 3, `Thread#kill` durante la pulizia di `run`), con un `F` iniziale
   in `spec/ci_workflow_spec.rb:8` senza messaggio (rspec fermato prima del riepilogo). Non riprodotto: l'esempio
   passa da solo 5 volte su 5 e la suite in ordine definito passa. Lo script di verifica ora ha un timeout per suite.
-- **Lotto 8 diviso in due** (scelta dell'utente del 2026-11-21, per tenere il contesto di ogni sessione piccolo): il
-  lotto 8 (`Reader`: ICH-218, ICH-484) è in corso nella sessione del 2026-11-21, branch `bug/ICH-218-484-opus`; le
-  3 issue dei grapheme passano al lotto 8b; ICH-576 e ICH-577 passano al lotto 8c (la scelta dell'utente era «dopo
-  il lotto 8»). Lo scoping del 2026-11-21 (effort High per le 5 issue insieme) ha diviso il codice in due gruppi:
-  `Reader` (`widgets/reader.rb`, stato del cursore in `context.rb`, `reader_spec.rb`,
-  `wide_glyph_copies_spec.rb:86`) e grapheme (`zero_width_egc!` in `plane.rb`, `Cell#load_into` in `cell.rb`,
-  `Text.check!` in `ui/component.rb` e i suoi chiamanti in `ui/`).
-- **Prossimo step:** se il lotto 8 non è chiuso, riprendilo dal suo stato (PR, review, merge, chiusura). Poi lotto
-  8b (`bug`): ICH-217, ICH-232, ICH-533, issue già spiegate all'utente il 2026-11-21; non serve spiegarle di nuovo.
+- **Lotto 8 diviso in due** (scelta dell'utente del 2026-11-21, per tenere il contesto di ogni sessione piccolo):
+  lotto 8 (`Reader`: ICH-218, ICH-484), lotto 8b (grapheme: ICH-217, ICH-232, ICH-533), ICH-576 e ICH-577 nel lotto
+  8c. Lo scoping del 2026-11-21 ha diviso il codice in due gruppi: `Reader` (`widgets/reader.rb`, cursore in
+  `context.rb`) e grapheme (`zero_width_egc!` in `plane.rb`, `Cell#load_into` in `cell.rb`, `Text.check!` in
+  `ui/component.rb` e i suoi chiamanti in `ui/`).
+- **Lotto 8 fatto:** PR #31, merge `ee509e1` (2026-11-21), ICH-218 e ICH-484 a Done. Merge fatto dall'orchestratore
+  su autorizzazione dell'utente, che si è assentato: **nessuna review indipendente** (simplify e verify sì), CI verde
+  su tutta la matrice. Il verify con `ncvt` ha dato FAIL su un bordo, aperto come **ICH-580** (Backlog, Medium,
+  `related` a ICH-218): dopo un reader con `cursor: true` i reader con `cursor: false` lasciano acceso il cursore.
+  Log in `memory/backlog-issue.md`, esito in `RICONSEGNA.md`.
+- **Da fare all'inizio della prossima sessione:**
+  - worktree e branch del lotto 8 non sono rimossi: `5_remove-worktree` si avvia solo a mano (l'invocazione da parte
+    del modello è disabilitata). Esegui `/trinity:workflow:5_remove-worktree bug+ICH-218-484-opus`; il worktree ha in
+    più il submodule `notcurses` inizializzato, e con `git status` vuoto `--force` è approvato. Va tolto anche il
+    branch remoto `bug/ICH-218-484-opus`;
+  - chiedi all'utente in quale lotto mettere ICH-580 (tocca `Context#restore_cursor!` e `cursor_state_unknown!`, non
+    il codice dei lotti 8b e 8c);
+  - chiedi all'utente se aprire una issue per un comportamento del C fuori scope: un Backspace dopo un glifo largo lo
+    cancella intero, ma sposta il cursore di una sola colonna (con `"漢"` e il cursore in colonna 2 finisce in
+    colonna 1).
+- **Verify con un terminale vero:** `.claude/skills/verify/` ha la ricetta di `ncvt` (libghostty-vt 1.0.1, stabile
+  dalla 1.0), il sorgente `ncvt.c` e l'esempio `verify_reader.rb`. La libreria compilata e `ncvt` sono in
+  `~/.claude/tmp/libghostty-vt/` (prefix e `harness/ncvt`); se mancano, la ricetta li ricostruisce. Per ICH-576 usa
+  `ncvt -m` (terminale muto).
+- **Prossimo step:** dopo i punti sopra, lotto 8b (`bug`): ICH-217, ICH-232, ICH-533, issue già spiegate all'utente
+  il 2026-11-21; non serve spiegarle di nuovo.
   Comando: `/trinity:workflow:1_create-worktree master ICH-217 ICH-232 ICH-533 opus`. Prima di `2_work-issue`
   chiedi all'utente l'approvazione del cambio dell'API della Fase 2 per ICH-232 (un helper `@api private` su
   `Plane` che espone il controllo di `zero_width_egc!` a `Notcurses::UI`). Note dello scoping: ICH-533 e ICH-232
