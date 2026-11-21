@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Ricetta per verificare a mano notcursesruby (gem Ruby, wrapper di notcurses) su un terminale finto con l'API pubblica, quando nell'ambiente non c'è un emulatore di terminale. Usala in /trinity:workflow:2_work-verify o per provare dal vivo Context, Direct, Visual e i segnali.
+description: Ricetta per verificare a mano notcursesruby (gem Ruby, wrapper di notcurses) con l'API pubblica, quando nell'ambiente non c'è un emulatore di terminale, su un terminale headless (ncvt, libghostty-vt 1.x) che mostra lo schermo e il cursore, o su un terminale finto su pty. Usala in /trinity:workflow:2_work-verify o per provare dal vivo Context, Direct, Visual, i widget e i segnali.
 ---
 
 # Verifica di notcursesruby dall'API pubblica
@@ -18,7 +18,55 @@ emulatore utilizzabile:
   la lib di `master`;
 - non c'è un display: kitty e gli altri emulatori non partono.
 
-Funziona il terminale finto delle spec di integrazione (`spec/integration/pty_spec.rb`): un pty con un thread
+Funzionano due terminali senza display:
+
+- **ncvt** (sezione sotto): un emulatore vero (libghostty-vt, il nucleo di Ghostty) che risponde da solo alle query
+  e mostra lo schermo. Usalo quando la modifica si vede sullo schermo: testo, posizione e visibilità del cursore,
+  schermo alternativo.
+- **il terminale finto** delle spec: risponde solo a DA1 e alla posizione del cursore, ma può trattenere DA1 fino a
+  un segnale (`FAKETERM_HOLD`). Usalo per i tempi dell'init.
+
+### ncvt (libghostty-vt)
+
+`ncvt.c`, in questa cartella, avvia un comando su un pty con `forkpty`, gli passa le risposte di libghostty-vt
+(DA1, posizione del cursore, modi) e stampa lo stato dello schermo. La libreria va compilata una volta, fuori dal
+repository:
+
+```sh
+B="$HOME/.claude/tmp/libghostty-vt"; V=1.0.1
+mkdir -p "$B/dl" "$B/src" "$B/prefix"
+for f in libghostty-vt-$V.tar.gz libghostty-vt-$V-deps.tar.gz SHA256SUMS SHA256SUMS.minisig; do
+  curl -fsSL -o "$B/dl/$f" "https://release.files.ghostty.org/libghostty-vt/$V/$f"
+done
+minisign -V -P RWQlAjJC23149WL2sEpT/l0QKy7hMIFhYdQOFy0Z7z7PbneUgvlsnYcV -m "$B/dl/SHA256SUMS"
+(cd "$B/dl" && sha256sum --ignore-missing -c SHA256SUMS)
+tar -xzf "$B/dl/libghostty-vt-$V.tar.gz" -C "$B/src"; tar -xzf "$B/dl/libghostty-vt-$V-deps.tar.gz" -C "$B/src"
+(cd "$B/src/libghostty-vt-$V" && mise x zig@0.17.1 -- zig build --prefix "$B/prefix" \
+  --system "$B/src/libghostty-vt-$V-deps" -Doptimize=ReleaseFast)
+PKG_CONFIG_PATH="$B/prefix/lib/pkgconfig" cc -O2 -Wall -Wextra -o "$B/ncvt" .claude/skills/verify/ncvt.c \
+  $(PKG_CONFIG_PATH="$B/prefix/lib/pkgconfig" pkg-config --cflags --libs libghostty-vt) -lutil -Wl,-rpath,"$B/prefix/lib"
+```
+
+- libghostty-vt è stabile dalla 1.0 (ABI C stabile per tutta la serie 1.x). La build vuole Zig 0.17 e si ferma con
+  le altre minor. Usa i tarball di `release.files.ghostty.org`, non l'archivio dei tag GitHub, che costruisce l'app.
+- `minisign` è il pacchetto di sistema (`sudo pacman -S minisign`).
+
+Uso: `ncvt [-c COLONNE] [-r RIGHE] [-t SECONDI] [-m] [-s FILE] -- comando`.
+
+- `-s FILE`: lo script crea FILE con un'etichetta nella prima riga; ncvt aspetta che l'output si fermi, stampa lo
+  snapshot, cancella FILE e crea `FILE.done`; lo script aspetta `FILE.done`, lo cancella e prosegue.
+  `verify_reader.rb`, in questa cartella, è un esempio completo (Reader: colonna 0, metà destre, cursore).
+- Uno snapshot ha la riga `cursor x=.. y=.. visible=0|1 screen=primary|alternate replies=N` (posizione da 0,
+  `visible` è il modo 25) e le righe dello schermo numerate da 0. Alla fine stampa uno snapshot e l'exit status.
+- `-m`: terminale muto, non risponde a niente; con `-t` il comando fermo nell'init viene ucciso con SIGKILL.
+- Lancia lo script con `TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8` e
+  `Context.open(termtype: 'xterm-256color', suppress_banners: true)`, senza `output:`.
+- Prendi lo snapshot a widget aperto: la chiusura di un Reader con `cursor: true` spegne il cursore.
+- ncvt non mostra la larghezza delle celle: per i glifi larghi stampa `Plane#at` nell'etichetta.
+
+### Terminale finto
+
+Il terminale finto delle spec di integrazione (`spec/integration/pty_spec.rb`): un pty con un thread
 che risponde a DA1 e alla posizione del cursore.
 
 ```ruby
