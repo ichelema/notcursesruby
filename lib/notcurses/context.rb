@@ -341,8 +341,9 @@ module Notcurses
       begin
         init = Util.init_thread(go, ready, start, undo)
         Notcurses.acquire_context(self)
-        # dopo acquire_context: con un altro contesto attivo il FILE* resterebbe aperto
-        fp, @own_fp = open_output(output)
+        # dopo acquire_context: con un altro contesto attivo il FILE* resterebbe aperto. Con le eccezioni asincrone
+        # rimandate: arrivano a FILE* assegnato, e undo lo chiude
+        Thread.handle_interrupt(Object => :never) { fp, @own_fp = open_output(output) }
         $stdout.flush if output.nil?
         go << true
         ptr = ready.pop

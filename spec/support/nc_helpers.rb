@@ -69,20 +69,23 @@ module NcHelpers
   end
 
   # Esegue il blocco in un thread nuovo, lo ferma al primo ritorno del metodo
-  # C method_id (dove Ruby consegna le eccezioni asincrone) e gli manda
+  # method_id (dove Ruby consegna le eccezioni asincrone) e gli manda
   # Thread#raise(RuntimeError, 'interrotto'), poi lo lascia ripartire.
   #
-  # @param method_id [Symbol] metodo C, per esempio :ncvisual_from_file
-  # @return [Array(Object, Array<Integer>)] il valore del blocco (il messaggio
-  #   del RuntimeError, se lo solleva) e l'indirizzo restituito dal metodo C
-  def raise_at_c_return(method_id)
+  # @param method_id [Symbol] metodo, per esempio :ncvisual_from_file
+  # @param event [Symbol] :c_return per un metodo C, :return per un metodo Ruby
+  # @return [Array(Object, Array)] il valore del blocco (il messaggio del
+  #   RuntimeError, se lo solleva) e il valore restituito dal metodo
+  #   (l'indirizzo, per un ::FFI::Pointer)
+  def raise_at_c_return(method_id, event: :c_return)
     returned = []
     paused = Queue.new
     resume = Queue.new
-    trace = TracePoint.new(:c_return) do |tp|
+    trace = TracePoint.new(event) do |tp|
       next unless tp.method_id == method_id && Thread.current[:raise_at_c_return] && returned.empty?
 
-      returned << tp.return_value.address
+      value = tp.return_value
+      returned << (value.is_a?(::FFI::Pointer) ? value.address : value)
       paused << true
       resume.pop
     end

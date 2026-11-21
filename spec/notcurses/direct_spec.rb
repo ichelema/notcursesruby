@@ -150,6 +150,18 @@ RSpec.describe Notcurses::Direct do
       expect(Notcurses.active_context).to be_nil
     end
 
+    # Review della PR #30: un'eccezione asincrona al ritorno di open_output, prima dell'assegnazione del FILE*,
+    # lasciava aperto il file dell'output.
+    it "un Thread#raise al ritorno di open_output non lascia aperto il file dell'output" do
+      Dir.mktmpdir do |dir|
+        fds = NcHelpers.open_fd_count
+        result, = NcHelpers.raise_at_c_return(:open_output, event: :return) do
+          open_direct(output: File.join(dir, 'out'))
+        end
+        expect([result, NcHelpers.open_fd_count, Notcurses.active_context]).to eq(['interrotto', fds, nil])
+      end
+    end
+
     it 'valida le opzioni prima di avviare notcurses' do
       allow(ffi).to receive(:ncdirect_init).and_call_original
       expect { open_direct(output: 42) }.to raise_error(TypeError)
