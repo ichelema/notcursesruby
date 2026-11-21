@@ -1960,6 +1960,22 @@ module Notcurses
       end
     end
 
+    # Controlla un testo con le regole di {#putstr}, senza scriverlo.
+    # Notcurses::UI lo usa per rifiutare il testo di un componente alla
+    # creazione: le regole che dipendono da notcurses (per esempio il keycap
+    # "1️⃣", che notcurses 3.0.17 divide con un pezzo largo 0) Ruby non le vede
+    # da solo (ICH-232).
+    # @api private
+    # @param text [String] testo
+    # @param name [String] nome usato nel messaggio d'errore
+    # @return [String] il testo, UTF-8
+    # @raise [ArgumentError, TypeError] se {#putstr} rifiuterebbe il testo
+    #   (caratteri rifiutati)
+    # @raise [PlaneError] se l'egcpool del piano (16 MiB) non ha spazio per un
+    #   EGC di più di 4 byte del testo
+    # @raise [ClosedError] se il piano è chiuso
+    def check_text!(text, name) = Guard.run { output_text!(to_ptr, text, name) }
+
     # --- stile e colori dell'output ---
 
     # @return [Array<Symbol>] stili delle scritture successive (+ncplane_styles+)

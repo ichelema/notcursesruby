@@ -48,6 +48,12 @@ RSpec.describe Notcurses::UI::LogView do
     expect(lines(view)).to eq(["a       b", 'x?y?z?[0m', '?solo'])
   end
 
+  it 'un keycap, che notcurses 3.0.17 divide con un pezzo largo 0, diventa "?": i byte grezzi non sono rifiutati' do
+    view = log(1, cols: 12)
+    view.append("1️⃣ ok\n")
+    expect([view.lines, lines(view)]).to eq([["1️⃣ ok"], ['? ok']])
+  end
+
   it 'tiene al massimo max_lines righe finite; clear toglie tutto' do
     view = log(5, max_lines: 3)
     view.append((1..6).map { |i| "r#{i}\n" }.join)

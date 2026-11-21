@@ -32,7 +32,7 @@ module Notcurses
       def initialize(parent, label, channels: 0, focused_channels: FOCUSED_CHANNELS, size: nil, weight: nil, &block)
         raise ArgumentError, 'Button: serve un blocco' unless block
 
-        @label = Text.check!(label, 'label')
+        @label = Text.check!(label, 'label', Text.host(parent))
         @channels = Util.plane_channels_value(channels, 'channels')
         @focused_channels = Util.plane_channels_value(focused_channels, 'focused_channels')
         @block = block
@@ -46,7 +46,7 @@ module Notcurses
       # @raise [ClosedError] se il componente è chiuso
       def label=(label)
         to_ptr
-        @label = Text.check!(label, 'label')
+        @label = Text.check!(label, 'label', @plane)
         redraw
       end
 

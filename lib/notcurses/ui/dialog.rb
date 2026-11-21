@@ -39,11 +39,11 @@ module Notcurses
       def initialize(app, text:, title: nil, buttons: ['OK'], channels: 0, &block)
         raise TypeError, "app deve essere Notcurses::UI::App, non #{app.class}" unless app.is_a?(App)
 
-        @text = Text.check!(text, 'text', newlines: true)
+        @text = Text.check!(text, 'text', Text.host(app), newlines: true)
         raise TypeError, "buttons deve essere Array, non #{buttons.class}" unless buttons.is_a?(Array)
         raise ArgumentError, 'buttons è vuoto: serve almeno un pulsante' if buttons.empty?
 
-        @buttons = buttons.each_with_index.map { |label, i| Text.check!(label, "buttons[#{i}]") }.freeze
+        @buttons = buttons.each_with_index.map { |label, i| Text.check!(label, "buttons[#{i}]", Text.host(app)) }.freeze
         @block = block
         @body = nil
         before = app.focus_state # prima che il dialogo prenda il focus

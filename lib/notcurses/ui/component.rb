@@ -22,19 +22,27 @@ module Notcurses
 
       module_function
 
-      # Controlla il testo di un componente con le regole di {Plane#putstr}
-      # che Ruby vede da solo, così un errore esce alla creazione e non a un
-      # layout successivo.
+      # Controlla il testo di un componente con le regole di {Plane#putstr},
+      # così un errore esce alla creazione e non a un layout successivo. Le
+      # regole che dipendono da notcurses (i grapheme che notcurses 3.0.17
+      # divide con un pezzo largo 0, come il keycap "1️⃣") le controlla
+      # {Plane#check_text!} su plane.
       #
       # @param text [String] testo
       # @param name [String] nome usato nel messaggio d'errore
+      # @param plane [Plane, nil] piano per il controllo di notcurses: quello
+      #   del componente, o quello di {host} prima della creazione; nil = solo
+      #   le regole che Ruby vede da solo
       # @param newlines [Boolean] true = "\n" ammesso (separa le righe)
       # @return [String] copia UTF-8 frozen
       # @raise [TypeError] se text non è String
       # @raise [ArgumentError] se text non è UTF-8 valido o contiene NUL, TAB,
       #   "\n" (senza newlines), un altro carattere di controllo, U+2028,
-      #   U+2029 o un carattere di larghezza zero isolato
-      def check!(text, name, newlines: false)
+      #   U+2029, un carattere di larghezza zero isolato o un grapheme che
+      #   notcurses scrive con un pezzo largo 0
+      # @raise [PlaneError] se l'egcpool di plane (16 MiB) non ha spazio per un
+      #   EGC di più di 4 byte del testo
+      def check!(text, name, plane, newlines: false)
         str = Util.string!(text, name)
         raise ArgumentError, "#{name} contiene un TAB: espandilo prima (per esempio con String#gsub)" if str.include?("\t")
         raise ArgumentError, "#{name} contiene un a capo" if !newlines && str.include?("\n")
@@ -44,7 +52,21 @@ module Notcurses
           raise ArgumentError, "#{name} contiene un carattere di larghezza zero isolato"
         end
 
+        plane&.check_text!(str, name) unless str.ascii_only?
         -str
+      end
+
+      # Piano per {check!} quando il componente non ha ancora il suo: quello
+      # del contenitore, o lo stdplane per un'App.
+      #
+      # @param parent [Object] il genitore passato al costruttore
+      # @return [Plane, nil] nil se parent non è un Container o un'App, o se è
+      #   chiuso: l'errore lo dà poi la creazione del componente
+      def host(parent)
+        case parent
+        when Container then parent.plane unless parent.closed?
+        when App then parent.context.stdplane unless parent.closed?
+        end
       end
 
       # @param grapheme [String] un grapheme cluster
@@ -413,8 +435,8 @@ module Notcurses
       rescue ArgumentError
         raise if line.nil? || line.ascii_only?
 
-        # ponytail: i grapheme che notcurses 3.0.17 divide diversamente da Ruby (il keycap "1️⃣") diventano "?";
-        # controllo esatto alla creazione se Plane esporrà il suo
+        # i grapheme che notcurses 3.0.17 divide con un pezzo largo 0 (il keycap "1️⃣") diventano "?": serve al
+        # testo di LogView (byte grezzi); il testo degli altri componenti lo rifiuta già Text.check! (ICH-232)
         @plane.move_cursor(y, x)
         line.each_grapheme_cluster do |g|
           @plane.putstr(g)

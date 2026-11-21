@@ -36,7 +36,7 @@ module Notcurses
       # @raise [ClosedError] se il contenitore è chiuso
       def initialize(parent, text: '', channels: FIELD_CHANNELS, focused_channels: FOCUSED_CHANNELS, size: nil, weight: nil,
                      &block)
-        @text = Text.check!(text, 'text')
+        @text = Text.check!(text, 'text', Text.host(parent))
         @position = @text.grapheme_clusters.size
         @first = 0
         @cursor_col = 0
@@ -53,7 +53,7 @@ module Notcurses
       # @raise [ClosedError] se il componente è chiuso
       def text=(text)
         to_ptr
-        @text = Text.check!(text, 'text')
+        @text = Text.check!(text, 'text', @plane)
         @position = @text.grapheme_clusters.size
         @first = 0
         redraw
@@ -112,7 +112,7 @@ module Notcurses
         return false if str.empty? || str.match?(/\p{Cc}/)
 
         before = graphemes[0...@position].join + str
-        @text = Text.check!(before + graphemes[@position..].join, 'text')
+        @text = Text.check!(before + graphemes[@position..].join, 'text', @plane)
         @position = before.grapheme_clusters.size
         true
       rescue ArgumentError

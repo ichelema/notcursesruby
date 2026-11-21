@@ -22,6 +22,11 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Notcurses::UI`: `Label`, `Button`, `TextInput`, `ListView`, `Dialog` e il titolo di `Container` controllano il
+  testo anche con le regole di notcurses: un grapheme che notcurses 3.0.17 divide con un pezzo largo 0, come il
+  keycap "1️⃣", solleva `ArgumentError` alla creazione e nei setter, con un messaggio che nomina il grapheme; in
+  `TextInput` il tasto che lo completerebbe non viene inserito (ICH-232). Prima il controllo passava e il disegno
+  scriveva "?". `LogView`, che mostra byte grezzi, lo mostra ancora come "?".
 - `Cell`: con un grapheme che notcurses 3.0.17 divide in più caratteri (bandiere, coniugati devanagari, hangul con
   i jamo L, V e T, keycap) le scritture con una cella sollevano `CellError` con i pezzi e con che cosa usare:
   `Plane#putstr` per bandiere e coniugati, la forma composta (`String#unicode_normalize(:nfc)`) per gli hangul

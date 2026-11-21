@@ -68,9 +68,15 @@ RSpec.describe Notcurses::UI::Label do
     expect { described_class.new(app.root, styles: :blink) }.to raise_error(ArgumentError)
   end
 
-  it 'un grapheme che notcurses 3.0.17 divide diversamente da Ruby (keycap) diventa "?" senza errori' do
-    label = described_class.new(row(1), text: "1️⃣ ok", size: 6)
-    expect(label.plane.contents(y: 0, rows: 1)).to eq('? ok')
+  # ICH-232: Text.check! applicava solo le regole che Ruby vede; il keycap passava e al disegno diventava "?".
+  it 'un grapheme che notcurses 3.0.17 divide con un pezzo largo 0 (keycap) è ArgumentError (prima: "?")' do
+    keycap = "1️⃣"
+    expect { described_class.new(row(1), text: "#{keycap} ok", size: 6) }
+      .to raise_error(ArgumentError, /#{Regexp.escape(keycap.inspect)}/)
+    label = described_class.new(row(1), text: "\u{1F44D} ok", size: 6)
+    expect(label.plane.contents(y: 0, rows: 1)).to eq("\u{1F44D} ok")
+    expect { label.text = "a\n#{keycap}" }.to raise_error(ArgumentError, /#{Regexp.escape(keycap.inspect)}/)
+    expect(label.text).to eq("\u{1F44D} ok")
   end
 
   it 'channels con lo sfondo :highcontrast solleva alla creazione, anche senza spazio (ICH-291)' do
