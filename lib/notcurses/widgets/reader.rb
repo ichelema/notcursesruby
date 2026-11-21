@@ -195,8 +195,8 @@ module Notcurses
           # successivi di Ctrl+U e Ctrl+W; poi lo stile torna 0 nei due piani.
           ctrl = !@no_cmd_keys && !input.release? && input.modifiers.anybits?(FFI::NCKEY_MOD_CTRL)
           deletion = backspace ? :backspace : (ctrl && x.positive? && {0x55 => :line, 0x57 => :word}[input.id])
+          text = deletion && text_area(ptr)
           if deletion
-            text = text_area(ptr)
             FFI.ncplane_erase(@plane.to_ptr)
             FFI.ncplane_format(text, 0, 0, 0, 0, RECOPY_STYLE) if text
             move_view_cursor!(y, x)
