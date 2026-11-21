@@ -29,8 +29,10 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   scriveva "?". `LogView`, che mostra byte grezzi, lo mostra ancora come "?".
 - `Cell`: con un grapheme che notcurses 3.0.17 divide in più caratteri (bandiere, coniugati devanagari, hangul con
   i jamo L, V e T, keycap) le scritture con una cella sollevano `CellError` con i pezzi e con che cosa usare:
-  `Plane#putstr` per bandiere e coniugati, la forma composta (`String#unicode_normalize(:nfc)`) per gli hangul
-  (ICH-217). Prima il messaggio diceva solo "notcurses non accetta ... come un solo carattere". `Plane#set_base` con
+  `Plane#putstr` per i coniugati, la forma composta (`String#unicode_normalize(:nfc)`) per gli hangul (ICH-217). Per
+  le bandiere il messaggio avvisa che `Plane#putstr` le scrive in due celle larghe 1, ma molti terminali (per esempio
+  Ghostty) le disegnano più larghe e il testo dopo si sposta. Prima il messaggio diceva solo "notcurses non accetta
+  ... come un solo carattere". `Plane#set_base` con
   uno di quei grapheme solleva `CellError`: prima teneva in silenzio il primo pezzo (per esempio "🇮" di "🇮🇹").
   `Cell.new` non cambia: controlla con le regole di Ruby, perché senza un piano non sa come notcurses divide il
   grapheme. Lo YARD di `Cell` elenca i casi.

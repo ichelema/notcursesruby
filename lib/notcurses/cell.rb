@@ -25,9 +25,13 @@ module Notcurses
   # CellError con i pezzi e con che cosa usare ({Plane#putegc} solleva
   # CellError per i primi due casi qui sotto, ArgumentError per gli altri,
   # come {Plane#putstr}):
-  # - bandiere ("🇮🇹", due indicatori regionali) e coniugati devanagari
-  #   ("क्ष"): due caratteri larghi 1 colonna; {Plane#putstr} li scrive in due
-  #   celle vicine;
+  # - coniugati devanagari ("क्ष"): due caratteri larghi 1 colonna;
+  #   {Plane#putstr} li scrive in due celle vicine;
+  # - bandiere ("🇮🇹", due indicatori regionali): due caratteri larghi 1
+  #   colonna per notcurses; {Plane#putstr} li scrive in due celle, ma molti
+  #   terminali (per esempio Ghostty) disegnano ogni indicatore largo 2, e il
+  #   testo dopo la bandiera si sposta: dopo una sovrascrittura restano
+  #   caratteri vecchi sullo schermo;
   # - sillabe hangul scritte con i jamo L, V e T ("한"): il
   #   jamo T è largo 0 colonne; la forma composta ("한",
   #   String#unicode_normalize(:nfc)) si scrive;
@@ -121,6 +125,11 @@ module Notcurses
 
       head = "notcurses 3.0.17 divide #{Util.egc_label(egc)} in #{pieces.size} caratteri " \
              "(#{pieces.map { |s, _| Util.egc_label(s) }.join(", ")})"
+      if egc.match?(/\A\p{Grapheme_Cluster_Break=Regional_Indicator}+\z/)
+        # misurato con libghostty-vt: ogni indicatore regionale prende 2 colonne, notcurses ne conta 1
+        return CellError.new("#{head} e una cella ne tiene uno solo. Plane#putstr scrive una bandiera in due celle " \
+                             'larghe 1, ma molti terminali la disegnano più larga: il testo dopo si sposta')
+      end
       zero, = pieces.find { |_, width| width.zero? }
       return CellError.new("#{head} e una cella ne tiene uno solo: usa Plane#putstr, che li scrive in celle vicine") unless zero
 

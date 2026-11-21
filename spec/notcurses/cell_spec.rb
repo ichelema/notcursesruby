@@ -103,7 +103,9 @@ RSpec.describe Notcurses::Cell do
 
       def message_for(name, egc)
         case name
-        when :flag, :ksha then /divide #{Regexp.escape(egc.inspect)} in 2 caratteri .*usa Plane#putstr/
+        # Plane#putstr scrive la bandiera in due celle larghe 1, ma molti terminali (Ghostty) la disegnano più larga
+        when :flag then /divide #{Regexp.escape(egc.inspect)} in 2 caratteri .*Plane#putstr.*più larga.*si sposta/
+        when :ksha then /divide #{Regexp.escape(egc.inspect)} in 2 caratteri .*usa Plane#putstr/
         when :jamo then /#{Regexp.escape(egc.inspect)}.*largo 0.*Plane#putstr.*forma composta "\u{D55C}"/
         else /#{Regexp.escape(egc.inspect)}.*largo 0.*Plane#putstr/
         end
