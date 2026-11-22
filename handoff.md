@@ -74,7 +74,9 @@
 - **Verify con un terminale vero:** `.claude/skills/verify/` ha la ricetta di `ncvt` (libghostty-vt 1.0.1, stabile
   dalla 1.0), il sorgente `ncvt.c` e l'esempio `verify_reader.rb`. La libreria compilata e `ncvt` sono in
   `~/.claude/tmp/libghostty-vt/` (prefix e `harness/ncvt`); se mancano, la ricetta li ricostruisce. Per ICH-576 usa
-  `ncvt -m` (terminale muto).
+  `ncvt -m` (terminale muto). Per una prova rapida dello schermo c'è `.claude/skills/verify/screen` con l'helper
+  `snap.rb` (regola 22). `verify_reader.rb` scrive il file di controllo con `File.write`, e a volte `ncvt` legge
+  l'etichetta vuota ("punto di controllo"): `snap.rb` usa un rename.
 - **Lotto 8b fatto:** PR #32, merge `67164c7` (2026-11-22), ICH-533, ICH-217 e ICH-232 a Done. Catena: simplify,
   verify con `ncvt` (FAIL sul consiglio di `putstr` per le bandiere, corretto), review `soft` Sonnet (3 finding),
   review mirata `soft` Sonnet (2 finding), tutti corretti. Cambio dell'API della Fase 2 approvato dall'utente:
@@ -91,7 +93,8 @@
     gli helper di `spec/support/nc_helpers.rb` per le spec di «piano invariato»;
   - per le modifiche su grapheme o Unicode esegui le spec del lotto anche con Ruby 3.1.7 prima della PR (Unicode 13:
     senza la regola GB9c Ruby divide "क्ष"): ora è la regola 21, con `.claude/scripts/spec31`;
-  - un consiglio scritto in un messaggio d'errore si prova con `ncvt` prima del commit;
+  - un consiglio scritto in un messaggio d'errore si prova con `ncvt` prima del commit: ora è la regola 22, con
+    `.claude/skills/verify/screen`;
   - CI rossa in circa 30 secondi su tutti i job = guasto dell'infrastruttura (per esempio `archive.archlinux.org`
     giù, controllalo con `curl`), non il codice.
 - **Prossimo step:** dopo i punti sopra, lotto 8c (`bug`): ICH-576, ICH-580, ICH-577 (tabella di "Ordine di lavoro").
@@ -212,7 +215,7 @@ lo stesso formato di `memory/correzioni-review.md` (Fix, Decisioni, Review, Prob
 
 ## Regole vincolanti
 
-Le regole 1–10 vengono dalle fasi precedenti, le regole 11–17 dai lotti della revisione, le regole 18–21 dai lotti
+Le regole 1–10 vengono dalle fasi precedenti, le regole 11–17 dai lotti della revisione, le regole 18–22 dai lotti
 successivi.
 
 1. Non cambiare la Fase 1 (`lib/notcurses/ffi/`, `lib/notcurses/ffi.rb`) senza l'approvazione dell'utente. Se un
@@ -264,6 +267,13 @@ successivi.
     Una spec il cui risultato dipende dalla versione ricava l'atteso da Ruby al momento (per esempio
     `str.grapheme_clusters.size == 1`) e controlla tutti e due i rami. Ruby 3.2-3.4 li prova solo la CI (lotto 8b: la
     CI è fallita su Ruby 3.1-3.4 dopo i fix della review).
+22. Un testo che dice all'utente che cosa fare (messaggio d'errore, YARD, `CHANGELOG`, per esempio «usa Plane#putstr»)
+    è un'affermazione: prima del commit la provi sulla superficie, cioè sullo schermo con
+    `.claude/skills/verify/screen` quando riguarda quello che si vede, con uno script sull'API pubblica negli altri
+    casi. Se un acceptance criterion chiede un consiglio, provalo prima di scrivere la spec; se non regge, proponi
+    all'utente il testo nuovo del criterio (vedi sotto la "Procedura per ogni lotto"). `screen` usa `ncvt`
+    (Ghostty): un terminale diverso, per esempio Kitty, si prova solo con un display (lotto 8b: il consiglio di
+    `putstr` per le bandiere lasciava residui sullo schermo, trovato solo nel verify dopo la PR).
 
 ## Ordine di lavoro
 
@@ -384,6 +394,8 @@ ICH-224, ICH-228 e ICH-229 sono già a Done.
    il fix, la suite completa (regola 11). Commit separati per issue, Conventional Commits in inglese con scope.
    Prima della PR, se il diff tocca grapheme o Unicode, le spec cambiate anche con `.claude/scripts/spec31`
    (regola 21): `git diff origin/master...HEAD | grep -E 'grapheme|\\X|\\p\{|unicode_normalize|strwidth|\\u[0-9A-Fa-f{]'`.
+   Ogni consiglio nuovo nei messaggi d'errore, nello YARD o nel `CHANGELOG` (per esempio «usa X») è provato sulla
+   superficie prima del commit (regola 22). Il piano elenca i consigli e come provarli.
    Apre la PR con le magic words, senza merge. Ripeti il controllo dopo ogni round di fix della review.
 3. `3_independent-review` fa una review indipendente in sola lettura del changeset rispetto agli acceptance
    criteria.
