@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# screen: esegue uno script Ruby di prova sotto ncvt (libghostty-vt, il nucleo di Ghostty) e stampa gli snapshot
+# dello schermo, per provare in un minuto cosa vede l'utente (regola 22 di handoff.md). Lo script usa l'API pubblica
+# con la lib del checkout che contiene questo file, e Screen.open / Screen.snap(nc, etichetta) di snap.rb.
+#
+# Uso: .claude/skills/verify/screen [-c COLONNE] [-r RIGHE] [-t SECONDI] [-a] prova.rb [argomenti]
+#   -c, -r  dimensioni del terminale (default 80 x 24)
+#   -t      secondi prima che ncvt fermi lo script (default 60)
+#   -a      stampa anche le righe vuote dello schermo
+# Ogni snapshot ha la riga "cursor x=.. y=.. visible=0|1 screen=primary|alternate" e le righe numerate da 0.
+# ncvt va costruito una volta con la ricetta di SKILL.md (NCVT per un altro percorso).
+set -euo pipefail
+
+here="$(cd "$(dirname "$0")" && pwd)"
+root="$(git -C "$here" rev-parse --show-toplevel)"
+ncvt="${NCVT:-$HOME/.claude/tmp/libghostty-vt/harness/ncvt}"
+cols=80 rows=24 secs=60 all=0
+usage() { echo "uso: $0 [-c COLONNE] [-r RIGHE] [-t SECONDI] [-a] prova.rb [argomenti]" >&2; }
+
+while getopts c:r:t:a opt; do
+  case "$opt" in
+    c) cols="$OPTARG" ;;
+    r) rows="$OPTARG" ;;
+    t) secs="$OPTARG" ;;
+    a) all=1 ;;
+    *) usage; exit 2 ;;
+  esac
+done
+shift $((OPTIND - 1))
+[ "$#" -ge 1 ] || { usage; exit 2; }
+[ -x "$ncvt" ] || { echo "screen: manca $ncvt: costruiscilo con la ricetta di $here/SKILL.md" >&2; exit 2; }
+
+script="$(realpath "$1")"
+shift
+mkdir -p "$HOME/.claude/tmp"
+tmp="$(mktemp -d "$HOME/.claude/tmp/screen.XXXXXX")"
+trap 'rm -rf "$tmp"' EXIT
+
+cd "$root"
+TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8 SCREEN_CONTROL="$tmp/ctl" \
+  timeout -k 5 -s KILL $((secs + 15)) "$ncvt" -c "$cols" -r "$rows" -t "$secs" -s "$tmp/ctl" -- \
+  ruby -I"$root/lib" -r"$here/snap.rb" "$script" "$@" |
+  if [ "$all" = 1 ]; then cat; else grep -v -E '^ *[0-9]+\|$'; fi

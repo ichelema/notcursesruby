@@ -64,6 +64,29 @@ Uso: `ncvt [-c COLONNE] [-r RIGHE] [-t SECONDI] [-m] [-s FILE] -- comando`.
 - Prendi lo snapshot a widget aperto: la chiusura di un Reader con `cursor: true` spegne il cursore.
 - ncvt non mostra la larghezza delle celle: per i glifi larghi stampa `Plane#at` nell'etichetta.
 
+### Prova rapida: `screen`
+
+Per controllare in un minuto cosa vede l'utente, anche durante l'implementazione (regola 22 di `handoff.md`: un
+consiglio in un messaggio o nello YARD si prova sullo schermo prima del commit). Lo script di prova usa la lib del
+checkout che contiene `screen` (anche un worktree) e due helper di `snap.rb`, caricato da `screen`:
+
+```ruby
+Screen.open do |nc|
+  pl = nc.stdplane.create_child(rows: 1, cols: 10, y: 2, x: 10)
+  pl.putstr("A🇮🇹B", y: 0, x: 0)
+  Screen.snap(nc, "bandiera: contents=#{pl.contents.inspect}")
+  pl.putstr("xyz", y: 0, x: 1)
+  Screen.snap(nc, "sovrascritta")   # schermo: "Axyz B", la B vecchia resta (ICH-586)
+end
+```
+
+```sh
+.claude/skills/verify/screen -c 40 -r 6 "$S/prova.rb"   # -a per stampare anche le righe vuote
+```
+
+`Screen.snap` fa il render e aspetta lo snapshot; l'etichetta va su una riga, al massimo 255 byte. Lo script di prova
+sta nello scratchpad, non nel repository.
+
 ### Terminale finto
 
 Il terminale finto delle spec di integrazione (`spec/integration/pty_spec.rb`): un pty con un thread
