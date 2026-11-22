@@ -477,7 +477,6 @@ all'utente e, dopo la conferma, aggiorna la issue su Linear.
   ASCII vicine. Nel codice di `lib/` e `spec/` scrivi questi caratteri come escape (`"\u0301"`), mai come carattere:
   `spec/source_chars_spec.rb` fallisce e indica file e riga. Nei commenti restano ammessi. Nelle regex delle spec usa
   `Regexp.escape` del valore calcolato.
-- Negli script di prova copia le opzioni del contesto da `CONTEXT_OPTIONS` di `spec/support/nc_helpers.rb`.
 
 ## Comandi
 
@@ -495,7 +494,10 @@ TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5
 # coverage (report in coverage/; con una sola spec fallisce per la soglia)
 TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 \
   bundle exec rspec --require ./spec/support/coverage.rb < /dev/null
-# script di prova contro notcurses: un solo contesto per processo, output su /dev/null
+# script di prova contro notcurses: un solo contesto per processo, output su /dev/null. Nello script apri il contesto
+# con le opzioni di CONTEXT_OPTIONS (spec/support/nc_helpers.rb), copiate qui: nc_helpers.rb non si carica fuori da
+# RSpec. Non scriverle a memoria (lotto 8b: flags: [...] è la forma del C e solleva "unknown keyword: :flags")
+#   Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true, drain_input: true)
 TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 60 ruby -Ilib "$S/prova.rb" < /dev/null
 # prova sul terminale vero: finestra nuova di Kitty, con il PATH del Ruby di mise; --foreground evita SIGTTOU
 kitty @ launch --type=os-window --cwd="$PWD" --env PATH="$(dirname "$(command -v ruby)"):$PATH" -- \
