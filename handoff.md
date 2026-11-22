@@ -87,6 +87,11 @@
   - chiedi all'utente in quale lotto mettere ICH-581 (lotto 8, `Reader`), ICH-582 (lotto 8b: con l'egcpool pieno le
     scritture con `Cell` sollevano `CellError` invece di `PlaneError`; `gradient` dà già `PlaneError` dal C) e ICH-586
     (lotto 8b: una bandiera è larga 2 colonne per notcurses e 4 per Ghostty; il testo dopo si sposta). Sono Low, Bug.
+  - `037c011` (escape dei caratteri invisibili e `spec/source_chars_spec.rb`, 2026-11-22) è su `master` senza CI:
+    il push aveva in cima `d667047` con `[skip ci]`, che salta la CI di tutto il push, e `ci.yml` non ha
+    `workflow_dispatch`. In locale: 1289 esempi, 0 fallimenti; `spec31` e RuboCop verdi. L'utente ha scelto di
+    aspettare il prossimo merge: dopo il merge del lotto 8c controlla la CI di `master` su tutta la matrice. Un commit
+    di codice va su `master` con un push a parte, prima dei commit `[skip ci]`.
 - **Lezioni del lotto 8b** (per i lotti con grapheme, egcpool o controlli prima della chiamata C):
   - un controllo che prevede il C va scritto dopo aver letto la funzione C per intero: `ncplane_put` rilascia la
     cella di arrivo prima di copiare e la svuota prima di fallire (`notcurses.c:1911-1950`); ora è la regola 20, con
