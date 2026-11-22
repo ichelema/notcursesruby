@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# spec31: esegue le spec indicate con Ruby 3.1.7, la versione della matrice della CI con l'Unicode più vecchio
+# (13.0; Ruby 3.2-3.4 usano 15.0, Ruby 4.0 17.0). Serve per le modifiche su grapheme e Unicode (regola 21 di
+# handoff.md): in locale gira Ruby 4.0, e una spec che dà per scontata la sua segmentazione si rompe solo in CI.
+#
+# Uso: .claude/scripts/spec31 [opzioni di rspec] spec/... [spec/...]
+# Esegue rspec dalla radice del checkout che contiene lo script (anche un worktree), senza bundle: con Ruby 3.1
+# Bundler 4 del lockfile non parte. La prima volta installa rspec e ffi in SPEC31_GEM_HOME
+# (default ~/.claude/tmp/gems31), che resta tra le sessioni. SPEC31_TIMEOUT: secondi, default 600.
+set -euo pipefail
+
+gems="${SPEC31_GEM_HOME:-$HOME/.claude/tmp/gems31}"
+root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+
+if [ "$#" -eq 0 ]; then
+  echo "uso: $0 [opzioni di rspec] spec/... [spec/...]" >&2
+  exit 2
+fi
+
+if [ ! -x "$gems/bin/rspec" ]; then
+  echo "spec31: installo rspec 3.13.2 e ffi 1.17.4 (versioni di Gemfile.lock) in $gems" >&2
+  GEM_HOME="$gems" GEM_PATH="$gems" mise exec ruby@3.1.7 -- gem install --no-document rspec:3.13.2 ffi:1.17.4 >&2
+fi
+
+cd "$root"
+echo "spec31: $(mise exec ruby@3.1.7 -- ruby -e 'print RUBY_VERSION, " Unicode ", RbConfig::CONFIG["UNICODE_VERSION"]') in $root" >&2
+exec env GEM_HOME="$gems" GEM_PATH="$gems" TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+  timeout -k 5 -s KILL "${SPEC31_TIMEOUT:-600}" mise exec ruby@3.1.7 -- ruby "$gems/bin/rspec" "$@" < /dev/null
