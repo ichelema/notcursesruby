@@ -461,9 +461,13 @@ all'utente e, dopo la conferma, aggiorna la issue su Linear.
 - Prima di una suite lunga controlla `free -h`: con la memoria quasi finita il sistema ferma i comandi in background, e
   le spec dei pty e la coverage si bloccano (lotto 8b). Esegui la coverage con `--format documentation --out <file>`:
   se si blocca, il file dice quale spec.
-- In un worktree la sessione rifiuta i comandi composti che non riesce a controllare (heredoc, più comandi): scrivi
-  gli script con lo strumento Write ed eseguili con un comando semplice. Non usare `cd`: un `cd` in una sottocartella
-  sposta la directory della sessione.
+- In una sessione entrata in un worktree, un heredoc che crea un file (`cat > file <<'EOF'`) viene rifiutato
+  («too complex to verify that it stays inside the worktree»): crea il file con lo strumento Write, poi eseguilo con un
+  comando a parte. Un heredoc verso un programma (`git commit -F - <<'EOF'`) passa.
+- Un `cd` che finisce dentro le cartelle di lavoro resta valido nelle chiamate dopo e sposta la directory della
+  sessione (lotto 8b: `cd lib/notcurses/ui && sed -i ...`); un `cd` verso fuori viene annullato. Al posto del `cd`
+  usa path dalla radice (`sed -i ... lib/notcurses/ui/label.rb`), `git -C`, `mise -C`, oppure una subshell
+  `( cd dir && comando )`, che non sposta la sessione.
 - Edit non trova il testo con segni combinanti o con U+2028 e U+2029 scritti come caratteri: usa come ancora le righe
   ASCII vicine. Nel codice nuovo scrivi `"́"`, non il carattere; nelle regex delle spec usa `Regexp.escape` del
   valore calcolato.
