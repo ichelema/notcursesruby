@@ -1077,4 +1077,5 @@ Dal 2026-11-21 al 2026-11-22. Branch `bug/ICH-217-232-533-opus`, worktree `.clau
   (exit 137); non si sa quale spec, perché l'output era `progress`. La seconda corsa, con `--format documentation` in un
   file, è passata in 3 minuti e 38 secondi. Come il blocco del lotto 7 in `event_loop_spec.rb:716`: non riprodotto.
 - Linear: ICH-533, ICH-217 e ICH-232 a Done; ICH-582 e ICH-586 in Backlog. Worktree e branch da rimuovere con
-  `/trinity:workflow:5_remove-worktree bug+ICH-217-232-533-opus` (si avvia solo a mano).
+  `/trinity:workflow:5_remove-worktree bug+ICH-217-232-533-opus` (si avvia solo a mano). Rimossi il 2026-11-22,
+  anche il branch remoto.

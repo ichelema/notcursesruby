@@ -82,9 +82,6 @@
   coverage 98,19 %, RuboCop 0, YARD 100 %, gem costruita, layer FFI invariato; CI della PR e di `master` verde. Log in
   `memory/backlog-issue.md`, esito in `RICONSEGNA.md`, retain in Hindsight fatto il 2026-11-22.
 - **Da fare all'inizio della prossima sessione:**
-  - worktree e branch del lotto 8b non sono rimossi (`5_remove-worktree` si avvia solo a mano): esegui
-    `/trinity:workflow:5_remove-worktree bug+ICH-217-232-533-opus`; il worktree ha il submodule `notcurses`
-    inizializzato, e con `git status` vuoto `--force` è approvato; va tolto anche il branch remoto;
   - chiedi all'utente in quale lotto mettere ICH-581 (lotto 8, `Reader`), ICH-582 (lotto 8b: con l'egcpool pieno le
     scritture con `Cell` sollevano `CellError` invece di `PlaneError`; `gradient` dà già `PlaneError` dal C) e ICH-586
     (lotto 8b: una bandiera è larga 2 colonne per notcurses e 4 per Ghostty; il testo dopo si sposta). Sono Low, Bug.
