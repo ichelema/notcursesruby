@@ -28,6 +28,16 @@ RSpec.describe Notcurses::UI::Dialog do
     expect(buttons_of(dialog).map(&:label)).to eq(%w[Sì No])
   end
 
+  it 'un keycap, che notcurses 3.0.17 divide con un pezzo largo 0, è ArgumentError nel testo, nel titolo e nei pulsanti' do
+    keycap = Regexp.escape("1️⃣".inspect)
+    expect { described_class.new(app, text: "1️⃣") }.to raise_error(ArgumentError, /text.*#{keycap}/)
+    expect { described_class.new(app, text: 'ok', title: "1️⃣") }.to raise_error(ArgumentError, /title.*#{keycap}/)
+    expect { described_class.new(app, text: 'ok', buttons: ["1️⃣"]) }
+      .to raise_error(ArgumentError, /buttons\[0\].*#{keycap}/)
+    dialog = described_class.new(app, text: "\u{1F44D}", buttons: ["\u{1F44D}"])
+    expect([dialog.text, dialog.buttons]).to eq(["\u{1F44D}", ["\u{1F44D}"]])
+  end
+
   it 'ogni pulsante ha spazio per tutta l\'etichetta; etichette uguali dividono la riga in parti uguali (ICH-293)' do
     { ['Save', "Don't save", 'Cancel'] => 39, %w[A B Longest] => 28 }.each do |labels, width|
       dialog = described_class.new(app, text: 'Save?', buttons: labels)

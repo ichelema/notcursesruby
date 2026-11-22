@@ -35,7 +35,7 @@ module Notcurses
       #   ha il tipo sbagliato
       # @raise [ClosedError] se il contenitore è chiuso
       def initialize(parent, items: [], channels: 0, focused_channels: FOCUSED_CHANNELS, size: nil, weight: nil, &block)
-        @items = items!(items)
+        @items = items!(items, Text.host(parent))
         @selected = @items.empty? ? nil : 0
         @top = 0
         @channels = Util.plane_channels_value(channels, 'channels')
@@ -52,7 +52,7 @@ module Notcurses
       # @raise [ClosedError] se il componente è chiuso
       def items=(items)
         to_ptr
-        @items = items!(items)
+        @items = items!(items, @plane)
         @selected = @items.empty? ? nil : [@selected || 0, @items.size - 1].min
         redraw
       end
@@ -98,11 +98,12 @@ module Notcurses
 
       private
 
+      # @param host [Plane, nil] piano per il controllo di notcurses (vedi {Text.check!})
       # @raise [TypeError, ArgumentError] se le voci non sono ammesse
-      def items!(items)
+      def items!(items, host)
         raise TypeError, "items deve essere Array, non #{items.class}" unless items.is_a?(Array)
 
-        items.each_with_index.map { |item, i| Text.check!(item, "items[#{i}]") }.freeze
+        items.each_with_index.map { |item, i| Text.check!(item, "items[#{i}]", host) }.freeze
       end
 
       def target_index(input)

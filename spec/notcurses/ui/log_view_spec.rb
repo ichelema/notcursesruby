@@ -48,6 +48,21 @@ RSpec.describe Notcurses::UI::LogView do
     expect(lines(view)).to eq(["a       b", 'x?y?z?[0m', '?solo'])
   end
 
+  # Review mirata di ICH-232: con l'egcpool pieno putstr solleva PlaneError, che il ripiego di put_text non prendeva.
+  it "con l'egcpool pieno un EGC lungo diventa \"?\": append non solleva" do
+    view = log(3, cols: 4)
+    big = ->(c) { "#{c}#{"́" * 3_000_000}\n" }
+    expect { view.append(%w[a b c].map(&big).join) }.not_to raise_error
+    expect(lines(view).map(&:bytesize)).to eq([6_000_001, 6_000_001, 1])
+    expect(lines(view).last).to eq('?')
+  end
+
+  it 'un keycap, che notcurses 3.0.17 divide con un pezzo largo 0, diventa "?": i byte grezzi non sono rifiutati' do
+    view = log(1, cols: 12)
+    view.append("1️⃣ ok\n")
+    expect([view.lines, lines(view)]).to eq([["1️⃣ ok"], ['? ok']])
+  end
+
   it 'tiene al massimo max_lines righe finite; clear toglie tutto' do
     view = log(5, max_lines: 3)
     view.append((1..6).map { |i| "r#{i}\n" }.join)

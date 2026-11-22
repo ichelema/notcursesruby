@@ -1443,6 +1443,24 @@ del lotto 3. Comportamenti nuovi:
   sposta più il cursore del terminale. Limite aperto: dopo un reader con `cursor: true` lo stato è sconosciuto e i
   reader con `cursor: false` non lo rimettono (ICH-580) (lotto 8, ICH-218).
 - Nuovo metodo `@api private` di `Context`: `restore_cursor!` (lotto 8).
+- `Plane#putstr`, `#putegc` e `#puttext`: con l'egcpool del piano pieno (16 MiB) un EGC di più di 4 byte solleva
+  `PlaneError` con un messaggio che nomina l'egcpool e l'EGC; prima `ArgumentError` con i segni combinanti,
+  `CellError` da `putegc` senza. Lo spazio lo decide il C, che prima libera le celle che sovrascrive, e si ferma al
+  primo EGC che non entra. Il controllo dei caratteri di larghezza zero carica i pezzi su un piano temporaneo con il
+  pool vuoto quando il pool del piano è pieno. Ogni EGC di più di 4 byte ha una chiamata C sua: il wrapper legge prima
+  il glifo di arrivo e, se la scrittura fallisce, lo riscrive e rimette il cursore, perché `ncplane_put` lo svuota
+  prima di fallire (`notcurses.c:1911-1950`, bug di notcurses non segnalato prima). `LogView` mostra "?" anche per
+  un EGC senza spazio nel pool (lotto 8b, ICH-533 e ICH-232, con i fix delle due review).
+- Le scritture con una `Cell` di un grapheme che notcurses divide (bandiere, coniugati devanagari, hangul con i jamo
+  L, V e T, keycap) sollevano `CellError` con i pezzi e con che cosa usare; `Plane#set_base` solleva `CellError`
+  invece di tenere il primo pezzo. `Cell.new` non cambia (lotto 8b, ICH-217).
+- Il testo dei componenti di `Notcurses::UI` (`Label`, `Button`, `TextInput`, `ListView`, `Dialog`, il titolo di
+  `Container`) è controllato anche con le regole di notcurses: un keycap ("1️⃣") solleva `ArgumentError` alla
+  creazione e nei setter, invece di diventare "?" al disegno; `LogView` lo mostra ancora come "?" (lotto 8b, ICH-232).
+- Cambio dell'API della Fase 2 approvato dall'utente il 2026-11-21: nuovo metodo `@api private` `Plane#check_text!`
+  (i controlli di `putstr` senza scrittura), usato da `Notcurses::UI::Text.check!`, che ha un parametro `plane` in
+  più; nuovi `UI::Text.host`, `Cell.split_error` e `Util.egc_label`, tutti `@api private` (lotto 8b, ICH-232,
+  ICH-217).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 

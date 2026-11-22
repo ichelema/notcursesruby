@@ -90,6 +90,102 @@ RSpec.describe Notcurses::Cell do
       end
     end
 
+    # ICH-217: notcurses 3.0.17 divide in più caratteri alcuni grapheme che per Ruby sono uno solo. Cell.new non ha un
+    # piano e li accetta; le scritture con una Cell sollevano CellError con il motivo e con che cosa usare (prima:
+    # "notcurses non accetta ... come un solo carattere", senza alternative).
+    describe 'grapheme che notcurses divide (ICH-217)' do
+      let(:split) do
+        {flag: "\u{1F1EE}\u{1F1F9}", # due indicatori regionali, larghi 1
+         ksha: "क्ष", # coniugato devanagari: "क्" e "ष", larghi 1
+         jamo: "한", # hangul con jamo LVT: "하" e U+11AB, largo 0
+         keycap: "1️⃣"} # "1️" e U+20E3, largo 0
+      end
+
+      # Prima di Unicode 15.1 (Ruby 3.x) anche Ruby divide il coniugato in due grapheme (la regola GB9c manca):
+      # Cell.new lo rifiuta già con ArgumentError, come notcurses, e non c'è una differenza da spiegare.
+      let(:ruby_conjunct) { split[:ksha].grapheme_clusters.size == 1 }
+      let(:divided) { ruby_conjunct ? split : split.except(:ksha) }
+
+      def message_for(name, egc)
+        case name
+        # Plane#putstr scrive la bandiera in due celle larghe 1, ma molti terminali (Ghostty) la disegnano più larga
+        when :flag then /divide #{Regexp.escape(egc.inspect)} in 2 caratteri .*Plane#putstr.*più larga.*si sposta/
+        when :ksha then /divide #{Regexp.escape(egc.inspect)} in 2 caratteri .*usa Plane#putstr/
+        when :jamo then /#{Regexp.escape(egc.inspect)}.*largo 0.*Plane#putstr.*forma composta "\u{D55C}"/
+        else /#{Regexp.escape(egc.inspect)}.*largo 0.*Plane#putstr/
+        end
+      end
+
+      it 'Cell.new li accetta con le regole di Ruby' do
+        divided.each_value do |egc|
+          cell = described_class.new(egc: egc)
+          expect([cell.egc, cell.width]).to eq([egc, Notcurses.strwidth(egc)])
+        end
+        expect { described_class.new(egc: split[:ksha]) }.to raise_error(ArgumentError, /grapheme/) unless ruby_conjunct
+      end
+
+      it 'putc e set_base sollevano CellError che nomina il grapheme e rimanda a Plane#putstr' do
+        nc.stdplane.create_child(rows: 1, cols: 10) do |p|
+          divided.each do |name, egc|
+            cell = described_class.new(egc: egc)
+            expect { p.putc(cell, y: 0, x: 0) }.to raise_error(Notcurses::CellError, message_for(name, egc)), name.to_s
+            # prima: set_base teneva il primo pezzo ("🇮", "하", "क्", "1️") senza errore
+            expect { p.set_base(egc: egc) }.to raise_error(Notcurses::CellError, message_for(name, egc)), name.to_s
+          end
+          expect([p.contents, p.base.egc]).to eq(['', ''])
+        end
+      end
+
+      it 'le linee, il riempimento, il box e il gradiente sollevano CellError per il keycap (largo 1 colonna)' do
+        nc.stdplane.create_child(rows: 3, cols: 6) do |p|
+          keycap = split[:keycap]
+          cell = described_class.new(egc: keycap)
+          writes = {
+            hline: -> { p.hline(cell, 2, y: 0, x: 0) },
+            vline: -> { p.vline(cell, 2, y: 0, x: 0) },
+            polyfill: -> { p.polyfill(cell, y: 0, x: 0) },
+            box: -> { p.box(3, 3, y: 0, x: 0, set: [cell] * 6) },
+            gradient: -> { p.gradient(keycap, 0, 0, 0, 0, rows: 1, cols: 2) }
+          }
+          writes.each do |name, write|
+            expect { write.call }.to raise_error(Notcurses::CellError, message_for(:keycap, keycap)), name.to_s
+          end
+          expect(p.contents).to eq('')
+        end
+      end
+
+      it 'Plane#putegc solleva CellError per bandiera e coniugato, ArgumentError per un pezzo largo 0' do
+        nc.stdplane.create_child(rows: 1, cols: 10) do |p|
+          (divided.keys & %i[flag ksha]).each do |name|
+            expect { p.putegc(split[name], y: 0, x: 0) }.to raise_error(Notcurses::CellError, message_for(name, split[name]))
+          end
+          expect { p.putegc(split[:ksha], y: 0, x: 0) }.to raise_error(ArgumentError, /grapheme/) unless ruby_conjunct
+          %i[jamo keycap].each do |name|
+            expect { p.putegc(split[name], y: 0, x: 0) }.to raise_error(ArgumentError, /larghezza zero/)
+          end
+          expect(p.contents).to eq('')
+        end
+      end
+
+      it 'Plane#putstr scrive bandiera e coniugato in due celle e rifiuta i grapheme con un pezzo largo 0' do
+        nc.stdplane.create_child(rows: 1, cols: 10) do |p|
+          {flag: ["\u{1F1EE}", "\u{1F1F9}"], ksha: ["क्", "ष"]}.each do |name, pieces|
+            p.erase
+            expect(p.putstr(split[name], y: 0, x: 0)).to eq(2)
+            expect([p.contents, p.at(y: 0, x: 0).egc, p.at(y: 0, x: 1).egc]).to eq([split[name], *pieces]), name.to_s
+          end
+          p.erase
+          %i[jamo keycap].each do |name|
+            expect { p.putstr(split[name], y: 0, x: 0) }.to raise_error(ArgumentError, /larghezza zero/), name.to_s
+          end
+          expect(p.contents).to eq('')
+          composed = described_class.new(egc: split[:jamo].unicode_normalize(:nfc))
+          expect(p.putc(composed, y: 0, x: 0)).to eq(2)
+          expect(p.at(y: 0, x: 0)).to eq(composed)
+        end
+      end
+    end
+
     it 'Plane#base restituisce una Cell con la larghezza del C' do
       nc.stdplane.create_child(rows: 1, cols: 3) do |p|
         p.set_base(egc: '漢', styles: :bold, channels: red)

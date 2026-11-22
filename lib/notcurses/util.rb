@@ -311,6 +311,12 @@ module Notcurses
       segments
     end
 
+    # EGC per un messaggio d'errore: l'inizio e i byte di un EGC lungo (un EGC
+    # può avere milioni di segni combinanti).
+    # @param egc [String] EGC UTF-8
+    # @return [String] egc.inspect, oppure l'inizio e i byte
+    def egc_label(egc) = (egc.bytesize > 32) ? "#{egc[0, 3].inspect}... (#{egc.bytesize} byte)" : egc.inspect
+
     # --- dal C a Ruby ---
 
     # Stringa restituita da un :string di FFI (copia BINARY) in UTF-8.

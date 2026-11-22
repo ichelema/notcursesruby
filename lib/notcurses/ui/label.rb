@@ -37,7 +37,7 @@ module Notcurses
       # @raise [TypeError] se un argomento ha il tipo sbagliato
       # @raise [ClosedError] se il contenitore è chiuso
       def initialize(parent, text: '', align: :left, styles: [], channels: 0, size: nil, weight: nil)
-        @text = Text.check!(text, 'text', newlines: true)
+        @text = Text.check!(text, 'text', Text.host(parent), newlines: true)
         raise ArgumentError, "align = #{align.inspect} non valido: usa :left, :center o :right" unless ALIGNS.include?(align)
 
         @align = align
@@ -53,7 +53,7 @@ module Notcurses
       # @raise [ClosedError] se il componente è chiuso
       def text=(text)
         to_ptr
-        @text = Text.check!(text, 'text', newlines: true)
+        @text = Text.check!(text, 'text', @plane, newlines: true)
         redraw
       end
 

@@ -868,7 +868,7 @@ RSpec.describe Notcurses::Plane do
             child.set_resize_callback do
               %w[a b].each_with_index do |c, y|
                 pl.putstr("\#{c}\#{"\\u0301" * 3_000_000}", y: y, x: 0)
-              rescue Notcurses::PlaneError, ArgumentError => e # il controllo di zero_width_egc! carica l'EGC nel pool
+              rescue Notcurses::PlaneError => e # egcpool pieno (prima di ICH-533: ArgumentError)
                 errors << e.message
               end
               0
@@ -1266,6 +1266,94 @@ RSpec.describe Notcurses::Plane do
         expect(p.contents).to eq('')
         expect(p.putstr("éx", y: 0, x: 0)).to eq(2)
         expect(p.at(y: 0, x: 0).egc).to eq("é")
+      end
+    end
+
+    # ICH-533: il controllo dei caratteri di larghezza zero carica l'EGC nell'egcpool (nccell_load) e con il pool pieno
+    # sollevava ArgumentError ("notcurses non accetta"), come per un testo non valido; senza segni combinanti il C
+    # falliva con un messaggio che non nominava il pool (putegc: CellError "divide").
+    it "putstr, putegc e puttext con un EGC che non entra nell'egcpool sollevano PlaneError (prima: ArgumentError)" do
+      with_parent(rows: 3, cols: 8) do |p|
+        %w[a b].each_with_index { |c, y| p.putstr("#{c}#{"́" * 3_000_000}", y: y, x: 0) } # 12 MB nel pool
+        before = p.contents
+        # 6 MB ciascuno: con segni combinanti (Mn) e con soli segni di spaziatura (Mc, nessun candidato)
+        {combinanti: "c#{"́" * 3_000_000}", spaziatura: "क#{"ि" * 2_000_000}"}.each do |kind, egc|
+          {putstr: ->(t) { p.putstr(t, y: 2, x: 0) }, putegc: ->(t) { p.putegc(t, y: 2, x: 0) },
+           puttext: ->(t) { p.puttext(t, y: 2) }}.each do |name, write|
+            error = begin
+              write.call(egc)
+              nil
+            rescue => e
+              e
+            end
+            expect(error).to be_a(Notcurses::PlaneError), "#{name}, #{kind}: #{error.class} #{error&.message.to_s[0, 80]}"
+            expect(error.message).to match(/egcpool/)
+            expect(error.message.bytesize).to be < 200 # prima: tutto l'EGC nel messaggio
+          end
+        end
+        expect(p.contents).to eq(before)
+        expect { p.putstr("a​b", y: 2, x: 0) }.to raise_error(ArgumentError, /larghezza zero/)
+        expect(p.putstr("oḱ", y: 2, x: 0)).to eq(2)
+      end
+    end
+
+    # Review mirata di ICH-533: con l'egcpool pieno ncplane_put svuota il glifo di arrivo e gli dà i colori del piano
+    # prima di fallire (notcurses.c:1911-1950); il wrapper lo rimette, con il cursore, così il piano non cambia.
+    it "una scrittura che non entra nell'egcpool lascia com'erano il glifo di arrivo e il cursore, anche largo" do
+      with_parent(rows: 3, cols: 8) do |p|
+        %w[a b].each_with_index { |c, y| p.putstr("#{c}#{"́" * 3_000_000}", y: y, x: 0) }
+        p.putstr('X', y: 2, x: 0)
+        p.putstr('漢', y: 2, x: 2)
+        p.move_cursor(0, 1)
+        p.channels = Notcurses::Channels.rgb(255, 0, 0, 0, 0, 0)
+        p.styles = :bold
+        before = (0..3).map { |x| p.at(y: 2, x: x) }
+        big = "c#{"́" * 3_000_000}"
+        {putstr: -> { p.putstr(big, y: 2, x: 0) }, putegc: -> { p.putegc(big, y: 2, x: 0) },
+         puttext: -> { p.puttext(big, y: 2) }, largo: -> { p.putstr(big, y: 2, x: 2) },
+         meta_destra: -> { p.putstr(big, y: 2, x: 3) }, cursore: -> { p.move_cursor(2, 0) && p.putstr(big) }}
+          .each do |name, write|
+          expect { write.call }.to raise_error(Notcurses::PlaneError, /egcpool/), name.to_s
+          expect((0..3).map { |x| p.at(y: 2, x: x) }).to eq(before), name.to_s
+          expect(p.cursor).to eq((name == :cursore) ? [2, 0] : [0, 1]), name.to_s
+        end
+      end
+    end
+
+    # Review di ICH-533: il C rilascia l'EGC della cella che sovrascrive prima di copiare il nuovo, quindi un EGC lungo
+    # su una cella con un EGC lungo entra anche con il pool pieno; il controllo prima della scrittura lo rifiutava.
+    it "putstr, putegc e puttext su una cella con un EGC lungo scrivono anche con l'egcpool pieno (prima: PlaneError)" do
+      {combinanti: ->(c) { "#{c}#{"́" * 3_000_000}" }, spaziatura: ->(c) { "#{c}#{"ि" * 2_000_000}" }}
+        .each do |kind, big|
+        with_parent(rows: 2, cols: 8) do |p|
+          p.putstr(big.('a'), y: 0, x: 0)
+          p.putstr(big.('b'), y: 1, x: 0)
+          expect(p.putstr(big.('c'), y: 0, x: 0)).to eq(1), kind.to_s
+          expect(p.putegc(big.('d'), y: 1, x: 0)).to eq(1), kind.to_s
+          expect(p.puttext(big.('e'), y: 0)).to eq(1), kind.to_s
+          expect([p.at(y: 0, x: 0).egc, p.at(y: 1, x: 0).egc]).to eq([big.('e'), big.('d')]), kind.to_s
+        end
+      end
+    end
+
+    # Review di ICH-533: il controllo prova un EGC alla volta; con più EGC lunghi nello stesso testo il C si ferma al
+    # primo che non entra, e il messaggio non nominava il pool.
+    it "con più EGC lunghi che insieme non entrano nell'egcpool il messaggio nomina il pool e l'EGC" do
+      big = ->(c) { "#{c}#{"́" * 3_000_000}" }
+      with_parent(rows: 2, cols: 8) do |p|
+        label = Regexp.escape("#{"ć́".inspect}... (6000001 byte)")
+        expect { p.putstr(%w[a b c].map(&big).join(' '), y: 0, x: 0) }
+          .to raise_error(Notcurses::PlaneError, /scritto 4 colonne su 5: l'egcpool .*#{label}/)
+        expect([0, 2].map { |x| p.at(y: 0, x: x).egc }).to eq([big.('a'), big.('b')]) # il C scrive quelli che entrano
+        expect { p.puttext(big.('d'), y: 1) }.to raise_error(Notcurses::PlaneError, /egcpool/)
+      end
+    end
+
+    it 'un EGC che notcurses rifiuta con spazio nel pool solleva ancora ArgumentError' do
+      with_parent(rows: 1, cols: 4) do |p|
+        allow(Notcurses::FFI).to receive(:nccell_load).and_return(-1)
+        expect { p.putstr("é", y: 0, x: 0) }.to raise_error(ArgumentError, /non accetta/)
+        expect(p.contents).to eq('')
       end
     end
 

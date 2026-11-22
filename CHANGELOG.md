@@ -22,6 +22,30 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Notcurses::UI`: `Label`, `Button`, `TextInput`, `ListView`, `Dialog` e il titolo di `Container` controllano il
+  testo anche con le regole di notcurses: un grapheme che notcurses 3.0.17 divide con un pezzo largo 0, come il
+  keycap "1️⃣", solleva `ArgumentError` alla creazione e nei setter, con un messaggio che nomina il grapheme; in
+  `TextInput` il tasto che lo completerebbe non viene inserito (ICH-232). Prima il controllo passava e il disegno
+  scriveva "?". `LogView`, che mostra byte grezzi, lo mostra ancora come "?", e così anche un EGC lungo senza spazio
+  nell'egcpool, invece di sollevare `PlaneError`.
+- `Cell`: con un grapheme che notcurses 3.0.17 divide in più caratteri (bandiere, coniugati devanagari, hangul con
+  i jamo L, V e T, keycap) le scritture con una cella sollevano `CellError` con i pezzi e con che cosa usare:
+  `Plane#putstr` per i coniugati, la forma composta (`String#unicode_normalize(:nfc)`) per gli hangul (ICH-217). Per
+  le bandiere il messaggio avvisa che `Plane#putstr` le scrive in due celle larghe 1, ma molti terminali (per esempio
+  Ghostty) le disegnano più larghe e il testo dopo si sposta. Prima il messaggio diceva solo "notcurses non accetta
+  ... come un solo carattere". `Plane#set_base` con
+  uno di quei grapheme solleva `CellError`: prima teneva in silenzio il primo pezzo (per esempio "🇮" di "🇮🇹").
+  `Cell.new` non cambia: controlla con le regole di Ruby, perché senza un piano non sa come notcurses divide il
+  grapheme. Lo YARD di `Cell` elenca i casi.
+- `Plane#putstr`, `#putegc` e `#puttext`: con l'egcpool del piano pieno (16 MiB) un EGC di più di 4 byte solleva
+  `PlaneError` con un messaggio che nomina l'egcpool e l'EGC (ICH-533). notcurses scrive gli EGC che entrano e si
+  ferma lì; il glifo dove si ferma (che il C svuota prima di fallire) e il cursore tornano com'erano, quindi un solo
+  EGC che non entra lascia il piano com'era. Un EGC che sovrascrive celle con EGC lunghi entra se
+  il C, che prima libera quelle celle, trova spazio. Prima un EGC con segni combinanti sollevava `ArgumentError`
+  ("notcurses non accetta"), come un testo non valido, anche quando il C l'avrebbe scritto; senza segni combinanti
+  `putstr` e `puttext` sollevavano `PlaneError` senza nominare il pool, e `putegc` `CellError` ("divide in più
+  caratteri"). Il controllo dei caratteri di larghezza zero, che carica i pezzi con `nccell_load`, usa un piano
+  temporaneo quando il pool è pieno. I messaggi d'errore mostrano solo l'inizio e i byte di un EGC lungo.
 - `Reader#offer_input`: Backspace, Ctrl+U e Ctrl+W cancellano anche il carattere della colonna 0, ASCII o glifo
   largo (ICH-218). Prima il carattere restava, perché il C cancella scrivendo `""` e in colonna 0 la scrittura
   fallisce (`notcurses.c:1883`); il carattere successivo lo sovrascriveva. Ctrl+W si ferma ancora, come nel C, su un

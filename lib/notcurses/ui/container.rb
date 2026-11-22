@@ -48,7 +48,7 @@ module Notcurses
 
         @direction = direction
         @border = Util.bool!(border, 'border')
-        @title = title.nil? ? nil : Text.check!(title, 'title')
+        @title = title.nil? ? nil : Text.check!(title, 'title', Text.host(parent))
         @channels = Util.plane_channels_value(channels, 'channels')
         @children = []
         @closing = false
