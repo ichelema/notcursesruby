@@ -20,6 +20,15 @@ RSpec.describe Notcurses::Reader do
 
     let(:std) { nc.stdplane }
 
+    # Il contesto è condiviso: un esempio precedente che ha lasciato il cursore acceso con cursor_enable farebbe
+    # fallire il cursor_disable di questo esempio (senza un tty il C non spegne il cursore). Con lo stato noto
+    # sconosciuto cursor_disable tollera l'errore del C e riporta il cursore chiesto a nascosto. Prima delle
+    # aspettative sulle chiamate FFI dell'esempio, che conterebbero queste.
+    before do
+      nc.cursor_state_unknown!
+      nc.cursor_disable
+    end
+
     def new_plane(rows: 2, cols: 10) = std.create_child(rows: rows, cols: cols, y: 3, x: 3)
 
     def new_reader(rows: 2, cols: 10, **opts, &block) = described_class.open(new_plane(rows: rows, cols: cols), **opts, &block)
