@@ -83,10 +83,9 @@
   `Plane#check_text!` (`@api private`). `master` su `67164c7`: 1288 esempi, 0 fallimenti, semi 1234, 4242 e 7,
   coverage 98,19 %, RuboCop 0, YARD 100 %, gem costruita, layer FFI invariato; CI della PR e di `master` verde. Log in
   `memory/backlog-issue.md`, esito in `RICONSEGNA.md`, retain in Hindsight fatto il 2026-11-22.
-- **Da fare all'inizio della prossima sessione:**
-  - chiedi all'utente in quale lotto mettere ICH-581 (lotto 8, `Reader`), ICH-582 (lotto 8b: con l'egcpool pieno le
-    scritture con `Cell` sollevano `CellError` invece di `PlaneError`; `gradient` dà già `PlaneError` dal C) e ICH-586
-    (lotto 8b: una bandiera è larga 2 colonne per notcurses e 4 per Ghostty; il testo dopo si sposta). Sono Low, Bug.
+- **Scelte dell'utente del 2026-11-22:** ICH-581 nel lotto 8c (tocca `widgets/reader.rb` come ICH-580); ICH-582 e
+  ICH-586 nel lotto 8d nuovo, dopo l'8c (codice di grapheme ed egcpool del lotto 8b).
+- **Da fare:**
   - `037c011` (escape dei caratteri invisibili e `spec/source_chars_spec.rb`, 2026-11-22) è su `master` senza CI:
     il push aveva in cima `d667047` con `[skip ci]`, che salta la CI di tutto il push, e `ci.yml` non ha
     `workflow_dispatch`. In locale: 1289 esempi, 0 fallimenti; `spec31` e RuboCop verdi. L'utente ha scelto di
@@ -102,9 +101,9 @@
     `.claude/skills/verify/screen`;
   - CI rossa in circa 30 secondi su tutti i job = guasto dell'infrastruttura (per esempio `archive.archlinux.org`
     giù, controllalo con `curl`), non il codice.
-- **Prossimo step:** dopo i punti sopra, lotto 8c (`bug`): ICH-576, ICH-580, ICH-577 (tabella di "Ordine di lavoro").
+- **Prossimo step:** lotto 8c (`bug`): ICH-576, ICH-580, ICH-577, ICH-581 (tabella di "Ordine di lavoro").
   Spiega prima le issue all'utente (passo 0 della "Procedura per ogni lotto"), poi proponi
-  `/trinity:workflow:1_create-worktree master ICH-576 ICH-580 ICH-577 opus`. ICH-576 chiede la verifica manuale con
+  `/trinity:workflow:1_create-worktree master ICH-576 ICH-580 ICH-577 ICH-581 opus`. ICH-576 chiede la verifica manuale con
   `/trinity:workflow:2_work-verify` prima della review (`ncvt -m`, terminale muto); ICH-580 ha la verifica con
   `verify_reader.rb` (scenari 9a e 9b).
 - Nata dal lotto 6, in Backlog, Low, da assegnare a un lotto successivo (non blocca la PR #29): ICH-554 (`Visual#rotate`
@@ -343,6 +342,9 @@ Le issue nate dai lotti 1, 2, 2b, 2c e 3 sono state aggiunte dopo (lotti 2, 2b, 
 | 8c | `bug` | ICH-576 | Medium | Let SIGTERM and Ctrl-C end the process while Context.new or Direct.new waits for a terminal that never answers (nata dal lotto 7; verify manuale prima della review) |
 | 8c | `bug` | ICH-580 | Medium | Restore the last cursor_enable or cursor_disable in cursor: false readers after a cursor: true reader (nata dal lotto 8; nel lotto 8c per scelta dell'utente) |
 | 8c | `bug` | ICH-577 | Low | Keep the original exception when the rollback of Context.new or Direct.new raises (nata dal lotto 7) |
+| 8c | `bug` | ICH-581 | Low | Move the Reader cursor to the start of a wide glyph deleted by Backspace (nata dal lotto 8; nel lotto 8c per scelta dell'utente) |
+| 8d | `bug` | ICH-582 | Low | Raise PlaneError, not CellError, when the egcpool has no room for the EGC of a cell in the cell-based Plane writes (nata dal lotto 8b) |
+| 8d | `bug` | ICH-586 | Low | Keep the text after a flag aligned when the terminal draws regional indicators wider than notcurses counts them (nata dal lotto 8b; il comportamento lo sceglie l'utente) |
 | 9 | `bug` | ICH-230 | Medium | Bound the unfinished line in LogView#append by bytes |
 | 10 | `bug` | ICH-220 | Medium | Make the Tabbed header follow plane resizes |
 | 10 | `bug` | ICH-221 | Medium | Fix Tree focus drift with items of different heights |

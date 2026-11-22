@@ -1079,3 +1079,12 @@ Dal 2026-11-21 al 2026-11-22. Branch `bug/ICH-217-232-533-opus`, worktree `.clau
 - Linear: ICH-533, ICH-217 e ICH-232 a Done; ICH-582 e ICH-586 in Backlog. Worktree e branch da rimuovere con
   `/trinity:workflow:5_remove-worktree bug+ICH-217-232-533-opus` (si avvia solo a mano). Rimossi il 2026-11-22,
   anche il branch remoto.
+
+## Assegnazione di ICH-581, ICH-582 e ICH-586 (2026-11-22)
+
+Scelte dell'utente, dopo il lotto 8b:
+
+- ICH-581 (Backspace dopo un glifo largo nel `Reader`) nel lotto 8c, con ICH-576, ICH-580 e ICH-577: tocca
+  `widgets/reader.rb` come ICH-580.
+- ICH-582 (scritture con `Cell` e egcpool pieno) e ICH-586 (larghezza delle bandiere) nel lotto 8d nuovo: stesso
+  codice di grapheme ed egcpool del lotto 8b (`plane.rb`, `cell.rb`).
