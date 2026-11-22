@@ -209,6 +209,7 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
   def mute_init_script = <<~RUBY
     require 'notcurses'
     $stdout.sync = true
+    trap('TERM') { exit 3 } if ENV['NC_TRAP'] # un gestore dell'applicazione: SystemExit invece di SignalException
     klass = Notcurses.const_get(ENV.fetch('NC_CLASS'))
     extra = klass == Notcurses::Context ? { suppress_banners: true } : {}
     klass.new(output: ENV.fetch('NC_TTY'), termtype: 'xterm-256color', **extra)
@@ -218,7 +219,7 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
   def tty_state(slave) = [slave.echo?, slave.fcntl(Fcntl::F_GETFL)]
 
   # @return [Array] stato di uscita, secondi dal primo segnale, stato del pty prima e dopo, byte scritti sul pty
-  def run_mute_init(klass, signals)
+  def run_mute_init(klass, signals, env: {})
     now = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
     master, slave = PTY.open
     slave.winsize = [24, 80]
@@ -234,8 +235,8 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
       nil
     end
     out_r, out_w = IO.pipe
-    pid = spawn({ 'NC_CLASS' => klass, 'NC_TTY' => slave.path }, RbConfig.ruby, '-I', lib_dir, '-e', mute_init_script,
-                in: slave, out: out_w, err: out_w)
+    pid = spawn({ 'NC_CLASS' => klass, 'NC_TTY' => slave.path }.merge(env), RbConfig.ruby, '-I', lib_dir, '-e',
+                mute_init_script, in: slave, out: out_w, err: out_w)
     out_w.close
     output = Thread.new { out_r.read }
     limit = now.call + 10
@@ -267,6 +268,16 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
       expect(after).to eq(before) # echo e modo canonico, O_NONBLOCK del fd 0 tolto
       expect(log).to include("\e[<u") # pop della tastiera kitty, attivata dall'init
       expect(log.include?("\e[?1049l")).to be(klass == 'Context') # lo schermo alternativo lo apre solo Context
+    end
+
+    next unless signals == %i[TERM]
+
+    # review della PR #33: con un trap('TERM') { exit } il segnale diventa una SystemExit, e new aspettava senza limite
+    it "#{klass}.new con un terminale che non risponde mai: exit da un trap('TERM') chiude il processo entro 5 s " \
+       'con il suo stato e ripristina il terminale' do
+      status, elapsed, before, after, _log, out = run_mute_init(klass, signals, env: { 'NC_TRAP' => '1' })
+      expect([status.exitstatus, elapsed < 5]).to eq([3, true]), out
+      expect(after).to eq(before)
     end
   end
 

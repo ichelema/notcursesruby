@@ -689,16 +689,17 @@ module Notcurses
     end
 
     # Il chiamante di new ha rinunciato all'init e aspetta il rollback del
-    # thread di init. Dopo un segnale (SignalException: SIGTERM, Ctrl-C)
-    # aspetta al più fino alla scadenza di INIT_GRACE secondi (ICH-576): con
-    # un terminale che non risponde mai l'init non torna. Con le altre
-    # eccezioni (error nil per Thread#kill) aspetta senza limite (ICH-226).
+    # thread di init. Dopo un segnale (SignalException: SIGTERM, Ctrl-C) o
+    # un exit (SystemExit, anche da un gestore +trap+ del segnale) aspetta al
+    # più fino alla scadenza di INIT_GRACE secondi (ICH-576): con un
+    # terminale che non risponde mai l'init non torna. Con le altre eccezioni
+    # (error nil per Thread#kill) aspetta senza limite (ICH-226).
     # @param pending [PendingInit, nil] l'init in corso
     # @param error [Exception, nil] l'eccezione per cui il chiamante rinuncia
     # @return [void]
     def await_init(pending, error)
       return unless pending
-      return pending.thread.join unless error.is_a?(SignalException)
+      return pending.thread.join unless error.is_a?(SignalException) || error.is_a?(SystemExit)
 
       pending.deadline ||= monotonic + INIT_GRACE
       pending.thread.join([pending.deadline - monotonic, 0].max)

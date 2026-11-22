@@ -293,8 +293,9 @@ module Notcurses
     # rollback (per esempio di +notcurses_stop+) viene scartato, senza
     # scrivere su stderr: il chiamante riceve l'eccezione per cui new ha
     # rinunciato, anche l'InitError di un init NULL. Dopo un segnale
-    # (SIGTERM, Ctrl-C) new aspetta la risposta del terminale al più per 2
-    # secondi, poi esce con l'eccezione del segnale; un secondo Ctrl-C esce
+    # (SIGTERM, Ctrl-C) o un +exit+ (anche da un gestore +trap+ del segnale)
+    # new aspetta la risposta del terminale al più per 2 secondi, poi esce
+    # con l'eccezione del segnale o la SystemExit; un secondo Ctrl-C esce
     # subito. Il thread interno ferma il contesto quando l'init torna, e fino
     # ad allora il contesto resta registrato (un nuovo init solleva
     # InitError). Con le altre eccezioni new aspetta senza limite. Con un

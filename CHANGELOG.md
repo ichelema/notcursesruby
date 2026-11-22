@@ -78,8 +78,9 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 - `Context.new` e `Direct.new` con un terminale che non risponde mai alle query dell'init: SIGTERM, un Ctrl-C o due
   Ctrl-C chiudono il processo in circa 2 secondi (ICH-576). Prima il processo restava vivo, e solo SIGKILL lo
   chiudeva: il C aspetta la risposta senza timeout (`pthread_cond_wait`, `in.c:2924-2925`), `new` aspettava il thread
-  dell'init, e all'uscita Ruby aspettava lo stesso thread. Ora, dopo un segnale, `new` aspetta al più 2 secondi e
-  poi esce con l'eccezione del segnale; se il processo esce con l'init ancora fermo, l'hook `at_exit` del wrapper lo
+  dell'init, e all'uscita Ruby aspettava lo stesso thread. Ora, dopo un segnale o un `exit` (anche da un gestore
+  `trap` del segnale), `new` aspetta al più 2 secondi e poi esce con l'eccezione del segnale o la `SystemExit`; se il
+  processo esce con l'init ancora fermo, l'hook `at_exit` del wrapper lo
   chiude senza aspettare gli altri thread, con la morte per il segnale (o lo stato di `exit`). Prima di uscire rimette
   il terminale come l'ha trovato l'init: echo e modo canonico, `O_NONBLOCK` del fd 0, la tastiera kitty e (`Context`)
   lo schermo alternativo. Con un terminale che risponde entro i 2 secondi non cambia nulla; oltre, un solo Ctrl-C si
