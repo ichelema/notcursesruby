@@ -75,15 +75,28 @@
   dalla 1.0), il sorgente `ncvt.c` e l'esempio `verify_reader.rb`. La libreria compilata e `ncvt` sono in
   `~/.claude/tmp/libghostty-vt/` (prefix e `harness/ncvt`); se mancano, la ricetta li ricostruisce. Per ICH-576 usa
   `ncvt -m` (terminale muto).
-- **Prossimo step:** lotto 8b (`bug`): ICH-217, ICH-232, ICH-533, issue già spiegate all'utente
-  il 2026-11-21; non serve spiegarle di nuovo.
-  Comando: `/trinity:workflow:1_create-worktree master ICH-217 ICH-232 ICH-533 opus`. Prima di `2_work-issue`
-  chiedi all'utente l'approvazione del cambio dell'API della Fase 2 per ICH-232 (un helper `@api private` su
-  `Plane` che espone il controllo di `zero_width_egc!` a `Notcurses::UI`). Note dello scoping: ICH-533 e ICH-232
-  toccano lo stesso metodo (`zero_width_egc!`, `nccell_load` con -1 per il pool pieno: `poolused` e `poolsize`
-  sono in `Plane::Internals`); `Cell#load_into` ha lo stesso problema per `putc` (`CellError`); precedente in
-  `reader.rb:209` (`nccell_load` -1 diventa `WidgetError`); `spec/notcurses/ui/label_spec.rb:71-73` oggi si
-  aspetta `"?"` per il keycap e va cambiata; nessuna spec per Hangul e devanagari.
+- **Lotto 8b in corso** (`bug`): ICH-217, ICH-232, ICH-533. PR #32 aperta, branch `bug/ICH-217-232-533-opus` su
+  `d847446`, worktree `.claude/worktrees/bug+ICH-217-232-533-opus` (submodule `notcurses` inizializzato: alla
+  rimozione `--force` è approvato). Catena: `2_work-issue`, simplify, verify con `ncvt` (FAIL sul consiglio di usare
+  `putstr` per le bandiere, corretto in `2e916f9`), review `soft` Sonnet (APPROVABILE CON RISERVE, 3 finding corretti
+  in `d847446`: lo spazio nell'egcpool lo decide il C, il controllo dei pezzi larghi 0 usa un piano temporaneo con il
+  pool pieno). Verifica locale su `d847446`: 1286 esempi, 0 fallimenti, semi 1234, 4242 e 7, coverage 98,18 %,
+  RuboCop 0, YARD 100 %, gem costruita, layer FFI invariato. Cambio dell'API della Fase 2 approvato dall'utente il
+  2026-11-21: `Plane#check_text!` (`@api private`). Log da scrivere in `memory/backlog-issue.md` alla chiusura.
+- **CI non verificata (scelta dell'utente del 2026-11-22):** tutte le corse della PR #32 dal 2026-11-21 alle 22:58
+  falliscono prima delle spec: `archive.archlinux.org` non risponde (pacman non scarica `core.db` dello snapshot
+  2026/10/26; `archlinux.org` risponde). L'utente ha scelto di proseguire senza CI. Da fare appena l'archivio torna:
+  `gh run rerun <id> --failed` sull'ultima corsa (della PR, o di `master` dopo il merge) e controllo di tutta la
+  matrice; Ruby 3.1 e 3.2 non sono provati in locale per il lotto 8b. Se un job fallisce per il codice, correggi o
+  apri una issue con l'utente.
+- Nate dal lotto 8b, in Backlog, Low, da assegnare a un lotto (chiedi all'utente): ICH-582 (le scritture con `Cell`
+  con l'egcpool pieno sollevano `CellError` invece di `PlaneError`; dopo `d847446` `gradient` dà già `PlaneError`
+  dal C) e ICH-586 (una bandiera: notcurses conta 2 colonne, Ghostty ne disegna 4; il testo dopo si sposta e restano
+  residui sullo schermo).
+- **Prossimo step:** l'utente esegue `gh pr merge 32 --merge` (il classificatore blocca il merge dalla sessione);
+  poi chiusura del lotto 8b (passo 7, con la CI come sopra), `/trinity:workflow:5_remove-worktree
+  bug+ICH-217-232-533-opus`, e il lotto 8c (`bug`): ICH-576, ICH-580, ICH-577, da spiegare prima (passo 0), con
+  `/trinity:workflow:1_create-worktree master ICH-576 ICH-580 ICH-577 opus`.
 - Nata dal lotto 6, in Backlog, Low, da assegnare a un lotto successivo (non blocca la PR #29): ICH-554 (`Visual#rotate`
   chiama il C una volta per pixel, circa 0,9 s su 1024x1024; accelerarlo può servire un cambio del layer FFI, regola 1).
 - Alla chiusura del lotto 6: 3 bug di notcurses nuovi nelle tabelle di `RICONSEGNA.md` (elenco in
