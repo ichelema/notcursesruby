@@ -97,6 +97,11 @@
   - un consiglio scritto in un messaggio d'errore si prova con `ncvt` prima del commit;
   - CI rossa in circa 30 secondi su tutti i job = guasto dell'infrastruttura (per esempio `archive.archlinux.org`
     giù, controllalo con `curl`), non il codice.
+- **Prossimo step:** dopo i punti sopra, lotto 8c (`bug`): ICH-576, ICH-580, ICH-577 (tabella di "Ordine di lavoro").
+  Spiega prima le issue all'utente (passo 0 della "Procedura per ogni lotto"), poi proponi
+  `/trinity:workflow:1_create-worktree master ICH-576 ICH-580 ICH-577 opus`. ICH-576 chiede la verifica manuale con
+  `/trinity:workflow:2_work-verify` prima della review (`ncvt -m`, terminale muto); ICH-580 ha la verifica con
+  `verify_reader.rb` (scenari 9a e 9b).
 - Nata dal lotto 6, in Backlog, Low, da assegnare a un lotto successivo (non blocca la PR #29): ICH-554 (`Visual#rotate`
   chiama il C una volta per pixel, circa 0,9 s su 1024x1024; accelerarlo può servire un cambio del layer FFI, regola 1).
 - Alla chiusura del lotto 6: 3 bug di notcurses nuovi nelle tabelle di `RICONSEGNA.md` (elenco in
