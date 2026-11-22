@@ -70,6 +70,11 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   rendere idempotente `#cursor_disable` (che tollera ancora un cursore già nascosto dalla chiusura di un reader con
   `cursor: true`). Con un reader con `cursor: true` e uno con `cursor: false` aperti insieme decide l'ultima
   operazione. I reader con `cursor: true` non cambiano.
+- `Context.new` e `Direct.new`: quando il rollback dell'init solleva (per esempio un errore dello stop), il chiamante
+  riceve l'eccezione per cui `new` ha rinunciato: l'`Interrupt` del Ctrl-C, l'eccezione di un `Thread#raise` o
+  l'`InitError` di un init NULL (ICH-577). Prima l'errore del rollback la sostituiva, e un `rescue Interrupt` attorno a
+  `new` non scattava più. L'errore del rollback viene scartato, senza scrivere su stderr; registro, `FILE*`
+  dell'output e `TERM` tornano a posto come prima.
 - `Direct#stream` con il blitter `:pixel` ridisegna ogni frame sulle righe del primo anche in fondo allo schermo
   (ICH-458). Prima un frame più basso dello schermo poteva finire sull'ultima riga (per esempio con il cursore in
   fondo: il C sposta in alto un frame che non entra sotto il cursore, `direct.c:442-448`); il C mandava poi una CUP

@@ -178,7 +178,10 @@ module Notcurses
     # che ferma anche il contesto quando new non va a buon fine:
     # un'eccezione asincrona durante l'attesa (Ctrl-C, Thread#raise, Timeout,
     # anche Thread#kill) arriva a init completato e a contesto fermato, con
-    # il registro libero. Un secondo Ctrl-C mentre new aspetta esce subito: il
+    # il registro libero. Un errore del rollback (per esempio di
+    # +ncdirect_stop+) viene scartato, senza scrivere su stderr: il chiamante
+    # riceve l'eccezione per cui new ha rinunciato, anche l'InitError di un
+    # init NULL. Un secondo Ctrl-C mentre new aspetta esce subito: il
     # thread interno ferma il contesto quando l'init torna (con il fd 1 su
     # /dev/null durante lo stop, come in {#close}), e fino ad allora il
     # contesto resta registrato (un nuovo init solleva InitError). Con un

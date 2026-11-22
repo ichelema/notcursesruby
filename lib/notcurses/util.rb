@@ -570,7 +570,9 @@ module Notcurses
     # del chiamante non lo saltano (ICH-226). Il chiamante scrive in go true
     # per partire (false: rinuncia prima dell'init), poi true se adotta il
     # puntatore letto da ready. Il thread rimanda le interruzioni per tutta
-    # la sua vita: anche all'uscita del processo il rollback finisce.
+    # la sua vita: anche all'uscita del processo il rollback finisce. Un
+    # errore del rollback viene scartato (ICH-577): il join del chiamante lo
+    # rilancerebbe al posto dell'eccezione per cui il chiamante ha rinunciato.
     # @param go [Thread::Queue] le decisioni del chiamante
     # @param ready [Thread::Queue] il puntatore, o l'eccezione della chiamata C
     # @param start [Proc] la chiamata C dell'init
@@ -591,7 +593,11 @@ module Notcurses
             end
             next if go.pop
           end
-          undo.call(ptr)
+          begin
+            undo.call(ptr)
+          rescue Exception # rubocop:disable Lint/RescueException
+            nil # il registro, il FILE* e TERM li sistema comunque l'ensure di undo
+          end
         end
       end
     end

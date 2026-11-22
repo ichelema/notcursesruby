@@ -284,7 +284,10 @@ module Notcurses
     # setenv). L'init gira in un thread interno, che ferma anche il contesto
     # quando new non va a buon fine: un'eccezione asincrona durante l'attesa
     # (Ctrl-C, Thread#raise, Timeout, anche Thread#kill) arriva a init
-    # completato e a contesto fermato, con il registro libero. Un secondo
+    # completato e a contesto fermato, con il registro libero. Un errore del
+    # rollback (per esempio di +notcurses_stop+) viene scartato, senza
+    # scrivere su stderr: il chiamante riceve l'eccezione per cui new ha
+    # rinunciato, anche l'InitError di un init NULL. Un secondo
     # Ctrl-C mentre new aspetta esce subito: il thread interno ferma il
     # contesto quando l'init torna, e fino ad allora il contesto resta
     # registrato (un nuovo init solleva InitError). Con un terminale che non
