@@ -177,9 +177,9 @@
 - **CI:** container `archlinux:base` fissato per digest, snapshot `2026/10/26` dell'Arch Linux Archive, Ruby da
   mise, matrice 3.1.7, 3.2.11, 3.3.13, 3.4.12, 4.0.9. RuboCop solo nel job 4.0.9. Soglie di coverage: 98 % totale,
   90 % per file, layer FFI escluso. I commit di sola documentazione usano `[skip ci]`.
-- **Linear:** progetto `notcursesruby` del team Ichelema (`ICH`). Le issue sono in inglese (label di progetto
-  `lang:en`). Le issue della revisione (ICH-441…ICH-475) hanno `Problem`, `Acceptance criteria` e `Required
-  tests`; per ICH-214…ICH-232 il formato non è controllato.
+- **Linear:** progetto `notcursesruby` del team Ichelema (`ICH`). Le issue sono in italiano (label di progetto
+  `lang:it`); quelle scritte fino al 2026-11-22 sono in inglese. Le issue della revisione (ICH-441…ICH-475) hanno
+  `Problem`, `Acceptance criteria` e `Required tests`; per ICH-214…ICH-232 il formato non è controllato.
 - **Punto aperto senza issue:** blocco raro in `Context#close` su macOS (log della Fase 5, "Punti aperti"). L'utente
   ha scelto il 2026-11-15 di non aprire una issue: resta fuori da questa fase.
 
@@ -247,8 +247,9 @@ successivi.
     il push su `origin/master` dei commit di sola documentazione sono autorizzati.
 14. Una scelta con due letture valide spetta all'utente: chiedi con AskUserQuestion. Se hai dubbi, fermati e
     chiarisci con l'utente.
-15. Lingua: commit, titolo e corpo delle PR e commenti su Linear in inglese (`lang:en`, per esempio
-    `fix(plane): ...`). `RICONSEGNA.md`, `handoff.md` e `memory/` restano in italiano.
+15. Lingua: commit, titolo e corpo delle PR in inglese (label di progetto `git:en`, per esempio
+    `fix(plane): ...`); issue e commenti su Linear in italiano (label `lang:it`). `RICONSEGNA.md`,
+    `handoff.md` e `memory/` restano in italiano.
 16. Un lotto tocca solo il codice delle sue issue. Se un fix richiede un cambio che appartiene a un altro lotto o a
     un'altra issue, fermati e chiedi all'utente. Un difetto nuovo trovato in review diventa una issue nuova in
     Backlog, con la conferma dell'utente.
