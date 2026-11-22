@@ -68,10 +68,12 @@ module Notcurses
   # controllo di {Util.watch_init}, che chiude il processo (ICH-576).
   at_exit do
     ctx = Notcurses.active_context
-    Util.watch_init(ctx.pending_init, $!) if ctx && ctx.pid == Process.pid
+    next unless ctx && ctx.pid == Process.pid
+
+    Util.watch_init(ctx.pending_init, $!)
     # anche un contesto già chiuso per le chiamate nuove: close esegue lo stop rimasto in attesa, se nessuna
     # operazione è in corso
-    ctx.close if ctx && ctx.pid == Process.pid
+    ctx.close
   rescue StandardError => e
     warn "notcurses: chiusura del contesto all'uscita fallita: #{e.message}"
   end
