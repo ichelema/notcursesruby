@@ -1444,9 +1444,10 @@ del lotto 3. Comportamenti nuovi:
   reader con `cursor: false` non lo rimettono (ICH-580) (lotto 8, ICH-218).
 - Nuovo metodo `@api private` di `Context`: `restore_cursor!` (lotto 8).
 - `Plane#putstr`, `#putegc` e `#puttext`: con l'egcpool del piano pieno (16 MiB) un EGC di più di 4 byte solleva
-  `PlaneError` con un messaggio che nomina l'egcpool, prima di scrivere; prima `ArgumentError` con i segni
-  combinanti, `CellError` da `putegc` senza. Il controllo prima della scrittura carica in prova nel pool anche gli EGC
-  di più di 4 byte senza segni combinanti (lotto 8b, ICH-533).
+  `PlaneError` con un messaggio che nomina l'egcpool e l'EGC; prima `ArgumentError` con i segni combinanti,
+  `CellError` da `putegc` senza. Lo spazio lo decide il C, che prima libera le celle che sovrascrive, e si ferma al
+  primo EGC che non entra. Il controllo dei caratteri di larghezza zero carica i pezzi su un piano temporaneo con il
+  pool vuoto quando il pool del piano è pieno (lotto 8b, ICH-533, con i fix della review).
 - Le scritture con una `Cell` di un grapheme che notcurses divide (bandiere, coniugati devanagari, hangul con i jamo
   L, V e T, keycap) sollevano `CellError` con i pezzi e con che cosa usare; `Plane#set_base` solleva `CellError`
   invece di tenere il primo pezzo. `Cell.new` non cambia (lotto 8b, ICH-217).

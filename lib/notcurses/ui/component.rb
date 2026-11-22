@@ -40,8 +40,6 @@ module Notcurses
       #   "\n" (senza newlines), un altro carattere di controllo, U+2028,
       #   U+2029, un carattere di larghezza zero isolato o un grapheme che
       #   notcurses scrive con un pezzo largo 0
-      # @raise [PlaneError] se l'egcpool di plane (16 MiB) non ha spazio per un
-      #   EGC di più di 4 byte del testo
       def check!(text, name, plane, newlines: false)
         str = Util.string!(text, name)
         raise ArgumentError, "#{name} contiene un TAB: espandilo prima (per esempio con String#gsub)" if str.include?("\t")

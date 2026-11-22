@@ -37,10 +37,13 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   `Cell.new` non cambia: controlla con le regole di Ruby, perché senza un piano non sa come notcurses divide il
   grapheme. Lo YARD di `Cell` elenca i casi.
 - `Plane#putstr`, `#putegc` e `#puttext`: con l'egcpool del piano pieno (16 MiB) un EGC di più di 4 byte solleva
-  `PlaneError` con un messaggio che nomina l'egcpool, prima di scrivere, e il piano non cambia (ICH-533). Prima un
-  EGC con segni combinanti sollevava `ArgumentError` ("notcurses non accetta"), come un testo non valido; senza segni
-  combinanti `putstr` e `puttext` sollevavano `PlaneError` senza nominare il pool, e `putegc` `CellError` ("divide
-  in più caratteri"). I messaggi d'errore mostrano solo l'inizio e i byte di un EGC lungo, non tutto l'EGC.
+  `PlaneError` con un messaggio che nomina l'egcpool e l'EGC (ICH-533). notcurses scrive gli EGC che entrano e si
+  ferma lì; un solo EGC che non entra lascia il piano com'era. Un EGC che sovrascrive celle con EGC lunghi entra se
+  il C, che prima libera quelle celle, trova spazio. Prima un EGC con segni combinanti sollevava `ArgumentError`
+  ("notcurses non accetta"), come un testo non valido, anche quando il C l'avrebbe scritto; senza segni combinanti
+  `putstr` e `puttext` sollevavano `PlaneError` senza nominare il pool, e `putegc` `CellError` ("divide in più
+  caratteri"). Il controllo dei caratteri di larghezza zero, che carica i pezzi con `nccell_load`, usa un piano
+  temporaneo quando il pool è pieno. I messaggi d'errore mostrano solo l'inizio e i byte di un EGC lungo.
 - `Reader#offer_input`: Backspace, Ctrl+U e Ctrl+W cancellano anche il carattere della colonna 0, ASCII o glifo
   largo (ICH-218). Prima il carattere restava, perché il C cancella scrivendo `""` e in colonna 0 la scrittura
   fallisce (`notcurses.c:1883`); il carattere successivo lo sovrascriveva. Ctrl+W si ferma ancora, come nel C, su un

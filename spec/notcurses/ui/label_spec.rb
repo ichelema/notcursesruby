@@ -79,6 +79,16 @@ RSpec.describe Notcurses::UI::Label do
     expect(label.text).to eq("\u{1F44D} ok")
   end
 
+  # Review di ICH-232: il controllo del testo prima della creazione carica gli EGC nel pool del contenitore, che non
+  # è il piano dove il componente scriverà; con quel pool pieno sollevava PlaneError.
+  it "un testo con un EGC lungo è accettato anche con l'egcpool del contenitore pieno (prima: PlaneError)" do
+    big = ->(c) { "#{c}#{"́" * 3_000_000}" }
+    box = row(2)
+    2.times { |y| box.plane.putstr(big.call('a'), y: y, x: 0) }
+    label = described_class.new(box, text: big.call('b'), size: 1)
+    expect(label.text).to eq(big.call('b'))
+  end
+
   it 'channels con lo sfondo :highcontrast solleva alla creazione, anche senza spazio (ICH-291)' do
     box = Notcurses::UI::Container.new(app.root, size: 3)
     expect { described_class.new(box, text: 'x', channels: 0x3000_0000) }.to raise_error(ArgumentError, /highcontrast/)

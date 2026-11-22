@@ -1297,6 +1297,35 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    # Review di ICH-533: il C rilascia l'EGC della cella che sovrascrive prima di copiare il nuovo, quindi un EGC lungo
+    # su una cella con un EGC lungo entra anche con il pool pieno; il controllo prima della scrittura lo rifiutava.
+    it "putstr, putegc e puttext su una cella con un EGC lungo scrivono anche con l'egcpool pieno (prima: PlaneError)" do
+      {combinanti: ->(c) { "#{c}#{"́" * 3_000_000}" }, spaziatura: ->(c) { "#{c}#{"ि" * 2_000_000}" }}
+        .each do |kind, big|
+        with_parent(rows: 2, cols: 8) do |p|
+          p.putstr(big.('a'), y: 0, x: 0)
+          p.putstr(big.('b'), y: 1, x: 0)
+          expect(p.putstr(big.('c'), y: 0, x: 0)).to eq(1), kind.to_s
+          expect(p.putegc(big.('d'), y: 1, x: 0)).to eq(1), kind.to_s
+          expect(p.puttext(big.('e'), y: 0)).to eq(1), kind.to_s
+          expect([p.at(y: 0, x: 0).egc, p.at(y: 1, x: 0).egc]).to eq([big.('e'), big.('d')]), kind.to_s
+        end
+      end
+    end
+
+    # Review di ICH-533: il controllo prova un EGC alla volta; con più EGC lunghi nello stesso testo il C si ferma al
+    # primo che non entra, e il messaggio non nominava il pool.
+    it "con più EGC lunghi che insieme non entrano nell'egcpool il messaggio nomina il pool e l'EGC" do
+      big = ->(c) { "#{c}#{"́" * 3_000_000}" }
+      with_parent(rows: 2, cols: 8) do |p|
+        label = Regexp.escape("#{"ć́".inspect}... (6000001 byte)")
+        expect { p.putstr(%w[a b c].map(&big).join(' '), y: 0, x: 0) }
+          .to raise_error(Notcurses::PlaneError, /scritto 4 colonne su 5: l'egcpool .*#{label}/)
+        expect([0, 2].map { |x| p.at(y: 0, x: x).egc }).to eq([big.('a'), big.('b')]) # il C scrive quelli che entrano
+        expect { p.puttext(big.('d'), y: 1) }.to raise_error(Notcurses::PlaneError, /egcpool/)
+      end
+    end
+
     it 'un EGC che notcurses rifiuta con spazio nel pool solleva ancora ArgumentError' do
       with_parent(rows: 1, cols: 4) do |p|
         allow(Notcurses::FFI).to receive(:nccell_load).and_return(-1)

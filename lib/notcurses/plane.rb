@@ -74,18 +74,6 @@ module Notcurses
     ZERO_WIDTH_CANDIDATES = /[\p{Mn}\p{Me}\p{Cf}ᅠ-ᇿힰ-퟿]/
     private_constant :ZERO_WIDTH_CANDIDATES
 
-    # Caratteri che si legano al carattere vicino nello stesso grapheme
-    # cluster (UAX #29). Un EGC di più di 4 byte, che notcurses copia
-    # nell'egcpool, ha più di un codepoint e quindi ne contiene almeno uno:
-    # un testo senza questi caratteri e senza ZERO_WIDTH_CANDIDATES non ha
-    # grapheme da controllare con +nccell_load+.
-    GRAPHEME_JOINERS = /\p{Grapheme_Cluster_Break=Extend} | \p{Grapheme_Cluster_Break=ZWJ}
-                       | \p{Grapheme_Cluster_Break=SpacingMark} | \p{Grapheme_Cluster_Break=Prepend}
-                       | \p{Grapheme_Cluster_Break=Regional_Indicator} | \p{Grapheme_Cluster_Break=L}
-                       | \p{Grapheme_Cluster_Break=V} | \p{Grapheme_Cluster_Break=T}
-                       | \p{Grapheme_Cluster_Break=LV} | \p{Grapheme_Cluster_Break=LVT}/x
-    private_constant :GRAPHEME_JOINERS
-
     # Spazi tra le parole per {#puttext} (senza gli spazi non separabili).
     WORD_SPACES = /[\p{Zs}&&[^   ]]+/
     private_constant :WORD_SPACES
@@ -1792,9 +1780,9 @@ module Notcurses
     # @raise [ArgumentError, TypeError] se un argomento non è valido (caratteri
     #   rifiutati, coordinate fuori dal piano, x: insieme ad align:)
     # @raise [PlaneError] se il testo non entra nel piano, se l'egcpool del
-    #   piano (16 MiB) non ha spazio per un EGC di più di 4 byte del testo
-    #   (controllo prima della scrittura, un EGC alla volta: il piano non
-    #   cambia), o se notcurses rifiuta la scrittura (per esempio su un piano
+    #   piano (16 MiB) non ha spazio per un EGC di più di 4 byte del testo (il
+    #   C scrive gli EGC prima e si ferma lì; il messaggio nomina l'egcpool e
+    #   l'EGC), o se notcurses rifiuta la scrittura (per esempio su un piano
     #   con un bitmap)
     # @raise [RenderError] su uno stdplane che scorre, se fallisce il render
     #   che prima della scrittura lo porta alle dimensioni del terminale
@@ -1833,7 +1821,10 @@ module Notcurses
                end
           @context.raise_callback_errors!
           written += rc.abs
-          raise PlaneError, "putstr: notcurses ha scritto #{written} colonne su #{widths.sum}" unless rc == widths[i]
+          next if rc == widths[i]
+
+          raise PlaneError, "putstr: notcurses ha scritto #{written} colonne su #{widths.sum}" \
+                            "#{egcpool_hint(ptr, seg, rc.abs)}"
         end
         written
       end
@@ -1891,7 +1882,9 @@ module Notcurses
         ty, tx = text_target!(text, cols, cols, y: y, x: x, align: nil, stained: stained)
         rc = stained ? FFI.ncplane_putegc_stained(ptr, text, nil) : FFI.ncplane_putegc_yx(ptr, ty, tx, text, nil)
         @context.raise_callback_errors!
-        Util.check!(rc, PlaneError, "ncplane_putegc_yx(#{text.inspect})")
+        raise PlaneError, "ncplane_putegc_yx(#{Util.egc_label(text)}) fallita (#{rc})#{egcpool_hint(ptr, text)}" if rc.negative?
+
+        rc
       end
     end
 
@@ -1941,9 +1934,10 @@ module Notcurses
     # @param align [Symbol] :left, :center o :right
     # @return [Integer] colonne scritte
     # @raise [ArgumentError, TypeError] se un argomento non è valido
-    # @raise [PlaneError] se il testo non entra nel piano, o se l'egcpool del
-    #   piano (16 MiB) non ha spazio per un EGC di più di 4 byte del testo
-    #   (tutti e due prima di scrivere)
+    # @raise [PlaneError] se il testo non entra nel piano (prima di scrivere),
+    #   o se l'egcpool del piano (16 MiB) non ha spazio per un EGC di più di 4
+    #   byte del testo (le righe e gli EGC prima restano scritti; il messaggio
+    #   nomina l'egcpool)
     # @raise [Exception] l'eccezione di un callback Ruby di resize
     # @raise [ClosedError] se il piano è chiuso
     def puttext(text, y: nil, align: :left)
@@ -1982,9 +1976,7 @@ module Notcurses
     # @param name [String] nome usato nel messaggio d'errore
     # @return [String] il testo, UTF-8
     # @raise [ArgumentError, TypeError] se {#putstr} rifiuterebbe il testo
-    #   (caratteri rifiutati)
-    # @raise [PlaneError] se l'egcpool del piano (16 MiB) non ha spazio per un
-    #   EGC di più di 4 byte del testo
+    #   (caratteri rifiutati); lo spazio nell'egcpool non è controllato
     # @raise [ClosedError] se il piano è chiuso
     def check_text!(text, name) = Guard.run { output_text!(to_ptr, text, name) }
 
@@ -3215,45 +3207,79 @@ module Notcurses
       raise ArgumentError, "#{name} contiene un carattere di controllo" if str.match?(/(?!\n)\p{Cc}/)
       raise ArgumentError, "#{name} contiene U+2028 o U+2029, che notcurses tronca a un byte" if str.match?(/[  ]/)
 
-      zero_width_egc!(ptr, str, name) if str.match?(ZERO_WIDTH_CANDIDATES) || str.match?(GRAPHEME_JOINERS)
+      zero_width_egc!(ptr, str, name) if str.match?(ZERO_WIDTH_CANDIDATES)
       str
     end
 
-    # Controlla con +nccell_load+ i grapheme che notcurses può scrivere male,
-    # prima di ogni scrittura, così il piano non cambia:
-    # - rifiuta i caratteri che notcurses scrive come EGC di larghezza zero: il
-    #   C li mette in una cella propria e, con il cursore a fine riga
-    #   (x == colonne), scrive fuori dalla riga (sull'ultima riga fuori dal
-    #   framebuffer). La segmentazione è quella di notcurses, che può
-    #   dividere un grapheme di Ruby;
-    # - carica in prova ogni EGC di più di 4 byte, che va nell'egcpool del
-    #   piano: senza spazio nel pool (16 MiB) solleva PlaneError (ICH-533).
-    # Il testo arriva UTF-8 valido e senza caratteri di controllo: allora
-    # +nccell_load+ fallisce solo in +egcpool_stash+, per un pezzo di più di 4
-    # byte (+pool_blit_direct+, internal.h:1447-1468). Un fallimento con al più
-    # 4 byte rimasti è un rifiuto vero.
+    # Rifiuta i caratteri che notcurses scrive come EGC di larghezza zero: il
+    # C li mette in una cella propria e, con il cursore a fine riga
+    # (x == colonne), scrive fuori dalla riga (sull'ultima riga fuori dal
+    # framebuffer). La segmentazione è quella di notcurses (+nccell_load+),
+    # che può dividere un grapheme di Ruby.
     def zero_width_egc!(ptr, str, name)
-      cell = FFI::NcCell.new
       str.each_grapheme_cluster do |g|
-        next unless g.bytesize > 4 || g.match?(ZERO_WIDTH_CANDIDATES)
+        next unless g.match?(ZERO_WIDTH_CANDIDATES)
 
-        off = 0
-        while off < g.bytesize
-          len = FFI.nccell_load(ptr, cell, g.byteslice(off..))
-          unless len.positive?
-            raise ArgumentError, "#{name}: notcurses non accetta #{Util.egc_label(g)}" if g.bytesize - off <= 4
+        read = nc_pieces(ptr, g) do |piece, width|
+          next unless width.zero?
 
-            raise PlaneError, "#{name}: l'egcpool del piano (16 MiB) non ha spazio per #{Util.egc_label(g)}; " \
-                              'il piano non è cambiato'
-          end
-          if cell[:width].zero?
-            raise ArgumentError, "#{name}: notcurses 3.0.17 scrive #{Util.egc_label(g.byteslice(off, len))} " \
-                                 "(in #{Util.egc_label(g)}) come un carattere di larghezza zero, in una cella propria"
-          end
-
-          off += len
+          raise ArgumentError, "#{name}: notcurses 3.0.17 scrive #{Util.egc_label(piece)} (in #{Util.egc_label(g)}) " \
+                               'come un carattere di larghezza zero, in una cella propria'
         end
+        raise ArgumentError, "#{name}: notcurses non accetta #{Util.egc_label(g)}" if read < g.bytesize
       end
+    end
+
+    # Passa al blocco i pezzi in cui notcurses divide str (+nccell_load+), con
+    # le loro colonne. Un pezzo di più di 4 byte che l'egcpool del piano non ha
+    # spazio per caricare si carica su un piano temporaneo con il pool vuoto:
+    # la segmentazione non dipende dal pool, e lo spazio per la scrittura lo
+    # controlla il C, che prima rilascia gli EGC delle celle che sovrascrive
+    # (ICH-533). Il testo arriva UTF-8 valido e senza caratteri di controllo:
+    # allora +nccell_load+ fallisce solo in +egcpool_stash+, per un pezzo di
+    # più di 4 byte (+pool_blit_direct+, internal.h:1447-1468).
+    # @return [Integer] byte letti: meno di str.bytesize se notcurses rifiuta
+    #   un pezzo
+    def nc_pieces(ptr, str)
+      cell = FFI::NcCell.new
+      target = ptr # la cella si rilascia sul piano dove è caricata
+      off = 0
+      while off < str.bytesize
+        len = FFI.nccell_load(target, cell, str.byteslice(off..))
+        unless len.positive?
+          break unless target.equal?(ptr) && str.bytesize - off > 4
+
+          target = spare_plane(ptr) # il caricamento fallito ha già rilasciato la cella
+          next
+        end
+        yield str.byteslice(off, len), cell[:width]
+        off += len
+      end
+      off
+    ensure
+      FFI.nccell_release(target, cell) if cell
+      FFI.ncplane_destroy(target) unless target.nil? || target.equal?(ptr)
+    end
+
+    # Piano 1x1 figlio di ptr, con l'egcpool vuoto, per {#nc_pieces}: il
+    # chiamante lo distrugge prima che arrivi un render.
+    def spare_plane(ptr)
+      opts = FFI::NcPlaneOptions.new
+      opts[:rows] = 1
+      opts[:cols] = 1
+      Util.check_ptr!(FFI.ncplane_create(ptr, opts), PlaneError, 'ncplane_create')
+    end
+
+    # Motivo da aggiungere al messaggio di una scrittura di text fallita dopo
+    # cols colonne: l'EGC dove il C si è fermato, se è di più di 4 byte e
+    # l'egcpool del piano non ha spazio per caricarlo (ICH-533). Gli EGC prima
+    # restano scritti.
+    def egcpool_hint(ptr, text, cols = 0)
+      stop = text.each_grapheme_cluster.find { |g| (cols -= Notcurses.strwidth(g)).negative? }
+      return '' unless stop && stop.bytesize > 4
+
+      cell = FFI::NcCell.new
+      FFI.nccell_load(ptr, cell, stop).positive? ? '' : ": l'egcpool del piano (16 MiB) non ha spazio per #{Util.egc_label(stop)}"
     ensure
       FFI.nccell_release(ptr, cell) if cell
     end
@@ -3296,13 +3322,10 @@ module Notcurses
 
     # Controlla che notcurses legga text come un solo EGC (+nccell_load+).
     def single_egc!(ptr, text)
-      probe = FFI::NcCell.new
-      len = FFI.nccell_load(ptr, probe, text)
-      return if len == text.bytesize
+      pieces = 0
+      return if nc_pieces(ptr, text) { pieces += 1 } == text.bytesize && pieces == 1
 
       raise Cell.split_error(ptr, text) || CellError.new("notcurses divide #{text.inspect} in più caratteri")
-    ensure
-      FFI.nccell_release(ptr, probe) if probe
     end
 
     # Copia le Cell in nccell temporanee del piano, esegue il blocco e le
