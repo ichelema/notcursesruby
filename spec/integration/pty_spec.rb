@@ -1241,7 +1241,8 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
 
   # ICH-218: il ridisegno di ncreader accende il cursore del terminale (reader.c:105). Il terminale finto registra
   # le sequenze; per ogni operazione del reader il figlio stampa l'ultima fra \e[?25h (mostra) e \e[?25l (nasconde).
-  def reader_cursor_script = <<~'RUBY'
+  # order: i valori di cursor: dei reader, nell'ordine in cui girano (ICH-580).
+  def reader_cursor_script(order) = (<<~'RUBY').sub('ORDER', order.inspect)
     require 'notcurses'
     require 'io/console'
     require 'pty'
@@ -1267,7 +1268,7 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     end
     backspace = Notcurses::Input.synthesize(Notcurses::Key::BACKSPACE)
     Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
-      [false, true].each do |managed|
+      ORDER.each do |managed|
         Notcurses::Reader.open(nc.stdplane.create_child(rows: 1, cols: 10, y: 2, x: 2), cursor: managed) do |reader|
           puts "cursor: #{managed} write #{last.call { reader.write('ab') }}"
           puts "cursor: #{managed} backspace #{last.call { reader.offer_input(backspace) }}"
@@ -1279,11 +1280,19 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
   RUBY
 
   it 'con cursor: false il reader lascia nascosto il cursore del terminale; con cursor: true lo mostra (prima: sempre acceso)' do
-    out, status, timed_out = run_child(reader_cursor_script, timeout: 30)
+    out, status, timed_out = run_child(reader_cursor_script([false, true]), timeout: 30)
     expect(timed_out).to be(false), out
     expect(status.exitstatus).to eq(0), out
     expect(out.lines.grep(/^cursor: false/)).to eq(%w[write backspace move_left].map { |op| "cursor: false #{op} \"\\e[?25l\"\n" })
     expect(out).to include('cursor: true write "\e[?25h"', 'fine')
     expect(out.lines.grep(/^cursor: true/)).not_to include(a_string_including('25l'))
+  end
+
+  it 'con cursor: false il reader lascia nascosto il cursore anche dopo un reader con cursor: true (ICH-580, prima: acceso)' do
+    out, status, timed_out = run_child(reader_cursor_script([true, false]), timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(status.exitstatus).to eq(0), out
+    expect(out.lines.grep(/^cursor: false/)).to eq(%w[write backspace move_left].map { |op| "cursor: false #{op} \"\\e[?25l\"\n" })
+    expect(out).to include('cursor: true write "\e[?25h"', 'fine')
   end
 end

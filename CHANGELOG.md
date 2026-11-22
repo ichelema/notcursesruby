@@ -62,6 +62,14 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   lasciava i cursori sulla colonna della metà destra (`reader.c:263-265`): la scrittura dopo lasciava un buco nella
   riga (`"a漢"`, Backspace, `"c"`: celle `a`, vuota, `c`) e `contents` non lo mostrava. Vale anche sulle righe sotto la
   prima.
+- `Reader` con `cursor: false`: dopo un reader con `cursor: true` rimette di nuovo il cursore del terminale come l'ha
+  chiesto l'ultima chiamata a `Context#cursor_enable` (con la posizione) o `#cursor_disable`, o nascosto se non ce ne
+  sono state (ICH-580). Prima il reader con `cursor: true` rendeva sconosciuto lo stato del cursore, e i reader con
+  `cursor: false` non facevano nulla: il cursore restava acceso nel campo anche dopo `Context#cursor_disable`. Ora
+  `Context` tiene separati lo stato chiesto dall'applicazione e quello noto del cursore del C, che serve solo a
+  rendere idempotente `#cursor_disable` (che tollera ancora un cursore già nascosto dalla chiusura di un reader con
+  `cursor: true`). Con un reader con `cursor: true` e uno con `cursor: false` aperti insieme decide l'ultima
+  operazione. I reader con `cursor: true` non cambiano.
 - `Direct#stream` con il blitter `:pixel` ridisegna ogni frame sulle righe del primo anche in fondo allo schermo
   (ICH-458). Prima un frame più basso dello schermo poteva finire sull'ultima riga (per esempio con il cursore in
   fondo: il C sposta in alto un frame che non entra sotto il cursore, `direct.c:442-448`); il C mandava poi una CUP

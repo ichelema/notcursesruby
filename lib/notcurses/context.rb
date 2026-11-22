@@ -374,7 +374,8 @@ module Notcurses
         @closing = false
         @closer = nil
         @close_error = nil
-        @cursor_enabled = false
+        @cursor_enabled = false # stato noto del cursore del C: true, false o nil (sconosciuto)
+        @cursor_at = nil # stato chiesto dall'applicazione: nil = nascosto, [y, x] = acceso lì
         @mice_enabled = false
         @drain_input = drain_input
         @no_winch_sighandler = no_winch_sighandler
@@ -789,7 +790,9 @@ module Notcurses
     # Idempotente: con il cursore già nascosto non chiama il C (che
     # restituirebbe un errore). Dopo un'operazione di un {Reader} con
     # cursor: true, che accende e spegne il cursore da sé, chiama il C e
-    # tollera un cursore già nascosto.
+    # tollera un cursore già nascosto. I {Reader} con cursor: false rimettono
+    # dopo ogni ridisegno lo stato dell'ultima chiamata a {#cursor_enable} o a
+    # questo metodo.
     #
     # @return [self]
     # @raise [ContextError] se il terminale non nasconde il cursore acceso con
@@ -803,34 +806,40 @@ module Notcurses
         rc = FFI.notcurses_cursor_disable(ptr)
         Util.check!(rc, ContextError, 'notcurses_cursor_disable') if @cursor_enabled
         @cursor_enabled = false
+        @cursor_at = nil
         self
       end
     end
 
-    # Segna come sconosciuto lo stato del cursore del terminale. Lo chiama il
-    # {Reader} con cursor: true: il suo ridisegno accende il cursore e la sua
-    # chiusura lo spegne, senza passare da {#cursor_enable} e
-    # {#cursor_disable}.
+    # Segna come sconosciuto lo stato noto del cursore del terminale, quello
+    # che {#cursor_disable} usa per essere idempotente. Lo chiama il {Reader}
+    # con cursor: true: il suo ridisegno accende il cursore e la sua chiusura
+    # lo spegne, senza passare da {#cursor_enable} e {#cursor_disable}. Non
+    # tocca lo stato chiesto dall'applicazione, che {#restore_cursor!} rimette.
     # @return [void]
     # @api private
     def cursor_state_unknown!
       @cursor_enabled = nil
     end
 
-    # Rimette il cursore del terminale come l'ha lasciato l'ultima chiamata a
-    # {#cursor_enable} o {#cursor_disable}; con lo stato sconosciuto non fa
-    # nulla. Lo chiama il {Reader} con cursor: false dopo ogni ridisegno del
-    # C, che accende e sposta il cursore. L'esito del C non conta, come nel
+    # Rimette il cursore del terminale come l'ha chiesto l'ultima chiamata a
+    # {#cursor_enable} (con la posizione) o {#cursor_disable}, o nascosto se
+    # non ce ne sono state, anche dopo un {Reader} con cursor: true che ha
+    # reso sconosciuto lo stato noto del cursore. Aggiorna lo stato noto. Lo
+    # chiama il {Reader} con cursor: false dopo ogni ridisegno del C, che
+    # accende e sposta il cursore. L'esito del C non conta, come nel
     # ridisegno: senza un tty il C non spegne il cursore.
     # @return [void]
     # @api private
     def restore_cursor!
       Guard.run do
         ptr = to_ptr
-        if @cursor_enabled
+        if @cursor_at
           FFI.notcurses_cursor_enable(ptr, *@cursor_at)
-        elsif @cursor_enabled == false
+          @cursor_enabled = true
+        else
           FFI.notcurses_cursor_disable(ptr)
+          @cursor_enabled = false
         end
       end
     end

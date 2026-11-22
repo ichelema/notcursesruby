@@ -25,10 +25,13 @@ module Notcurses
   #
   # Ogni ridisegno del C accende il cursore del terminale e lo porta nel campo
   # (+notcurses_cursor_enable+), anche senza NCREADER_OPTION_CURSOR. Con
-  # cursor: false il wrapper lo rimette subito come l'ha lasciato l'ultima
-  # chiamata a {Context#cursor_enable} o {Context#cursor_disable} (senza un
+  # cursor: false il wrapper lo rimette subito come l'ha chiesto l'ultima
+  # chiamata a {Context#cursor_enable} o {Context#cursor_disable}, o nascosto
+  # se non ce ne sono state, anche dopo un reader con cursor: true (senza un
   # tty il C non lo spegne); con cursor: true il reader lo mostra nel campo e
-  # la chiusura lo spegne.
+  # la chiusura lo spegne. Con un reader con cursor: true e uno con
+  # cursor: false aperti insieme decide l'ultima operazione: il cursore resta
+  # come l'ha lasciato il reader che ha ridisegnato per ultimo.
   #
   # Bug di 3.0.17 da conoscere:
   # - NCREADER_OPTION_HORSCROLL non è offerto: con lo scorrimento orizzontale
@@ -75,8 +78,11 @@ module Notcurses
     #   scorciatoie con Ctrl e Alt (le lascia all'applicazione)
     # @param cursor [Boolean] NCREADER_OPTION_CURSOR: il reader mostra il
     #   cursore del terminale nel campo e lo spegne alla chiusura; con false il
-    #   cursore resta come l'ha lasciato l'applicazione (vedi la descrizione
-    #   della classe)
+    #   cursore resta come l'ha chiesto l'applicazione con
+    #   {Context#cursor_enable} o {Context#cursor_disable}, anche dopo un
+    #   reader con cursor: true. Con un reader con cursor: true e uno con
+    #   cursor: false aperti insieme decide l'ultima operazione (vedi la
+    #   descrizione della classe)
     # @raise [WidgetError] se +ncreader_create+ fallisce (il piano risulta
     #   distrutto); se il piano è lo stdplane, è già di un widget, non è
     #   posseduto, scorre o cresce da solo; dentro un callback chiamato da

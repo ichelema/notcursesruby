@@ -595,6 +595,55 @@ RSpec.describe Notcurses::Reader do
       expect(nc.cursor_disable).to equal(nc)
     end
 
+    # una chiamata di ogni operazione che ridisegna: ogni ridisegno del C accende il cursore
+    def redraw_all(reader)
+      reader.write('ab')
+      reader.offer_input(ev(key::BACKSPACE))
+      reader.offer_input(ctrl('U'))
+      reader.offer_input(ctrl('W'))
+      reader.move_left
+      reader.move_right
+      reader.move_up
+      reader.move_down
+    end
+
+    it 'dopo un reader con cursor: true, un reader con cursor: false rispegne il cursore ad ogni ridisegno (ICH-580, prima: acceso)' do
+      nc.cursor_disable
+      new_reader(cursor: true) { |reader| reader.write('a') }
+      new_reader do |reader|
+        expect(Notcurses::FFI).to receive(:notcurses_cursor_disable).exactly(8).times.and_call_original
+        redraw_all(reader)
+      end
+    end
+
+    it 'dopo un reader con cursor: true, un reader con cursor: false rimette il cursore di cursor_enable (ICH-580, prima: acceso nel campo)' do
+      nc.cursor_enable(y: 1, x: 2)
+      new_reader(cursor: true) { |reader| reader.write('a') }
+      new_reader do |reader|
+        expect(Notcurses::FFI).to receive(:notcurses_cursor_enable).with(nc.to_ptr, 1, 2).exactly(8).times.and_call_original
+        redraw_all(reader)
+      end
+    end
+
+    it 'cursor_enable e cursor_disable con un reader con cursor: true aperto valgono per i reader con cursor: false (ICH-580)' do
+      new_reader(cursor: true) do |reader|
+        reader.write('a')
+        nc.cursor_enable(y: 1, x: 2)
+        reader.write('b') # il reader con cursor: true riaccende il cursore nel campo
+        new_reader do |other|
+          expect(Notcurses::FFI).to receive(:notcurses_cursor_enable).with(nc.to_ptr, 1, 2).exactly(8).times.and_call_original
+          redraw_all(other)
+        end
+        reader.write('c') # stato del C di nuovo sconosciuto: cursor_disable chiama il C e tollera l'errore
+        nc.cursor_disable
+        reader.write('d')
+        new_reader do |other|
+          expect(Notcurses::FFI).to receive(:notcurses_cursor_disable).exactly(8).times.and_call_original
+          redraw_all(other)
+        end
+      end
+    end
+
     it 'con cursor: true il reader lascia acceso il cursore del terminale nel campo, come vuole notcurses' do
       new_reader(cursor: true) do |reader|
         expect(Notcurses::FFI).not_to receive(:notcurses_cursor_disable)
