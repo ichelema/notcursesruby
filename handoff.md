@@ -469,8 +469,9 @@ all'utente e, dopo la conferma, aggiorna la issue su Linear.
   usa path dalla radice (`sed -i ... lib/notcurses/ui/label.rb`), `git -C`, `mise -C`, oppure una subshell
   `( cd dir && comando )`, che non sposta la sessione.
 - Edit non trova il testo con segni combinanti o con U+2028 e U+2029 scritti come caratteri: usa come ancora le righe
-  ASCII vicine. Nel codice nuovo scrivi `"́"`, non il carattere; nelle regex delle spec usa `Regexp.escape` del
-  valore calcolato.
+  ASCII vicine. Nel codice di `lib/` e `spec/` scrivi questi caratteri come escape (`"\u0301"`), mai come carattere:
+  `spec/source_chars_spec.rb` fallisce e indica file e riga. Nei commenti restano ammessi. Nelle regex delle spec usa
+  `Regexp.escape` del valore calcolato.
 - Negli script di prova copia le opzioni del contesto da `CONTEXT_OPTIONS` di `spec/support/nc_helpers.rb`.
 
 ## Comandi
