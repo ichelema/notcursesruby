@@ -68,6 +68,63 @@ module NcHelpers
     Notcurses::Context.open(**CONTEXT_OPTIONS, **opts, &block)
   end
 
+  # --- stati difficili per le spec di «piano invariato» (lezione del lotto 8b) ---
+
+  # Un EGC di circa 6 MB (base e 3 milioni di U+0301): tre non entrano nei
+  # 16 MiB dell'egcpool di un piano (egcpool.h:36).
+  #
+  # @param base [String] carattere di base, diverso per ogni EGC da confrontare
+  # @return [String]
+  def big_egc(base = 'a') = "#{base}#{"́" * 3_000_000}"
+
+  # Riempie l'egcpool di plane con due EGC da 6 MB, in colonna 0 delle righe
+  # ys: dopo, un altro EGC da 6 MB non entra, se non sovrascrive uno di questi.
+  #
+  # @param plane [Notcurses::Plane] piano largo almeno 1 colonna, con le righe ys
+  # @param ys [Array<Integer>] righe da usare
+  # @return [void]
+  def fill_egcpool(plane, ys: [0, 1])
+    ys.each_with_index { |y, i| plane.putstr(big_egc((97 + i).chr), y: y, x: 0) }
+  end
+
+  # Mette la riga y in uno stato «occupato»: "X" in colonna 0, il glifo largo
+  # "漢" nelle colonne 2-3, stili e colori del piano non di default e il cursore
+  # in cursor. Una scrittura che fallisce su quella riga deve lasciarla così:
+  # una riga vuota con i colori di default nasconde le celle che il C svuota o
+  # ricolora prima di fallire (notcurses.c:1911-1950).
+  #
+  # @param plane [Notcurses::Plane] piano largo almeno 4 colonne
+  # @param y [Integer] riga
+  # @param cursor [Array(Integer, Integer)] posizione finale del cursore
+  # @return [void]
+  def occupy_row(plane, y, cursor: [0, 1])
+    plane.putstr('X', y: y, x: 0)
+    plane.putstr('漢', y: y, x: 2)
+    plane.channels = Notcurses::Channels.rgb(255, 0, 0, 0, 0, 0)
+    plane.styles = :bold
+    plane.move_cursor(*cursor)
+  end
+
+  # Fotografia di plane da confrontare prima e dopo una scrittura che deve
+  # fallire senza cambiarlo: per ogni cella EGC, stili, colori e larghezza
+  # (Plane#at legge anche con l'egcpool pieno), poi cursore, stili e colori del
+  # piano. Un EGC lungo diventa inizio, byte e hash, così un fallimento non
+  # stampa megabyte.
+  #
+  # @param plane [Notcurses::Plane]
+  # @return [Array]
+  def plane_snapshot(plane)
+    rows, cols = plane.dims
+    cells = Array.new(rows) do |y|
+      Array.new(cols) do |x|
+        cell = plane.at(y: y, x: x)
+        egc = (cell.egc.bytesize > 32) ? "#{cell.egc[0, 3].inspect}... (#{cell.egc.bytesize} byte, #{cell.egc.hash})" : cell.egc
+        [egc, cell.styles, cell.channels.value, cell.width]
+      end
+    end
+    [cells, plane.cursor, plane.styles, plane.channels.value]
+  end
+
   # Esegue il blocco in un thread nuovo, lo ferma al primo ritorno del metodo
   # method_id (dove Ruby consegna le eccezioni asincrone) e gli manda
   # Thread#raise(RuntimeError, 'interrotto'), poi lo lascia ripartire.
