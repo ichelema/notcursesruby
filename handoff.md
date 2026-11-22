@@ -136,7 +136,8 @@
   CapsLock'`, 1 esempio, 0 fallimenti.
 - **Review con GPT e Sonnet**: `gpt-bridge:reviewer` e `trinity:reviewer` con `model: sonnet` ed `effort: max` al
   posto di Fable (scelta dell'utente del 2026-11-18; worktree di review `review+<base-name>-sonnet`). I revisori
-  eseguono gli script da stdin, senza file e senza `.review-tmp` (non è in `.gitignore`), e rspec in una subshell con
+  eseguono gli script da stdin, senza file e senza `.review-tmp` (allora non era in `.gitignore`; lo è dal 2026-11-22,
+  vedi le Note pratiche), e rspec in una subshell con
   cwd nel worktree di review; i worktree di review puliti si rimuovono con `git worktree remove`.
 - Nata dal lotto 2c: ICH-533 (`putstr`, `putegc` e `puttext` sollevano `ArgumentError` invece di `PlaneError` con
   l'egcpool pieno e un EGC con segni combinanti), nel lotto 8b con ICH-217 e ICH-232: stesso codice
@@ -407,7 +408,9 @@ ICH-224, ICH-228 e ICH-229 sono già a Done.
 4. `4_review-fix-loop` serve solo se la review trova problemi.
 5. Controlla la CI della PR (`gh pr checks <n> --watch`). Con la CI verde chiedi all'utente il merge (regola 13).
    Dopo il merge Linear porta le issue a Done.
-6. `5_remove-worktree` rimuove worktree e branch, anche quello remoto. `git worktree remove` rifiuta un worktree con
+6. `5_remove-worktree` rimuove worktree e branch. Il branch remoto lo cancella GitHub al merge
+   (`delete_branch_on_merge`, attivato il 2026-11-22): il passo 4 lo trova assente e non fa il push con
+   `--force-with-lease`, che Blast Radius metterebbe in coda. `git worktree remove` rifiuta un worktree con
    il submodule inizializzato: `--force` è approvato solo se il worktree ha in più il submodule `notcurses` e
    `git status` è vuoto (decisione dell'utente del 2026-11-08, `memory/correzioni-review.md`). Chiedi conferma se
    la condizione non vale.
@@ -455,8 +458,12 @@ all'utente e, dopo la conferma, aggiorna la issue su Linear.
 - Non eseguire due suite in parallelo: il carico della CPU rende instabili le spec dei pty.
 - In zsh un comando in una variabile non si divide in parole: usa un array (`E=(env ...)`, `"${E[@]}"`) e scrivi
   `--order "rand:$seed"`. In zsh `echo ====` fallisce: usa `echo '----'`.
-- Nei comandi non mettere `rm` né `rm -rf`: un hook li mette in coda per la conferma dell'utente. `doc`, `.yardoc` e
-  `coverage` sono già in `.gitignore`. Per `gem build` usa `--output` con un file nello scratchpad.
+- Nei comandi non mettere `rm` né `rm -rf`: Blast Radius li mette in coda per la conferma dell'utente, anche sotto
+  `~/.claude/tmp`, nonostante `2_work-verify` (lotto 8b: `rm -f "$V/ctl-$k.results"` in un ciclo). Per ripetere una
+  prova usa una cartella nuova (`mktemp -d`). `doc`, `.yardoc`, `coverage` e `.review-tmp` sono in `.gitignore`.
+  `git worktree remove` cancella da solo le cartelle ignorate, senza `--force`: nella pulizia della review salta
+  l'`rm -rf` di `.review-tmp`, che chiede la sezione «Pulizia» di `3_independent-review`. Per `gem build` usa
+  `--output` con un file nello scratchpad.
 - Non lanciare `rspec` con cwd in un checkout per provare il codice di un altro: `rspec` mette il `lib/` del cwd nel
   load path prima di `-I`. Nei worktree esegui la suite dalla radice del worktree.
 - Dopo l'apertura della PR la CI può partire con qualche minuto di ritardo: aspetta con

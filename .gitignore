@@ -4,6 +4,7 @@
 /.yardoc/
 /coverage/
 /*.gem
+/.review-tmp/
 
 CLAUDE_FABLE.md
 CLAUDE_GPT.md
