@@ -226,7 +226,10 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     log = String.new(encoding: Encoding::BINARY)
     lock = Mutex.new
     reader = Thread.new do # il terminale muto: legge tutto e non risponde mai
-      loop { (data = master.readpartial(65_536)) && lock.synchronize { log << data } }
+      loop do
+        data = master.readpartial(65_536)
+        lock.synchronize { log << data }
+      end
     rescue IOError, Errno::EIO
       nil
     end
