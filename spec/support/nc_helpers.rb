@@ -75,7 +75,7 @@ module NcHelpers
   #
   # @param base [String] carattere di base, diverso per ogni EGC da confrontare
   # @return [String]
-  def big_egc(base = 'a') = "#{base}#{"́" * 3_000_000}"
+  def big_egc(base = 'a') = "#{base}#{"\u0301" * 3_000_000}"
 
   # Riempie l'egcpool di plane con due EGC da 6 MB, in colonna 0 delle righe
   # ys: dopo, un altro EGC da 6 MB non entra, se non sovrascrive uno di questi.

@@ -3228,7 +3228,7 @@ module Notcurses
       str = Util.string!(text, name)
       raise ArgumentError, "#{name} contiene un TAB: espandilo prima (per esempio con String#gsub)" if str.include?("\t")
       raise ArgumentError, "#{name} contiene un carattere di controllo" if str.match?(/(?!\n)\p{Cc}/)
-      raise ArgumentError, "#{name} contiene U+2028 o U+2029, che notcurses tronca a un byte" if str.match?(/[  ]/)
+      raise ArgumentError, "#{name} contiene U+2028 o U+2029, che notcurses tronca a un byte" if str.match?(/[\u2028\u2029]/)
 
       zero_width_egc!(ptr, str, name) if str.match?(ZERO_WIDTH_CANDIDATES)
       str

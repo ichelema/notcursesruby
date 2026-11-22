@@ -113,7 +113,7 @@ RSpec.describe 'Notcurses: funzioni di formattazione' do
       expect(Notcurses.strwidth('')).to eq(0)
       expect(Notcurses.strwidth('abc')).to eq(3)
       expect(Notcurses.strwidth('漢字')).to eq(4)
-      expect(Notcurses.strwidth("é")).to eq(1)
+      expect(Notcurses.strwidth("e\u0301")).to eq(1)
       expect(Notcurses.strwidth("a\nb")).to eq(3)
       expect(Notcurses.strwidth('abc'.b)).to eq(3)
     end

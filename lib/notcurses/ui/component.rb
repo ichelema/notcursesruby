@@ -45,7 +45,7 @@ module Notcurses
         raise ArgumentError, "#{name} contiene un TAB: espandilo prima (per esempio con String#gsub)" if str.include?("\t")
         raise ArgumentError, "#{name} contiene un a capo" if !newlines && str.include?("\n")
         raise ArgumentError, "#{name} contiene un carattere di controllo" if str.match?(/(?!\n)\p{Cc}/)
-        raise ArgumentError, "#{name} contiene U+2028 o U+2029, che notcurses tronca a un byte" if str.match?(/[  ]/)
+        raise ArgumentError, "#{name} contiene U+2028 o U+2029, che notcurses tronca a un byte" if str.match?(/[\u2028\u2029]/)
         if str.match?(ZERO_WIDTH) && str.each_grapheme_cluster.any? { |g| zero_width?(g) }
           raise ArgumentError, "#{name} contiene un carattere di larghezza zero isolato"
         end
@@ -136,7 +136,7 @@ module Notcurses
       # @return [String] UTF-8
       def clean(bytes)
         str = bytes.dup.force_encoding(Encoding::UTF_8).scrub('?')
-        str.gsub!(/(?!\t)[\p{Cc}  ]/, '?')
+        str.gsub!(/(?!\t)[\p{Cc}\u2028\u2029]/, '?')
         str = expand_tabs(str) if str.include?("\t")
         return str unless str.match?(ZERO_WIDTH)
 

@@ -300,12 +300,12 @@ module Notcurses
     # @param str [String] testo UTF-8 valido
     # @return [Array<String>] [str] se str non contiene ZWJ
     def zwj_segments(str)
-      return [str] unless str.include?("‍")
+      return [str] unless str.include?("\u200D")
 
       segments = [+'']
       str.each_grapheme_cluster do |g|
         segments.last << g
-        segments << +'' if g.include?("‍")
+        segments << +'' if g.include?("\u200D")
       end
       segments.pop if segments.last.empty?
       segments

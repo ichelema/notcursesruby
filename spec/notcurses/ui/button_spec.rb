@@ -85,7 +85,7 @@ RSpec.describe Notcurses::UI::Button do
   end
 
   it 'un keycap, che notcurses 3.0.17 divide con un pezzo largo 0, è ArgumentError; un emoji no (ICH-232)' do
-    keycap = "1️⃣"
+    keycap = "1\uFE0F\u20E3"
     expect { described_class.new(row(1), keycap, size: 9) {} }.to raise_error(ArgumentError, /#{Regexp.escape(keycap.inspect)}/)
     button = described_class.new(row(1), "\u{1F44D}", size: 9) {}
     expect { button.label = keycap }.to raise_error(ArgumentError, /#{Regexp.escape(keycap.inspect)}/)

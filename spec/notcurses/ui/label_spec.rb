@@ -58,7 +58,7 @@ RSpec.describe Notcurses::UI::Label do
     source << '!'
     expect(label.text).to eq('dopo')
     expect(label.plane.contents(y: 0, rows: 1)).to eq('dopo')
-    ["a\tb", "a\u0001", "a ", "́a", "a​b", "a\xffb".b].each do |bad|
+    ["a\tb", "a\u0001", "a\u2028", "\u0301a", "a\u200Bb", "a\xffb".b].each do |bad|
       expect { label.text = bad }.to raise_error(ArgumentError), bad.inspect
     end
     expect { label.text = :x }.to raise_error(TypeError)
@@ -70,7 +70,7 @@ RSpec.describe Notcurses::UI::Label do
 
   # ICH-232: Text.check! applicava solo le regole che Ruby vede; il keycap passava e al disegno diventava "?".
   it 'un grapheme che notcurses 3.0.17 divide con un pezzo largo 0 (keycap) è ArgumentError (prima: "?")' do
-    keycap = "1️⃣"
+    keycap = "1\uFE0F\u20E3"
     expect { described_class.new(row(1), text: "#{keycap} ok", size: 6) }
       .to raise_error(ArgumentError, /#{Regexp.escape(keycap.inspect)}/)
     label = described_class.new(row(1), text: "\u{1F44D} ok", size: 6)
@@ -82,7 +82,7 @@ RSpec.describe Notcurses::UI::Label do
   # Review di ICH-232: il controllo del testo prima della creazione carica gli EGC nel pool del contenitore, che non
   # è il piano dove il componente scriverà; con quel pool pieno sollevava PlaneError.
   it "un testo con un EGC lungo è accettato anche con l'egcpool del contenitore pieno (prima: PlaneError)" do
-    big = ->(c) { "#{c}#{"́" * 3_000_000}" }
+    big = ->(c) { "#{c}#{"\u0301" * 3_000_000}" }
     box = row(2)
     2.times { |y| box.plane.putstr(big.call('a'), y: y, x: 0) }
     label = described_class.new(box, text: big.call('b'), size: 1)

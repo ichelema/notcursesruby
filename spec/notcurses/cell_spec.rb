@@ -22,8 +22,8 @@ RSpec.describe Notcurses::Cell do
       expect(described_class.new(egc: '漢').width).to eq(2)
       expect(described_class.new(egc: '漢')).to be_wide
       expect(described_class.new(egc: 0x41).egc).to eq('A')
-      expect(described_class.new(egc: "é").width).to eq(1)
-      astronaut = "\u{1F469}‍\u{1F680}"
+      expect(described_class.new(egc: "e\u0301").width).to eq(1)
+      astronaut = "\u{1F469}\u200D\u{1F680}"
       expect(described_class.new(egc: astronaut).egc).to eq(astronaut)
       empty = described_class.new(egc: '')
       expect([empty.width, empty]).to match([0, be_empty])
@@ -71,7 +71,7 @@ RSpec.describe Notcurses::Cell do
 
     it 'una Cell scritta con putc torna uguale da Plane#at, anche con un EGC di più di 4 byte' do
       nc.stdplane.create_child(rows: 1, cols: 10) do |p|
-        cell = described_class.new(egc: "\u{1F469}‍\u{1F680}", styles: :italic, channels: red)
+        cell = described_class.new(egc: "\u{1F469}\u200D\u{1F680}", styles: :italic, channels: red)
         expect(p.putc(cell, y: 0, x: 0)).to eq(2)
         read = p.at(y: 0, x: 0)
         expect(read).to eq(cell)
@@ -96,9 +96,9 @@ RSpec.describe Notcurses::Cell do
     describe 'grapheme che notcurses divide (ICH-217)' do
       let(:split) do
         {flag: "\u{1F1EE}\u{1F1F9}", # due indicatori regionali, larghi 1
-         ksha: "क्ष", # coniugato devanagari: "क्" e "ष", larghi 1
+         ksha: "क\u094Dष", # coniugato devanagari: "क्" e "ष", larghi 1
          jamo: "한", # hangul con jamo LVT: "하" e U+11AB, largo 0
-         keycap: "1️⃣"} # "1️" e U+20E3, largo 0
+         keycap: "1\uFE0F\u20E3"} # "1️" e U+20E3, largo 0
       end
 
       # Prima di Unicode 15.1 (Ruby 3.x) anche Ruby divide il coniugato in due grapheme (la regola GB9c manca):
@@ -169,7 +169,7 @@ RSpec.describe Notcurses::Cell do
 
       it 'Plane#putstr scrive bandiera e coniugato in due celle e rifiuta i grapheme con un pezzo largo 0' do
         nc.stdplane.create_child(rows: 1, cols: 10) do |p|
-          {flag: ["\u{1F1EE}", "\u{1F1F9}"], ksha: ["क्", "ष"]}.each do |name, pieces|
+          {flag: ["\u{1F1EE}", "\u{1F1F9}"], ksha: ["क\u094D", "ष"]}.each do |name, pieces|
             p.erase
             expect(p.putstr(split[name], y: 0, x: 0)).to eq(2)
             expect([p.contents, p.at(y: 0, x: 0).egc, p.at(y: 0, x: 1).egc]).to eq([split[name], *pieces]), name.to_s

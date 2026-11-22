@@ -16,7 +16,7 @@ RSpec.describe "Copie di celle tra piani con glifi larghi" do
     require 'notcurses'
     RNG = Random.new(1)
     WIDE = ["漢", "中", "\u{1F44D}\u{1F3FD}", "\u{1F469}\u{1F3FF}"].freeze
-    NARROW = ['a', 'é', "é̂̃"].freeze
+    NARROW = ['a', 'é', "é\u0302\u0303"].freeze
     OPTS = {output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true, drain_input: true}.freeze
 
     def fill(plane, y)
@@ -87,8 +87,8 @@ RSpec.describe "Copie di celle tra piani con glifi larghi" do
     script = common + <<~'RUBY'
       K = Notcurses::Key
       EV = ->(id, **o) { Notcurses::Input.synthesize(id, **o) }
-      TEXTS = ['漢', '中文', 'a', 'ab ', ' ', "\u{1F44D}\u{1F3FD}", 'é', "é̂̃", '漢 字', 'x漢', '漢漢漢漢',
-        "\t", "​", "️", "́", "漢\t漢"].freeze
+      TEXTS = ['漢', '中文', 'a', 'ab ', ' ', "\u{1F44D}\u{1F3FD}", 'é', "e\u0301\u0302\u0303", '漢 字', 'x漢', '漢漢漢漢',
+        "\t", "\u200B", "\uFE0F", "\u0301", "漢\t漢"].freeze
       Notcurses::Context.open(**OPTS) do |nc|
         40.times do
           plane = nc.stdplane.create_child(rows: RNG.rand(1..3), cols: RNG.rand(2..8), y: 1, x: 1)
@@ -174,7 +174,7 @@ RSpec.describe "Copie di celle tra piani con glifi larghi" do
           when 0 then std.putstr(('漢' * (cols / 2)) + "\n")
           when 1 then std.putstr('a' + (WIDE.sample(random: RNG) * (cols / 2)))
           when 2 then std.scrollup(lines: RNG.rand(1..3))
-          when 3 then std.puttext('中文 é̂̃ ' * 40)
+          when 3 then std.puttext("中文 é\u0302\u0303 " * 40)
           when 4
             child = std.create_child(rows: 2, cols: 10, y: rows - 1, x: cols - 9)
             child.putstr('漢字漢字漢')

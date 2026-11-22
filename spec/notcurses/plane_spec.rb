@@ -210,18 +210,18 @@ RSpec.describe Notcurses::Plane do
     # (notcurses.c:995-997): prima del fix quelle celle restavano vuote (ICH-215).
     context 'resize_region con keep_x > 0 e EGC di più di 4 byte nella regione conservata' do
       # Riga di 8 celle strette, ognuna con un EGC di 5 byte: una lettera da first in poi e due segni combinanti.
-      def marked(first) = Array.new(8) { |i| "#{(first.ord + i).chr}́̂" }
+      def marked(first) = Array.new(8) { |i| "#{(first.ord + i).chr}\u0301\u0302" }
 
       it 'conserva emoji con ZWJ e con modificatore e lettere con segni combinanti (prima: celle vuote nella riga 0)' do
         with_parent(rows: 2, cols: 8) do |p|
           p.putstr('ab👍🏽cd', y: 0, x: 0)
-          p.putegc('👨‍🚀', y: 0, x: 6)
+          p.putegc("👨\u200D🚀", y: 0, x: 6)
           p.putstr(marked('a').join, y: 1, x: 0)
           p.move_cursor(1, 7)
           p.resize_region(rows: 2, cols: 6, keep_x: 2, keep_rows: 2, keep_cols: 6)
           expect([p.dims, p.yx, p.cursor]).to eq([[2, 6], [3, 6], [1, 5]])
-          expect(p.contents(y: 0, rows: 1)).to eq('👍🏽cd👨‍🚀') # prima: "👍🏽cd"
-          expect([p.at(y: 0, x: 0).egc, p.at(y: 0, x: 4).egc, p.at(y: 0, x: 5).egc]).to eq(%w[👍🏽 👨‍🚀 👨‍🚀])
+          expect(p.contents(y: 0, rows: 1)).to eq("👍🏽cd👨\u200D🚀") # prima: "👍🏽cd"
+          expect([p.at(y: 0, x: 0).egc, p.at(y: 0, x: 4).egc, p.at(y: 0, x: 5).egc]).to eq(%W[👍🏽 👨\u200D🚀 👨\u200D🚀])
           expect(Array.new(6) { |x| p.at(y: 1, x: x).egc }).to eq(marked('c').first(6))
         end
       end
@@ -298,7 +298,7 @@ RSpec.describe Notcurses::Plane do
       # della riga e non rilascia nemmeno gli EGC delle celle scartate: restavano nel pool (review del round 2).
       it 'rilascia gli EGC delle celle scartate: ritagli ripetuti non riempiono l\'egcpool (prima: ArgumentError al terzo)' do
         with_parent(rows: 1, cols: 4) do |p|
-          big = "a#{"́" * 3_000_000}" # 6 MB: tre copie superano i 16 MiB del pool
+          big = "a#{"\u0301" * 3_000_000}" # 6 MB: tre copie superano i 16 MiB del pool
           4.times do
             p.putstr('K', y: 0, x: 1)
             p.putstr(big, y: 0, x: 2)
@@ -313,7 +313,7 @@ RSpec.describe Notcurses::Plane do
       # EGC scartati non deve leggere un pool vuoto né rilasciare la cella base o gli EGC scritti dal callback
       # (review del round 3).
       it 'un callback che svuota il piano non rompe il rilascio degli EGC scartati (prima: NullPointerError, cella base persa)' do
-        marked = "á̂" # 5 byte, nel pool
+        marked = "a\u0301\u0302" # 5 byte, nel pool
         with_parent(rows: 1, cols: 4) do |p|
           p.putstr(marked, y: 0, x: 2)
           p.create_child(rows: 1, cols: 1, resize: ->(_) { p.erase })
@@ -323,10 +323,10 @@ RSpec.describe Notcurses::Plane do
           p.putstr(marked, y: 0, x: 2)
           p.create_child(rows: 1, cols: 1, resize: lambda { |_|
             p.erase
-            p.set_base(egc: "B́̂")
+            p.set_base(egc: "B\u0301\u0302")
           })
           p.resize_region(rows: 1, cols: 3, keep_x: 1, keep_rows: 1, keep_cols: 1)
-          expect(p.base.egc).to eq("B́̂")
+          expect(p.base.egc).to eq("B\u0301\u0302")
         end
       end
 
@@ -607,7 +607,7 @@ RSpec.describe Notcurses::Plane do
       # di 16 MiB) e la lettura fallisce. Prima del fix il wrapper non riconosceva la metà tagliata (ICH-487).
       context 'con un glifo che notcurses non riesce a leggere (egcpool pieno)' do
         it 'la metà sinistra tagliata dal resize diventa una cella vuota: la scrittura lascia intatta la riga sotto (prima: "XY")' do
-          big = "漢#{"́" * 3_000_000}"
+          big = "漢#{"\u0301" * 3_000_000}"
           with_parent(rows: 3, cols: 4) do |p|
             p.putstr(big, y: 0, x: 0)
             p.putstr(big, y: 1, x: 2)
@@ -620,8 +620,8 @@ RSpec.describe Notcurses::Plane do
         end
 
         it 'un glifo stretto nell\'ultima colonna e un glifo largo intero nelle ultime due restano dove sono' do
-          narrow = "a#{"́" * 3_000_000}"
-          wide = "漢#{"́" * 3_000_000}"
+          narrow = "a#{"\u0301" * 3_000_000}"
+          wide = "漢#{"\u0301" * 3_000_000}"
           with_parent(rows: 2, cols: 4) do |p|
             p.putstr(narrow, y: 0, x: 2)
             p.putstr(wide, y: 1, x: 1)
@@ -637,7 +637,7 @@ RSpec.describe Notcurses::Plane do
             require 'notcurses'
             Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
                                     drain_input: true) do |nc|
-              big = "漢#{"́" * 3_000_000}"
+              big = "漢#{"\u0301" * 3_000_000}"
               pl = nc.stdplane.create_child(rows: 3, cols: 4)
               pl.putstr(big, y: 0, x: 0)
               pl.putstr('WXYZ', y: 1, x: 0)
@@ -1237,7 +1237,7 @@ RSpec.describe Notcurses::Plane do
     # fallisce; contents sollevava PlaneError anche se il contenuto era intatto e at lo leggeva.
     it 'contents legge gli EGC lunghi con l\'egcpool pieno, come at (prima: PlaneError)' do
       with_parent(rows: 2, cols: 4) do |p|
-        big = "漢#{"́" * 3_000_000}" # 6 MB, due righe riempiono il pool
+        big = "漢#{"\u0301" * 3_000_000}" # 6 MB, due righe riempiono il pool
         2.times { |y| p.putstr(big, y: y, x: 0) }
         expect(p.contents).to eq(big * 2)
         expect(p.contents).to eq([0, 1].map { |y| p.at(y: y, x: 0).egc }.join)
@@ -1258,14 +1258,14 @@ RSpec.describe Notcurses::Plane do
       with_parent(rows: 2, cols: 10) do |p|
         expect { p.putstr("a\tb") }.to raise_error(ArgumentError, /TAB/)
         expect { p.putstr("a\rb") }.to raise_error(ArgumentError, /controllo/)
-        expect { p.putstr("a b") }.to raise_error(ArgumentError, /U\+2028/)
-        expect { p.putstr("a​b") }.to raise_error(ArgumentError, /larghezza zero/)
-        expect { p.putstr("1️⃣") }.to raise_error(ArgumentError, /larghezza zero/)
+        expect { p.putstr("a\u2028b") }.to raise_error(ArgumentError, /U\+2028/)
+        expect { p.putstr("a\u200Bb") }.to raise_error(ArgumentError, /larghezza zero/)
+        expect { p.putstr("1\uFE0F\u20E3") }.to raise_error(ArgumentError, /larghezza zero/)
         expect { p.putstr("a\0b") }.to raise_error(ArgumentError)
         expect { p.putstr(:a) }.to raise_error(TypeError)
         expect(p.contents).to eq('')
-        expect(p.putstr("éx", y: 0, x: 0)).to eq(2)
-        expect(p.at(y: 0, x: 0).egc).to eq("é")
+        expect(p.putstr("e\u0301x", y: 0, x: 0)).to eq(2)
+        expect(p.at(y: 0, x: 0).egc).to eq("e\u0301")
       end
     end
 
@@ -1274,10 +1274,10 @@ RSpec.describe Notcurses::Plane do
     # falliva con un messaggio che non nominava il pool (putegc: CellError "divide").
     it "putstr, putegc e puttext con un EGC che non entra nell'egcpool sollevano PlaneError (prima: ArgumentError)" do
       with_parent(rows: 3, cols: 8) do |p|
-        %w[a b].each_with_index { |c, y| p.putstr("#{c}#{"́" * 3_000_000}", y: y, x: 0) } # 12 MB nel pool
+        %w[a b].each_with_index { |c, y| p.putstr("#{c}#{"\u0301" * 3_000_000}", y: y, x: 0) } # 12 MB nel pool
         before = p.contents
         # 6 MB ciascuno: con segni combinanti (Mn) e con soli segni di spaziatura (Mc, nessun candidato)
-        {combinanti: "c#{"́" * 3_000_000}", spaziatura: "क#{"ि" * 2_000_000}"}.each do |kind, egc|
+        {combinanti: "c#{"\u0301" * 3_000_000}", spaziatura: "क#{"ि" * 2_000_000}"}.each do |kind, egc|
           {putstr: ->(t) { p.putstr(t, y: 2, x: 0) }, putegc: ->(t) { p.putegc(t, y: 2, x: 0) },
            puttext: ->(t) { p.puttext(t, y: 2) }}.each do |name, write|
             error = begin
@@ -1292,8 +1292,8 @@ RSpec.describe Notcurses::Plane do
           end
         end
         expect(p.contents).to eq(before)
-        expect { p.putstr("a​b", y: 2, x: 0) }.to raise_error(ArgumentError, /larghezza zero/)
-        expect(p.putstr("oḱ", y: 2, x: 0)).to eq(2)
+        expect { p.putstr("a\u200Bb", y: 2, x: 0) }.to raise_error(ArgumentError, /larghezza zero/)
+        expect(p.putstr("ok\u0301", y: 2, x: 0)).to eq(2)
       end
     end
 
@@ -1319,7 +1319,7 @@ RSpec.describe Notcurses::Plane do
     # Review di ICH-533: il C rilascia l'EGC della cella che sovrascrive prima di copiare il nuovo, quindi un EGC lungo
     # su una cella con un EGC lungo entra anche con il pool pieno; il controllo prima della scrittura lo rifiutava.
     it "putstr, putegc e puttext su una cella con un EGC lungo scrivono anche con l'egcpool pieno (prima: PlaneError)" do
-      {combinanti: ->(c) { "#{c}#{"́" * 3_000_000}" }, spaziatura: ->(c) { "#{c}#{"ि" * 2_000_000}" }}
+      {combinanti: ->(c) { "#{c}#{"\u0301" * 3_000_000}" }, spaziatura: ->(c) { "#{c}#{"ि" * 2_000_000}" }}
         .each do |kind, big|
         with_parent(rows: 2, cols: 8) do |p|
           p.putstr(big.('a'), y: 0, x: 0)
@@ -1335,9 +1335,9 @@ RSpec.describe Notcurses::Plane do
     # Review di ICH-533: il controllo prova un EGC alla volta; con più EGC lunghi nello stesso testo il C si ferma al
     # primo che non entra, e il messaggio non nominava il pool.
     it "con più EGC lunghi che insieme non entrano nell'egcpool il messaggio nomina il pool e l'EGC" do
-      big = ->(c) { "#{c}#{"́" * 3_000_000}" }
+      big = ->(c) { "#{c}#{"\u0301" * 3_000_000}" }
       with_parent(rows: 2, cols: 8) do |p|
-        label = Regexp.escape("#{"ć́".inspect}... (6000001 byte)")
+        label = Regexp.escape("#{"c\u0301\u0301".inspect}... (6000001 byte)")
         expect { p.putstr(%w[a b c].map(&big).join(' '), y: 0, x: 0) }
           .to raise_error(Notcurses::PlaneError, /scritto 4 colonne su 5: l'egcpool .*#{label}/)
         expect([0, 2].map { |x| p.at(y: 0, x: x).egc }).to eq([big.('a'), big.('b')]) # il C scrive quelli che entrano
@@ -1348,7 +1348,7 @@ RSpec.describe Notcurses::Plane do
     it 'un EGC che notcurses rifiuta con spazio nel pool solleva ancora ArgumentError' do
       with_parent(rows: 1, cols: 4) do |p|
         allow(Notcurses::FFI).to receive(:nccell_load).and_return(-1)
-        expect { p.putstr("é", y: 0, x: 0) }.to raise_error(ArgumentError, /non accetta/)
+        expect { p.putstr("e\u0301", y: 0, x: 0) }.to raise_error(ArgumentError, /non accetta/)
         expect(p.contents).to eq('')
       end
     end
@@ -1365,7 +1365,7 @@ RSpec.describe Notcurses::Plane do
 
     it 'putstr non unisce il testo dopo una sequenza ZWJ (bug di 3.0.17)' do
       with_parent(rows: 1, cols: 10) do |p|
-        astronaut = "\u{1F469}‍\u{1F680}"
+        astronaut = "\u{1F469}\u200D\u{1F680}"
         expect(p.putstr("x#{astronaut}z", y: 0, x: 0)).to eq(4)
         expect([p.at(y: 0, x: 0).egc, p.at(y: 0, x: 1).egc, p.at(y: 0, x: 3).egc]).to eq(['x', astronaut, 'z'])
       end
@@ -1699,7 +1699,7 @@ RSpec.describe Notcurses::Plane do
     it 'merge_down ripetuto lascia invariato dst con EGC lunghi (prima: vuoto dopo una quindicina di merge da 1 MB)' do
       with_parent(rows: 1, cols: 4) do |dst|
         src = dst.create_child(rows: 1, cols: 4)
-        dst.putstr("a#{"́" * 500_000}b", y: 0, x: 0) # un EGC di 1 MB e una "b"
+        dst.putstr("a#{"\u0301" * 500_000}b", y: 0, x: 0) # un EGC di 1 MB e una "b"
         want = dst.contents
         40.times { src.merge_down(dst) }
         got = dst.contents
@@ -1713,7 +1713,7 @@ RSpec.describe Notcurses::Plane do
     it 'merge_down con un egcpool di dst senza spazio per le copie solleva PlaneError e lascia dst com\'era (prima: EGC persi)' do
       with_parent(rows: 2, cols: 4) do |dst|
         src = dst.create_child(rows: 2, cols: 4)
-        big = "a#{"́" * 3_000_000}" # 6 MB
+        big = "a#{"\u0301" * 3_000_000}" # 6 MB
         2.times { |y| dst.putstr(big, y: y, x: 0) }
         expect { src.merge_down(dst) }.to raise_error(Notcurses::PlaneError, /egcpool/)
         expect(Array.new(2) { |y| dst.at(y: y, x: 0).egc.bytesize }).to eq([big.bytesize] * 2) # prima: [0, 0]
@@ -2096,7 +2096,7 @@ RSpec.describe Notcurses::Plane do
       # dst: con due EGC da 6 MB la copia non ci sta (limite di 16 MiB) e la lettura fallisce. Prima del fix
       # quei glifi restavano con la metà destra larga 0 (ICH-485).
       context 'che notcurses non riesce a leggere (egcpool pieno)' do
-        let(:big) { "漢#{"́" * 3_000_000}" }
+        let(:big) { "漢#{"\u0301" * 3_000_000}" }
 
         # dst 3x4 dopo la fusione di un piano con due glifi da 6 MB: "a" e il glifo nella riga 0, "WXYZ"
         # nella riga 1, il glifo nella riga 2. Il blocco gira subito prima della fusione.
@@ -2159,7 +2159,7 @@ RSpec.describe Notcurses::Plane do
             require 'notcurses'
             Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
                                     drain_input: true) do |nc|
-              big = "漢#{"́" * 3_000_000}"
+              big = "漢#{"\u0301" * 3_000_000}"
               dst = nc.stdplane.create_child(rows: 3, cols: 4)
               src = nc.stdplane.create_child(rows: 3, cols: 4)
               src.putstr(big, y: 0, x: 0)
@@ -2267,7 +2267,7 @@ RSpec.describe Notcurses::Plane do
       end
 
       it "un riempimento che fallisce a metà svuota lo stesso l'altra metà (prima: \"XYZ\" dopo il PlaneError)" do
-        big = 'e' + ("́" * 3_000_000) # le copie superano i 16 MiB dell'egcpool: il C si ferma a metà
+        big = 'e' + ("\u0301" * 3_000_000) # le copie superano i 16 MiB dell'egcpool: il C si ferma a metà
         # [righe con "ab漢", riempimento, riga della scrittura larga]
         {gradient: [1, ->(p) { p.gradient(big, 0, 0, 0, 0, rows: 1, cols: 3) }, 0],
          polyfill: [2, ->(p) { p.polyfill(big, y: 1, x: 2) }, 1]}.each do |name, (glyph_rows, fill, y)|

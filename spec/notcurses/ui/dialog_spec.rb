@@ -29,10 +29,10 @@ RSpec.describe Notcurses::UI::Dialog do
   end
 
   it 'un keycap, che notcurses 3.0.17 divide con un pezzo largo 0, è ArgumentError nel testo, nel titolo e nei pulsanti' do
-    keycap = Regexp.escape("1️⃣".inspect)
-    expect { described_class.new(app, text: "1️⃣") }.to raise_error(ArgumentError, /text.*#{keycap}/)
-    expect { described_class.new(app, text: 'ok', title: "1️⃣") }.to raise_error(ArgumentError, /title.*#{keycap}/)
-    expect { described_class.new(app, text: 'ok', buttons: ["1️⃣"]) }
+    keycap = Regexp.escape("1\uFE0F\u20E3".inspect)
+    expect { described_class.new(app, text: "1\uFE0F\u20E3") }.to raise_error(ArgumentError, /text.*#{keycap}/)
+    expect { described_class.new(app, text: 'ok', title: "1\uFE0F\u20E3") }.to raise_error(ArgumentError, /title.*#{keycap}/)
+    expect { described_class.new(app, text: 'ok', buttons: ["1\uFE0F\u20E3"]) }
       .to raise_error(ArgumentError, /buttons\[0\].*#{keycap}/)
     dialog = described_class.new(app, text: "\u{1F44D}", buttons: ["\u{1F44D}"])
     expect([dialog.text, dialog.buttons]).to eq(["\u{1F44D}", ["\u{1F44D}"]])

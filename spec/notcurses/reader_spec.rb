@@ -47,8 +47,8 @@ RSpec.describe Notcurses::Reader do
         reader.write('cdefg')
         expect(reader.contents).to eq('abcdg')
         reader.clear
-        reader.write("é漢") # un grapheme di due codepoint e un glifo largo
-        expect(reader.contents).to eq("é漢")
+        reader.write("e\u0301漢") # un grapheme di due codepoint e un glifo largo
+        expect(reader.contents).to eq("e\u0301漢")
         expect(reader.write('')).to equal(reader)
       end
     end
@@ -307,7 +307,7 @@ RSpec.describe Notcurses::Reader do
         expect(reader.offer_input(ev('x'.ord))).to be true
         expect(reader.contents).to eq('Mi piacx')
       end
-      ["​", "́"].each do |zw|
+      ["\u200B", "\u0301"].each do |zw|
         new_reader(rows: 1, cols: 8) do |reader|
           reader.write('Mi piace').write(zw)
           expect(reader.plane.cursor).to eq([0, 7]), zw.inspect
@@ -315,7 +315,7 @@ RSpec.describe Notcurses::Reader do
         end
       end
       new_reader(rows: 1, cols: 8) do |reader| # prima dell'ultima colonna ha una cella propria, come prima
-        expect(reader.write("ab​c").contents).to eq("ab​c")
+        expect(reader.write("ab\u200Bc").contents).to eq("ab\u200Bc")
         expect(reader.plane.cursor).to eq([0, 4])
       end
     end
@@ -347,12 +347,12 @@ RSpec.describe Notcurses::Reader do
 
     it 'write non perde i grapheme che notcurses divide' do
       # keycap, bandiera e congiunto devanagari: notcurses li divide, ogni pezzo ha una cella
-      ["1\u{FE0F}\u{20E3}x", "\u{1F1EE}\u{1F1F9}x", 'क्षx'].each do |text|
+      ["1\u{FE0F}\u{20E3}x", "\u{1F1EE}\u{1F1F9}x", "क\u094Dषx"].each do |text|
         new_reader(rows: 1, cols: 10) do |reader|
           expect([reader.write(text).contents, reader.plane.cursor]).to eq([text, [0, 3]]), text.inspect
         end
       end
-      { "\u{1F44D}\u{1F3FD}x" => [0, 3], "éx" => [0, 2], "❤\u{FE0F}x" => [0, 2] }.each do |text, cursor|
+      { "\u{1F44D}\u{1F3FD}x" => [0, 3], "e\u0301x" => [0, 2], "❤\u{FE0F}x" => [0, 2] }.each do |text, cursor|
         new_reader(rows: 1, cols: 10) do |reader|
           expect([reader.write(text).contents, reader.plane.cursor]).to eq([text, cursor]), text.inspect
         end
@@ -397,7 +397,7 @@ RSpec.describe Notcurses::Reader do
     end
 
     it "contents non fa crescere l'egcpool della vista" do
-      text = ("e#{"́" * 50}") * 10 # 10 EGC di 101 byte: stanno nell'egcpool della vista
+      text = ("e#{"\u0301" * 50}") * 10 # 10 EGC di 101 byte: stanno nell'egcpool della vista
       new_reader(rows: 1, cols: 10) do |reader|
         reader.write(text)
         expect(20_000.times.count { reader.contents == text }).to eq(20_000) # prima: WidgetError dopo circa 16 450

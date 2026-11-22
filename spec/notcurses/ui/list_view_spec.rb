@@ -105,7 +105,7 @@ RSpec.describe Notcurses::UI::ListView do
   end
 
   it 'una voce con un keycap, che notcurses 3.0.17 divide con un pezzo largo 0, è ArgumentError (ICH-232)' do
-    keycap = "1️⃣"
+    keycap = "1\uFE0F\u20E3"
     expect { list(3, items: ['a', keycap]) }.to raise_error(ArgumentError, /items\[1\].*#{Regexp.escape(keycap.inspect)}/)
     view = list(3, items: ["\u{1F44D}"])
     expect { view.items = ['a', "b #{keycap}"] }.to raise_error(ArgumentError, /items\[1\].*#{Regexp.escape(keycap.inspect)}/)

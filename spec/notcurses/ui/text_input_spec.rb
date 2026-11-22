@@ -52,7 +52,7 @@ RSpec.describe Notcurses::UI::TextInput do
     expect(app.dispatch(syn(0x301))).to be(false) # all'inizio sarebbe un carattere di larghezza zero
     type('e')
     app.dispatch(syn(0x301))
-    expect([input.text, input.position]).to eq(["é", 1])
+    expect([input.text, input.position]).to eq(["e\u0301", 1])
     type('漢')
     expect(input.cursor).to eq([0, 3])
     key(Notcurses::Key::LEFT)
@@ -62,13 +62,13 @@ RSpec.describe Notcurses::UI::TextInput do
   end
 
   it 'un keycap, che notcurses 3.0.17 divide con un pezzo largo 0, è rifiutato; un emoji no (ICH-232)' do
-    keycap = "1️⃣"
+    keycap = "1\uFE0F\u20E3"
     expect { field(20, text: keycap) }.to raise_error(ArgumentError, /#{Regexp.escape(keycap.inspect)}/)
     input = field(20, text: "\u{1F44D}")
     expect { input.text = "a#{keycap}" }.to raise_error(ArgumentError, /#{Regexp.escape(keycap.inspect)}/)
-    type("1️")
+    type("1\uFE0F")
     expect(app.dispatch(syn(0x20E3))).to be(false) # prima: inserito, e al disegno "?"
-    expect(input.text).to eq("\u{1F44D}1️")
+    expect(input.text).to eq("\u{1F44D}1\uFE0F")
   end
 
   it 'il testo scorre in orizzontale per tenere visibile il cursore, anche con i glifi larghi' do
