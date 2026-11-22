@@ -76,19 +76,21 @@
   `~/.claude/tmp/libghostty-vt/` (prefix e `harness/ncvt`); se mancano, la ricetta li ricostruisce. Per ICH-576 usa
   `ncvt -m` (terminale muto).
 - **Lotto 8b in corso** (`bug`): ICH-217, ICH-232, ICH-533. PR #32 aperta, branch `bug/ICH-217-232-533-opus` su
-  `d847446`, worktree `.claude/worktrees/bug+ICH-217-232-533-opus` (submodule `notcurses` inizializzato: alla
+  `0e0cf11`, worktree `.claude/worktrees/bug+ICH-217-232-533-opus` (submodule `notcurses` inizializzato: alla
   rimozione `--force` è approvato). Catena: `2_work-issue`, simplify, verify con `ncvt` (FAIL sul consiglio di usare
   `putstr` per le bandiere, corretto in `2e916f9`), review `soft` Sonnet (APPROVABILE CON RISERVE, 3 finding corretti
-  in `d847446`: lo spazio nell'egcpool lo decide il C, il controllo dei pezzi larghi 0 usa un piano temporaneo con il
-  pool pieno). Verifica locale su `d847446`: 1286 esempi, 0 fallimenti, semi 1234, 4242 e 7, coverage 98,18 %,
-  RuboCop 0, YARD 100 %, gem costruita, layer FFI invariato. Cambio dell'API della Fase 2 approvato dall'utente il
-  2026-11-21: `Plane#check_text!` (`@api private`). Log da scrivere in `memory/backlog-issue.md` alla chiusura.
-- **CI non verificata (scelta dell'utente del 2026-11-22):** tutte le corse della PR #32 dal 2026-11-21 alle 22:58
-  falliscono prima delle spec: `archive.archlinux.org` non risponde (pacman non scarica `core.db` dello snapshot
-  2026/10/26; `archlinux.org` risponde). L'utente ha scelto di proseguire senza CI. Da fare appena l'archivio torna:
-  `gh run rerun <id> --failed` sull'ultima corsa (della PR, o di `master` dopo il merge) e controllo di tutta la
-  matrice; Ruby 3.1 e 3.2 non sono provati in locale per il lotto 8b. Se un job fallisce per il codice, correggi o
-  apri una issue con l'utente.
+  in `d847446`: lo spazio nell'egcpool lo decide il C), review mirata `soft` Sonnet (NON APPROVABILE, 2 finding
+  corretti in `85f4d74`: con il pool pieno `ncplane_put` svuota il glifo di arrivo prima di fallire, il wrapper lo
+  rimette con il cursore; `LogView` mostra "?" anche su `PlaneError`). Verifica locale su `85f4d74`: 1288 esempi, 0
+  fallimenti, semi 1234, 4242 e 7, coverage 98,19 %, RuboCop 0, YARD 100 %, gem costruita, layer FFI invariato.
+  Cambio dell'API della Fase 2 approvato dall'utente il 2026-11-21: `Plane#check_text!` (`@api private`). Log da
+  scrivere in `memory/backlog-issue.md` alla chiusura.
+- **CI della PR #32 verde su `0e0cf11`** (2026-11-22, tutta la matrice e Codecov). Prima: dal 2026-11-21 alle 22:58
+  `archive.archlinux.org` non rispondeva e i job si fermavano prima delle spec (l'utente aveva scelto di proseguire
+  senza CI); tornato l'archivio, Ruby 3.1-3.4 fallivano 3 spec di ICH-217: prima di Unicode 15.1 (regola GB9c) anche
+  Ruby divide il coniugato "क्ष", quindi le spec lo controllano solo quando Ruby lo legge come un grapheme (`0e0cf11`).
+  Con il carico della macchina una corsa del seme 4242 è andata in timeout in `spec/integration/ui_pty_spec.rb:732`
+  (kitty Ctrl+C, codice non toccato); da sola passa.
 - Nate dal lotto 8b, in Backlog, Low, da assegnare a un lotto (chiedi all'utente): ICH-582 (le scritture con `Cell`
   con l'egcpool pieno sollevano `CellError` invece di `PlaneError`; dopo `d847446` `gradient` dà già `PlaneError`
   dal C) e ICH-586 (una bandiera: notcurses conta 2 colonne, Ghostty ne disegna 4; il testo dopo si sposta e restano
