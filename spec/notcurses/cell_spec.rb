@@ -101,6 +101,11 @@ RSpec.describe Notcurses::Cell do
          keycap: "1️⃣"} # "1️" e U+20E3, largo 0
       end
 
+      # Prima di Unicode 15.1 (Ruby 3.x) anche Ruby divide il coniugato in due grapheme (la regola GB9c manca):
+      # Cell.new lo rifiuta già con ArgumentError, come notcurses, e non c'è una differenza da spiegare.
+      let(:ruby_conjunct) { split[:ksha].grapheme_clusters.size == 1 }
+      let(:divided) { ruby_conjunct ? split : split.except(:ksha) }
+
       def message_for(name, egc)
         case name
         # Plane#putstr scrive la bandiera in due celle larghe 1, ma molti terminali (Ghostty) la disegnano più larga
@@ -112,15 +117,16 @@ RSpec.describe Notcurses::Cell do
       end
 
       it 'Cell.new li accetta con le regole di Ruby' do
-        split.each_value do |egc|
+        divided.each_value do |egc|
           cell = described_class.new(egc: egc)
           expect([cell.egc, cell.width]).to eq([egc, Notcurses.strwidth(egc)])
         end
+        expect { described_class.new(egc: split[:ksha]) }.to raise_error(ArgumentError, /grapheme/) unless ruby_conjunct
       end
 
       it 'putc e set_base sollevano CellError che nomina il grapheme e rimanda a Plane#putstr' do
         nc.stdplane.create_child(rows: 1, cols: 10) do |p|
-          split.each do |name, egc|
+          divided.each do |name, egc|
             cell = described_class.new(egc: egc)
             expect { p.putc(cell, y: 0, x: 0) }.to raise_error(Notcurses::CellError, message_for(name, egc)), name.to_s
             # prima: set_base teneva il primo pezzo ("🇮", "하", "क्", "1️") senza errore
@@ -150,9 +156,10 @@ RSpec.describe Notcurses::Cell do
 
       it 'Plane#putegc solleva CellError per bandiera e coniugato, ArgumentError per un pezzo largo 0' do
         nc.stdplane.create_child(rows: 1, cols: 10) do |p|
-          %i[flag ksha].each do |name|
+          (divided.keys & %i[flag ksha]).each do |name|
             expect { p.putegc(split[name], y: 0, x: 0) }.to raise_error(Notcurses::CellError, message_for(name, split[name]))
           end
+          expect { p.putegc(split[:ksha], y: 0, x: 0) }.to raise_error(ArgumentError, /grapheme/) unless ruby_conjunct
           %i[jamo keycap].each do |name|
             expect { p.putegc(split[name], y: 0, x: 0) }.to raise_error(ArgumentError, /larghezza zero/)
           end

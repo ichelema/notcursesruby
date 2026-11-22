@@ -26,7 +26,8 @@ module Notcurses
   # CellError per i primi due casi qui sotto, ArgumentError per gli altri,
   # come {Plane#putstr}):
   # - coniugati devanagari ("क्ष"): due caratteri larghi 1 colonna;
-  #   {Plane#putstr} li scrive in due celle vicine;
+  #   {Plane#putstr} li scrive in due celle vicine. Solo da Unicode 15.1
+  #   (Ruby 4.0): prima anche Ruby li divide, e Cell.new li rifiuta;
   # - bandiere ("🇮🇹", due indicatori regionali): due caratteri larghi 1
   #   colonna per notcurses; {Plane#putstr} li scrive in due celle, ma molti
   #   terminali (per esempio Ghostty) disegnano ogni indicatore largo 2, e il
