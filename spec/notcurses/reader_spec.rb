@@ -139,9 +139,47 @@ RSpec.describe Notcurses::Reader do
           expect(reader.offer_input(ev(key::BACKSPACE))).to be true
           expect([reader.contents, reader.plane.at(y: 0, x: 0).egc]).to eq(['', '']), "cursore in colonna #{col}"
           expect(orphan_wide_right?(reader.plane, 0)).to be(false)
-          reader.offer_input(ctrl('A')) # dalla colonna 2 il C lascia il cursore in colonna 1
           reader.write('漢漢漢')
           expect(reader.contents).to eq('漢漢漢')
+        end
+      end
+    end
+
+    it 'Backspace su un glifo largo porta il cursore sulla sua prima colonna, senza buchi (ICH-581, prima: sulla seconda)' do
+      [false, true].each do |cursor|
+        new_reader(rows: 2, cols: 10, cursor: cursor) do |reader|
+          reader.write('漢')
+          expect(reader.plane.cursor).to eq([0, 2])
+          expect(reader.offer_input(ev(key::BACKSPACE))).to be true
+          expect([reader.contents, reader.plane.cursor]).to eq(['', [0, 0]])
+          expect(nc.cursor_yx).to eq([3, 3]) if cursor # cursore del terminale: piano in (3, 3)
+          reader.write('a')
+          expect([reader.contents, reader.plane.at(y: 0, x: 0).egc, reader.plane.at(y: 0, x: 1).egc]).to eq(['a', 'a', ''])
+          reader.clear.write('a漢')
+          expect(reader.offer_input(ev(key::BACKSPACE))).to be true
+          expect(reader.plane.cursor).to eq([0, 1])
+          expect(nc.cursor_yx).to eq([3, 4]) if cursor
+          reader.write('c')
+          cells = (0..3).map { |x| reader.plane.at(y: 0, x: x).egc }
+          expect([reader.contents, cells, reader.plane.cursor]).to eq(['ac', ['a', 'c', '', ''], [0, 2]])
+          reader.offer_input(ev(key::BACKSPACE)) # dopo un carattere stretto non cambia
+          expect([reader.contents, reader.plane.cursor]).to eq(['a', [0, 1]])
+        end
+      end
+    end
+
+    it 'Backspace su un glifo largo della seconda riga porta il cursore sulla sua prima colonna (ICH-581)' do
+      [false, true].each do |cursor|
+        new_reader(rows: 2, cols: 10, cursor: cursor) do |reader|
+          reader.write('abc')
+          reader.move_down
+          reader.write('漢')
+          expect(reader.plane.cursor).to eq([1, 5])
+          expect(reader.offer_input(ev(key::BACKSPACE))).to be true
+          expect([reader.contents, reader.plane.cursor]).to eq(['abc', [1, 3]])
+          expect(nc.cursor_yx).to eq([4, 6]) if cursor # piano in (3, 3)
+          reader.write('d')
+          expect([reader.contents, reader.plane.at(y: 1, x: 3).egc, reader.plane.at(y: 1, x: 4).egc]).to eq(['abcd', 'd', ''])
         end
       end
     end

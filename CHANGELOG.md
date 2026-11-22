@@ -57,6 +57,11 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   di nuovo la larghezza del glifo, e `reader.plane.at` su quelle celle restituisce il glifo (ICH-484). Prima il
   ridisegno del C, che non confronta la larghezza delle celle (`internal.h:1510-1523`), le lasciava larghe 0, e
   `plane.at` restituiva una cella vuota. `Reader#contents` era già corretto.
+- `Reader#offer_input`: Backspace dopo un glifo largo porta il cursore sulla prima colonna del glifo, nella vista, nella
+  copia nascosta e, con `cursor: true`, nel terminale (ICH-581). Prima il C cancellava le due metà del glifo ma
+  lasciava i cursori sulla colonna della metà destra (`reader.c:263-265`): la scrittura dopo lasciava un buco nella
+  riga (`"a漢"`, Backspace, `"c"`: celle `a`, vuota, `c`) e `contents` non lo mostrava. Vale anche sulle righe sotto la
+  prima.
 - `Direct#stream` con il blitter `:pixel` ridisegna ogni frame sulle righe del primo anche in fondo allo schermo
   (ICH-458). Prima un frame più basso dello schermo poteva finire sull'ultima riga (per esempio con il cursore in
   fondo: il C sposta in alto un frame che non entra sotto il cursore, `direct.c:442-448`); il C mandava poi una CUP
