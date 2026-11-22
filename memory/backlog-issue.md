@@ -1013,3 +1013,68 @@ al lotto 8c.
 - Linear: ICH-218 e ICH-484 a Done; ICH-580 in Backlog. Worktree e branch non rimossi: `5_remove-worktree` si avvia
   solo a mano (passo per l'utente, scritto in `handoff.md`). Rimossi il 2026-11-21 con
   `/trinity:workflow:5_remove-worktree` (`--force` per il submodule `notcurses`), anche il branch remoto.
+
+## Lotto 8b — ICH-533, ICH-217, ICH-232 (PR #32, merge `67164c7`)
+
+Dal 2026-11-21 al 2026-11-22. Branch `bug/ICH-217-232-533-opus`, worktree `.claude/worktrees/bug+ICH-217-232-533-opus`.
+
+### Fix
+
+- `592846e` (ICH-533): con l'egcpool pieno `putstr`, `putegc` e `puttext` sollevano `PlaneError` che nomina il pool;
+  i messaggi mostrano solo l'inizio e i byte di un EGC lungo (`Util.egc_label`).
+- `7db4d10` (ICH-217): `Cell.split_error` (`@api private`) divide l'EGC con `nccell_load` e scrive i pezzi e che cosa
+  usare (`putstr` per bandiere e coniugati, la forma NFC per gli hangul a jamo); lo usano `Cell#load_into`,
+  `single_egc!` (`putegc`, `gradient`) e `set_base`, che prima teneva in silenzio il primo pezzo. `Cell.new` non cambia.
+- `7f78ca9` (ICH-232): `Plane#check_text!` (`@api private`, approvato dall'utente) e `Text.check!(text, name, plane)`:
+  il piano del widget nei setter, quello del contenitore o lo stdplane dell'App nei costruttori (`Text.host`).
+- Simplify: `dcdf76d` (filtro `GRAPHEME_JOINERS` prima del controllo per grapheme), `664cf59` (piano di `Dialog`
+  cercato una volta).
+- Verify: `2e916f9` (per le bandiere il messaggio avvisa che il terminale le disegna più larghe, invece di consigliare
+  `putstr`).
+- Review: `d847446` (il controllo non decide più sullo spazio nel pool: lo decide il C, che prima libera le celle che
+  sovrascrive; i pezzi larghi 0 si caricano su un piano temporaneo 1x1 con il pool vuoto; `egcpool_hint` nomina l'EGC
+  dove il C si ferma), `85f4d74` (review mirata: ogni EGC di più di 4 byte ha una chiamata C sua e `with_glyph_kept`
+  rimette il glifo di arrivo e il cursore se la scrittura fallisce; `put_text` ripiega su "?" anche per
+  `PlaneError`), `0e0cf11` (spec del coniugato solo quando Ruby lo legge come un grapheme).
+
+### Decisioni
+
+- Dell'utente: cambio dell'API della Fase 2 (`Plane#check_text!`); lettura di ICH-217 per le scritture con `Cell`
+  (`putstr` e `Cell.new` restano come sono); ICH-582 (scritture con `Cell` e pool pieno) e ICH-586 (larghezza delle
+  bandiere) come issue nuove; per il finding della review mirata, rimettere le celle invece di cambiare il criterio di
+  ICH-533; proseguire senza CI mentre `archive.archlinux.org` era giù; merge fatto dall'utente.
+- Mie: un solo meccanismo per i tre finding della prima review (lo spazio lo decide il C) invece di tre toppe;
+  `GRAPHEME_JOINERS` tolto con quel fix e rimesso nella review mirata, come filtro per la divisione in chiamate C.
+
+### Review
+
+- Review `soft` Sonnet su `2e916f9`: APPROVABILE CON RISERVE, 3 finding (MEDIUM: `PlaneError` falso quando un EGC
+  lungo sovrascrive un EGC lungo, regressione rispetto a `master`; LOW: più EGC lunghi in un testo, messaggio senza il
+  pool; LOW: `PlaneError` dei widget non documentato), corretti in `d847446`.
+- Review mirata `soft` Sonnet su `d847446`: NON APPROVABILE, 2 finding (MEDIUM: con il pool pieno la scrittura
+  fallita svuota la cella di arrivo; LOW: `LogView` solleva `PlaneError`), corretti in `85f4d74`.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| Verify: FAIL sul consiglio di `putstr` per le bandiere | notcurses conta 2 colonne, Ghostty ne disegna 4: il testo dopo si sposta | messaggio cambiato (`2e916f9`), ICH-586 |
+| Il controllo nel pool rifiutava sovrascritture che il C accetta | la prova carica l'EGC su una cella nuova, il C rilascia prima la cella di arrivo | lo spazio lo decide il C (`d847446`) |
+| Con il pool pieno una scrittura fallita cambia il piano | `ncplane_put` svuota il glifo di arrivo prima di `egcpool_stash` (`notcurses.c:1911-1950`) | `with_glyph_kept` (`85f4d74`) |
+| CI rossa in 30 secondi dal 2026-11-21 22:58 | `archive.archlinux.org` non rispondeva (pacman, snapshot 2026/10/26) | attesa; la CI è ripartita da sola il 2026-11-22 |
+| CI rossa su Ruby 3.1-3.4, 3 spec di ICH-217 | prima di Unicode 15.1 (regola GB9c) anche Ruby divide "क्ष" | spec condizionate (`0e0cf11`); provate con Ruby 3.1.7 nello scratchpad |
+| Suite fermata dal sistema; poi timeout in `ui_pty_spec.rb:732` | memoria quasi esaurita (350 MiB liberi) | memoria liberata dall'utente; la spec passa da sola e il seme al secondo giro |
+| `rm` nei comandi messo in coda dal guardiano | regola dell'ambiente | comandi senza `rm`, o conferma dell'utente |
+
+### Verifica finale
+
+- `master` su `67164c7`, 2026-11-22: 1288 esempi, 0 fallimenti, 1 pending (`qrcode` sullo stub), con i semi 1234, 4242
+  e 7 e in ordine definito; coverage 98,19 % di righe (6567 / 6688); RuboCop 0 offense; YARD senza warning, 100 %;
+  `ruby -w` pulito; gem costruita; `git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto. CI della PR
+  (`0e0cf11`) e di `master` (run `45043002864`) verdi su tutta la matrice. Su Ruby 3.1.7 (branch) le spec del lotto
+  in `cell_spec`, `plane_spec` e `ui/`: 48 esempi, 0 fallimenti.
+- La prima corsa della coverage su `master` si è bloccata dopo circa 2 minuti e il `timeout` di 600 s l'ha fermata
+  (exit 137); non si sa quale spec, perché l'output era `progress`. La seconda corsa, con `--format documentation` in un
+  file, è passata in 3 minuti e 38 secondi. Come il blocco del lotto 7 in `event_loop_spec.rb:716`: non riprodotto.
+- Linear: ICH-533, ICH-217 e ICH-232 a Done; ICH-582 e ICH-586 in Backlog. Worktree e branch da rimuovere con
+  `/trinity:workflow:5_remove-worktree bug+ICH-217-232-533-opus` (si avvia solo a mano).

@@ -211,6 +211,9 @@ copertura.
 | Bit di servizio dei canali (`0x87000000`) copiati dai setter | canali mascherati |
 | Eccezione Ruby in un callback di resize: attraversa il C, `pilelock` resta acquisito | trampolino con `Util.guard` |
 | Limiti dello stdplane (non si distrugge, sposta, ridimensiona con `resize`, riparenta; niente autogrow) | rifiutati prima della chiamata |
+| Con l'egcpool pieno (16 MiB) `ncplane_put` svuota il glifo di arrivo (anche le due metà di un glifo largo) e gli dà gli stili e i canali del piano, poi fallisce in `egcpool_stash` (`notcurses.c:1911-1950`, `internal.h:1459`): una scrittura fallita cambia il piano | ogni EGC di più di 4 byte ha una chiamata C sua; prima il wrapper legge il glifo di arrivo con `ncplane_at_yx` (`strdup`) e, se la scrittura fallisce, lo riscrive con `ncplane_putc_yx` (il C ha già rilasciato la copia vecchia) e rimette il cursore (lotto 8b, review mirata di ICH-533) |
+| `nccell_load` divide in più EGC alcuni grapheme che per Ruby (da Unicode 15.1 per i coniugati) sono uno solo: bandiere (due indicatori regionali larghi 1), coniugati devanagari, hangul con i jamo L, V e T (T largo 0), keycap (U+20E3 largo 0) | le scritture con una `Cell` e `set_base` (che teneva il primo pezzo) sollevano `CellError` con i pezzi e con che cosa usare; `putstr` scrive bandiere e coniugati in celle vicine (lotto 8b, ICH-217) |
+| Una bandiera è larga 2 colonne per notcurses (due indicatori larghi 1, `wcwidth`) ma il terminale (Ghostty, `ncvt`) la disegna larga 4: il testo dopo si sposta e restano residui sullo schermo | non aggirato: il messaggio di `CellError` lo dice; ICH-586, in Backlog |
 
 ### Celle
 

@@ -1295,6 +1295,7 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
 | 6 | [#29](https://github.com/ichelema/notcursesruby/pull/29) | `0730865` | ICH-458, ICH-486, ICH-222, ICH-223, ICH-488; ICH-549, ICH-550, ICH-551, ICH-552 (nate dalla review, sullo stesso branch per scelta dell'utente); ICH-542 (`Refs`) resta in Backlog | `ncplane_qrcode` con il cursore fuori da (0, 0) scrive fuori dal buffer di pixel (`fill.c:612-616`, ICH-542, non aggirato); `rotate_bounding_box` ruota il riquadro attorno al proprio centro e i pixel attorno al centro dell'immagine (`visual.c:658-705`): `ncvisual_rotate` perde pixel opachi con bordi trasparenti asimmetrici; `ncvisual_bounding_box` a volte calcola un riquadro più stretto (`visual.c:537-628`); tabelle "Visual" e "Piani" di `memory/fase2-wrapper-idiomatico.md` |
 | 7 | [#30](https://github.com/ichelema/notcursesruby/pull/30) | `e6b51e0` | ICH-569, ICH-568, ICH-226, ICH-474, ICH-441, ICH-539 (solo documentazione, scelta dell'utente); ICH-576 e ICH-577 nate dal lotto, in Backlog | nessuno |
 | 8 | [#31](https://github.com/ichelema/notcursesruby/pull/31) | `ee509e1` | ICH-218, ICH-484 (il lotto 8 della tabella diviso in due, scelta dell'utente: ICH-217, ICH-232 e ICH-533 nel lotto 8b); ICH-580 nata dal verify e ICH-581 nata dal lavoro sul lotto, in Backlog | `ncreader_redraw` copia una cella della copia nascosta nella vista solo se EGC, stile o canali sono diversi, senza confrontare la width (`cellcmp_and_dupfar`, `internal.h:1510-1523`, `reader.c:100`): dopo Backspace, Ctrl+U e Ctrl+W le metà destre restano con width 0 (aggirato); già noti e ora aggirati: la cancellazione della colonna 0 (`notcurses.c:1883`) e il cursore acceso a ogni ridisegno (`reader.c:105`); nuovo e non aggirato: Backspace dopo un glifo largo lascia il cursore sulla colonna della metà destra (`do_backspace`, `reader.c:252-266`, ICH-581); tabella "Widget A" di `memory/fase2-wrapper-idiomatico.md` |
+| 8b | [#32](https://github.com/ichelema/notcursesruby/pull/32) | `67164c7` | ICH-533, ICH-217, ICH-232; ICH-582 (nata dal lavoro su ICH-533) e ICH-586 (nata dal verify), in Backlog | con l'egcpool pieno `ncplane_put` svuota il glifo di arrivo e gli dà stili e canali del piano prima di fallire (`notcurses.c:1911-1950`; aggirato); `nccell_load` divide bandiere, coniugati devanagari, hangul con i jamo L, V e T e keycap (già noto, ora spiegato nei messaggi); una bandiera è larga 2 colonne per notcurses e 4 per Ghostty (non aggirato, ICH-586); tabella "Piani" di `memory/fase2-wrapper-idiomatico.md` |
 
 ### Cambi dell'API pubblica
 
@@ -1506,7 +1507,7 @@ del lotto 3. Comportamenti nuovi:
   la base resta uno spazio (lotto 2b, review round 2; Done nel lotto 2c).
 - ICH-533 — `Plane#putstr`, `#putegc` e `#puttext` sollevano `ArgumentError` invece di `PlaneError` con l'egcpool
   pieno e un EGC con segni combinanti: il controllo di `zero_width_egc!` carica l'EGC nel pool (lotto 2c, trovata
-  scrivendo le spec di ICH-531; nel lotto 8 con ICH-217 e ICH-232).
+  scrivendo le spec di ICH-531; Done nel lotto 8b, con ICH-217 e ICH-232).
 - ICH-536 — con kitty il segnale di Ctrl+C arrivava solo quando `run` leggeva il tasto: non interrompeva un handler
   occupato e si perdeva con la coda piena (lotto 3, primo loop; scelta dell'utente; Done nel lotto 3).
 - ICH-537 — la memoria del tasto di segnale tenuto premuto, per tasto e per contesto (lotto 3, primo loop, review
@@ -1549,3 +1550,8 @@ del lotto 3. Comportamenti nuovi:
 - ICH-581 — Backspace dopo un glifo largo nel `Reader` cancella il glifo intero ma lascia il cursore sulla colonna
   della metà destra: la scrittura dopo lascia una cella vuota nel campo (bug di notcurses, `reader.c:252-266`; lotto 8;
   Low, in Backlog, `related` a ICH-218).
+- ICH-582 — con l'egcpool pieno le scritture con una `Cell` (`putc`, `hline`, `vline`, `polyfill`, `box`) sollevano
+  `CellError` ("notcurses non accetta") invece di `PlaneError`; dopo il lotto 8b `gradient` solleva già `PlaneError`
+  dal C (lotto 8b, lavoro su ICH-533; Low, in Backlog, `related` a ICH-533).
+- ICH-586 — una bandiera è larga 2 colonne per notcurses e 4 per Ghostty: il testo dopo si sposta e restano residui
+  sullo schermo (lotto 8b, verify con `ncvt`; Low, in Backlog, `related` a ICH-217; Kitty non misurato).
