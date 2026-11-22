@@ -87,8 +87,8 @@
     (lotto 8b: una bandiera è larga 2 colonne per notcurses e 4 per Ghostty; il testo dopo si sposta). Sono Low, Bug.
 - **Lezioni del lotto 8b** (per i lotti con grapheme, egcpool o controlli prima della chiamata C):
   - un controllo che prevede il C va scritto dopo aver letto la funzione C per intero: `ncplane_put` rilascia la
-    cella di arrivo prima di copiare e la svuota prima di fallire (`notcurses.c:1911-1950`); le spec di «piano
-    invariato» usano celle di arrivo occupate, glifi larghi e colori non di default;
+    cella di arrivo prima di copiare e la svuota prima di fallire (`notcurses.c:1911-1950`); ora è la regola 20, con
+    gli helper di `spec/support/nc_helpers.rb` per le spec di «piano invariato»;
   - per le modifiche su grapheme o Unicode esegui le spec del lotto anche con Ruby 3.1.7 prima della PR (Unicode 13:
     senza la regola GB9c Ruby divide "क्ष"); metti il `GEM_HOME` in `~/.claude/tmp/gems31`, non nello scratchpad;
   - un consiglio scritto in un messaggio d'errore si prova con `ncvt` prima del commit;
@@ -212,7 +212,7 @@ lo stesso formato di `memory/correzioni-review.md` (Fix, Decisioni, Review, Prob
 
 ## Regole vincolanti
 
-Le regole 1–10 vengono dalle fasi precedenti, le regole 11–17 dai lotti della revisione, le regole 18–19 dai lotti
+Le regole 1–10 vengono dalle fasi precedenti, le regole 11–17 dai lotti della revisione, le regole 18–20 dai lotti
 successivi.
 
 1. Non cambiare la Fase 1 (`lib/notcurses/ffi/`, `lib/notcurses/ffi.rb`) senza l'approvazione dell'utente. Se un
@@ -249,6 +249,14 @@ successivi.
     con le virgolette doppie); `.rubocop_todo.yml` non va rigenerato per far passare codice nuovo (fino al lotto di
     ICH-469).
 19. Ogni file nuovo ha l'intestazione di due righe (`# Generated from notcurses 3.0.17` e `# Source: ...`).
+20. Un controllo prima della chiamata C, o un workaround, che prevede il comportamento del C si scrive dopo aver letto
+    per intero la funzione C che **scrive** (non solo quella che carica o legge), compreso il percorso d'errore e
+    quello che cambia nel framebuffer prima del fallimento. Il commento del wrapper cita quelle righe (`file.c:riga`),
+    e il piano di `2_work-issue` ha una riga «Percorso C letto» con le funzioni e le righe. Le spec di «piano
+    invariato» usano gli helper di `spec/support/nc_helpers.rb`: `NcHelpers.occupy_row` (celle di arrivo occupate,
+    glifo largo, colori non di default), `NcHelpers.fill_egcpool` e `NcHelpers.big_egc` (egcpool pieno) e il
+    confronto di `NcHelpers.plane_snapshot` prima e dopo (lotto 8b: la scrittura su una riga vuota nascondeva il
+    difetto).
 
 ## Ordine di lavoro
 
