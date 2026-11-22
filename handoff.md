@@ -90,7 +90,7 @@
     cella di arrivo prima di copiare e la svuota prima di fallire (`notcurses.c:1911-1950`); ora è la regola 20, con
     gli helper di `spec/support/nc_helpers.rb` per le spec di «piano invariato»;
   - per le modifiche su grapheme o Unicode esegui le spec del lotto anche con Ruby 3.1.7 prima della PR (Unicode 13:
-    senza la regola GB9c Ruby divide "क्ष"); metti il `GEM_HOME` in `~/.claude/tmp/gems31`, non nello scratchpad;
+    senza la regola GB9c Ruby divide "क्ष"): ora è la regola 21, con `.claude/scripts/spec31`;
   - un consiglio scritto in un messaggio d'errore si prova con `ncvt` prima del commit;
   - CI rossa in circa 30 secondi su tutti i job = guasto dell'infrastruttura (per esempio `archive.archlinux.org`
     giù, controllalo con `curl`), non il codice.
@@ -115,9 +115,9 @@
   metodi C: per un'operazione che deve sopravvivere a un secondo Ctrl+C serve uno stato condiviso recuperabile, non una
   variabile locale (schema `@claims` di `release_native!`). Le review del lotto 5 sono state
   `/trinity:workflow:3_independent-review` eseguite dall'orchestratore, con il verify di un `trinity:reviewer` Sonnet.
-- Ruby 3.1.7 locale non ha `rspec` né `ffi`: installali in un `GEM_HOME` nello scratchpad
-  (`GEM_HOME=$S/gems31 GEM_PATH=$S/gems31 mise exec ruby@3.1.7 -- gem install --no-document rspec:3.13.2
-  ffi:1.17.4`) e lancia `mise exec ruby@3.1.7 -- ruby $S/gems31/bin/rspec` con le stesse variabili.
+- Ruby 3.1.7 locale non ha `rspec` né `ffi` e con Bundler 4 del lockfile `bundle` non parte: usa
+  `.claude/scripts/spec31 spec/...` dalla radice del checkout o del worktree. Lo script installa la prima volta
+  `rspec` 3.13.2 e `ffi` 1.17.4 in `~/.claude/tmp/gems31`, che resta tra le sessioni, ed esegue rspec senza `bundle`.
 - Nata dal lotto 3: ICH-539 (Low), finestre dei segnali su Ruby 3.1 e 3.2 nella pulizia di `EventLoop#run`, in
   `InputReader#halt` e in `Context#close`, nel lotto 7 con ICH-226 e ICH-474 (scelta dell'utente del 2026-11-18).
 - Note dal lotto 3: con kitty `run` spegne il flag dei segnali di notcurses e lo lascia spento dopo `run` (scelta
@@ -159,7 +159,7 @@
   `require 'notcurses'`; non pubblicata su rubygems.org.
 - **Macchina:** checkout in `/Dati/Sviluppo/Progetti/Personali/20261027_notcursesruby` (CachyOS, Linux x86_64),
   notcurses 3.0.17 di sistema con `libnotcurses-ffi.so.3`, Ruby 4.0.7 da mise. Su Ruby 3.1.7:
-  `mise exec ruby@3.1.7 -- rspec` dalla radice del progetto, senza `bundle`.
+  `.claude/scripts/spec31 spec/...` (regola 21).
 - **Fasi 1–5:** complete. Fase 1 layer FFI, Fase 2 wrapper idiomatico, Fase 3 `Notcurses::UI`, Fase 4 pacchetto e
   CI, Fase 5 blitter su Kitty e Ghostty e porting su macOS (PR #20 e #21). Correzioni della revisione del
   2026-11-06: 17 lotti, PR #2…#19. Dettagli nelle sezioni omonime di `RICONSEGNA.md`.
@@ -212,7 +212,7 @@ lo stesso formato di `memory/correzioni-review.md` (Fix, Decisioni, Review, Prob
 
 ## Regole vincolanti
 
-Le regole 1–10 vengono dalle fasi precedenti, le regole 11–17 dai lotti della revisione, le regole 18–20 dai lotti
+Le regole 1–10 vengono dalle fasi precedenti, le regole 11–17 dai lotti della revisione, le regole 18–21 dai lotti
 successivi.
 
 1. Non cambiare la Fase 1 (`lib/notcurses/ffi/`, `lib/notcurses/ffi.rb`) senza l'approvazione dell'utente. Se un
@@ -257,6 +257,13 @@ successivi.
     glifo largo, colori non di default), `NcHelpers.fill_egcpool` e `NcHelpers.big_egc` (egcpool pieno) e il
     confronto di `NcHelpers.plane_snapshot` prima e dopo (lotto 8b: la scrittura su una riga vuota nascondeva il
     difetto).
+21. La segmentazione di Ruby cambia con la versione di Unicode: Ruby 3.1 usa la 13.0, Ruby 3.2-3.4 la 15.0, Ruby 4.0
+    la 17.0 (per esempio, prima della 15.1 Ruby divide il coniugato "क्ष"). Se il diff tocca grapheme o Unicode
+    (`grapheme_clusters`, `each_grapheme_cluster`, `\X`, `\p{...}`, `unicode_normalize`, `Notcurses.strwidth`,
+    codepoint `\u` nelle spec), prima della PR esegui le spec cambiate anche con `.claude/scripts/spec31` (Ruby 3.1.7).
+    Una spec il cui risultato dipende dalla versione ricava l'atteso da Ruby al momento (per esempio
+    `str.grapheme_clusters.size == 1`) e controlla tutti e due i rami. Ruby 3.2-3.4 li prova solo la CI (lotto 8b: la
+    CI è fallita su Ruby 3.1-3.4 dopo i fix della review).
 
 ## Ordine di lavoro
 
@@ -375,7 +382,9 @@ ICH-224, ICH-228 e ICH-229 sono già a Done.
    il worktree in `.claude/worktrees/` del repository.
 2. `2_work-issue` porta le issue a In Progress, scrive il piano e implementa. Per ogni issue: la spec che fallisce,
    il fix, la suite completa (regola 11). Commit separati per issue, Conventional Commits in inglese con scope.
-   Apre la PR con le magic words, senza merge.
+   Prima della PR, se il diff tocca grapheme o Unicode, le spec cambiate anche con `.claude/scripts/spec31`
+   (regola 21): `git diff origin/master...HEAD | grep -E 'grapheme|\\X|\\p\{|unicode_normalize|strwidth|\\u[0-9A-Fa-f{]'`.
+   Apre la PR con le magic words, senza merge. Ripeti il controllo dopo ogni round di fix della review.
 3. `3_independent-review` fa una review indipendente in sola lettura del changeset rispetto agli acceptance
    criteria.
 4. `4_review-fix-loop` serve solo se la review trova problemi.
