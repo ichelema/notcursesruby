@@ -7,8 +7,10 @@ K = Notcurses::Key
 BS = Notcurses::Input.synthesize(K::BACKSPACE)
 def ctrl(l) = Notcurses::Input.synthesize(l.ord, modifiers: [:ctrl])
 
+# Il file compare con un rename: ncvt lo legge appena esiste, e con File.write a volte lo trovava ancora vuoto.
 def checkpoint(label)
-  File.write(CONTROL, label)
+  File.write("#{CONTROL}.tmp", label)
+  File.rename("#{CONTROL}.tmp", CONTROL)
   sleep 0.02 until File.exist?("#{CONTROL}.done")
   File.delete("#{CONTROL}.done")
 end

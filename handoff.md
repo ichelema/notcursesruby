@@ -75,8 +75,8 @@
   dalla 1.0), il sorgente `ncvt.c` e l'esempio `verify_reader.rb`. La libreria compilata e `ncvt` sono in
   `~/.claude/tmp/libghostty-vt/` (prefix e `harness/ncvt`); se mancano, la ricetta li ricostruisce. Per ICH-576 usa
   `ncvt -m` (terminale muto). Per una prova rapida dello schermo c'è `.claude/skills/verify/screen` con l'helper
-  `snap.rb` (regola 22). `verify_reader.rb` scrive il file di controllo con `File.write`, e a volte `ncvt` legge
-  l'etichetta vuota ("punto di controllo"): `snap.rb` usa un rename.
+  `snap.rb` (regola 22). Il file di controllo di `ncvt -s` si crea con un rename (`snap.rb`, `verify_reader.rb`):
+  con `File.write` a volte `ncvt` lo legge ancora vuoto e stampa "punto di controllo" al posto dell'etichetta.
 - **Lotto 8b fatto:** PR #32, merge `67164c7` (2026-11-22), ICH-533, ICH-217 e ICH-232 a Done. Catena: simplify,
   verify con `ncvt` (FAIL sul consiglio di `putstr` per le bandiere, corretto), review `soft` Sonnet (3 finding),
   review mirata `soft` Sonnet (2 finding), tutti corretti. Cambio dell'API della Fase 2 approvato dall'utente:
