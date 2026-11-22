@@ -6,7 +6,7 @@
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
 > `git show ad0315b:RIPRESA.md`; quello dei lotti della revisione in `git show 8a4b5f7:RIPRESA.md`.
 
-## Stato e prossimo step (aggiornato il 2026-11-21, lotto 8 fatto, prossimo lotto 8b)
+## Stato e prossimo step (aggiornato il 2026-11-22, lotto 8b fatto, prossimo lotto 8c)
 
 - Lotto 1 fatto: PR #22, merge `74deb80`. Lotto 2 fatto: PR #23, merge `cb90c4f`. Lotto 2b fatto: PR #24, merge
   `6374e41`. Lotto 2c fatto: PR #25, merge `d2c5f7c`. Lotto 3 fatto: PR #26, merge `e15b40a` (ICH-454, ICH-456,
@@ -75,30 +75,28 @@
   dalla 1.0), il sorgente `ncvt.c` e l'esempio `verify_reader.rb`. La libreria compilata e `ncvt` sono in
   `~/.claude/tmp/libghostty-vt/` (prefix e `harness/ncvt`); se mancano, la ricetta li ricostruisce. Per ICH-576 usa
   `ncvt -m` (terminale muto).
-- **Lotto 8b in corso** (`bug`): ICH-217, ICH-232, ICH-533. PR #32 aperta, branch `bug/ICH-217-232-533-opus` su
-  `0e0cf11`, worktree `.claude/worktrees/bug+ICH-217-232-533-opus` (submodule `notcurses` inizializzato: alla
-  rimozione `--force` è approvato). Catena: `2_work-issue`, simplify, verify con `ncvt` (FAIL sul consiglio di usare
-  `putstr` per le bandiere, corretto in `2e916f9`), review `soft` Sonnet (APPROVABILE CON RISERVE, 3 finding corretti
-  in `d847446`: lo spazio nell'egcpool lo decide il C), review mirata `soft` Sonnet (NON APPROVABILE, 2 finding
-  corretti in `85f4d74`: con il pool pieno `ncplane_put` svuota il glifo di arrivo prima di fallire, il wrapper lo
-  rimette con il cursore; `LogView` mostra "?" anche su `PlaneError`). Verifica locale su `85f4d74`: 1288 esempi, 0
-  fallimenti, semi 1234, 4242 e 7, coverage 98,19 %, RuboCop 0, YARD 100 %, gem costruita, layer FFI invariato.
-  Cambio dell'API della Fase 2 approvato dall'utente il 2026-11-21: `Plane#check_text!` (`@api private`). Log da
-  scrivere in `memory/backlog-issue.md` alla chiusura.
-- **CI della PR #32 verde su `0e0cf11`** (2026-11-22, tutta la matrice e Codecov). Prima: dal 2026-11-21 alle 22:58
-  `archive.archlinux.org` non rispondeva e i job si fermavano prima delle spec (l'utente aveva scelto di proseguire
-  senza CI); tornato l'archivio, Ruby 3.1-3.4 fallivano 3 spec di ICH-217: prima di Unicode 15.1 (regola GB9c) anche
-  Ruby divide il coniugato "क्ष", quindi le spec lo controllano solo quando Ruby lo legge come un grapheme (`0e0cf11`).
-  Con il carico della macchina una corsa del seme 4242 è andata in timeout in `spec/integration/ui_pty_spec.rb:732`
-  (kitty Ctrl+C, codice non toccato); da sola passa.
-- Nate dal lotto 8b, in Backlog, Low, da assegnare a un lotto (chiedi all'utente): ICH-582 (le scritture con `Cell`
-  con l'egcpool pieno sollevano `CellError` invece di `PlaneError`; dopo `d847446` `gradient` dà già `PlaneError`
-  dal C) e ICH-586 (una bandiera: notcurses conta 2 colonne, Ghostty ne disegna 4; il testo dopo si sposta e restano
-  residui sullo schermo).
-- **Prossimo step:** l'utente esegue `gh pr merge 32 --merge` (il classificatore blocca il merge dalla sessione);
-  poi chiusura del lotto 8b (passo 7, con la CI come sopra), `/trinity:workflow:5_remove-worktree
-  bug+ICH-217-232-533-opus`, e il lotto 8c (`bug`): ICH-576, ICH-580, ICH-577, da spiegare prima (passo 0), con
-  `/trinity:workflow:1_create-worktree master ICH-576 ICH-580 ICH-577 opus`.
+- **Lotto 8b fatto:** PR #32, merge `67164c7` (2026-11-22), ICH-533, ICH-217 e ICH-232 a Done. Catena: simplify,
+  verify con `ncvt` (FAIL sul consiglio di `putstr` per le bandiere, corretto), review `soft` Sonnet (3 finding),
+  review mirata `soft` Sonnet (2 finding), tutti corretti. Cambio dell'API della Fase 2 approvato dall'utente:
+  `Plane#check_text!` (`@api private`). `master` su `67164c7`: 1288 esempi, 0 fallimenti, semi 1234, 4242 e 7,
+  coverage 98,19 %, RuboCop 0, YARD 100 %, gem costruita, layer FFI invariato; CI della PR e di `master` verde. Log in
+  `memory/backlog-issue.md`, esito in `RICONSEGNA.md`, retain in Hindsight fatto il 2026-11-22.
+- **Da fare all'inizio della prossima sessione:**
+  - worktree e branch del lotto 8b non sono rimossi (`5_remove-worktree` si avvia solo a mano): esegui
+    `/trinity:workflow:5_remove-worktree bug+ICH-217-232-533-opus`; il worktree ha il submodule `notcurses`
+    inizializzato, e con `git status` vuoto `--force` è approvato; va tolto anche il branch remoto;
+  - chiedi all'utente in quale lotto mettere ICH-581 (lotto 8, `Reader`), ICH-582 (lotto 8b: con l'egcpool pieno le
+    scritture con `Cell` sollevano `CellError` invece di `PlaneError`; `gradient` dà già `PlaneError` dal C) e ICH-586
+    (lotto 8b: una bandiera è larga 2 colonne per notcurses e 4 per Ghostty; il testo dopo si sposta). Sono Low, Bug.
+- **Lezioni del lotto 8b** (per i lotti con grapheme, egcpool o controlli prima della chiamata C):
+  - un controllo che prevede il C va scritto dopo aver letto la funzione C per intero: `ncplane_put` rilascia la
+    cella di arrivo prima di copiare e la svuota prima di fallire (`notcurses.c:1911-1950`); le spec di «piano
+    invariato» usano celle di arrivo occupate, glifi larghi e colori non di default;
+  - per le modifiche su grapheme o Unicode esegui le spec del lotto anche con Ruby 3.1.7 prima della PR (Unicode 13:
+    senza la regola GB9c Ruby divide "क्ष"); metti il `GEM_HOME` in `~/.claude/tmp/gems31`, non nello scratchpad;
+  - un consiglio scritto in un messaggio d'errore si prova con `ncvt` prima del commit;
+  - CI rossa in circa 30 secondi su tutti i job = guasto dell'infrastruttura (per esempio `archive.archlinux.org`
+    giù, controllalo con `curl`), non il codice.
 - Nata dal lotto 6, in Backlog, Low, da assegnare a un lotto successivo (non blocca la PR #29): ICH-554 (`Visual#rotate`
   chiama il C una volta per pixel, circa 0,9 s su 1024x1024; accelerarlo può servire un cambio del layer FFI, regola 1).
 - Alla chiusura del lotto 6: 3 bug di notcurses nuovi nelle tabelle di `RICONSEGNA.md` (elenco in
@@ -429,6 +427,16 @@ all'utente e, dopo la conferma, aggiorna la issue su Linear.
   `until gh run list --branch <branch> --limit 1 | grep -q .; do sleep 15; done`, poi `gh pr checks <n> --watch`.
 - `gem build` può stampare warning di rdoc dell'installazione locale, non del gemspec: conta che la gem si costruisca
   e che la CI sia verde.
+- Prima di una suite lunga controlla `free -h`: con la memoria quasi finita il sistema ferma i comandi in background, e
+  le spec dei pty e la coverage si bloccano (lotto 8b). Esegui la coverage con `--format documentation --out <file>`:
+  se si blocca, il file dice quale spec.
+- In un worktree la sessione rifiuta i comandi composti che non riesce a controllare (heredoc, più comandi): scrivi
+  gli script con lo strumento Write ed eseguili con un comando semplice. Non usare `cd`: un `cd` in una sottocartella
+  sposta la directory della sessione.
+- Edit non trova il testo con segni combinanti o con U+2028 e U+2029 scritti come caratteri: usa come ancora le righe
+  ASCII vicine. Nel codice nuovo scrivi `"́"`, non il carattere; nelle regex delle spec usa `Regexp.escape` del
+  valore calcolato.
+- Negli script di prova copia le opzioni del contesto da `CONTEXT_OPTIONS` di `spec/support/nc_helpers.rb`.
 
 ## Comandi
 
