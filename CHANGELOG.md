@@ -75,6 +75,15 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   l'`InitError` di un init NULL (ICH-577). Prima l'errore del rollback la sostituiva, e un `rescue Interrupt` attorno a
   `new` non scattava più. L'errore del rollback viene scartato, senza scrivere su stderr; registro, `FILE*`
   dell'output e `TERM` tornano a posto come prima.
+- `Context.new` e `Direct.new` con un terminale che non risponde mai alle query dell'init: SIGTERM, un Ctrl-C o due
+  Ctrl-C chiudono il processo in circa 2 secondi (ICH-576). Prima il processo restava vivo, e solo SIGKILL lo
+  chiudeva: il C aspetta la risposta senza timeout (`pthread_cond_wait`, `in.c:2924-2925`), `new` aspettava il thread
+  dell'init, e all'uscita Ruby aspettava lo stesso thread. Ora, dopo un segnale, `new` aspetta al più 2 secondi e
+  poi esce con l'eccezione del segnale; se il processo esce con l'init ancora fermo, l'hook `at_exit` del wrapper lo
+  chiude senza aspettare gli altri thread, con la morte per il segnale (o lo stato di `exit`). Prima di uscire rimette
+  il terminale come l'ha trovato l'init: echo e modo canonico, `O_NONBLOCK` del fd 0, la tastiera kitty e (`Context`)
+  lo schermo alternativo. Con un terminale che risponde entro i 2 secondi non cambia nulla; oltre, un solo Ctrl-C si
+  comporta come prima il secondo (`new` esce, e il contesto resta registrato fino alla risposta).
 - `Direct#stream` con il blitter `:pixel` ridisegna ogni frame sulle righe del primo anche in fondo allo schermo
   (ICH-458). Prima un frame più basso dello schermo poteva finire sull'ultima riga (per esempio con il cursore in
   fondo: il C sposta in alto un frame che non entra sotto il cursore, `direct.c:442-448`); il C mandava poi una CUP

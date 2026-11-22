@@ -63,9 +63,12 @@ module Notcurses
 
   # Chiude all'uscita il contesto rimasto aperto, per lasciare il terminale in
   # uno stato pulito. Solo nel processo che l'ha creato: un figlio creato con
-  # fork non deve ripristinare il terminale del padre.
+  # fork non deve ripristinare il terminale del padre. Con un init ancora
+  # fermo nel C (un terminale che non risponde alle query) avvia il thread di
+  # controllo di {Util.watch_init}, che chiude il processo (ICH-576).
   at_exit do
     ctx = Notcurses.active_context
+    Util.watch_init(ctx.pending_init, $!) if ctx && ctx.pid == Process.pid
     # anche un contesto già chiuso per le chiamate nuove: close esegue lo stop rimasto in attesa, se nessuna
     # operazione è in corso
     ctx.close if ctx && ctx.pid == Process.pid
@@ -287,11 +290,22 @@ module Notcurses
     # completato e a contesto fermato, con il registro libero. Un errore del
     # rollback (per esempio di +notcurses_stop+) viene scartato, senza
     # scrivere su stderr: il chiamante riceve l'eccezione per cui new ha
-    # rinunciato, anche l'InitError di un init NULL. Un secondo
-    # Ctrl-C mentre new aspetta esce subito: il thread interno ferma il
-    # contesto quando l'init torna, e fino ad allora il contesto resta
-    # registrato (un nuovo init solleva InitError). Con un terminale che non
-    # risponde mai l'init non torna, e il registro resta occupato. Resta una
+    # rinunciato, anche l'InitError di un init NULL. Dopo un segnale
+    # (SIGTERM, Ctrl-C) new aspetta la risposta del terminale al più per 2
+    # secondi, poi esce con l'eccezione del segnale; un secondo Ctrl-C esce
+    # subito. Il thread interno ferma il contesto quando l'init torna, e fino
+    # ad allora il contesto resta registrato (un nuovo init solleva
+    # InitError). Con le altre eccezioni new aspetta senza limite. Con un
+    # terminale che non risponde mai l'init non torna (ICH-576): se il
+    # processo esce con l'init ancora fermo, anche dopo un +rescue+ del
+    # segnale, l'hook +at_exit+ lo chiude alla fine dei 2 secondi (fino a un
+    # secondo in più per gli altri hook +at_exit+), senza aspettare gli altri
+    # thread. Il processo muore per il segnale, o esce con lo stato di +exit+;
+    # finalizzatori e +atexit+ del C non girano. Prima di uscire il wrapper
+    # rimette il terminale come l'ha trovato l'init: echo e modo canonico, i
+    # flag del fd 0 (O_NONBLOCK), la tastiera kitty e lo schermo alternativo.
+    # Con un FILE* passato come output il terminale ripristinato è /dev/tty.
+    # Resta una
     # finestra: un'eccezione arrivata proprio al ritorno di new, a contesto già
     # adottato, lo lascia aperto e registrato senza che il chiamante lo
     # riceva; lo chiudono <tt>Notcurses.active_context.close</tt> o l'hook
@@ -329,7 +343,7 @@ module Notcurses
                      Util.flag(cli_mode, FFI::NCOPTION_CLI_MODE, 'cli_mode')
       @closed = true # fino alla fine dell'init: close e at_exit ignorano l'oggetto
       @pid = Process.pid # già durante l'init: la guardia di Process.daemon riconosce il contesto di questo processo
-      old_term = fp = init = nil
+      old_term = fp = error = nil
       @own_fp = false
       go = Queue.new    # al thread di init: true per partire, poi true se il chiamante ha adottato il contesto
       ready = Queue.new # dal thread di init: il puntatore, o l'eccezione della chiamata C
@@ -348,11 +362,15 @@ module Notcurses
         FFI.fclose(fp) if @own_fp
       end
       begin
-        init = Util.init_thread(go, ready, start, undo)
+        @pending_init = Util.init_thread(go, ready, start, undo)
         Notcurses.acquire_context(self)
         # dopo acquire_context: con un altro contesto attivo il FILE* resterebbe aperto. Con le eccezioni asincrone
         # rimandate: arrivano a FILE* assegnato, e undo lo chiude
         Thread.handle_interrupt(Object => :never) { fp, @own_fp = open_output(output) }
+        # ICH-576: il terminale di prima dell'init, se il processo esce con l'init fermo nel C. Le sequenze annullano
+        # quelle dell'init: la tastiera kitty (non con drain_input) e lo schermo alternativo (termdesc.c:528-543)
+        seq = "#{"\e[<u" unless drain_input}#{"\e[?1049l" if (opts[:flags] & FFI::NCOPTION_NO_ALTERNATE_SCREEN).zero?}"
+        Thread.handle_interrupt(Object => :never) { @pending_init.tty = Util.save_init_tty(output, seq) }
         $stdout.flush if output.nil?
         go << true
         ptr = ready.pop
@@ -388,12 +406,23 @@ module Notcurses
         @stdplane = Plane.new(FFI.notcurses_stdplane(ptr), owned: false, context: self)
         @closed = false
         adopted = true
+      rescue Exception => e # rubocop:disable Lint/RescueException -- solo per sapere quale: Thread#kill non passa
+        error = e
+        raise
       ensure
         go << adopted # per prima, una sola chiamata C: né un secondo Ctrl-C né Thread#kill la saltano
-        # il rollback è del thread di init: un secondo Ctrl-C esce dall'attesa, e il rollback continua
-        init&.join unless adopted
+        # il rollback è del thread di init: un secondo Ctrl-C esce dall'attesa, e il rollback continua; dopo un
+        # segnale l'attesa ha un limite (ICH-576)
+        Util.await_init(@pending_init, error) unless adopted
+        @pending_init = nil if adopted
       end
     end
+
+    # L'init in corso, finché il chiamante non adotta il contesto; nil dopo un
+    # init andato a buon fine. Lo legge l'hook +at_exit+ (ICH-576).
+    # @return [Util::PendingInit, nil]
+    # @api private
+    attr_reader :pending_init
 
     # Ferma notcurses e ripristina il terminale (+notcurses_stop+). Chiude prima
     # i widget e gli altri oggetti figli ancora aperti, in ordine inverso di

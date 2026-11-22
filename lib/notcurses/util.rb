@@ -2,6 +2,8 @@
 # Source: notcurses/include/notcurses/notcurses.h
 # frozen_string_literal: true
 
+require 'fcntl'
+
 module Notcurses
   # Funzioni di supporto comuni ai wrapper: validazione ai confini, stringhe,
   # memoria ALLOC, codici di errore, conversione dei simboli Ruby nelle costanti
@@ -573,14 +575,16 @@ module Notcurses
     # la sua vita: anche all'uscita del processo il rollback finisce. Un
     # errore del rollback viene scartato (ICH-577): il join del chiamante lo
     # rilancerebbe al posto dell'eccezione per cui il chiamante ha rinunciato.
+    # Alla fine il thread chiude il terminale salvato in {PendingInit#tty}.
     # @param go [Thread::Queue] le decisioni del chiamante
     # @param ready [Thread::Queue] il puntatore, o l'eccezione della chiamata C
     # @param start [Proc] la chiamata C dell'init
     # @param undo [Proc] il rollback: riceve il puntatore, o nil se l'init non
     #   è partito
-    # @return [Thread]
+    # @return [PendingInit] l'init in corso, con il thread
     def init_thread(go, ready, start, undo)
-      Thread.new do # rubocop:disable ThreadSafety/NewThread -- il thread è il proprietario del rollback
+      pending = PendingInit.new
+      pending.thread = Thread.new do # rubocop:disable ThreadSafety/NewThread -- il thread è il proprietario del rollback
         Thread.current.report_on_exception = false
         Thread.handle_interrupt(Object => :never) do
           ptr = nil
@@ -598,7 +602,167 @@ module Notcurses
           rescue Exception # rubocop:disable Lint/RescueException
             nil # il registro, il FILE* e TERM li sistema comunque l'ensure di undo
           end
+        ensure
+          close_init_tty(pending.tty)
         end
+      end
+      pending
+    end
+
+    # Secondi che {Context.new} e {Direct.new}, interrotti da un segnale,
+    # concedono al terminale per rispondere alle query dell'init (ICH-576).
+    INIT_GRACE = 2
+
+    # Un init di {Context} o {Direct} in corso (ICH-576): il thread di
+    # {init_thread}, la scadenza dell'attesa (Float del clock monotono, nil
+    # finché nessuno rinuncia per un segnale o il processo non esce) e il
+    # terminale di {save_init_tty}. Con un terminale che non risponde mai
+    # l'init resta per sempre nel C (+pthread_cond_wait+ senza timeout,
+    # in.c:2924-2925), e nessun segnale lo sveglia.
+    PendingInit = Struct.new(:thread, :deadline, :tty)
+
+    # Clock monotono, in secondi.
+    # @return [Float]
+    def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+    # Salva, prima dell'init, il terminale che il C cambia mentre aspetta le
+    # risposte alle query: il termios (+cbreak_mode+, termdesc.c:1371-1381)
+    # e i flag del fd 0 (O_NONBLOCK, in.c:1973). Il terminale è quello del C
+    # (+get_tty_fd+, fd.c:455-485): l'output se è un tty, altrimenti
+    # /dev/tty. Con un FILE* passato come output il fd non si conosce, e vale
+    # /dev/tty.
+    # @param output [String, ::FFI::Pointer, nil] l'output dell'init
+    # @param seq [String] le sequenze che annullano quelle mandate dall'init
+    #   (pop della tastiera kitty, uscita dallo schermo alternativo)
+    # @return [Array(IO, FFI::Termios, Integer, String), nil] nil senza un tty:
+    #   allora il C non interroga il terminale e non aspetta
+    def save_init_tty(output, seq)
+      io = IO.for_fd(1, autoclose: false) if output.nil?
+      io = File.open(output, File::RDWR | File::NOCTTY | File::NONBLOCK) if output.is_a?(String) && File.chardev?(output)
+      unless io&.tty?
+        io&.close
+        io = File.open('/dev/tty', File::RDWR | File::NOCTTY | File::NONBLOCK)
+      end
+      termios = FFI::Termios.new
+      if FFI.tcgetattr(io.fileno, termios).negative?
+        io.close
+        return
+      end
+
+      [io, termios, fd0_fcntl(Fcntl::F_GETFL), seq]
+    rescue SystemCallError, IOError
+      io&.close
+      nil
+    end
+
+    # fcntl sul fd 0 del processo, anche se +$stdin+ è stato riassegnato.
+    # @param cmd [Integer] F_GETFL o F_SETFL
+    # @param arg [Integer] i flag di F_SETFL
+    # @return [Integer, nil] il risultato, nil se il fd 0 è chiuso
+    def fd0_fcntl(cmd, arg = 0)
+      IO.for_fd(0, autoclose: false).fcntl(cmd, arg)
+    rescue SystemCallError, IOError
+      nil
+    end
+
+    # Ripristina il terminale salvato da {save_init_tty}, come il percorso
+    # d'errore dell'init nel C (termdesc.c:1538-1552): prima le sequenze, poi
+    # il termios; poi i flag del fd 0.
+    # @param tty [Array, nil] il valore di {save_init_tty}
+    # @return [void]
+    def restore_init_tty(tty)
+      return unless tty
+
+      io, termios, stdin_flags, seq = tty
+      io.write_nonblock(seq, exception: false) unless seq.empty?
+      FFI.tcsetattr(io.fileno, FFI::TCSANOW, termios)
+      fd0_fcntl(Fcntl::F_SETFL, stdin_flags) if stdin_flags
+    end
+
+    # Chiude l'IO di {save_init_tty} (il fd 1 resta aperto).
+    # @param tty [Array, nil] il valore di {save_init_tty}
+    # @return [void]
+    def close_init_tty(tty)
+      tty&.first&.close
+    rescue IOError
+      nil
+    end
+
+    # Il chiamante di new ha rinunciato all'init e aspetta il rollback del
+    # thread di init. Dopo un segnale (SignalException: SIGTERM, Ctrl-C)
+    # aspetta al più fino alla scadenza di INIT_GRACE secondi (ICH-576): con
+    # un terminale che non risponde mai l'init non torna. Con le altre
+    # eccezioni (error nil per Thread#kill) aspetta senza limite (ICH-226).
+    # @param pending [PendingInit, nil] l'init in corso
+    # @param error [Exception, nil] l'eccezione per cui il chiamante rinuncia
+    # @return [void]
+    def await_init(pending, error)
+      return unless pending
+      return pending.thread.join unless error.is_a?(SignalException)
+
+      pending.deadline ||= monotonic + INIT_GRACE
+      pending.thread.join([pending.deadline - monotonic, 0].max)
+    end
+
+    # Dall'hook +at_exit+: se il processo esce con un init fermo nel C, Ruby
+    # aspetterebbe per sempre il thread di init (+rb_thread_terminate_all+,
+    # dopo gli hook). Un thread di controllo aspetta l'init fino alla
+    # scadenza, e fino a un secondo in più per gli hook +at_exit+ ancora da
+    # eseguire; poi ripristina il terminale ({restore_init_tty}) e chiude il
+    # processo come farebbe Ruby con error ({force_exit}). Il thread nasce con
+    # le interruzioni rimandate: il kill dell'uscita non lo ferma.
+    # @param pending [PendingInit, nil] l'init in corso
+    # @param error [Exception, nil] l'eccezione dell'uscita (+$!+)
+    # @return [void]
+    def watch_init(pending, error)
+      return unless pending&.thread&.alive?
+
+      pending.deadline ||= monotonic + INIT_GRACE
+      Thread.handle_interrupt(Object => :never) do
+        Thread.new do # rubocop:disable ThreadSafety/NewThread -- deve sopravvivere al kill dell'uscita
+          Thread.current.report_on_exception = false
+          init = pending.thread
+          # Thread.main non è più vivo quando Ruby, finiti gli hook, aspetta gli altri thread
+          until !init.alive? || (monotonic > pending.deadline && (!Thread.main.alive? || monotonic > pending.deadline + 1))
+            init.join(0.05)
+          end
+          next unless init.alive?
+
+          begin
+            restore_init_tty(pending.tty)
+          rescue Exception # rubocop:disable Lint/RescueException
+            nil
+          end
+          force_exit(error)
+        end
+      end
+    end
+
+    # Chiude il processo senza aspettare gli altri thread, con l'esito che
+    # Ruby darebbe all'uscita per error: la morte per il segnale di una
+    # SignalException (con il backtrace di Interrupt su stderr, come Ruby),
+    # lo stato di una SystemExit, 0 senza errore, 1 con il messaggio per le
+    # altre eccezioni. Salta finalizzatori e +atexit+ del C.
+    # @param error [Exception, nil] l'eccezione dell'uscita
+    # @return [void] non torna
+    def force_exit(error)
+      [$stdout, $stderr].each do |io|
+        io.flush
+      rescue IOError, SystemCallError
+        nil
+      end
+      case error
+      when nil then Process.exit!(0)
+      when SystemExit then Process.exit!(error.status)
+      when SignalException
+        warn error.full_message(highlight: false) if error.is_a?(Interrupt)
+        Signal.trap(error.signo, 'SYSTEM_DEFAULT')
+        Process.kill(error.signo, Process.pid)
+        sleep 1 # un segnale il cui default non chiude il processo
+        Process.exit!(128 + error.signo)
+      else
+        warn error.full_message(highlight: false)
+        Process.exit!(1)
       end
     end
 

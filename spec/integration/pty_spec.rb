@@ -2,6 +2,9 @@
 # Source: notcurses/include/notcurses/notcurses.h
 # frozen_string_literal: true
 
+require 'fcntl'
+require 'io/console'
+require 'pty'
 require 'rbconfig'
 require 'tmpdir'
 
@@ -197,6 +200,71 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     end
     expect(out.lines(chomp: true)).to eq(lines + ['fine']) # stdout e stderr insieme: niente altro
     expect(status.exitstatus).to eq(0), out
+  end
+
+  # ICH-576: con un terminale che non risponde mai a DA1 l'init resta per sempre nel C (pthread_cond_wait,
+  # in.c:2924-2925), e né SIGTERM né Ctrl-C fermavano il processo: il chiamante aspettava il thread di init, e
+  # all'uscita Ruby aspettava lo stesso thread. Il pty è del padre: dopo la morte del figlio il padre ne legge lo stato
+  # (echo, flag del fd 0, che il figlio condivide come stdin) e le sequenze ricevute.
+  def mute_init_script = <<~RUBY
+    require 'notcurses'
+    $stdout.sync = true
+    klass = Notcurses.const_get(ENV.fetch('NC_CLASS'))
+    extra = klass == Notcurses::Context ? { suppress_banners: true } : {}
+    klass.new(output: ENV.fetch('NC_TTY'), termtype: 'xterm-256color', **extra)
+    puts 'init finito'
+  RUBY
+
+  def tty_state(slave) = [slave.echo?, slave.fcntl(Fcntl::F_GETFL)]
+
+  # @return [Array] stato di uscita, secondi dal primo segnale, stato del pty prima e dopo, byte scritti sul pty
+  def run_mute_init(klass, signals)
+    now = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    before = tty_state(slave)
+    log = String.new(encoding: Encoding::BINARY)
+    lock = Mutex.new
+    reader = Thread.new do # il terminale muto: legge tutto e non risponde mai
+      loop { (data = master.readpartial(65_536)) && lock.synchronize { log << data } }
+    rescue IOError, Errno::EIO
+      nil
+    end
+    out_r, out_w = IO.pipe
+    pid = spawn({ 'NC_CLASS' => klass, 'NC_TTY' => slave.path }, RbConfig.ruby, '-I', lib_dir, '-e', mute_init_script,
+                in: slave, out: out_w, err: out_w)
+    out_w.close
+    output = Thread.new { out_r.read }
+    limit = now.call + 10
+    sleep 0.01 until lock.synchronize { log.include?("\e[c") } || now.call > limit # la query DA1: l'init aspetta
+    sleep 0.5
+    start = now.call
+    signals.each_with_index do |sig, i|
+      sleep 0.3 if i.positive?
+      Process.kill(sig, pid)
+    end
+    sleep 0.05 until (status = Process.wait2(pid, Process::WNOHANG)&.last) || now.call > start + 5
+    elapsed = now.call - start
+    unless status
+      Process.kill(:KILL, pid)
+      status = Process.wait2(pid).last
+    end
+    [status, elapsed, before, tty_state(slave), lock.synchronize { log.dup }, output.value]
+  ensure
+    reader&.kill
+    [master, slave, out_r].each { |io| io&.close }
+  end
+
+  %w[Context Direct].product([%i[TERM], %i[INT], %i[INT INT]]).each do |klass, signals|
+    it "#{klass}.new con un terminale che non risponde mai: #{signals.join(' + ')} ferma il processo entro 5 s e " \
+       'ripristina il terminale' do
+      status, elapsed, before, after, log, out = run_mute_init(klass, signals)
+      expect([status.termsig, elapsed < 5]).to eq([Signal.list.fetch(signals.last.to_s), true]), out
+      expect(out).not_to include('init finito')
+      expect(after).to eq(before) # echo e modo canonico, O_NONBLOCK del fd 0 tolto
+      expect(log).to include("\e[<u") # pop della tastiera kitty, attivata dall'init
+      expect(log.include?("\e[?1049l")).to be(klass == 'Context') # lo schermo alternativo lo apre solo Context
+    end
   end
 
   # ICH-441: Process.daemon fa il fork senza Process._fork, e il processo che ha creato il contesto esce con _exit
