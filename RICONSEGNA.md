@@ -1447,7 +1447,10 @@ del lotto 3. Comportamenti nuovi:
   `PlaneError` con un messaggio che nomina l'egcpool e l'EGC; prima `ArgumentError` con i segni combinanti,
   `CellError` da `putegc` senza. Lo spazio lo decide il C, che prima libera le celle che sovrascrive, e si ferma al
   primo EGC che non entra. Il controllo dei caratteri di larghezza zero carica i pezzi su un piano temporaneo con il
-  pool vuoto quando il pool del piano è pieno (lotto 8b, ICH-533, con i fix della review).
+  pool vuoto quando il pool del piano è pieno. Ogni EGC di più di 4 byte ha una chiamata C sua: il wrapper legge prima
+  il glifo di arrivo e, se la scrittura fallisce, lo riscrive e rimette il cursore, perché `ncplane_put` lo svuota
+  prima di fallire (`notcurses.c:1911-1950`, bug di notcurses non segnalato prima). `LogView` mostra "?" anche per
+  un EGC senza spazio nel pool (lotto 8b, ICH-533 e ICH-232, con i fix delle due review).
 - Le scritture con una `Cell` di un grapheme che notcurses divide (bandiere, coniugati devanagari, hangul con i jamo
   L, V e T, keycap) sollevano `CellError` con i pezzi e con che cosa usare; `Plane#set_base` solleva `CellError`
   invece di tenere il primo pezzo. `Cell.new` non cambia (lotto 8b, ICH-217).

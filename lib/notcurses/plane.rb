@@ -74,6 +74,18 @@ module Notcurses
     ZERO_WIDTH_CANDIDATES = /[\p{Mn}\p{Me}\p{Cf}ᅠ-ᇿힰ-퟿]/
     private_constant :ZERO_WIDTH_CANDIDATES
 
+    # Caratteri che si legano al carattere vicino nello stesso grapheme
+    # cluster (UAX #29). Un EGC di più di 4 byte, che notcurses copia
+    # nell'egcpool, ha più di un codepoint e quindi ne contiene almeno uno:
+    # un testo senza questi caratteri non ha EGC da scrivere a parte (vedi
+    # {#with_glyph_kept}).
+    GRAPHEME_JOINERS = /\p{Grapheme_Cluster_Break=Extend} | \p{Grapheme_Cluster_Break=ZWJ}
+                       | \p{Grapheme_Cluster_Break=SpacingMark} | \p{Grapheme_Cluster_Break=Prepend}
+                       | \p{Grapheme_Cluster_Break=Regional_Indicator} | \p{Grapheme_Cluster_Break=L}
+                       | \p{Grapheme_Cluster_Break=V} | \p{Grapheme_Cluster_Break=T}
+                       | \p{Grapheme_Cluster_Break=LV} | \p{Grapheme_Cluster_Break=LVT}/x
+    private_constant :GRAPHEME_JOINERS
+
     # Spazi tra le parole per {#puttext} (senza gli spazi non separabili).
     WORD_SPACES = /[\p{Zs}&&[^   ]]+/
     private_constant :WORD_SPACES
@@ -1781,9 +1793,10 @@ module Notcurses
     #   rifiutati, coordinate fuori dal piano, x: insieme ad align:)
     # @raise [PlaneError] se il testo non entra nel piano, se l'egcpool del
     #   piano (16 MiB) non ha spazio per un EGC di più di 4 byte del testo (il
-    #   C scrive gli EGC prima e si ferma lì; il messaggio nomina l'egcpool e
-    #   l'EGC), o se notcurses rifiuta la scrittura (per esempio su un piano
-    #   con un bitmap)
+    #   C scrive gli EGC prima e si ferma lì; il glifo dove si ferma e il
+    #   cursore restano com'erano; il messaggio nomina l'egcpool e l'EGC), o
+    #   se notcurses rifiuta la scrittura (per esempio su un piano con un
+    #   bitmap)
     # @raise [RenderError] su uno stdplane che scorre, se fallisce il render
     #   che prima della scrittura lo porta alle dimensioni del terminale
     # @raise [Exception] l'eccezione di un callback Ruby di resize (crescita
@@ -1803,6 +1816,12 @@ module Notcurses
         end
 
         segments = Util.zwj_segments(str).flat_map { |seg| seg.split(/(?=\n)/) }
+        # ogni EGC di più di 4 byte in una chiamata C sua (vedi with_glyph_kept)
+        if str.match?(GRAPHEME_JOINERS)
+          segments = segments.flat_map do |seg|
+            seg.each_grapheme_cluster.slice_when { |a, b| a.bytesize > 4 || b.bytesize > 4 }.map(&:join)
+          end
+        end
         widths = segments.map { |seg| Notcurses.strwidth(seg) }
         first = Notcurses.strwidth(str.grapheme_clusters.first)
         sync_scrolling_stdplane!(ptr, str.include?("\n") || widths.sum > dim_x - (x.is_a?(Integer) ? x : cursor_x))
@@ -1815,10 +1834,12 @@ module Notcurses
           if seg.start_with?("\n") && (i.positive? || tx == -1) && cursor_x == dim_x
             Util.check!(FFI.ncplane_cursor_move_yx(ptr, i.zero? ? ty : -1, dim_x - 1), PlaneError, 'ncplane_cursor_move_yx')
           end
-          rc = if stained then FFI.ncplane_putstr_stained(ptr, seg)
-               elsif i.zero? then FFI.ncplane_putstr_yx(ptr, ty, tx, seg)
-               else FFI.ncplane_putstr(ptr, seg)
-               end
+          rc = with_glyph_kept(ptr, seg, i.zero? ? ty : -1, i.zero? ? tx : -1) do
+            if stained then FFI.ncplane_putstr_stained(ptr, seg)
+            elsif i.zero? then FFI.ncplane_putstr_yx(ptr, ty, tx, seg)
+            else FFI.ncplane_putstr(ptr, seg)
+            end
+          end
           @context.raise_callback_errors!
           written += rc.abs
           next if rc == widths[i]
@@ -1880,7 +1901,9 @@ module Notcurses
         single_egc!(ptr, text)
         cols = Notcurses.strwidth(text)
         ty, tx = text_target!(text, cols, cols, y: y, x: x, align: nil, stained: stained)
-        rc = stained ? FFI.ncplane_putegc_stained(ptr, text, nil) : FFI.ncplane_putegc_yx(ptr, ty, tx, text, nil)
+        rc = with_glyph_kept(ptr, text, ty, tx) do
+          stained ? FFI.ncplane_putegc_stained(ptr, text, nil) : FFI.ncplane_putegc_yx(ptr, ty, tx, text, nil)
+        end
         @context.raise_callback_errors!
         raise PlaneError, "ncplane_putegc_yx(#{Util.egc_label(text)}) fallita (#{rc})#{egcpool_hint(ptr, text)}" if rc.negative?
 
@@ -1936,8 +1959,8 @@ module Notcurses
     # @raise [ArgumentError, TypeError] se un argomento non è valido
     # @raise [PlaneError] se il testo non entra nel piano (prima di scrivere),
     #   o se l'egcpool del piano (16 MiB) non ha spazio per un EGC di più di 4
-    #   byte del testo (le righe e gli EGC prima restano scritti; il messaggio
-    #   nomina l'egcpool)
+    #   byte del testo (le righe e gli EGC prima restano scritti, il glifo
+    #   dove notcurses si ferma resta com'era; il messaggio nomina l'egcpool)
     # @raise [Exception] l'eccezione di un callback Ruby di resize
     # @raise [ClosedError] se il piano è chiuso
     def puttext(text, y: nil, align: :left)
@@ -3268,6 +3291,51 @@ module Notcurses
       opts[:rows] = 1
       opts[:cols] = 1
       Util.check_ptr!(FFI.ncplane_create(ptr, opts), PlaneError, 'ncplane_create')
+    end
+
+    # Esegue il blocco, la scrittura C di text in (y, x) (-1 = cursore), e ne
+    # restituisce il valore. Con l'egcpool pieno ncplane_put svuota il glifo di
+    # arrivo e gli dà gli stili e i colori del piano prima di fallire
+    # (notcurses.c:1911-1950): per un solo EGC di più di 4 byte, l'unico che
+    # passa dal pool, il wrapper legge prima quel glifo e, se la scrittura
+    # fallisce, lo riscrive e rimette il cursore (review di ICH-533). Una
+    # scrittura che andrà a capo non tocca la riga di arrivo.
+    def with_glyph_kept(ptr, text, y, x)
+      return yield unless text.bytesize > 4 && text.each_grapheme_cluster.first(2).size == 1
+
+      cy, cx = cursor
+      ty = y.negative? ? cy : y
+      tx = x.negative? ? cx : x
+      cols = Notcurses.strwidth(text)
+      kept = kept_glyph(ptr, ty, tx) if tx + cols <= dim_x
+      rc = yield
+      restore_glyph!(ptr, kept, cy, cx) if kept && rc != cols
+      rc
+    end
+
+    # [y, colonna, EGC, stili, canali] del glifo che copre (y, x), letto con
+    # ncplane_at_yx (strdup, senza passare dal pool); nil su un piano con un
+    # bitmap, dove il C rifiuta la scrittura prima di toccare le celle.
+    def kept_glyph(ptr, y, x)
+      half = half_at(ptr, y, x)
+      return nil if half.nil?
+
+      left = half == :right ? x - 1 : x
+      styles = ::FFI::MemoryPointer.new(:uint16)
+      channels = ::FFI::MemoryPointer.new(:uint64)
+      egc = Util.take_string(FFI.ncplane_at_yx(ptr, y, left, styles, channels))
+      egc && [y, left, egc, styles.read_uint16, channels.read_uint64]
+    end
+
+    # Riscrive il glifo di kept_glyph e porta il cursore in (cy, cx). Il C ha
+    # già rilasciato la copia vecchia, quindi nel pool lo spazio c'è.
+    def restore_glyph!(ptr, kept, cy, cx)
+      y, x, egc, styles, channels = kept
+      cell = FFI::NcCell.new
+      FFI.ncplane_putc_yx(ptr, y, x, cell) if FFI.nccell_prime(ptr, cell, egc, styles, channels) == egc.bytesize
+      restore_cursor!(ptr, cy, cx, dim_x)
+    ensure
+      FFI.nccell_release(ptr, cell) if cell
     end
 
     # Motivo da aggiungere al messaggio di una scrittura di text fallita dopo

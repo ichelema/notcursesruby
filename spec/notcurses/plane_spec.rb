@@ -1297,6 +1297,29 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    # Review mirata di ICH-533: con l'egcpool pieno ncplane_put svuota il glifo di arrivo e gli dà i colori del piano
+    # prima di fallire (notcurses.c:1911-1950); il wrapper lo rimette, con il cursore, così il piano non cambia.
+    it "una scrittura che non entra nell'egcpool lascia com'erano il glifo di arrivo e il cursore, anche largo" do
+      with_parent(rows: 3, cols: 8) do |p|
+        %w[a b].each_with_index { |c, y| p.putstr("#{c}#{"́" * 3_000_000}", y: y, x: 0) }
+        p.putstr('X', y: 2, x: 0)
+        p.putstr('漢', y: 2, x: 2)
+        p.move_cursor(0, 1)
+        p.channels = Notcurses::Channels.rgb(255, 0, 0, 0, 0, 0)
+        p.styles = :bold
+        before = (0..3).map { |x| p.at(y: 2, x: x) }
+        big = "c#{"́" * 3_000_000}"
+        {putstr: -> { p.putstr(big, y: 2, x: 0) }, putegc: -> { p.putegc(big, y: 2, x: 0) },
+         puttext: -> { p.puttext(big, y: 2) }, largo: -> { p.putstr(big, y: 2, x: 2) },
+         meta_destra: -> { p.putstr(big, y: 2, x: 3) }, cursore: -> { p.move_cursor(2, 0) && p.putstr(big) }}
+          .each do |name, write|
+          expect { write.call }.to raise_error(Notcurses::PlaneError, /egcpool/), name.to_s
+          expect((0..3).map { |x| p.at(y: 2, x: x) }).to eq(before), name.to_s
+          expect(p.cursor).to eq((name == :cursore) ? [2, 0] : [0, 1]), name.to_s
+        end
+      end
+    end
+
     # Review di ICH-533: il C rilascia l'EGC della cella che sovrascrive prima di copiare il nuovo, quindi un EGC lungo
     # su una cella con un EGC lungo entra anche con il pool pieno; il controllo prima della scrittura lo rifiutava.
     it "putstr, putegc e puttext su una cella con un EGC lungo scrivono anche con l'egcpool pieno (prima: PlaneError)" do

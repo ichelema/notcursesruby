@@ -430,15 +430,16 @@ module Notcurses
           x += align == :center ? gap / 2 : gap
         end
         @plane.putstr(line, y: y, x: x)
-      rescue ArgumentError
+      rescue ArgumentError, PlaneError
         raise if line.nil? || line.ascii_only?
 
-        # i grapheme che notcurses 3.0.17 divide con un pezzo largo 0 (il keycap "1️⃣") diventano "?": serve al
-        # testo di LogView (byte grezzi); il testo degli altri componenti lo rifiuta già Text.check! (ICH-232)
+        # i grapheme che notcurses 3.0.17 divide con un pezzo largo 0 (il keycap "1️⃣"), e gli EGC lunghi senza
+        # spazio nell'egcpool (PlaneError), diventano "?": serve al testo di LogView (byte grezzi); il testo degli
+        # altri componenti lo rifiuta già Text.check! (ICH-232)
         @plane.move_cursor(y, x)
         line.each_grapheme_cluster do |g|
           @plane.putstr(g)
-        rescue ArgumentError
+        rescue ArgumentError, PlaneError
           @plane.putstr('?' * Notcurses.strwidth(g))
         end
       end
