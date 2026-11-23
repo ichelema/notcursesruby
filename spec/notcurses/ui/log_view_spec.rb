@@ -155,6 +155,12 @@ RSpec.describe Notcurses::UI::LogView do
     view.append('progress 50%')
     100.times { view.append("\r" * 1000) } # 100 000 byte di "\r", oltre il default
     expect([view.lines, partial_bytes(view)]).to eq([['progress 50%'], 13])
+    # review mirata: il "\r" in coda non conta nel limite, anche con un testo lungo quanto il limite
+    %w[😀 abcd].each do |text|
+      view = log(1, max_partial_bytes: 4)
+      [text, "\r", "\n"].each { |data| view.append(data) }
+      expect(view.lines).to eq([text])
+    end
   end
 
   it '"\r" vale anche nelle righe finite: resta l\'ultimo pezzo non vuoto' do

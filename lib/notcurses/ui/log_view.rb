@@ -35,7 +35,8 @@ module Notcurses
       # @return [Integer] righe tenute in memoria
       attr_reader :max_lines
 
-      # @return [Integer] byte tenuti al massimo nella riga non finita
+      # @return [Integer] byte tenuti al massimo nella riga non finita, senza
+      #   un "\r" in coda
       attr_reader :max_partial_bytes
 
       # @param parent [Container] contenitore
@@ -43,7 +44,7 @@ module Notcurses
       #   vecchie escono per prime
       # @param max_partial_bytes [Integer] byte da tenere nella riga non
       #   finita, >= 4 (un carattere UTF-8 spezzato in coda deve starci): i
-      #   più vecchi escono per primi
+      #   più vecchi escono per primi; un "\r" in coda non conta
       # @param channels [Channels, Integer] colori del testo e dello sfondo
       # @param size [Integer, nil] dimensione fissa nel contenitore, >= 1
       # @param weight [Integer, nil] quota dello spazio restante, >= 1 (default 1)
@@ -75,10 +76,10 @@ module Notcurses
 
         parts = (@partial + data.b).split("\n", -1)
         partial = parts.pop || ''.b # "".split("\n", -1) è []
-        text = partial[latest(partial)]
-        # un solo "\r" in coda basta per "\r\n" in due blocchi; tanti "\r" in coda toglierebbero il testo nel taglio
+        text = bound(partial[latest(partial)])
+        # un solo "\r" in coda basta per "\r\n" in due blocchi; fuori dal limite, così non toglie testo nel taglio
         text << "\r" if partial.end_with?("\r")
-        @partial = bound(text)
+        @partial = text
         @lines.concat(parts.map { |line| line[latest(line)] })
         @lines.shift(@lines.size - @max_lines) if @lines.size > @max_lines
         redraw
