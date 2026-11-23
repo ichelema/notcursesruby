@@ -21,6 +21,9 @@
 - Ruby 3.1.7 locale non ha `rspec` né `ffi`, e con Bundler 4 del lockfile `bundle` non parte: usa
   `.claude/scripts/spec31 spec/...` dalla radice del checkout o del worktree. Lo script installa la prima volta
   `rspec` 3.13.2 e `ffi` 1.17.4 in `~/.claude/tmp/gems31`, che resta tra le sessioni, ed esegue rspec senza `bundle`.
+- Su una macchina senza Ruby 3.1.7, mise lo compila con ruby-build. Da gcc 15 lo standard C di default è C23, e
+  Ruby 3.1 compila solo con `CFLAGS=-std=gnu17` e `RUBY_CFLAGS=-std=gnu17`, come in `ci.yml`. Metti `TMPDIR` in una
+  cartella temporanea: il build scrive circa 340 MB.
 - Sulla VPS la sessione di Claude Code non ha un display: il 2026-11-23 `DISPLAY`, `WAYLAND_DISPLAY` e
   `KITTY_WINDOW_ID` sono vuoti, anche se `kitty` è installato. Lì una prova su Kitty la fa l'utente. `kitty @ launch`
   ([comandi.md](comandi.md)) funziona solo in una sessione dentro Kitty: controlla prima `KITTY_WINDOW_ID`.
@@ -60,9 +63,18 @@
 
 - Container `archlinux:base` fissato per digest, snapshot `2026/10/26` dell'Arch Linux Archive, Ruby da mise, matrice
   3.1.7, 3.2.11, 3.3.13, 3.4.12, 4.0.9. RuboCop solo nel job 4.0.9.
+- Per una versione nuova di notcurses cambia in `ci.yml` `ARCH_SNAPSHOT` e il digest dell'immagine `archlinux:base`:
+  la chiave della cache dei pacchetti cambia da sola. Insieme aggiorna lo SHA di `codecov/codecov-action` e il
+  commento della versione (`gh api repos/codecov/codecov-action/commits/<tag> --jq .sha`, ICH-311). Poi controlla nei
+  log della CI che `spec/ffi_layout_spec.rb` non abbia esempi `pending`: senza `gcc` o senza gli header di notcurses
+  la spec va in skip e la CI resta verde (ICH-309).
+- Podman riproduce in locale il container della CI: l'immagine `archlinux:base` con il digest di `ci.yml`, il mirror
+  dello snapshot, poi `pacman -Syuu` con i pacchetti di `ci.yml`. Sulla VPS c'è Podman 6.2.0 (2026-11-23).
 - Soglie di coverage: 98 % totale, 90 % per file, layer FFI escluso.
 - I commit di sola documentazione usano `[skip ci]`.
-- La CI gira solo su Linux.
+- La CI gira solo su Linux: l'utente ha escluso un job macOS (Fase 5). Dopo un cambio a `notcurses_stop` o a
+  `Context#close`, esegui la suite a mano su macOS: i 2 esempi della chiusura del contesto passano su Linux anche
+  senza il fix.
 - Una CI rossa in circa 30 secondi su tutti i job indica di solito un guasto dell'infrastruttura, non il codice (lotto
   8b: `archive.archlinux.org` giù). Conferma con `gh run view <id> --log-failed` e controlla il servizio con `curl`.
 - Dopo l'apertura della PR la CI può partire con qualche minuto di ritardo: il comando di attesa è in

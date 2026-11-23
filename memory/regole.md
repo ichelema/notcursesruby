@@ -20,19 +20,20 @@ citano le regole per numero: non rinumerarle. Una regola nuova prende il numero 
 11. Ogni fix parte da una spec che fallisce sul codice attuale: prima la spec, poi il fix, poi la suite completa.
     Una spec di un crash (SIGSEGV, abort, double free) o di un blocco esegue il caso in un processo figlio con un
     timeout e controlla lo stato di uscita, così la suite sopravvive anche prima del fix. Un bug di notcurses nuovo
-    va nelle tabelle di `RICONSEGNA.md`. Ogni fix ha una voce in "Corretto" di `[Non rilasciato]` in
-    `CHANGELOG.md`.
+    va in [bug-notcurses.md](bug-notcurses.md), nella tabella della sua area. Ogni fix ha una voce in "Corretto" di
+    `[Non rilasciato]` in `CHANGELOG.md`.
 12. Una dipendenza di sviluppo nuova richiede l'approvazione dell'utente e va in un gruppo del `Gemfile`. Elenca ogni
-    cambio a `Gemfile` e `Gemfile.lock` in `RICONSEGNA.md`. Dopo un cambio del lockfile controlla il job Ruby 3.2.11
-    della CI (`parallel < 2`).
+    cambio a `Gemfile` e `Gemfile.lock` nel corpo della PR e nel capitolo del lotto in
+    [backlog-issue.md](backlog-issue.md). Dopo un cambio del lockfile controlla il job Ruby 3.2.11 della CI
+    (`parallel < 2`).
 13. Le azioni esterne o difficili da annullare richiedono la conferma esplicita dell'utente: merge di una PR, tag,
     release, impostazioni del repository, secret, GitHub Pages. Il push dei branch dei lotti, l'apertura delle PR e
     il push su `origin/master` dei commit di sola documentazione sono autorizzati.
 14. Una scelta con due letture valide spetta all'utente: chiedi con AskUserQuestion. Se hai dubbi, fermati e
     chiarisci con l'utente.
 15. Lingua: commit, titolo e corpo delle PR in inglese (label di progetto `git:en`, per esempio
-    `fix(plane): ...`); issue e commenti su Linear in italiano (label `lang:it`). `RICONSEGNA.md`, `handoff.md`,
-    `CLAUDE.md` e `memory/` restano in italiano.
+    `fix(plane): ...`); issue e commenti su Linear in italiano (label `lang:it`). `handoff.md`, `CLAUDE.md` e
+    `memory/` restano in italiano.
 16. Un lotto tocca solo il codice delle sue issue. Se un fix richiede un cambio che appartiene a un altro lotto o a
     un'altra issue, fermati e chiedi all'utente. Un difetto nuovo trovato in review diventa una issue nuova in
     Backlog, con la conferma dell'utente.

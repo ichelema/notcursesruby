@@ -20,8 +20,8 @@ Aggiornato il 2026-11-23. Questo file dice solo cosa fare nella prossima session
    issue per intero su Linear: i criteri di accettazione e i test richiesti sono la checklist del lotto.
    - ICH-582: con l'egcpool pieno le scritture con una `Cell` sollevano `CellError` invece di `PlaneError`. La issue
      elenca i metodi (`putc`, `hline`, `vline`, `polyfill`, `box`/`perimeter`, `gradient`) e chiede anche messaggi
-     senza l'EGC intero e la misura di `set_base`. Dopo il lotto 8b `gradient` solleva già `PlaneError` dal C
-     (`RICONSEGNA.md`, «Issue aperte nate dai lotti»): controlla ogni metodo per classe, messaggio e piano invariato.
+     senza l'EGC intero e la misura di `set_base`. Dopo il lotto 8b `gradient` solleva già `PlaneError` dal C:
+     controlla ogni metodo per classe, messaggio e piano invariato.
    - ICH-586: notcurses conta 2 colonne per una bandiera, `ncvt` (libghostty-vt 1.0.1) ne disegna 4, quindi il testo
      dopo la bandiera si sposta. La issue chiede di misurare la bandiera e l'indicatore regionale singolo su Ghostty
      (`ncvt`) e su Kitty, e una scelta di comportamento dell'utente prima del fix, anche per il testo di

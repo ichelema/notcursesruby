@@ -1,8 +1,8 @@
 # Piano della fase «Issue in Backlog»
 
 Obiettivo, avanzamento, criteri e ordine dei lotti della fase iniziata il 2026-11-15. Lo stato di ogni issue è in
-Linear, progetto `notcursesruby`. Il log dei lotti è in [backlog-issue.md](backlog-issue.md), l'esito in
-`RICONSEGNA.md`, sezione «Issue in Backlog». Il prossimo passo è in [handoff.md](../handoff.md).
+Linear, progetto `notcursesruby`. Il log dei lotti è in [backlog-issue.md](backlog-issue.md). Il prossimo passo è in
+[handoff.md](../handoff.md).
 
 ## Obiettivo
 
@@ -18,9 +18,10 @@ Windows.
 
 - Fasi 1–5 complete: Fase 1 layer FFI, Fase 2 wrapper idiomatico, Fase 3 `Notcurses::UI`, Fase 4 pacchetto e CI,
   Fase 5 blitter su Kitty e Ghostty e porting su macOS (PR #20 e #21). Correzioni della revisione del 2026-11-06:
-  17 lotti e ICH-465 fuori dai lotti, PR #2…#19. Esito nelle sezioni omonime di `RICONSEGNA.md`.
-- Fase «Issue in Backlog», dal 2026-11-15, base `ad0315b`: lotti 1–8c fatti, PR #22…#33 (tabella «Lotti» di
-  `RICONSEGNA.md`). Modello passato ai comandi del workflow: `opus`.
+  17 lotti e ICH-465 fuori dai lotti, PR #2…#19. Log nei file `fase*.md` e in
+  [correzioni-review.md](correzioni-review.md).
+- Fase «Issue in Backlog», dal 2026-11-15, base `ad0315b`: lotti 1–8c fatti, PR #22…#33 (un capitolo per lotto in
+  [backlog-issue.md](backlog-issue.md)). Modello passato ai comandi del workflow: `opus`.
 - Al 2026-11-23 restano 27 issue aperte: 16 nei lotti 8d–15, 10 senza lotto, ICH-463 in Blocked.
 
 ## Criteri dei lotti
@@ -67,8 +68,7 @@ Una issue nata da un lotto entra in un lotto con la scelta dell'utente. Un lotto
 
 ## Issue senza lotto
 
-Ognuna aspetta la scelta dell'utente sul lotto. Origine e descrizione breve sono in `RICONSEGNA.md`, «Issue aperte
-nate dai lotti».
+Ognuna aspetta la scelta dell'utente sul lotto.
 
 | Issue | Priorità | Label | Problema | Note |
 | --- | --- | --- | --- | --- |
@@ -110,9 +110,8 @@ nate dai lotti».
 
 1. Una PR per lotto, con la CI verde e il merge confermato dall'utente.
 2. Ogni issue della fase a Done, oppure chiusa o lasciata in Backlog con un motivo scritto nella issue.
-3. `RICONSEGNA.md`: sezione «Issue in Backlog» con data, tabella dei lotti, cambi dell'API pubblica, bug di notcurses
-   nuovi nelle tabelle esistenti, cambi a `Gemfile` e `Gemfile.lock` (se ci sono), «Cosa serve alla fase
-   successiva». Aggiorna anche «Issue aperte nate dai lotti» della sezione delle correzioni.
+3. I bug di notcurses nuovi in [bug-notcurses.md](bug-notcurses.md) e una voce del `CHANGELOG.md` per ogni fix
+   (regola 11).
 4. Il log [backlog-issue.md](backlog-issue.md).
 5. Hindsight, bank `notcursesruby`, se il server risponde: decisioni e cause radice.
 6. Alla fine della fase proponi il passo successivo e chiedi all'utente quale fase viene dopo. Candidate: la

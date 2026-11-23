@@ -20,7 +20,6 @@ idiomatico e framework `Notcurses::UI`. Questo file contiene le regole di lavoro
 | `.github/workflows/ci.yml` | CI: matrice Ruby 3.1–4.0 in un container Arch Linux |
 | `handoff.md` | Cosa fare nella prossima sessione |
 | `memory/` | Memoria del progetto, con l'indice in `memory/indice.md` |
-| `RICONSEGNA.md` | Esito di ogni fase e di ogni lotto: bug di notcurses 3.0.17, cambi dell'API pubblica, issue nate dai lotti |
 | `CHANGELOG.md` | Una voce per ogni fix in `[Non rilasciato]` (regola 11) |
 | `hindsight.config.json` | Missioni e pagine del bank Hindsight del progetto |
 | `.claude/skills/` | Skill del progetto: `notcurses-man` (man page e header di notcurses), `verify` (terminale headless `ncvt` e script `screen`), `context7-mcp` |
@@ -125,13 +124,12 @@ segnala all'utente che la chiusura resta da fare.
 1. Esegui su `master` i «Controlli finali» di [memory/piano.md](memory/piano.md), compresa la CI della PR e di
    `master`. Controlla in Linear che le issue del lotto siano a Done, oppure nello stato scelto con l'utente (lotto 4:
    ICH-463 in Blocked).
-2. In `RICONSEGNA.md`, sezione «Issue in Backlog»: la riga del lotto nella tabella «Lotti» (lotto, PR, merge, issue,
-   bug di notcurses nuovi), i cambi dell'API pubblica, i cambi a `Gemfile` e `Gemfile.lock` (regola 12) e le issue
-   nuove in «Issue aperte nate dai lotti».
-3. In `memory/backlog-issue.md` il capitolo del lotto: Fix, Decisioni, Review, Problemi e soluzioni, Verifica finale.
+2. In `memory/bug-notcurses.md` i bug di notcurses nuovi del lotto, nella tabella della loro area (regola 11).
+3. In `memory/backlog-issue.md` il capitolo del lotto: Fix, Decisioni, Review, Problemi e soluzioni, cambi a `Gemfile`
+   e `Gemfile.lock` (regola 12), Verifica finale.
 4. In `memory/piano.md` togli il lotto da «Lotti da fare», aggiorna «Avanzamento» e metti le issue nuove in «Issue
    senza lotto». Le lezioni durevoli del lotto vanno nel file del tema in `memory/`.
-5. Committa i file dei passi 2–4 con `docs(riconsegna): lotto <n> ... [skip ci]`.
+5. Committa i file dei passi 2–4 con `docs(memory): lotto <n> ... [skip ci]`.
 6. Fai il retain in Hindsight (sezione «Hindsight»).
 7. Riscrivi [handoff.md](handoff.md) (sezione «Come scrivere handoff.md»).
 
@@ -148,8 +146,8 @@ una sessione nel checkout principale. Tre sezioni:
   «Come riprendere il lavoro».
 - **Decisioni che servono all'utente**: le domande aperte, oppure «Nessuna».
 
-Non scrivere in `handoff.md` la storia del lavoro (è in git, in Linear, in `RICONSEGNA.md` e in
-`memory/backlog-issue.md`) né i fatti durevoli (vanno in `memory/`).
+Non scrivere in `handoff.md` la storia del lavoro (è in git, in Linear e in `memory/backlog-issue.md`) né i fatti
+durevoli (vanno in `memory/`).
 
 ## Memoria del progetto
 

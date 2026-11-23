@@ -117,29 +117,7 @@
 
 ### Bug e stranezze di notcurses 3.0.17 trovati durante i test
 
-Colpiscono anche il C nativo (e l'oracolo). Non sono bug del binding.
-
-1. `ncpile_render_to_buffer`: senza postpaint non emette testo (`*buflen` vale 0). `*buf` è il buffer interno
-   (mmap su Linux, malloc altrove): `free()`, come chiede l'header, va in crash o causa un double free.
-2. `ncpile_render_to_file`: non scrive nulla su `fp` e libera `pile->crender` senza azzerarlo (double free in `notcurses_stop`).
-3. `ncdirect_printf_aligned`: scrive con `puts()` su stdout e non sul `FILE*` di `ncdirect_init`. Aggiunge `"\n"` e
-   restituisce il valore di `puts()`, non le colonne.
-4. `ncplane_put` (usata da `putc`, box, `hline`/`vline`):
-   - un glifo largo o un TAB all'ultima colonna di un piano che scorre scrive fuori dalla riga e corrompe l'heap;
-   - una cella con `width > lenx` su un piano che scorre viene accettata e corrompe l'heap alla scrittura successiva;
-   - una cella con `gcluster` 0 e `width >= 2` viene presa per la metà destra di un glifo largo, e la scrittura
-     successiva legge prima dell'inizio del framebuffer;
-   - un EGC di più byte che inizia con `'\n'` passa `is_control_egc`: `ncplane_hline_interp` con `len` grande esegue
-     circa 2^32 iterazioni.
-5. `ncplane_putegc_stained`: con il cursore a `x == lenx` sull'ultima riga legge fuori dal framebuffer.
-6. `ncplane_vline_interp`: con `len == UINT_MAX` va in SIGFPE (divisione per `(int)len + 1`).
-7. `ncplane_resize_marginalized` su un piano non marginalizzato legge `margin_b`/`margin_r` non inizializzati.
-8. `nctree_goto` è uno stub che restituisce sempre NULL. `nctree_del` non aggiorna fuoco e percorso corrente.
-9. `ncplane_scrollup` restituisce 0 invece del numero di righe scorse.
-10. `ncplane_mergedown` controlla la regione ma dipinge tutto il piano sorgente.
-11. `ncdirect_stream` ignora il ritorno del callback. Senza `NCVISUAL_OPTION_HORALIGNED` fallisce prima di chiamarlo.
-12. `ncplane_qrcode` restituisce sempre -1 nella build Arch, compilata senza qrcodegen.
-13. `nccell_load_ucs32` lascia non inizializzati i byte di `utf8[]` oltre la sequenza (UB). La reimplementazione azzera il buffer.
+Dal 2026-11-23 l'elenco è in [bug-notcurses.md](bug-notcurses.md), sezione «Layer FFI (Fase 1)».
 
 ## Verifiche eseguite
 

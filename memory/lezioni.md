@@ -10,7 +10,7 @@ regole sono in [regole.md](regole.md) (regole 20–22).
 - I workaround di `keeping_base_cell` (ICH-531) e `blank_orphan_lefts!` (ICH-532) scrivono le celle grezze nei campi
   privati (`Plane::Internals`) e non girano senza (lotto 2c).
 - `rotate_2x1_cw` e `rotate_2x1_ccw` di notcurses non rilasciano le copie nel pool quando rifiutano un carattere: il
-  bug è nelle tabelle di `RICONSEGNA.md`, non aggirato (lotto 2c).
+  bug è in [bug-notcurses.md](bug-notcurses.md), tabella «Piani», non aggirato (lotto 2c).
 
 ## Gestori trap, segnali e thread
 
