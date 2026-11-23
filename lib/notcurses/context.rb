@@ -63,12 +63,17 @@ module Notcurses
 
   # Chiude all'uscita il contesto rimasto aperto, per lasciare il terminale in
   # uno stato pulito. Solo nel processo che l'ha creato: un figlio creato con
-  # fork non deve ripristinare il terminale del padre.
+  # fork non deve ripristinare il terminale del padre. Con un init ancora
+  # fermo nel C (un terminale che non risponde alle query) avvia il thread di
+  # controllo di {Util.watch_init}, che chiude il processo (ICH-576).
   at_exit do
     ctx = Notcurses.active_context
+    next unless ctx && ctx.pid == Process.pid
+
+    Util.watch_init(ctx.pending_init, $!)
     # anche un contesto già chiuso per le chiamate nuove: close esegue lo stop rimasto in attesa, se nessuna
     # operazione è in corso
-    ctx.close if ctx && ctx.pid == Process.pid
+    ctx.close
   rescue StandardError => e
     warn "notcurses: chiusura del contesto all'uscita fallita: #{e.message}"
   end
@@ -284,11 +289,26 @@ module Notcurses
     # setenv). L'init gira in un thread interno, che ferma anche il contesto
     # quando new non va a buon fine: un'eccezione asincrona durante l'attesa
     # (Ctrl-C, Thread#raise, Timeout, anche Thread#kill) arriva a init
-    # completato e a contesto fermato, con il registro libero. Un secondo
-    # Ctrl-C mentre new aspetta esce subito: il thread interno ferma il
-    # contesto quando l'init torna, e fino ad allora il contesto resta
-    # registrato (un nuovo init solleva InitError). Con un terminale che non
-    # risponde mai l'init non torna, e il registro resta occupato. Resta una
+    # completato e a contesto fermato, con il registro libero. Un errore del
+    # rollback (per esempio di +notcurses_stop+) viene scartato, senza
+    # scrivere su stderr: il chiamante riceve l'eccezione per cui new ha
+    # rinunciato, anche l'InitError di un init NULL. Dopo un segnale
+    # (SIGTERM, Ctrl-C) o un +exit+ (anche da un gestore +trap+ del segnale)
+    # new aspetta la risposta del terminale al più per 2 secondi, poi esce
+    # con l'eccezione del segnale o la SystemExit; un secondo Ctrl-C esce
+    # subito. Il thread interno ferma il contesto quando l'init torna, e fino
+    # ad allora il contesto resta registrato (un nuovo init solleva
+    # InitError). Con le altre eccezioni new aspetta senza limite. Con un
+    # terminale che non risponde mai l'init non torna (ICH-576): se il
+    # processo esce con l'init ancora fermo, anche dopo un +rescue+ del
+    # segnale, l'hook +at_exit+ lo chiude alla fine dei 2 secondi (fino a un
+    # secondo in più per gli altri hook +at_exit+), senza aspettare gli altri
+    # thread. Il processo muore per il segnale, o esce con lo stato di +exit+;
+    # finalizzatori e +atexit+ del C non girano. Prima di uscire il wrapper
+    # rimette il terminale come l'ha trovato l'init: echo e modo canonico, i
+    # flag del fd 0 (O_NONBLOCK), la tastiera kitty e lo schermo alternativo.
+    # Con un FILE* passato come output il terminale ripristinato è /dev/tty.
+    # Resta una
     # finestra: un'eccezione arrivata proprio al ritorno di new, a contesto già
     # adottato, lo lascia aperto e registrato senza che il chiamante lo
     # riceva; lo chiudono <tt>Notcurses.active_context.close</tt> o l'hook
@@ -326,7 +346,7 @@ module Notcurses
                      Util.flag(cli_mode, FFI::NCOPTION_CLI_MODE, 'cli_mode')
       @closed = true # fino alla fine dell'init: close e at_exit ignorano l'oggetto
       @pid = Process.pid # già durante l'init: la guardia di Process.daemon riconosce il contesto di questo processo
-      old_term = fp = init = nil
+      old_term = fp = error = nil
       @own_fp = false
       go = Queue.new    # al thread di init: true per partire, poi true se il chiamante ha adottato il contesto
       ready = Queue.new # dal thread di init: il puntatore, o l'eccezione della chiamata C
@@ -345,11 +365,15 @@ module Notcurses
         FFI.fclose(fp) if @own_fp
       end
       begin
-        init = Util.init_thread(go, ready, start, undo)
+        @pending_init = Util.init_thread(go, ready, start, undo)
         Notcurses.acquire_context(self)
         # dopo acquire_context: con un altro contesto attivo il FILE* resterebbe aperto. Con le eccezioni asincrone
         # rimandate: arrivano a FILE* assegnato, e undo lo chiude
         Thread.handle_interrupt(Object => :never) { fp, @own_fp = open_output(output) }
+        # ICH-576: il terminale di prima dell'init, se il processo esce con l'init fermo nel C. Le sequenze annullano
+        # quelle dell'init: la tastiera kitty (non con drain_input) e lo schermo alternativo (termdesc.c:528-543)
+        seq = "#{"\e[<u" unless drain_input}#{"\e[?1049l" if (opts[:flags] & FFI::NCOPTION_NO_ALTERNATE_SCREEN).zero?}"
+        Thread.handle_interrupt(Object => :never) { @pending_init.tty = Util.save_init_tty(output, seq) }
         $stdout.flush if output.nil?
         go << true
         ptr = ready.pop
@@ -374,7 +398,8 @@ module Notcurses
         @closing = false
         @closer = nil
         @close_error = nil
-        @cursor_enabled = false
+        @cursor_enabled = false # stato noto del cursore del C: true, false o nil (sconosciuto)
+        @cursor_at = nil # stato chiesto dall'applicazione: nil = nascosto, [y, x] = acceso lì
         @mice_enabled = false
         @drain_input = drain_input
         @no_winch_sighandler = no_winch_sighandler
@@ -384,12 +409,23 @@ module Notcurses
         @stdplane = Plane.new(FFI.notcurses_stdplane(ptr), owned: false, context: self)
         @closed = false
         adopted = true
+      rescue Exception => e # rubocop:disable Lint/RescueException -- solo per sapere quale: Thread#kill non passa
+        error = e
+        raise
       ensure
         go << adopted # per prima, una sola chiamata C: né un secondo Ctrl-C né Thread#kill la saltano
-        # il rollback è del thread di init: un secondo Ctrl-C esce dall'attesa, e il rollback continua
-        init&.join unless adopted
+        # il rollback è del thread di init: un secondo Ctrl-C esce dall'attesa, e il rollback continua; dopo un
+        # segnale l'attesa ha un limite (ICH-576)
+        Util.await_init(@pending_init, error) unless adopted
+        @pending_init = nil if adopted
       end
     end
+
+    # L'init in corso, finché il chiamante non adotta il contesto; nil dopo un
+    # init andato a buon fine. Lo legge l'hook +at_exit+ (ICH-576).
+    # @return [Util::PendingInit, nil]
+    # @api private
+    attr_reader :pending_init
 
     # Ferma notcurses e ripristina il terminale (+notcurses_stop+). Chiude prima
     # i widget e gli altri oggetti figli ancora aperti, in ordine inverso di
@@ -789,7 +825,9 @@ module Notcurses
     # Idempotente: con il cursore già nascosto non chiama il C (che
     # restituirebbe un errore). Dopo un'operazione di un {Reader} con
     # cursor: true, che accende e spegne il cursore da sé, chiama il C e
-    # tollera un cursore già nascosto.
+    # tollera un cursore già nascosto. I {Reader} con cursor: false rimettono
+    # dopo ogni ridisegno lo stato dell'ultima chiamata a {#cursor_enable} o a
+    # questo metodo.
     #
     # @return [self]
     # @raise [ContextError] se il terminale non nasconde il cursore acceso con
@@ -803,34 +841,40 @@ module Notcurses
         rc = FFI.notcurses_cursor_disable(ptr)
         Util.check!(rc, ContextError, 'notcurses_cursor_disable') if @cursor_enabled
         @cursor_enabled = false
+        @cursor_at = nil
         self
       end
     end
 
-    # Segna come sconosciuto lo stato del cursore del terminale. Lo chiama il
-    # {Reader} con cursor: true: il suo ridisegno accende il cursore e la sua
-    # chiusura lo spegne, senza passare da {#cursor_enable} e
-    # {#cursor_disable}.
+    # Segna come sconosciuto lo stato noto del cursore del terminale, quello
+    # che {#cursor_disable} usa per essere idempotente. Lo chiama il {Reader}
+    # con cursor: true: il suo ridisegno accende il cursore e la sua chiusura
+    # lo spegne, senza passare da {#cursor_enable} e {#cursor_disable}. Non
+    # tocca lo stato chiesto dall'applicazione, che {#restore_cursor!} rimette.
     # @return [void]
     # @api private
     def cursor_state_unknown!
       @cursor_enabled = nil
     end
 
-    # Rimette il cursore del terminale come l'ha lasciato l'ultima chiamata a
-    # {#cursor_enable} o {#cursor_disable}; con lo stato sconosciuto non fa
-    # nulla. Lo chiama il {Reader} con cursor: false dopo ogni ridisegno del
-    # C, che accende e sposta il cursore. L'esito del C non conta, come nel
+    # Rimette il cursore del terminale come l'ha chiesto l'ultima chiamata a
+    # {#cursor_enable} (con la posizione) o {#cursor_disable}, o nascosto se
+    # non ce ne sono state, anche dopo un {Reader} con cursor: true che ha
+    # reso sconosciuto lo stato noto del cursore. Aggiorna lo stato noto. Lo
+    # chiama il {Reader} con cursor: false dopo ogni ridisegno del C, che
+    # accende e sposta il cursore. L'esito del C non conta, come nel
     # ridisegno: senza un tty il C non spegne il cursore.
     # @return [void]
     # @api private
     def restore_cursor!
       Guard.run do
         ptr = to_ptr
-        if @cursor_enabled
+        if @cursor_at
           FFI.notcurses_cursor_enable(ptr, *@cursor_at)
-        elsif @cursor_enabled == false
+          @cursor_enabled = true
+        else
           FFI.notcurses_cursor_disable(ptr)
+          @cursor_enabled = false
         end
       end
     end

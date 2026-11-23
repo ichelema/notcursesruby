@@ -20,6 +20,15 @@ RSpec.describe Notcurses::Reader do
 
     let(:std) { nc.stdplane }
 
+    # Il contesto è condiviso: un esempio precedente che ha lasciato il cursore acceso con cursor_enable farebbe
+    # fallire il cursor_disable di questo esempio (senza un tty il C non spegne il cursore). Con lo stato noto
+    # sconosciuto cursor_disable tollera l'errore del C e riporta il cursore chiesto a nascosto. Prima delle
+    # aspettative sulle chiamate FFI dell'esempio, che conterebbero queste.
+    before do
+      nc.cursor_state_unknown!
+      nc.cursor_disable
+    end
+
     def new_plane(rows: 2, cols: 10) = std.create_child(rows: rows, cols: cols, y: 3, x: 3)
 
     def new_reader(rows: 2, cols: 10, **opts, &block) = described_class.open(new_plane(rows: rows, cols: cols), **opts, &block)
@@ -139,9 +148,47 @@ RSpec.describe Notcurses::Reader do
           expect(reader.offer_input(ev(key::BACKSPACE))).to be true
           expect([reader.contents, reader.plane.at(y: 0, x: 0).egc]).to eq(['', '']), "cursore in colonna #{col}"
           expect(orphan_wide_right?(reader.plane, 0)).to be(false)
-          reader.offer_input(ctrl('A')) # dalla colonna 2 il C lascia il cursore in colonna 1
           reader.write('漢漢漢')
           expect(reader.contents).to eq('漢漢漢')
+        end
+      end
+    end
+
+    it 'Backspace su un glifo largo porta il cursore sulla sua prima colonna, senza buchi (ICH-581, prima: sulla seconda)' do
+      [false, true].each do |cursor|
+        new_reader(rows: 2, cols: 10, cursor: cursor) do |reader|
+          reader.write('漢')
+          expect(reader.plane.cursor).to eq([0, 2])
+          expect(reader.offer_input(ev(key::BACKSPACE))).to be true
+          expect([reader.contents, reader.plane.cursor]).to eq(['', [0, 0]])
+          expect(nc.cursor_yx).to eq([3, 3]) if cursor # cursore del terminale: piano in (3, 3)
+          reader.write('a')
+          expect([reader.contents, reader.plane.at(y: 0, x: 0).egc, reader.plane.at(y: 0, x: 1).egc]).to eq(['a', 'a', ''])
+          reader.clear.write('a漢')
+          expect(reader.offer_input(ev(key::BACKSPACE))).to be true
+          expect(reader.plane.cursor).to eq([0, 1])
+          expect(nc.cursor_yx).to eq([3, 4]) if cursor
+          reader.write('c')
+          cells = (0..3).map { |x| reader.plane.at(y: 0, x: x).egc }
+          expect([reader.contents, cells, reader.plane.cursor]).to eq(['ac', ['a', 'c', '', ''], [0, 2]])
+          reader.offer_input(ev(key::BACKSPACE)) # dopo un carattere stretto non cambia
+          expect([reader.contents, reader.plane.cursor]).to eq(['a', [0, 1]])
+        end
+      end
+    end
+
+    it 'Backspace su un glifo largo della seconda riga porta il cursore sulla sua prima colonna (ICH-581)' do
+      [false, true].each do |cursor|
+        new_reader(rows: 2, cols: 10, cursor: cursor) do |reader|
+          reader.write('abc')
+          reader.move_down
+          reader.write('漢')
+          expect(reader.plane.cursor).to eq([1, 5])
+          expect(reader.offer_input(ev(key::BACKSPACE))).to be true
+          expect([reader.contents, reader.plane.cursor]).to eq(['abc', [1, 3]])
+          expect(nc.cursor_yx).to eq([4, 6]) if cursor # piano in (3, 3)
+          reader.write('d')
+          expect([reader.contents, reader.plane.at(y: 1, x: 3).egc, reader.plane.at(y: 1, x: 4).egc]).to eq(['abcd', 'd', ''])
         end
       end
     end
@@ -555,6 +602,55 @@ RSpec.describe Notcurses::Reader do
       # lo stato sconosciuto, e cursor_disable lo tollera
       new_reader(cursor: true) { |reader| reader.write('a') }
       expect(nc.cursor_disable).to equal(nc)
+    end
+
+    # una chiamata di ogni operazione che ridisegna: ogni ridisegno del C accende il cursore
+    def redraw_all(reader)
+      reader.write('ab')
+      reader.offer_input(ev(key::BACKSPACE))
+      reader.offer_input(ctrl('U'))
+      reader.offer_input(ctrl('W'))
+      reader.move_left
+      reader.move_right
+      reader.move_up
+      reader.move_down
+    end
+
+    it 'dopo un reader con cursor: true, un reader con cursor: false rispegne il cursore ad ogni ridisegno (ICH-580, prima: acceso)' do
+      nc.cursor_disable
+      new_reader(cursor: true) { |reader| reader.write('a') }
+      new_reader do |reader|
+        expect(Notcurses::FFI).to receive(:notcurses_cursor_disable).exactly(8).times.and_call_original
+        redraw_all(reader)
+      end
+    end
+
+    it 'dopo un reader con cursor: true, un reader con cursor: false rimette il cursore di cursor_enable (ICH-580, prima: acceso nel campo)' do
+      nc.cursor_enable(y: 1, x: 2)
+      new_reader(cursor: true) { |reader| reader.write('a') }
+      new_reader do |reader|
+        expect(Notcurses::FFI).to receive(:notcurses_cursor_enable).with(nc.to_ptr, 1, 2).exactly(8).times.and_call_original
+        redraw_all(reader)
+      end
+    end
+
+    it 'cursor_enable e cursor_disable con un reader con cursor: true aperto valgono per i reader con cursor: false (ICH-580)' do
+      new_reader(cursor: true) do |reader|
+        reader.write('a')
+        nc.cursor_enable(y: 1, x: 2)
+        reader.write('b') # il reader con cursor: true riaccende il cursore nel campo
+        new_reader do |other|
+          expect(Notcurses::FFI).to receive(:notcurses_cursor_enable).with(nc.to_ptr, 1, 2).exactly(8).times.and_call_original
+          redraw_all(other)
+        end
+        reader.write('c') # stato del C di nuovo sconosciuto: cursor_disable chiama il C e tollera l'errore
+        nc.cursor_disable
+        reader.write('d')
+        new_reader do |other|
+          expect(Notcurses::FFI).to receive(:notcurses_cursor_disable).exactly(8).times.and_call_original
+          redraw_all(other)
+        end
+      end
     end
 
     it 'con cursor: true il reader lascia acceso il cursore del terminale nel campo, come vuole notcurses' do

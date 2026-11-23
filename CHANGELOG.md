@@ -57,6 +57,34 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   di nuovo la larghezza del glifo, e `reader.plane.at` su quelle celle restituisce il glifo (ICH-484). Prima il
   ridisegno del C, che non confronta la larghezza delle celle (`internal.h:1510-1523`), le lasciava larghe 0, e
   `plane.at` restituiva una cella vuota. `Reader#contents` era già corretto.
+- `Reader#offer_input`: Backspace dopo un glifo largo porta il cursore sulla prima colonna del glifo, nella vista, nella
+  copia nascosta e, con `cursor: true`, nel terminale (ICH-581). Prima il C cancellava le due metà del glifo ma
+  lasciava i cursori sulla colonna della metà destra (`reader.c:263-265`): la scrittura dopo lasciava un buco nella
+  riga (`"a漢"`, Backspace, `"c"`: celle `a`, vuota, `c`) e `contents` non lo mostrava. Vale anche sulle righe sotto la
+  prima.
+- `Reader` con `cursor: false`: dopo un reader con `cursor: true` rimette di nuovo il cursore del terminale come l'ha
+  chiesto l'ultima chiamata a `Context#cursor_enable` (con la posizione) o `#cursor_disable`, o nascosto se non ce ne
+  sono state (ICH-580). Prima il reader con `cursor: true` rendeva sconosciuto lo stato del cursore, e i reader con
+  `cursor: false` non facevano nulla: il cursore restava acceso nel campo anche dopo `Context#cursor_disable`. Ora
+  `Context` tiene separati lo stato chiesto dall'applicazione e quello noto del cursore del C, che serve solo a
+  rendere idempotente `#cursor_disable` (che tollera ancora un cursore già nascosto dalla chiusura di un reader con
+  `cursor: true`). Con un reader con `cursor: true` e uno con `cursor: false` aperti insieme decide l'ultima
+  operazione. I reader con `cursor: true` non cambiano.
+- `Context.new` e `Direct.new`: quando il rollback dell'init solleva (per esempio un errore dello stop), il chiamante
+  riceve l'eccezione per cui `new` ha rinunciato: l'`Interrupt` del Ctrl-C, l'eccezione di un `Thread#raise` o
+  l'`InitError` di un init NULL (ICH-577). Prima l'errore del rollback la sostituiva, e un `rescue Interrupt` attorno a
+  `new` non scattava più. L'errore del rollback viene scartato, senza scrivere su stderr; registro, `FILE*`
+  dell'output e `TERM` tornano a posto come prima.
+- `Context.new` e `Direct.new` con un terminale che non risponde mai alle query dell'init: SIGTERM, un Ctrl-C o due
+  Ctrl-C chiudono il processo in circa 2 secondi (ICH-576). Prima il processo restava vivo, e solo SIGKILL lo
+  chiudeva: il C aspetta la risposta senza timeout (`pthread_cond_wait`, `in.c:2924-2925`), `new` aspettava il thread
+  dell'init, e all'uscita Ruby aspettava lo stesso thread. Ora, dopo un segnale o un `exit` (anche da un gestore
+  `trap` del segnale), `new` aspetta al più 2 secondi e poi esce con l'eccezione del segnale o la `SystemExit`; se il
+  processo esce con l'init ancora fermo, l'hook `at_exit` del wrapper lo
+  chiude senza aspettare gli altri thread, con la morte per il segnale (o lo stato di `exit`). Prima di uscire rimette
+  il terminale come l'ha trovato l'init: echo e modo canonico, `O_NONBLOCK` del fd 0, la tastiera kitty e (`Context`)
+  lo schermo alternativo. Con un terminale che risponde entro i 2 secondi non cambia nulla; oltre, un solo Ctrl-C si
+  comporta come prima il secondo (`new` esce, e il contesto resta registrato fino alla risposta).
 - `Direct#stream` con il blitter `:pixel` ridisegna ogni frame sulle righe del primo anche in fondo allo schermo
   (ICH-458). Prima un frame più basso dello schermo poteva finire sull'ultima riga (per esempio con il cursore in
   fondo: il C sposta in alto un frame che non entra sotto il cursore, `direct.c:442-448`); il C mandava poi una CUP

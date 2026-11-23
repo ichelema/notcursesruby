@@ -25,10 +25,13 @@ module Notcurses
   #
   # Ogni ridisegno del C accende il cursore del terminale e lo porta nel campo
   # (+notcurses_cursor_enable+), anche senza NCREADER_OPTION_CURSOR. Con
-  # cursor: false il wrapper lo rimette subito come l'ha lasciato l'ultima
-  # chiamata a {Context#cursor_enable} o {Context#cursor_disable} (senza un
+  # cursor: false il wrapper lo rimette subito come l'ha chiesto l'ultima
+  # chiamata a {Context#cursor_enable} o {Context#cursor_disable}, o nascosto
+  # se non ce ne sono state, anche dopo un reader con cursor: true (senza un
   # tty il C non lo spegne); con cursor: true il reader lo mostra nel campo e
-  # la chiusura lo spegne.
+  # la chiusura lo spegne. Con un reader con cursor: true e uno con
+  # cursor: false aperti insieme decide l'ultima operazione: il cursore resta
+  # come l'ha lasciato il reader che ha ridisegnato per ultimo.
   #
   # Bug di 3.0.17 da conoscere:
   # - NCREADER_OPTION_HORSCROLL non è offerto: con lo scorrimento orizzontale
@@ -75,8 +78,11 @@ module Notcurses
     #   scorciatoie con Ctrl e Alt (le lascia all'applicazione)
     # @param cursor [Boolean] NCREADER_OPTION_CURSOR: il reader mostra il
     #   cursore del terminale nel campo e lo spegne alla chiusura; con false il
-    #   cursore resta come l'ha lasciato l'applicazione (vedi la descrizione
-    #   della classe)
+    #   cursore resta come l'ha chiesto l'applicazione con
+    #   {Context#cursor_enable} o {Context#cursor_disable}, anche dopo un
+    #   reader con cursor: true. Con un reader con cursor: true e uno con
+    #   cursor: false aperti insieme decide l'ultima operazione (vedi la
+    #   descrizione della classe)
     # @raise [WidgetError] se +ncreader_create+ fallisce (il piano risulta
     #   distrutto); se il piano è lo stdplane, è già di un widget, non è
     #   posseduto, scorre o cresce da solo; dentro un callback chiamato da
@@ -159,7 +165,12 @@ module Notcurses
     # ((unsigned)x + cols - 1 con cols 0, notcurses.c:1883). Il wrapper svuota
     # quella cella nella vista e nella copia nascosta, con le due metà di un
     # glifo largo; Ctrl+W si ferma prima, come nel C, su un separatore (per
-    # esempio uno spazio) in colonna 0.
+    # esempio uno spazio) in colonna 0. Backspace dopo un glifo largo portava i
+    # cursori sulla sua metà destra, perché il C cancella la colonna prima del
+    # cursore e porta lì i cursori (reader.c:263-265), e il carattere
+    # successivo lasciava un buco nella riga (ICH-581): il wrapper porta i
+    # cursori della copia nascosta, della vista e, con cursor: true, del
+    # terminale sulla prima colonna del glifo.
     #
     # @param input [Input] evento, per esempio da {Context#get}
     # @return [Boolean] true se il reader ha consumato l'evento; false anche
@@ -196,6 +207,7 @@ module Notcurses
           ctrl = !@no_cmd_keys && !input.release? && input.modifiers.anybits?(FFI::NCKEY_MOD_CTRL)
           deletion = backspace ? :backspace : (ctrl && x.positive? && {0x55 => :line, 0x57 => :word}[input.id])
           text = deletion && text_area(ptr)
+          wide_start = wide_glyph_start(text, y, x) if text && backspace && x >= 2
           if deletion
             FFI.ncplane_erase(@plane.to_ptr)
             FFI.ncplane_format(text, 0, 0, 0, 0, RECOPY_STYLE) if text
@@ -208,6 +220,7 @@ module Notcurses
               [text, @plane.to_ptr].each { |plane| FFI.ncplane_format(plane, 0, 0, 0, 0, 0) } if text
             end
           wrap_backspace(y - 1) if wrap
+          rewind_wide_backspace(text, y, wide_start) if wide_start
           @cursor = @plane.cursor
           clear_column_zero!(text, deletion, y, x) if text
           consumed
@@ -410,6 +423,46 @@ module Notcurses
 
         ay, ax = @plane.abs_yx
         FFI.notcurses_cursor_enable(@context.to_ptr, ay + y, ax + x) # come ncreader_redraw, esito ignorato
+      end
+    end
+
+    # Prima di un Backspace dalla colonna x >= 2 della riga y: la colonna dove
+    # inizia il glifo largo la cui metà destra è nella colonna x - 1 della copia
+    # nascosta, nil se la colonna x - 1 non è una metà destra. Il C cancella
+    # scrivendo "" sulla colonna x - 1 (reader.c:263), e +ncplane_put+ toglie
+    # le due metà del glifo (notcurses.c:1917-1923), ma porta i cursori a x - 1,
+    # la colonna della vecchia metà destra (reader.c:264-265).
+    def wide_glyph_start(text, y, x)
+      Guard.run do
+        col = x - 1
+        next unless wide_right_cell?(text, y, col)
+
+        col -= 1 while col.positive? && wide_right_cell?(text, y, col)
+        col
+      end
+    end
+
+    # true se la cella (y, x) di un piano è la metà destra di un glifo largo
+    # (width >= 2 e nessun EGC, come +nccell_wide_right_p+).
+    def wide_right_cell?(plane, y, x)
+      cell = FFI::NcCell.new
+      FFI.ncplane_at_yx_cell(plane, y, x, cell) >= 0 && FFI.nccell_wide_right_p(cell)
+    ensure
+      FFI.nccell_release(plane, cell)
+    end
+
+    # Dopo un Backspace che ha cancellato un glifo largo, iniziato nella
+    # colonna col della riga y: porta alla sua prima colonna i cursori della
+    # copia nascosta e della vista, e con cursor: true quello del terminale che
+    # il ridisegno del C ha lasciato sulla vecchia metà destra, come
+    # {#wrap_backspace}.
+    def rewind_wide_backspace(text, y, col)
+      Guard.run do
+        [text, @plane.to_ptr].each { |plane| FFI.ncplane_cursor_move_yx(plane, y, col) }
+        next unless @manage_cursor
+
+        ay, ax = @plane.abs_yx
+        FFI.notcurses_cursor_enable(@context.to_ptr, ay + y, ax + col) # come ncreader_redraw, esito ignorato
       end
     end
 

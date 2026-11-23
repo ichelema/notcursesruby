@@ -127,14 +127,15 @@ module NcHelpers
 
   # Esegue il blocco in un thread nuovo, lo ferma al primo ritorno del metodo
   # method_id (dove Ruby consegna le eccezioni asincrone) e gli manda
-  # Thread#raise(RuntimeError, 'interrotto'), poi lo lascia ripartire.
+  # Thread#raise(error, 'interrotto'), poi lo lascia ripartire.
   #
   # @param method_id [Symbol] metodo, per esempio :ncvisual_from_file
   # @param event [Symbol] :c_return per un metodo C, :return per un metodo Ruby
-  # @return [Array(Object, Array)] il valore del blocco (il messaggio del
-  #   RuntimeError, se lo solleva) e il valore restituito dal metodo
-  #   (l'indirizzo, per un ::FFI::Pointer)
-  def raise_at_c_return(method_id, event: :c_return)
+  # @param error [Class] classe dell'eccezione, per esempio Interrupt
+  # @return [Array(Object, Array)] il valore del blocco (il messaggio
+  #   dell'eccezione di classe error, se la solleva) e il valore restituito dal
+  #   metodo (l'indirizzo, per un ::FFI::Pointer)
+  def raise_at_c_return(method_id, event: :c_return, error: RuntimeError)
     returned = []
     paused = Queue.new
     resume = Queue.new
@@ -151,14 +152,14 @@ module NcHelpers
     thread = Thread.new do
       Thread.current[:raise_at_c_return] = true
       yield
-    rescue RuntimeError => e
+    rescue error => e
       e.message
     ensure
       paused << false # il blocco è finito senza passare dal metodo: niente attesa infinita
     end
     # rubocop:enable ThreadSafety/NewThread
     if paused.pop
-      thread.raise(RuntimeError, 'interrotto')
+      thread.raise(error, 'interrotto')
       resume << true
     end
     [thread.value, returned]

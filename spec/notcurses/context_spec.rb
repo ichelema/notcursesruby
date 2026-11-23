@@ -89,29 +89,50 @@ RSpec.describe Notcurses::Context do
 
     # Review della PR #30: un errore dentro il rollback del thread di init (qui dopo lo stop vero del C) saltava
     # release_context e fclose: il registro restava occupato. Anche TERM, che notcurses ha già cambiato con termtype:,
-    # torna com'era.
-    it "un errore nel rollback del thread di init libera comunque il registro e non scrive su stderr" do
-      allow(Notcurses::FFI).to receive(:notcurses_stop).and_wrap_original do |m, ptr|
-        m.call(ptr)
-        raise 'stop'
+    # torna com'era. ICH-577: l'errore del rollback sostituiva l'eccezione del chiamante (Thread#join lo rilanciava).
+    [RuntimeError, Interrupt].each do |error|
+      it "un errore nel rollback del thread di init lascia al chiamante il suo #{error}, libera il registro e " \
+         'non scrive su stderr' do
+        allow(Notcurses::FFI).to receive(:notcurses_stop).and_wrap_original do |m, ptr|
+          m.call(ptr)
+          raise 'stop'
+        end
+        # il chiamante rinuncia al contesto al ritorno di ready.pop (metodo C fino a Ruby 3.x, metodo Ruby da 4.0)
+        pop = Thread::Queue.instance_method(:pop).source_location ? :return : :c_return
+        term = ENV.fetch('TERM', nil)
+        ENV['TERM'] = 'vt100' # diverso dal termtype: di open_context
+        Dir.mktmpdir do |dir|
+          fds = NcHelpers.open_fd_count
+          result = nil
+          expect do
+            result, = NcHelpers.raise_at_c_return(:pop, event: pop, error: error) do
+              NcHelpers.open_context(output: File.join(dir, 'out'))
+            end
+          end.not_to output.to_stderr
+          expect([result, NcHelpers.open_fd_count, Notcurses.active_context, ENV['TERM']])
+            .to eq(['interrotto', fds, nil, 'vt100'])
+        end
+      ensure
+        ENV['TERM'] = term
       end
-      # il chiamante rinuncia al contesto al ritorno di ready.pop (metodo C fino a Ruby 3.x, metodo Ruby da 4.0)
-      pop = Thread::Queue.instance_method(:pop).source_location ? :return : :c_return
-      term = ENV.fetch('TERM', nil)
-      ENV['TERM'] = 'vt100' # diverso dal termtype: di open_context
+    end
+
+    # ICH-577: con il puntatore NULL il rollback non ferma nulla, ma chiude il FILE* dell'output; un errore lì
+    # sostituiva l'InitError.
+    it "un errore nel rollback dopo un init NULL lascia al chiamante l'InitError e libera il registro" do
+      allow(Notcurses::FFI).to receive(:notcurses_init).and_return(::FFI::Pointer::NULL)
+      allow(Notcurses::FFI).to receive(:fclose).and_wrap_original do |m, fp|
+        m.call(fp)
+        raise 'fclose'
+      end
       Dir.mktmpdir do |dir|
         fds = NcHelpers.open_fd_count
-        result = nil
         expect do
-          result, = NcHelpers.raise_at_c_return(:pop, event: pop) do
-            NcHelpers.open_context(output: File.join(dir, 'out'))
-          end
+          expect { NcHelpers.open_context(output: File.join(dir, 'out')) }
+            .to raise_error(Notcurses::InitError, /NULL/)
         end.not_to output.to_stderr
-        expect([%w[interrotto stop].include?(result), NcHelpers.open_fd_count, Notcurses.active_context, ENV['TERM']])
-          .to eq([true, fds, nil, 'vt100'])
+        expect([NcHelpers.open_fd_count, Notcurses.active_context]).to eq([fds, nil])
       end
-    ensure
-      ENV['TERM'] = term
     end
 
     it 'valida le opzioni prima di avviare notcurses' do

@@ -2,6 +2,9 @@
 # Source: notcurses/include/notcurses/notcurses.h
 # frozen_string_literal: true
 
+require 'fcntl'
+require 'io/console'
+require 'pty'
 require 'rbconfig'
 require 'tmpdir'
 
@@ -197,6 +200,85 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     end
     expect(out.lines(chomp: true)).to eq(lines + ['fine']) # stdout e stderr insieme: niente altro
     expect(status.exitstatus).to eq(0), out
+  end
+
+  # ICH-576: con un terminale che non risponde mai a DA1 l'init resta per sempre nel C (pthread_cond_wait,
+  # in.c:2924-2925), e né SIGTERM né Ctrl-C fermavano il processo: il chiamante aspettava il thread di init, e
+  # all'uscita Ruby aspettava lo stesso thread. Il pty è del padre: dopo la morte del figlio il padre ne legge lo stato
+  # (echo, flag del fd 0, che il figlio condivide come stdin) e le sequenze ricevute.
+  def mute_init_script = <<~RUBY
+    require 'notcurses'
+    $stdout.sync = true
+    trap('TERM') { exit 3 } if ENV['NC_TRAP'] # un gestore dell'applicazione: SystemExit invece di SignalException
+    klass = Notcurses.const_get(ENV.fetch('NC_CLASS'))
+    extra = klass == Notcurses::Context ? { suppress_banners: true } : {}
+    klass.new(output: ENV.fetch('NC_TTY'), termtype: 'xterm-256color', **extra)
+    puts 'init finito'
+  RUBY
+
+  def tty_state(slave) = [slave.echo?, slave.fcntl(Fcntl::F_GETFL)]
+
+  # @return [Array] stato di uscita, secondi dal primo segnale, stato del pty prima e dopo, byte scritti sul pty
+  def run_mute_init(klass, signals, env: {})
+    now = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
+    master, slave = PTY.open
+    slave.winsize = [24, 80]
+    before = tty_state(slave)
+    log = String.new(encoding: Encoding::BINARY)
+    lock = Mutex.new
+    reader = Thread.new do # il terminale muto: legge tutto e non risponde mai
+      loop do
+        data = master.readpartial(65_536)
+        lock.synchronize { log << data }
+      end
+    rescue IOError, Errno::EIO
+      nil
+    end
+    out_r, out_w = IO.pipe
+    pid = spawn({ 'NC_CLASS' => klass, 'NC_TTY' => slave.path }.merge(env), RbConfig.ruby, '-I', lib_dir, '-e',
+                mute_init_script, in: slave, out: out_w, err: out_w)
+    out_w.close
+    output = Thread.new { out_r.read }
+    limit = now.call + 10
+    sleep 0.01 until lock.synchronize { log.include?("\e[c") } || now.call > limit # la query DA1: l'init aspetta
+    sleep 0.5
+    start = now.call
+    signals.each_with_index do |sig, i|
+      sleep 0.3 if i.positive?
+      Process.kill(sig, pid)
+    end
+    sleep 0.05 until (status = Process.wait2(pid, Process::WNOHANG)&.last) || now.call > start + 5
+    elapsed = now.call - start
+    unless status
+      Process.kill(:KILL, pid)
+      status = Process.wait2(pid).last
+    end
+    [status, elapsed, before, tty_state(slave), lock.synchronize { log.dup }, output.value]
+  ensure
+    reader&.kill
+    [master, slave, out_r].each { |io| io&.close }
+  end
+
+  %w[Context Direct].product([%i[TERM], %i[INT], %i[INT INT]]).each do |klass, signals|
+    it "#{klass}.new con un terminale che non risponde mai: #{signals.join(' + ')} ferma il processo entro 5 s e " \
+       'ripristina il terminale' do
+      status, elapsed, before, after, log, out = run_mute_init(klass, signals)
+      expect([status.termsig, elapsed < 5]).to eq([Signal.list.fetch(signals.last.to_s), true]), out
+      expect(out).not_to include('init finito')
+      expect(after).to eq(before) # echo e modo canonico, O_NONBLOCK del fd 0 tolto
+      expect(log).to include("\e[<u") # pop della tastiera kitty, attivata dall'init
+      expect(log.include?("\e[?1049l")).to be(klass == 'Context') # lo schermo alternativo lo apre solo Context
+    end
+
+    next unless signals == %i[TERM]
+
+    # review della PR #33: con un trap('TERM') { exit } il segnale diventa una SystemExit, e new aspettava senza limite
+    it "#{klass}.new con un terminale che non risponde mai: exit da un trap('TERM') chiude il processo entro 5 s " \
+       'con il suo stato e ripristina il terminale' do
+      status, elapsed, before, after, _log, out = run_mute_init(klass, signals, env: { 'NC_TRAP' => '1' })
+      expect([status.exitstatus, elapsed < 5]).to eq([3, true]), out
+      expect(after).to eq(before)
+    end
   end
 
   # ICH-441: Process.daemon fa il fork senza Process._fork, e il processo che ha creato il contesto esce con _exit
@@ -1241,7 +1323,8 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
 
   # ICH-218: il ridisegno di ncreader accende il cursore del terminale (reader.c:105). Il terminale finto registra
   # le sequenze; per ogni operazione del reader il figlio stampa l'ultima fra \e[?25h (mostra) e \e[?25l (nasconde).
-  def reader_cursor_script = <<~'RUBY'
+  # order: i valori di cursor: dei reader, nell'ordine in cui girano (ICH-580).
+  def reader_cursor_script(order) = (<<~'RUBY').sub('ORDER', order.inspect)
     require 'notcurses'
     require 'io/console'
     require 'pty'
@@ -1267,7 +1350,7 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     end
     backspace = Notcurses::Input.synthesize(Notcurses::Key::BACKSPACE)
     Notcurses::Context.open(output: slave.path, termtype: 'xterm-256color', suppress_banners: true) do |nc|
-      [false, true].each do |managed|
+      ORDER.each do |managed|
         Notcurses::Reader.open(nc.stdplane.create_child(rows: 1, cols: 10, y: 2, x: 2), cursor: managed) do |reader|
           puts "cursor: #{managed} write #{last.call { reader.write('ab') }}"
           puts "cursor: #{managed} backspace #{last.call { reader.offer_input(backspace) }}"
@@ -1279,11 +1362,19 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
   RUBY
 
   it 'con cursor: false il reader lascia nascosto il cursore del terminale; con cursor: true lo mostra (prima: sempre acceso)' do
-    out, status, timed_out = run_child(reader_cursor_script, timeout: 30)
+    out, status, timed_out = run_child(reader_cursor_script([false, true]), timeout: 30)
     expect(timed_out).to be(false), out
     expect(status.exitstatus).to eq(0), out
     expect(out.lines.grep(/^cursor: false/)).to eq(%w[write backspace move_left].map { |op| "cursor: false #{op} \"\\e[?25l\"\n" })
     expect(out).to include('cursor: true write "\e[?25h"', 'fine')
     expect(out.lines.grep(/^cursor: true/)).not_to include(a_string_including('25l'))
+  end
+
+  it 'con cursor: false il reader lascia nascosto il cursore anche dopo un reader con cursor: true (ICH-580, prima: acceso)' do
+    out, status, timed_out = run_child(reader_cursor_script([true, false]), timeout: 30)
+    expect(timed_out).to be(false), out
+    expect(status.exitstatus).to eq(0), out
+    expect(out.lines.grep(/^cursor: false/)).to eq(%w[write backspace move_left].map { |op| "cursor: false #{op} \"\\e[?25l\"\n" })
+    expect(out).to include('cursor: true write "\e[?25h"', 'fine')
   end
 end
