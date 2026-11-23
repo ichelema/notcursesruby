@@ -22,7 +22,8 @@ Windows.
   [correzioni-review.md](correzioni-review.md).
 - Fase «Issue in Backlog», dal 2026-11-15, base `ad0315b`: lotti 1–8d fatti, PR #22…#34 (un capitolo per lotto in
   [backlog-issue.md](backlog-issue.md)). Modello passato ai comandi del workflow: `opus`.
-- Al 2026-11-23 restano 28 issue aperte: 14 nei lotti 9–15, 13 senza lotto, ICH-463 in Blocked.
+- Al 2026-11-23 restano 29 issue aperte: 15 nei lotti 9–15 (con il 9b), 13 senza lotto, ICH-463 in Blocked. Il
+  lotto 9 è in corso: PR #35.
 
 ## Criteri dei lotti
 
@@ -44,6 +45,7 @@ Una issue nata da un lotto entra in un lotto con la scelta dell'utente. Un lotto
 | Lotto | Prefisso | Issue | Priorità | Titolo |
 | --- | --- | --- | --- | --- |
 | 9 | `bug` | ICH-230 | Medium | Bound the unfinished line in LogView#append by bytes |
+| 9b | `bug` | ICH-593 | Medium | Evitare che un processo fermo nelle spec di pty_spec.rb blocchi l'intera suite fino al timeout di 600 s (nata dal lotto 9; prima degli altri lotti per scelta dell'utente del 2026-11-23) |
 | 10 | `bug` | ICH-220 | Medium | Make the Tabbed header follow plane resizes |
 | 10 | `bug` | ICH-221 | Medium | Fix Tree focus drift with items of different heights |
 | 10 | `bug` | ICH-219 | Low | Fix Menu selection loss on separator click and mouse_selected for right-aligned sections |

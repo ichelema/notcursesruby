@@ -43,6 +43,11 @@ git diff origin/master...HEAD | grep -E 'grapheme|\\X|\\p\{|unicode_normalize|st
 - In zsh un comando in una variabile non si divide in parole: usa un array (`E=(env ...)`, `"${E[@]}"`) e scrivi
   `--order "rand:$seed"`. In zsh `echo ====` fallisce: usa `echo '----'`.
 - Le spec instabili note sono in [punti-aperti.md](punti-aperti.md).
+- Suite ferma fino al timeout: l'esempio fermo è il successivo all'ultimo carattere del formatter `progress`, che
+  scrive con `sync = true` (`rspec-core` 3.13.6, `formatters/base_formatter.rb:57`), anche nel log della CI. Conta
+  `.`, `*` e `F` delle righe di avanzamento e trova l'esempio con
+  `rspec --dry-run [--order rand:N] --format json`, nel checkout della corsa (il numero di esempi cambia fra
+  branch) e con le stesse variabili d'ambiente. Prova del 2026-11-23 (ICH-593).
 
 ## Script di prova
 

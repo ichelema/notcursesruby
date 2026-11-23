@@ -49,6 +49,12 @@ regole sono in [regole.md](regole.md) (regole 20–22).
   vuoto (`ci: retrigger CI`, scelta dell'utente) l'ha fatta partire. Un job che fallisce al passo «Pacchetti dello
   snapshot» per un timeout di `archive.archlinux.org` non dipende dal codice: `gh run rerun <id> --failed`.
 
+- Un processo nipote che eredita la pipe di `run_child` (per esempio un `spawn` dentro lo script del figlio) può
+  fermare l'intera suite: al timeout `run_child` uccide solo il figlio, e `output.value` aspetta la fine della pipe
+  finché il nipote resta vivo. In `fifo_raise_script` di `spec/integration/pty_spec.rb` il nipote `writer` resta
+  fermo in `File.open(fifo, "w")` se nessuno apre la FIFO (ICH-593, lotto 9). Un nipote che esce da solo quando il
+  figlio muore, come il `reader` di `stop_raise_script`, non ferma la suite (prova del 2026-11-23).
+
 ## Review
 
 Le istruzioni per i reviewer sono le regole 23 e 24 di [regole.md](regole.md). Qui restano i casi e i motivi.

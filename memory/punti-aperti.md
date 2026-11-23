@@ -13,4 +13,5 @@ voce.
 - **Blocco non riprodotto in `spec/notcurses/ui/event_loop_spec.rb:716`** (lotto 3, `Thread#kill` durante la pulizia
   di `run`). Alla chiusura del lotto 7 la prima suite su `master` si è fermata lì una volta, con un `F` iniziale in
   `spec/ci_workflow_spec.rb:8` senza messaggio (rspec fermato prima del riepilogo). L'esempio passa da solo 5 volte su
-  5 e la suite in ordine definito passa. Lo script di verifica ora ha un timeout per suite.
+  5 e la suite in ordine definito passa. Lo script di verifica ora ha un timeout per suite. ICH-593 (lotto 9b) tratta
+  due blocchi simili in `spec/integration/pty_spec.rb` e cita questo come dato non spiegato.
