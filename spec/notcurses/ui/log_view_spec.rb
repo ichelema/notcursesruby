@@ -106,10 +106,56 @@ RSpec.describe Notcurses::UI::LogView do
     expect(lines(view)).to eq(%w[1 2 3 4])
   end
 
+  # ICH-230: la riga non finita ha un limite in byte e "\r" sostituisce la riga.
+  def partial_bytes(view) = view.instance_variable_get(:@partial).bytesize
+
+  it '1 MiB senza "\n" lascia la riga non finita entro max_partial_bytes (default 65 536)' do
+    view = log(1)
+    expect(view.max_partial_bytes).to eq(65_536)
+    256.times { view.append('x' * 4096) }
+    expect(partial_bytes(view)).to eq(65_536)
+    view.append('y' * 1_048_576) # anche in un solo blocco
+    expect(view.lines).to eq(['y' * 65_536])
+    expect(lines(view)).to eq(['y' * 12])
+  end
+
+  it 'oltre il limite toglie i byte più vecchi senza spezzare un carattere UTF-8' do
+    view = log(1, max_partial_bytes: 4)
+    view.append('a漢字') # 7 byte: il taglio a 3 cade dentro 漢
+    expect(view.lines).to eq(['字'])
+    emoji = '😀'.b
+    view.append(emoji[0, 2]) # metà di 😀 in coda: il taglio non la tocca
+    view.append(emoji[2..])
+    expect([view.lines, lines(view)]).to eq([['😀'], ['😀']])
+    view.append("\n#{"\x80" * 10}".b) # UTF-8 non valido: salta al massimo 3 byte di continuazione
+    expect([view.lines.last, partial_bytes(view)]).to eq(["�", 1])
+  end
+
+  it '"\r" senza "\n": la vista mostra il testo più recente e la memoria resta limitata' do
+    view = log(2)
+    view.append("10%\r20%\r30%")
+    expect(lines(view)).to eq(['30%', ''])
+    view.append("\r40%\r") # un "\r" in coda non cancella niente
+    expect([view.lines, lines(view)]).to eq([['40%'], ['40%', '']])
+    1000.times { |i| view.append("\r#{i}%") }
+    expect([view.lines, partial_bytes(view)]).to eq([['999%'], 4])
+    view.append("\r") # "\r\n" in due blocchi vale "\n"
+    view.append("\n")
+    expect([view.lines, lines(view)]).to eq([['999%'], ['999%', '']])
+  end
+
+  it '"\r" vale anche nelle righe finite: resta l\'ultimo pezzo non vuoto' do
+    view = log(3)
+    view.append("10%\r20%\nok\r\r\n\r\n")
+    expect([view.lines, lines(view)]).to eq([['20%', 'ok', ''], ['20%', 'ok', '']])
+  end
+
   it 'valida gli argomenti; chiuso solleva ClosedError' do
     view = log(1)
     expect { view.append(:x) }.to raise_error(TypeError)
     expect { described_class.new(app.root, max_lines: 0) }.to raise_error(ArgumentError)
+    expect { described_class.new(app.root, max_partial_bytes: 3) }.to raise_error(ArgumentError)
+    expect { described_class.new(app.root, max_partial_bytes: '4') }.to raise_error(TypeError)
     view.close
     expect { view.append('x') }.to raise_error(Notcurses::ClosedError)
     expect { view.clear }.to raise_error(Notcurses::ClosedError)

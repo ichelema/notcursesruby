@@ -11,10 +11,15 @@ module Notcurses
     #
     # {#append} accetta anche i byte grezzi del thread di lettura: la riga
     # non finita (anche un carattere UTF-8 spezzato fra due blocchi) resta da
-    # parte fino al "\n" successivo, e il testo viene ripulito solo al
-    # disegno, solo per le righe visibili (UTF-8 non valido e caratteri di
-    # controllo diventano "?", TAB diventa spazi, "\r\n" vale "\n"). Non
-    # prende il focus.
+    # parte fino al "\n" successivo, al massimo max_partial_bytes byte: oltre
+    # il limite i byte più vecchi escono, a partire da un inizio di carattere
+    # UTF-8. "\r" sostituisce la riga: resta l'ultimo pezzo non vuoto fra due
+    # "\r", quindi una barra di avanzamento mostra l'ultimo valore
+    # ("10%\r20%\r30%" mostra "30%") e la sua memoria resta limitata. I "\r"
+    # in coda non cancellano niente: "\r\n" vale "\n", anche in due blocchi.
+    # Il testo viene ripulito solo al disegno, solo per le righe visibili
+    # (UTF-8 non valido e caratteri di controllo diventano "?", TAB diventa
+    # spazi). Non prende il focus.
     #
     # Thread: {#append} solo dal thread del ciclo; il thread di lettura passa
     # i dati con {EventLoop#post}.
@@ -30,25 +35,35 @@ module Notcurses
       # @return [Integer] righe tenute in memoria
       attr_reader :max_lines
 
+      # @return [Integer] byte tenuti al massimo nella riga non finita
+      attr_reader :max_partial_bytes
+
       # @param parent [Container] contenitore
       # @param max_lines [Integer] righe finite da tenere, >= 1: le più
       #   vecchie escono per prime
+      # @param max_partial_bytes [Integer] byte da tenere nella riga non
+      #   finita, >= 4 (un carattere UTF-8 spezzato in coda deve starci): i
+      #   più vecchi escono per primi
       # @param channels [Channels, Integer] colori del testo e dello sfondo
       # @param size [Integer, nil] dimensione fissa nel contenitore, >= 1
       # @param weight [Integer, nil] quota dello spazio restante, >= 1 (default 1)
-      # @raise [ArgumentError] se max_lines è minore di 1, con size e weight insieme,
-      #   se channels ha lo sfondo con alpha :highcontrast
+      # @raise [ArgumentError] se max_lines è minore di 1, se max_partial_bytes
+      #   è minore di 4, con size e weight insieme, se channels ha lo sfondo
+      #   con alpha :highcontrast
       # @raise [TypeError] se un argomento ha il tipo sbagliato
       # @raise [ClosedError] se il contenitore è chiuso
-      def initialize(parent, max_lines: 1000, channels: 0, size: nil, weight: nil)
+      def initialize(parent, max_lines: 1000, max_partial_bytes: 65_536, channels: 0, size: nil, weight: nil)
         @max_lines = Util.integer!(max_lines, 'max_lines', 1..Util::NONNEG_INT.max)
+        @max_partial_bytes = Util.integer!(max_partial_bytes, 'max_partial_bytes', 4..Util::NONNEG_INT.max)
         @channels = Util.plane_channels_value(channels, 'channels')
         @lines = []
         @partial = ''.b
         attach_component!(parent, size: size, weight: weight)
       end
 
-      # Aggiunge testo e ridisegna.
+      # Aggiunge testo e ridisegna. In ogni riga "\r" sostituisce il testo
+      # prima di lui (resta l'ultimo pezzo non vuoto); la riga non finita
+      # tiene al massimo {#max_partial_bytes} byte, gli ultimi.
       #
       # @param data [String] testo o byte grezzi, anche con righe non finite
       # @return [self]
@@ -59,8 +74,9 @@ module Notcurses
         raise TypeError, "data deve essere String, non #{data.class}" unless data.is_a?(String)
 
         parts = (@partial + data.b).split("\n", -1)
-        @partial = parts.pop || ''.b # "".split("\n", -1) è []
-        @lines.concat(parts.map { |line| line.delete_suffix("\r") })
+        partial = parts.pop || ''.b # "".split("\n", -1) è []
+        @partial = bound(partial[latest(partial).begin..])
+        @lines.concat(parts.map { |line| line[latest(line)] })
         @lines.shift(@lines.size - @max_lines) if @lines.size > @max_lines
         redraw
       end
@@ -77,19 +93,40 @@ module Notcurses
       end
 
       # @return [Array<String>] righe in memoria, con la riga non finita in
-      #   fondo se c'è; UTF-8, con i byte non validi sostituiti da U+FFFD
+      #   fondo se c'è (il testo dopo "\r", senza i "\r" in coda); UTF-8,
+      #   con i byte non validi sostituiti da U+FFFD
       def lines
-        all = @partial.empty? ? @lines : @lines + [@partial]
+        all = @partial.empty? ? @lines : @lines + [@partial[latest(@partial)]]
         all.map { |line| line.dup.force_encoding(Encoding::UTF_8).scrub }
       end
 
       private
 
+      # Byte del testo più recente di line: l'ultimo pezzo non vuoto fra due "\r", senza i "\r" in coda.
+      def latest(line)
+        stop = line.bytesize
+        stop -= 1 while stop.positive? && line.getbyte(stop - 1) == 13 # "\r"
+        cr = stop.positive? && line.rindex("\r", stop - 1)
+        (cr ? cr + 1 : 0)...stop
+      end
+
+      # Toglie i byte più vecchi oltre max_partial_bytes, da un inizio di carattere UTF-8: salta al massimo 3 byte di
+      # continuazione (0b10xxxxxx), quanti ne ha un carattere valido. Con max_partial_bytes >= 4 il taglio resta prima
+      # dell'ultimo byte e non tocca un carattere spezzato in coda.
+      def bound(partial)
+        cut = partial.bytesize - @max_partial_bytes
+        return partial unless cut.positive?
+
+        stop = cut + 3
+        cut += 1 while cut < stop && (partial.getbyte(cut) & 0xC0) == 0x80
+        partial.byteslice(cut..)
+      end
+
       def draw
         rows = @plane.dim_y
         @plane.set_base(egc: ' ', channels: @channels)
         @plane.channels = @channels
-        shown = @partial.empty? ? @lines.last(rows) : @lines.last(rows - 1) << @partial
+        shown = @partial.empty? ? @lines.last(rows) : @lines.last(rows - 1) << @partial[latest(@partial)]
         shown.each_with_index { |line, y| put_text(y, Text.clean(line)) }
       end
     end
