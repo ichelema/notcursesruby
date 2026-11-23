@@ -22,7 +22,7 @@ Windows.
   [correzioni-review.md](correzioni-review.md).
 - Fase «Issue in Backlog», dal 2026-11-15, base `ad0315b`: lotti 1–9 fatti, PR #22…#35 (un capitolo per lotto in
   [backlog-issue.md](backlog-issue.md)). Modello passato ai comandi del workflow: `opus`.
-- Al 2026-11-23 restano 30 issue aperte: 16 nei lotti 9b–15 (con il 9c), 13 senza lotto, ICH-463 in Blocked.
+- Al 2026-11-23 restano 31 issue aperte: 16 nei lotti 9b–15 (con il 9c), 14 senza lotto, ICH-463 in Blocked.
 
 ## Criteri dei lotti
 
@@ -83,6 +83,7 @@ Ognuna aspetta la scelta dell'utente sul lotto.
 | ICH-590 | Low | Bug | Kitty 0.51 disegna il coniugato devanagari "क्ष" largo 1, notcurses e Ghostty lo contano largo 2: su Kitty il testo dopo si sposta | Lotto 8d. La misura su Kitty serve all'utente (display); il comportamento lo sceglie l'utente |
 | ICH-591 | Low | Bug | `putstr`/`putegc` di un EGC lungo con il pool quasi pieno: il ripristino del glifo di arrivo (lotto 8b) fallisce e il glifo va perso | Lotto 8d. `Plane#rehearse!` del lotto 8d può sostituire `with_glyph_kept`; tocca `plane.rb` come ICH-592 |
 | ICH-592 | Low | Bug | `Plane#base` con una base lunga e il pool pieno solleva `PlaneError` senza motivo (`ncplane_base` duplica nel pool) | Lotto 8d. Come ICH-490; tocca `plane.rb` come ICH-591 |
+| ICH-596 | Low | Bug | Le righe finite di `LogView` non hanno un limite in byte: con `Subprocess` superano `max_partial_bytes` di al massimo un blocco da 8192 byte, con `append` diretto di un blocco solo restano intere | Lotto 9. Prima del fix l'utente sceglie la keyword e quale parte tenere oltre il limite |
 
 - ICH-554, ICH-556 e ICH-594 (lotto 9c) hanno solo la label `Performance`: `1_create-worktree` può chiedere il
   prefisso del branch. ICH-591 e ICH-592 toccano `plane.rb` e `with_glyph_kept` come ICH-594.
