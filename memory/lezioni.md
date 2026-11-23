@@ -11,6 +11,12 @@ regole sono in [regole.md](regole.md) (regole 20–22).
   privati (`Plane::Internals`) e non girano senza (lotto 2c).
 - `rotate_2x1_cw` e `rotate_2x1_ccw` di notcurses non rilasciano le copie nel pool quando rifiutano un carattere: il
   bug è in [bug-notcurses.md](bug-notcurses.md), tabella «Piani», non aggirato (lotto 2c).
+- Per sapere se una scrittura con un EGC lungo entra nel pool non prevederlo con caricamenti di prova: il C rilascia
+  la cella di arrivo prima di copiare, e linee, box e riempimenti fanno più copie. Prova la stessa chiamata C su una
+  copia del piano (`Plane#rehearse!`, `ncplane_dup`), che ha lo stesso pool (lotto 8d, ICH-582).
+- Una misura delle larghezze su `ncvt` vale per Ghostty solo con il modo 2027 acceso ([ambiente.md](ambiente.md)):
+  nel lotto 8b la bandiera larga 4 di `ncvt` sembrava un difetto di Ghostty, e Ghostty 1.4 e Kitty la disegnano
+  larga 2 (lotto 8d, ICH-586).
 
 ## Gestori trap, segnali e thread
 
@@ -35,6 +41,13 @@ regole sono in [regole.md](regole.md) (regole 20–22).
   `spec/notcurses/init_exit_spec.rb` (lotto 8c).
 - La coverage varia di qualche centesimo fra una corsa e l'altra (da 98,33 a 98,41 % nel lotto 3): alcune righe
   dipendono dai tempi dei thread.
+- Lo strumento Edit di Claude Code e il testo dei comandi Bash (anche un heredoc) trasformano `\u0301` e gli altri escape `\uXXXX` del testo nuovo nei caratteri veri;
+  la forma con le graffe (`\u{1F1EE}`) resta. `spec/source_chars_spec.rb` lo trova: riscrivi gli escape con uno script
+  che costruisce i caratteri dai codici, senza scriverli nel testo (lotto 8d).
+- Se `gh pr checks --watch` dice "no checks reported" subito dopo l'apertura della PR, aspetta che compaia la run
+  (`gh run list --branch`). Nel lotto 8d GitHub non ha creato la run del `pull_request`: dopo 30 minuti un commit
+  vuoto (`ci: retrigger CI`, scelta dell'utente) l'ha fatta partire. Un job che fallisce al passo «Pacchetti dello
+  snapshot» per un timeout di `archive.archlinux.org` non dipende dal codice: `gh run rerun <id> --failed`.
 
 ## Review
 

@@ -52,6 +52,11 @@
 
 - La ricetta è in `.claude/skills/verify/SKILL.md`, con il sorgente `ncvt.c`, l'esempio `verify_reader.rb` e lo script
   `screen` con l'helper `snap.rb` (regola 22). `ncvt` usa libghostty-vt 1.0.1, stabile dalla 1.0.
+- libghostty-vt misura le larghezze dei grapheme come l'app Ghostty solo con il modo 2027 acceso: senza, conta ogni
+  codepoint da solo e disegna una bandiera larga 4 invece di 2 (misura del 2026-11-23, ICH-586). `Screen.open` di
+  `snap.rb` accende il modo; uno script lanciato con `ncvt` direttamente scrive `"\e[?2027h"` prima di
+  `Context.open`. Kitty e l'app Ghostty si misurano con uno script che chiede la colonna del cursore (CSI 6n) prima
+  e dopo il testo, su una macchina con un display.
 - La libreria compilata e `ncvt` sono in `~/.claude/tmp/libghostty-vt/` (`prefix` e `harness/ncvt`); se mancano, la
   ricetta li ricostruisce.
 - `ncvt -m` simula un terminale muto (ICH-576). `verify_reader.rb` chiede `ncvt -r 24`: lo scenario 7 usa

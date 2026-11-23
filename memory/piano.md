@@ -20,9 +20,9 @@ Windows.
   Fase 5 blitter su Kitty e Ghostty e porting su macOS (PR #20 e #21). Correzioni della revisione del 2026-11-06:
   17 lotti e ICH-465 fuori dai lotti, PR #2…#19. Log nei file `fase*.md` e in
   [correzioni-review.md](correzioni-review.md).
-- Fase «Issue in Backlog», dal 2026-11-15, base `ad0315b`: lotti 1–8c fatti, PR #22…#33 (un capitolo per lotto in
+- Fase «Issue in Backlog», dal 2026-11-15, base `ad0315b`: lotti 1–8d fatti, PR #22…#34 (un capitolo per lotto in
   [backlog-issue.md](backlog-issue.md)). Modello passato ai comandi del workflow: `opus`.
-- Al 2026-11-23 restano 27 issue aperte: 16 nei lotti 8d–15, 10 senza lotto, ICH-463 in Blocked.
+- Al 2026-11-23 restano 28 issue aperte: 14 nei lotti 9–15, 13 senza lotto, ICH-463 in Blocked.
 
 ## Criteri dei lotti
 
@@ -43,8 +43,6 @@ Una issue nata da un lotto entra in un lotto con la scelta dell'utente. Un lotto
 
 | Lotto | Prefisso | Issue | Priorità | Titolo |
 | --- | --- | --- | --- | --- |
-| 8d | `bug` | ICH-582 | Low | Raise PlaneError, not CellError, when the egcpool has no room for the EGC of a cell in the cell-based Plane writes (nata dal lotto 8b) |
-| 8d | `bug` | ICH-586 | Low | Keep the text after a flag aligned when the terminal draws regional indicators wider than notcurses counts them (nata dal lotto 8b; il comportamento lo sceglie l'utente) |
 | 9 | `bug` | ICH-230 | Medium | Bound the unfinished line in LogView#append by bytes |
 | 10 | `bug` | ICH-220 | Medium | Make the Tabbed header follow plane resizes |
 | 10 | `bug` | ICH-221 | Medium | Fix Tree focus drift with items of different heights |
@@ -63,8 +61,6 @@ Una issue nata da un lotto entra in un lotto con la scelta dell'utente. Un lotto
 - ICH-219, ICH-220, ICH-221, ICH-227, ICH-230 e ICH-231 vengono dal gruppo ICH-214…ICH-232, che non ha un formato
   controllato. Se una issue non ha `Acceptance criteria`, proponi il testo all'utente e, dopo la conferma, scrivilo
   nella issue su Linear prima del fix.
-- ICH-586: la misura delle bandiere su Ghostty si fa con `ncvt`; su Kitty serve un display
-  ([ambiente.md](ambiente.md)).
 
 ## Issue senza lotto
 
@@ -82,6 +78,9 @@ Ognuna aspetta la scelta dell'utente sul lotto.
 | ICH-554 | Low | Performance | `Visual#rotate` chiama il C una volta per pixel: circa 0,9 s su 1024x1024 | Lotto 6. Accelerarlo può servire un cambio del layer FFI (regola 1) |
 | ICH-556 | Low | Performance | Il controllo dei glifi larghi dei blit `:braille` legge tutte le celle del rettangolo: 20 ms su un piano 60x200, contro 0,19 ms prima del lotto 6 | Lotto 6. Nelle celle con soli pixel trasparenti `braille_blit` azzera canali e stile e cambia gli alpha, ma non scrive l'EGC (`blit.c:1193-1215`) |
 | ICH-562 | Low | Bug, Performance | Un blit 1x1 di `Visual.blit_rgba` crea due `ncvisual` | Lotto 6 |
+| ICH-590 | Low | Bug | Kitty 0.51 disegna il coniugato devanagari "क्ष" largo 1, notcurses e Ghostty lo contano largo 2: su Kitty il testo dopo si sposta | Lotto 8d. La misura su Kitty serve all'utente (display); il comportamento lo sceglie l'utente |
+| ICH-591 | Low | Bug | `putstr`/`putegc` di un EGC lungo con il pool quasi pieno: il ripristino del glifo di arrivo (lotto 8b) fallisce e il glifo va perso | Lotto 8d. `Plane#rehearse!` del lotto 8d può sostituire `with_glyph_kept`; tocca `plane.rb` come ICH-592 |
+| ICH-592 | Low | Bug | `Plane#base` con una base lunga e il pool pieno solleva `PlaneError` senza motivo (`ncplane_base` duplica nel pool) | Lotto 8d. Come ICH-490; tocca `plane.rb` come ICH-591 |
 
 - ICH-554 e ICH-556 hanno solo la label `Performance`: `1_create-worktree` può chiedere il prefisso del branch.
 - ICH-214: il lotto 2 ha scartato la rotazione del framebuffer da Ruby, che non si rende sicura: un gestore `trap` o

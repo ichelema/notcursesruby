@@ -1161,3 +1161,69 @@ ICH-577 e ICH-576 dall'orchestratore (concorrenza e segnali).
   `/trinity:workflow:5_remove-worktree bug+ICH-576-580-577-581-opus` (si avvia solo a mano); il worktree ha il link
   temporaneo `notcurses/data` (non tracciato). Worktree e branch rimossi il 2026-11-23 con quel comando; il branch
   remoto l'aveva già cancellato GitHub al merge.
+
+## Lotto 8d — ICH-582, ICH-586 (PR #34, merge `964bbf8`)
+
+Il 2026-11-23. Branch `bug/ICH-582-586-opus`, worktree `.claude/worktrees/bug+ICH-582-586-opus`. Analisi dei percorsi
+C di ICH-582 e prototipo da un `trinity:deep-reasoner` in sola lettura; implementazione dell'orchestratore.
+
+### Fix
+
+- `2e0d878` (ICH-582): `Cell#load_into` restituisce nil quando `nccell_prime` fallisce; `with_nccells` distingue un EGC
+  diviso (`CellError`, controllo con il pool vuoto di `single_egc!`) dal pool pieno (`PlaneError`). Helper privato
+  nuovo `Plane#rehearse!`: prova la stessa chiamata C su una copia del piano (`ncplane_dup` copia framebuffer, cursore,
+  cella base ed egcpool; il wrapper ripristina scrolling, autogrow e `logrow`) e solleva `PlaneError` che nomina
+  l'egcpool, solo per EGC di più di 4 byte (circa 0,6 ms con il pool a 16 MiB). Lo usano `putc`, `hline`, `vline`,
+  `box`/`perimeter` (`box_cells` passa al blocco il piano su cui disegnare), `polyfill`, `gradient` e `set_base`;
+  `hline`, `vline` e `box` spostano il cursore solo dopo la prova. `set_base` usa `single_egc!` al posto di
+  `Cell.split_error`. Messaggi con `Util.egc_label`.
+- `afb6e55` (ICH-586): `Util.lone_regional_indicator!` (`ArgumentError` per un grapheme con un solo indicatore
+  regionale), chiamato da `Cell.egc!`, `Plane#output_text!` e `Text.check!` di `Notcurses::UI`. Tolto da
+  `Cell.split_error` il ramo della bandiera con la frase «molti terminali la disegnano più larga»: ora vale il
+  messaggio dei coniugati («usa Plane#putstr, che li scrive in celle vicine»). Corretta la voce del lotto 8b nel
+  `CHANGELOG`. Skill `verify`: `Screen.open` accende il modo 2027, `SKILL.md` ha la nota e la tabella delle misure.
+- `ef9ce54`: commit vuoto `ci: retrigger CI` (sotto, «Problemi e soluzioni»).
+
+### Decisioni
+
+- Dell'utente: criterio di ICH-586 da `RICONSEGNA.md` a `memory/bug-notcurses.md` (anche in ICH-463 e ICH-542);
+  comportamento di ICH-586 dopo le misure: bandiere invariate, indicatore da solo rifiutato in `putstr`, `Notcurses::UI`,
+  `Cell`, `set_base` e `gradient` (criterio 3 proposto da me); ICH-586 riscritta su Linear; prova su copia in tutti
+  gli otto metodi (non solo `gradient` e `set_base`); `set_base` con U+2028 solleva `CellError` (prima la base
+  diventava il byte `"\xE2"`); modo 2027 di default in `Screen.open`; issue nuove ICH-590, ICH-591, ICH-592; issue del
+  lotto e issue nuove tradotte in italiano su Linear (regola 15); commit vuoto per la CI; merge senza simplify, verify
+  e review.
+- Mie: prova su una copia del piano invece di prevedere lo spazio con caricamenti di prova (il C rilascia la cella di
+  arrivo prima di copiare, e linee, box e riempimenti fanno più copie) o di un rollback grezzo di framebuffer e pool
+  con `Internals`; controllo unico in `Util` per i tre punti d'ingresso del testo.
+
+### Review
+
+- Nessuna: l'utente ha fatto il merge dopo `2_work-issue`, senza `2_work-simplify`, `2_work-verify` e review. La prova
+  sullo schermo della regola 22 è stata fatta con `screen` prima del commit di ICH-586.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| La bandiera larga 4 del lotto 8b non si riproduce su Ghostty 1.4 e Kitty 0.51 | `ncvt` usa libghostty-vt senza il modo 2027, che conta ogni codepoint da solo | misure con la colonna del cursore (CSI 6n) su Ghostty e Kitty fatte dall'utente, `ncvt` con il modo 2027; ICH-586 riscritta |
+| Kitty disegna "क्ष" largo 1 | differenza del terminale, fuori dal perimetro di ICH-586 | ICH-590 in Backlog |
+| Scritture sulle issue di Linear bloccate | classificatore dei permessi («External System Writes»), anche con l'autorizzazione in chat | regola `Allow` per `Bash(mise x python -- python scripts/linear.py mutation:*)` in `.claude/settings.local.json`, aggiunta dall'utente |
+| Escape `\u0301`, `\uFE0F`, `\u20E3` diventati caratteri veri nelle spec | lo strumento Edit trasforma gli escape `\uXXXX` | `source_chars_spec` lo ha trovato; escape riscritti con uno script ([lezioni.md](lezioni.md)) |
+| 11 spec delle immagini rosse nel worktree | manca `notcurses/data` | link temporaneo ([ambiente.md](ambiente.md)) |
+| Nessuna run della CI per l'apertura della PR | evento `pull_request` perso da GitHub (stato «All Systems Operational», PR `mergeable: UNKNOWN` per 20 minuti) | commit vuoto `ef9ce54`, scelta dell'utente |
+| Tre job rossi al passo «Pacchetti dello snapshot» | timeout di `archive.archlinux.org` su `core.db` ed `extra.db` | `gh run rerun 45129189119 --failed`: verdi |
+
+### Verifica finale
+
+- PR: suite completa, semi 1234, 4242 e 7, Ruby 3.1.7 sulle spec cambiate (214 esempi), RuboCop, YARD; prova con
+  `screen` e il modo 2027: la bandiera sovrascritta non lascia residui, l'indicatore da solo è rifiutato con il
+  messaggio nuovo. CI della PR (run `45129189119`) verde su tutta la matrice dopo il rilancio.
+- `master` su `964bbf8`, 2026-11-23: 1325 esempi, 0 fallimenti, 1 pending (`qrcode` sullo stub), in ordine normale e
+  con i semi 1234, 4242 e 7; coverage 98,11 % di righe (6694 / 6823) e 90,07 % di rami (nella PR 90,15 %); RuboCop 0
+  offense (109 file); YARD 100 %; `ruby -w` pulito; gem costruita; `git diff ad0315b -- lib/notcurses/ffi
+  lib/notcurses/ffi.rb` vuoto. CI di `master` (run `45132296796`) verde su tutta la matrice. Nessun cambio a
+  `Gemfile` e `Gemfile.lock`.
+- Linear: ICH-582 e ICH-586 a Done. Issue nuove in Backlog: ICH-590 (devanagari su Kitty), ICH-591 (ripristino di
+  `putstr` con il pool quasi pieno), ICH-592 (`Plane#base` con il pool pieno). Worktree e branch rimossi il 2026-11-23
+  con `/trinity:workflow:5_remove-worktree bug+ICH-582-586-opus`; il branch remoto l'aveva già cancellato GitHub.
