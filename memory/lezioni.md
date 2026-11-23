@@ -44,7 +44,7 @@ regole sono in [regole.md](regole.md) (regole 20–22).
 - Lo strumento Edit di Claude Code e il testo dei comandi Bash (anche un heredoc) trasformano `\u0301` e gli altri escape `\uXXXX` del testo nuovo nei caratteri veri;
   la forma con le graffe (`\u{1F1EE}`) resta. `spec/source_chars_spec.rb` lo trova: riscrivi gli escape con uno script
   che costruisce i caratteri dai codici, senza scriverli nel testo (lotto 8d).
-- Se `gh pr checks --watch` dice "no checks reported" subito dopo l'apertura della PR, aspetta che compaia la run
+- Se `gh pr checks --watch` dice "no checks reported" subito dopo un push, aspetta che compaia la run
   (`gh run list --branch`). Nel lotto 8d GitHub non ha creato la run del `pull_request`: dopo 30 minuti un commit
   vuoto (`ci: retrigger CI`, scelta dell'utente) l'ha fatta partire. Un job che fallisce al passo «Pacchetti dello
   snapshot» per un timeout di `archive.archlinux.org` non dipende dal codice: `gh run rerun <id> --failed`.

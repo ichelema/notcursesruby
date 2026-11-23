@@ -98,8 +98,15 @@ autorizzato il merge.
   lotto che la PR non risolve usa `Refs ICH-<n>` (lotto 4: ICH-463). Non citare issue fuori dal lotto, neanche con
   `Refs`: l'automazione GitHub → Linear le sposta a In Progress. Dopo ogni evento della PR controlla lo stato delle
   issue in Linear.
-- **CI**: dopo l'apertura della PR, e prima della review, segui la CI con `gh pr checks <n> --watch` (ICH-465: un job
-  rosso è emerso solo nella review). Ripeti il controllo dopo ogni push di fix.
+- **CI**: prima della review e prima di chiedere il merge, segui la CI dell'ultimo commit spinto con
+  `gh pr checks <n> --watch` (ICH-465: un job rosso è emerso solo nella review). Alla fine di `2_work-issue` non
+  aspettarla: scrivi all'utente che la CI è in corso e non verificata, con il link della run, o che la run non c'è
+  ancora. La run continua da sola: un push la cancella solo se è ancora in corso (`cancel-in-progress` in
+  `.github/workflows/ci.yml`). All'inizio di `2_work-simplify` e prima del suo push guarda lo stato senza aspettare
+  (`gh pr checks <n>`: exit 0 verde, 8 in corso, altro rosso): se è rosso, fermati e mostralo. Segui la CI alla fine
+  di `2_work-simplify`, anche se simplify non spinge niente, e dopo ogni push di fix della review. Se l'utente salta
+  `2_work-simplify`, seguila all'inizio della review (`3_independent-review` o `4_review-fix-loop`) o quando chiede
+  il merge; `2_work-verify` non la aspetta.
 - **Merge**: chiedi il merge all'utente (regola 13) solo quando valgono tre condizioni: CI verde sull'ultimo commit
   della PR (regola 17), nessun `FAIL` o `BLOCKED` aperto del verify, nessun finding BLOCKER o HIGH aperto della
   review. Se un fix arrivato dopo il verify cambia quello che si vede (schermo, messaggi, consigli della regola 22),

@@ -95,10 +95,13 @@ git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb
 ```sh
 # workflow: controllo prima del push
 mise x aqua:rhysd/actionlint@1.7.12 -- actionlint -ignore SC2016 .github/workflows/ci.yml
-# dopo l'apertura della PR o un push: aspetta la run del commit appena spinto, al massimo 10 minuti, poi seguila
+# prima della review o del merge (regola «CI» di CLAUDE.md): aspetta la run dell'ultimo commit spinto, al massimo
+# 10 minuti, poi seguila
 sha=$(git -C <checkout> rev-parse HEAD)
 timeout 600 bash -c "until gh run list --commit $sha --limit 1 | grep -q .; do sleep 15; done" || echo "nessuna run per $sha"
 gh pr checks <n> --watch
+# senza aspettare (fine di 2_work-issue, inizio di 2_work-simplify e prima del suo push): exit 0 verde, 8 in corso
+gh pr checks <n>
 gh run list --limit 5
 gh run view <id> --log-failed
 ```
