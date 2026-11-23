@@ -166,7 +166,9 @@ module Notcurses
     # @api private
     # @param plane_ptr [::FFI::Pointer] ncplane*
     # @param nccell [FFI::NcCell] cella azzerata o già legata a plane_ptr
-    # @return [FFI::NcCell] nccell
+    # @return [FFI::NcCell, nil] nccell; nil se +nccell_prime+ fallisce (-1):
+    #   con l'EGC di Cell.new succede quando l'egcpool del piano non ha spazio,
+    #   oppure per un EGC che notcurses divide (il chiamante lo distingue)
     # @raise [CellError] se notcurses non legge l'EGC come un solo carattere
     #   (il messaggio dice in quali pezzi lo divide, vedi {Cell})
     def load_into(plane_ptr, nccell)
@@ -176,10 +178,10 @@ module Notcurses
 
       # dopo un errore la cella può sembrare la metà destra di un glifo largo
       FFI.nccell_release(plane_ptr, nccell)
-      split = Cell.split_error(plane_ptr, @egc) if rc.positive?
-      raise split if split
+      return nil if rc.negative?
 
-      raise CellError, "notcurses non accetta #{@egc.inspect} come un solo carattere (nccell_prime: #{rc})"
+      raise Cell.split_error(plane_ptr, @egc) ||
+        CellError.new("notcurses non accetta #{Util.egc_label(@egc)} come un solo carattere (nccell_prime: #{rc})")
     end
 
     # @param other [Object] oggetto da confrontare

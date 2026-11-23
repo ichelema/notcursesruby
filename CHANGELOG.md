@@ -46,6 +46,18 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   `putstr` e `puttext` sollevavano `PlaneError` senza nominare il pool, e `putegc` `CellError` ("divide in più
   caratteri"). Il controllo dei caratteri di larghezza zero, che carica i pezzi con `nccell_load`, usa un piano
   temporaneo quando il pool è pieno. I messaggi d'errore mostrano solo l'inizio e i byte di un EGC lungo.
+- `Plane#putc`, `#hline`, `#vline`, `#box`, `#perimeter`, `#polyfill`, `#gradient` e `#set_base`: quando l'egcpool
+  del piano (16 MiB) non ha spazio per un EGC di più di 4 byte, o per le copie che il C ne fa (una per la cella
+  temporanea, una per la linea, una per cella scritta), sollevano `PlaneError` con un messaggio che nomina l'egcpool,
+  e il piano, la cella base e il cursore restano com'erano (ICH-582). Prima della scrittura il wrapper la prova su
+  una copia del piano (`ncplane_dup`). Prima le scritture con una `Cell` sollevavano `CellError` ("notcurses non
+  accetta ... come un solo carattere"), come se la cella non fosse valida, con l'EGC intero nel messaggio, e `hline`,
+  `vline` e `box` spostavano il cursore; con il pool quasi pieno il C cambiava il piano prima di fallire: celle
+  scritte a metà, la cella di arrivo svuotata, la base persa, e linee e box lasciavano nel pool la loro copia di
+  lavoro fino a `erase`. `set_base` con una bandiera seguita da segni combinanti teneva in silenzio il primo
+  indicatore: ora solleva `CellError`, come con il pool vuoto; anche U+2028 e U+2029, che il C troncava a un byte
+  rotto nella base, sollevano `CellError`. Le celle che notcurses divide davvero (bandiere,
+  keycap) sollevano ancora `CellError`. I messaggi d'errore mostrano solo l'inizio e i byte di un EGC lungo.
 - `Reader#offer_input`: Backspace, Ctrl+U e Ctrl+W cancellano anche il carattere della colonna 0, ASCII o glifo
   largo (ICH-218). Prima il carattere restava, perché il C cancella scrivendo `""` e in colonna 0 la scrittura
   fallisce (`notcurses.c:1883`); il carattere successivo lo sovrascriveva. Ctrl+W si ferma ancora, come nel C, su un
