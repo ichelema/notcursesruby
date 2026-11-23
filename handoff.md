@@ -92,8 +92,8 @@
   1315 esempi, 0 fallimenti, semi 1234, 4242 e 7, coverage 98,16 %, RuboCop 0, YARD 100 %, gem costruita, layer FFI
   invariato; CI della PR e di `master` verde. La CI di `master` prova anche `037c011`, che era arrivato senza CI. Log
   in `memory/backlog-issue.md`, esito in `RICONSEGNA.md`, retain in Hindsight fatto il 2026-11-23.
-- **Da fare:** l'utente avvia `/trinity:workflow:5_remove-worktree bug+ICH-576-580-577-581-opus` (si avvia solo a
-  mano). Il worktree ha il link temporaneo `notcurses/data` (non tracciato) verso il submodule del checkout principale.
+- Worktree e branch del lotto 8c rimossi il 2026-11-23 con `/trinity:workflow:5_remove-worktree` (il branch remoto
+  l'aveva già cancellato GitHub al merge).
 - **Lezioni del lotto 8c:**
   - prima della PR esegui la suite anche con i semi 1234, 4242 e 7 e la coverage, non solo in ordine normale: la prima
     CI del lotto è fallita per una spec che lasciava il cursore acceso nel contesto condiviso e per la coverage a
