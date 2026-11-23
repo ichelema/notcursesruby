@@ -11,8 +11,11 @@ S=/percorso/dello/scratchpad   # dal prompt di sistema della sessione
 # gate prima della PR (CLAUDE.md): la suite con la coverage e i tre semi, 4 esecuzioni.
 # COLORTERM serve alle 10 spec dei colori RGB, TERM fisso anche dentro Kitty o Ghostty
 
-# suite con la coverage, in ordine normale (report in coverage/; con una sola spec fallisce per la soglia);
-# se si blocca, il log dice quale spec
+# suite con la coverage, in ordine normale (report in coverage/). Eseguita su un solo file di spec fallisce per la
+# soglia. Con --out il terminale non mostra l'esito delle spec: leggi il riepilogo con
+# grep -E '^[0-9]+ examples?, ' "$S/coverage.log"; se la suite si blocca, il log dice quale spec. Exit 1: spec
+# fallite, soglia non controllata. Exit 2: coverage sotto la soglia. Se una spec fallisce, anche quella instabile di
+# punti-aperti.md, ripeti questo comando, con la coverage: la suite senza coverage non controlla la soglia
 TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 \
   bundle exec rspec --require ./spec/support/coverage.rb --format documentation --out "$S/coverage.log" < /dev/null
 # con un seme: ripeti con 1234, 4242 e 7
