@@ -34,7 +34,11 @@ git diff origin/master...HEAD | grep -E 'grapheme|\\X|\\p\{|unicode_normalize|st
 .claude/scripts/spec31 spec/...
 ```
 
-- Non eseguire due suite in parallelo: il carico della CPU rende instabili le spec dei pty.
+- Non eseguire due suite in parallelo: il carico della CPU rende instabili le spec dei pty. Prova del 2026-11-23 su
+  `master`: la suite con la coverage e la suite casuale insieme durano ~5 minuti invece di ~10, ma 1 coppia su 4 è
+  fallita in `spec/integration/ui_pty_spec.rb:786` (caso «coda piena», limite di 4 s). Riprova il parallelo solo
+  dopo il fix di ICH-595. Il vincolo vale anche fra sessioni diverse: prima di una suite controlla con
+  `pgrep -af rspec` che non giri la suite di un'altra sessione, per esempio quella del worktree di un lotto.
 - Prima di una suite lunga controlla `free -h` ([ambiente.md](ambiente.md)).
 - Non lanciare `rspec` con cwd in un checkout per provare il codice di un altro: `rspec` mette il `lib/` del cwd nel
   load path prima di `-I`. Nei worktree esegui la suite dalla radice del worktree. Senza `cd`, usa

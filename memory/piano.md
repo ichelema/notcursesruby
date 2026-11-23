@@ -22,7 +22,7 @@ Windows.
   [correzioni-review.md](correzioni-review.md).
 - Fase «Issue in Backlog», dal 2026-11-15, base `ad0315b`: lotti 1–8d fatti, PR #22…#34 (un capitolo per lotto in
   [backlog-issue.md](backlog-issue.md)). Modello passato ai comandi del workflow: `opus`.
-- Al 2026-11-23 restano 29 issue aperte: 15 nei lotti 9–15 (con il 9b), 13 senza lotto, ICH-463 in Blocked. Il
+- Al 2026-11-23 restano 31 issue aperte: 15 nei lotti 9–15 (con il 9b), 15 senza lotto, ICH-463 in Blocked. Il
   lotto 9 è in corso: PR #35.
 
 ## Criteri dei lotti
@@ -83,8 +83,11 @@ Ognuna aspetta la scelta dell'utente sul lotto.
 | ICH-590 | Low | Bug | Kitty 0.51 disegna il coniugato devanagari "क्ष" largo 1, notcurses e Ghostty lo contano largo 2: su Kitty il testo dopo si sposta | Lotto 8d. La misura su Kitty serve all'utente (display); il comportamento lo sceglie l'utente |
 | ICH-591 | Low | Bug | `putstr`/`putegc` di un EGC lungo con il pool quasi pieno: il ripristino del glifo di arrivo (lotto 8b) fallisce e il glifo va perso | Lotto 8d. `Plane#rehearse!` del lotto 8d può sostituire `with_glyph_kept`; tocca `plane.rb` come ICH-592 |
 | ICH-592 | Low | Bug | `Plane#base` con una base lunga e il pool pieno solleva `PlaneError` senza motivo (`ncplane_base` duplica nel pool) | Lotto 8d. Come ICH-490; tocca `plane.rb` come ICH-591 |
+| ICH-594 | Low | Performance | `Plane#putstr` scorre il testo più volte in Ruby prima del C: ~14x il C con un EGC da 6 MB, da 2,3x a 5x con un testo normale | Analisi dei tempi del gate (2026-11-23): le spec dell'egcpool costano 138 s su ~290 di suite. Tocca `plane.rb` e `with_glyph_kept` come ICH-591 e ICH-592 |
+| ICH-595 | Low | Bug | La spec pty di ICH-536 (`ui_pty_spec.rb:786`) supera a volte il limite di 4 s con la coda piena | Prova del parallelo (2026-11-23): 1 coppia su 4, e una volta in CI con una suite sola. Diversa da ICH-593. Il fix permette di riprovare le suite in parallelo ([comandi.md](comandi.md)) |
 
-- ICH-554 e ICH-556 hanno solo la label `Performance`: `1_create-worktree` può chiedere il prefisso del branch.
+- ICH-554, ICH-556 e ICH-594 hanno solo la label `Performance`: `1_create-worktree` può chiedere il prefisso del
+  branch.
 - ICH-214: il lotto 2 ha scartato la rotazione del framebuffer da Ruby, che non si rende sicura: un gestore `trap` o
   un altro thread può fare un resize fra la copia e la scrittura, e servirebbe un lock o codice C. La issue ammette
   un'altra strada: dopo uno scroll, `resize`, `duplicate`, `rotate_cw`, `rotate_ccw` e `merge_down` possono sollevare
