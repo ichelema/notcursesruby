@@ -52,8 +52,8 @@ TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5
 ## Terminale vero (Kitty)
 
 Solo in una sessione dentro Kitty ([ambiente.md](ambiente.md)). Per una prova a vista chiedi all'utente di confermare
-quello che vede. Dopo la prova il terminale deve tornare pulito (una regola della Fase 5). `kitty @ send-key` non
-manda il testo associato ai tasti.
+quello che vede. Dopo la prova il terminale torna pulito (regola 25 di [regole.md](regole.md)). `kitty @ send-key`
+non manda il testo associato ai tasti.
 
 ```sh
 # finestra nuova di Kitty, con il PATH del Ruby di mise; --foreground evita SIGTTOU

@@ -15,8 +15,8 @@ regole sono in [regole.md](regole.md) (regole 20–22).
 ## Gestori trap, segnali e thread
 
 - Un gestore `trap` gira anche al ritorno dei metodi C e dentro i blocchi, e `Thread.handle_interrupt` non lo
-  rinvia. I workaround che leggono i campi privati restringono le finestre e lo YARD lo dice: non rincorrere ogni
-  finestra in review (decisione dell'utente nel lotto 2).
+  rinvia. I workaround che leggono i campi privati restringono le finestre, e lo YARD lo dice: per questo la regola 23
+  chiede di non rincorrere ogni finestra in review (decisione dell'utente nel lotto 2).
 - Nei filtri non usare `nonzero?` (guardia di ricorsione: `NameError` con un trap che lo chiama), ma `!= 0`.
 - `Notcurses::Guard` (`lib/notcurses/guard.rb`) conta le operazioni del wrapper in corso. Ogni metodo nuovo che legge
   un puntatore C (`to_ptr`, `@ptr`, `Util.ptr_of`) inizia con `Guard.run`, altrimenti falliscono
@@ -38,12 +38,11 @@ regole sono in [regole.md](regole.md) (regole 20–22).
 
 ## Review
 
-- I reviewer provano l'egcpool pieno (EGC da 6 MB), i piani con bitmap su un pty finto (sixel e Kitty:
-  `bitmap_plane_script` in `spec/integration/pty_spec.rb`), i piani che hanno fatto scroll, le metà sinistre orfane,
-  i callback di resize che cambiano il piano e i gestori `trap` (lotti 1 e 2).
-- I reviewer eseguono rspec con `mise -C "<rev-path>" x -- bundle exec rspec ...`, come chiede `3_independent-review`:
-  il comando gira con cwd nel worktree di review e ne carica il `lib/` ([comandi.md](comandi.md)), senza `cd`. I file
-  di appoggio vanno solo in `<rev-path>/.review-tmp/`, l'unico posto che il comando ammette; dal 2026-11-22 la
-  cartella è in `.gitignore`. I reviewer non usano `rm` (Blast Radius, [ambiente.md](ambiente.md)).
-- Dopo una review con script su terminali muti controlla con `pgrep` i processi orfani fermi nell'init, prima di
-  rimuovere il worktree di review (lotto 8c: fermati con SIGTERM, usciti in meno di 3 s).
+Le istruzioni per i reviewer sono le regole 23 e 24 di [regole.md](regole.md). Qui restano i casi e i motivi.
+
+- La lista dei casi della regola 23 viene dalle review dei lotti 1 e 2, che hanno provato questi casi.
+- `mise -C "<rev-path>"` (regola 24) serve perché rspec carica il `lib/` del cwd ([comandi.md](comandi.md)) e
+  `3_independent-review` vieta il `cd` nel worktree di review. `.review-tmp/` è l'unico posto in cui il comando ammette
+  file; dal 2026-11-22 la cartella è in `.gitignore`. `rm` resta fuori per Blast Radius ([ambiente.md](ambiente.md)).
+- Il controllo con `pgrep` (regola 24) viene dal lotto 8c: gli script di prova del reviewer su terminali muti hanno
+  lasciato processi orfani fermi nell'init, fermati con SIGTERM e usciti in meno di 3 s.

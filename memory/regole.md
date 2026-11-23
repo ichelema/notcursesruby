@@ -2,8 +2,9 @@
 
 Le regole valgono per ogni lotto e per ogni modifica al codice: leggile per intero prima di `2_work-issue`. Sono
 vincolanti, non un consiglio come il resto della memoria, e valgono anche per le review. Le regole 1–10 vengono dalle
-fasi 1–5, le regole 11–17 dai lotti della revisione del 2026-11-06, le regole 18–22 dai lotti successivi. Spec,
-script e log citano le regole per numero: non rinumerarle. Una regola nuova prende il numero successivo.
+fasi 1–5, le regole 11–17 dai lotti della revisione del 2026-11-06, le regole 18–22 dai lotti successivi. Le regole
+23–25, sulle review e sulle prove, raccolgono istruzioni dei lotti e della Fase 5 (2026-11-23). Spec, script e log
+citano le regole per numero: non rinumerarle. Una regola nuova prende il numero successivo.
 
 1. Non cambiare la Fase 1 (`lib/notcurses/ffi/`, `lib/notcurses/ffi.rb`) senza l'approvazione dell'utente. Se un
    fix lo richiede, fermati e chiedi.
@@ -63,3 +64,13 @@ script e log citano le regole per numero: non rinumerarle. Una regola nuova pren
     all'utente il testo nuovo del criterio (regola «Acceptance criteria» del workflow in [CLAUDE.md](../CLAUDE.md)).
     `screen` usa `ncvt` (Ghostty): un terminale diverso, per esempio Kitty, si prova solo con un display (lotto 8b: il
     consiglio di `putstr` per le bandiere lasciava residui sullo schermo, trovato solo nel verify dopo la PR).
+23. Una review prova l'egcpool pieno (EGC da 6 MB), i piani con bitmap su un pty finto (sixel e Kitty:
+    `bitmap_plane_script` in `spec/integration/pty_spec.rb`), i piani che hanno fatto scroll, le metà sinistre
+    orfane, i callback di resize che cambiano il piano e i gestori `trap`. Non rincorre ogni finestra dei gestori
+    `trap`: i workaround che leggono i campi privati restringono le finestre, e lo YARD lo dice (decisione
+    dell'utente nel lotto 2).
+24. Un reviewer esegue rspec con `mise -C "<rev-path>" x -- bundle exec rspec ...`, senza `cd`, scrive i file di
+    appoggio solo in `<rev-path>/.review-tmp/` e non usa `rm`. Prima di rimuovere un worktree di review in cui sono
+    girati script su terminali muti, chi lo rimuove controlla con `pgrep` i processi orfani fermi nell'init.
+25. Dopo una prova su un terminale vero, per esempio Kitty, il terminale torna pulito: modo del tty, schermo normale,
+    cursore visibile, immagini kitty cancellate (regola 16 della Fase 5).

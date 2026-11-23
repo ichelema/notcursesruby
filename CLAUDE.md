@@ -49,7 +49,7 @@ Quando l'utente chiede di riprendere o di continuare (per esempio: riprendi, con
 
 Un lotto è un gruppo di issue corrette in un worktree, un branch e una PR. Le issue sono nel progetto Linear
 `notcursesruby` (team `ICH`): per leggerle e cambiarle usa la skill `trinity:linear`. L'ordine dei lotti, i criteri
-per comporli e le issue senza lotto sono in [memory/piano.md](memory/piano.md). Le 22 regole vincolanti sono in
+per comporli e le issue senza lotto sono in [memory/piano.md](memory/piano.md). Le regole vincolanti sono in
 [memory/regole.md](memory/regole.md): leggile per intero prima di `2_work-issue`. Valgono come regole di questo file,
 anche per le review. I comandi di suite, coverage e prove sono in [memory/comandi.md](memory/comandi.md).
 
@@ -106,7 +106,7 @@ autorizzato il merge.
 - **Review**: `4_review-fix-loop` lancia una review con `gpt-bridge:reviewer` e una con `trinity:reviewer` su Fable.
   Per la seconda passa `model: sonnet` ed `effort: max` al posto di Fable (scelta dell'utente del 2026-11-18). Il
   comando crea le issue dei finding residui senza chiedere: in questo progetto chiedi prima la conferma all'utente
-  (regola 16). Passa ai reviewer la sezione «Review» di [memory/lezioni.md](memory/lezioni.md).
+  (regola 16). Le istruzioni per i reviewer sono le regole 23 e 24 di [memory/regole.md](memory/regole.md).
 - **Worktree**: `git worktree remove` rifiuta un worktree con il submodule inizializzato. In un worktree di lotto usa
   `--force` solo se il worktree ha in più il submodule `notcurses` e `git status` è vuoto (scelta dell'utente del
   2026-11-08); negli altri casi chiedi conferma all'utente. Con il link di `notcurses/data`
