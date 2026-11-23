@@ -239,7 +239,8 @@ regole per numero: non rinumerarle. Una regola nuova prende il numero successivo
 18. RuboCop: `bundle exec rubocop` esce con 0 prima di ogni PR. Un file nuovo passa da ogni cop di Standard (stringhe
     con le virgolette doppie); `.rubocop_todo.yml` non va rigenerato per far passare codice nuovo (fino al lotto di
     ICH-469).
-19. Ogni file nuovo ha l'intestazione di due righe (`# Generated from notcurses 3.0.17` e `# Source: ...`).
+19. Ogni file Ruby nuovo in `lib/`, `spec/` ed `examples/` ha l'intestazione di due righe
+    (`# Generated from notcurses 3.0.17` e `# Source: ...`).
 20. Un controllo prima della chiamata C, o un workaround, che prevede il comportamento del C si scrive dopo aver letto
     per intero la funzione C che **scrive** (non solo quella che carica o legge), compreso il percorso d'errore e
     quello che cambia nel framebuffer prima del fallimento. Il commento del wrapper cita quelle righe (`file.c:riga`),
