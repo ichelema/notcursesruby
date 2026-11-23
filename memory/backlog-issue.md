@@ -1227,3 +1227,67 @@ C di ICH-582 e prototipo da un `trinity:deep-reasoner` in sola lettura; implemen
 - Linear: ICH-582 e ICH-586 a Done. Issue nuove in Backlog: ICH-590 (devanagari su Kitty), ICH-591 (ripristino di
   `putstr` con il pool quasi pieno), ICH-592 (`Plane#base` con il pool pieno). Worktree e branch rimossi il 2026-11-23
   con `/trinity:workflow:5_remove-worktree bug+ICH-582-586-opus`; il branch remoto l'aveva già cancellato GitHub.
+
+## Lotto 9 — ICH-230 (PR #35, merge `51aebe3`)
+
+Il 2026-11-23. Branch `bug/ICH-230-opus`, worktree `.claude/worktrees/bug+ICH-230-opus`. Implementazione
+dell'orchestratore; catena completa: `2_work-issue`, `2_work-simplify`, `2_work-verify`, `3_independent-review soft`,
+fix, review mirata `soft`, fix, `2_work-verify` sull'ultimo commit.
+
+### Fix
+
+- `5e51e3a` (ICH-230): keyword `max_partial_bytes:` di `LogView.new` (default 65 536, minimo 4) con `attr_reader`.
+  Metodi privati nuovi: `latest(line)`, il range del testo dopo l'ultimo `"\r"` che non sta in coda, e
+  `bound(partial)`, che toglie i byte più vecchi oltre il limite saltando al massimo 3 byte di continuazione UTF-8.
+  `"\r"` sostituisce la riga, anche nelle righe finite; `#lines` e il disegno mostrano la riga non finita dopo la
+  regola del `"\r"`. Prima un produttore senza `"\n"` costava 4,7 s per il primo MiB in blocchi da 4 KiB e 14 s per
+  il secondo (costo quadratico); dopo circa 0,6 s per MiB.
+- `62e099c` (simplify): `latest` trova la fine del testo con `rindex(/[^\r]/)` invece di un ciclo byte per byte.
+- `5fbf6d5` (review): la riga non finita tiene un solo `"\r"` in coda, così una serie di `"\r"` oltre il limite non
+  cancella il testo.
+- `2831f61` (review mirata): il limite si applica al testo prima di aggiungere l'unico `"\r"` in coda; YARD di
+  `max_partial_bytes` e dell'`attr_reader` aggiornati.
+
+### Decisioni
+
+- Dell'utente (AskUserQuestion dopo il worktree): `max_partial_bytes: 65_536`; `"\r"` sostituisce la riga (resta
+  l'ultimo pezzo non vuoto), scartata la sovrascrittura del terminale (`"100%\r20%"` darebbe `20%%`, con larghezze e
+  glifi larghi da gestire); la regola del `"\r"` vale anche per le righe finite, oltre i criteri della issue; taglio
+  al confine del carattere UTF-8, non del grapheme (non dipende dalla versione di Unicode di Ruby); fix dei due
+  finding LOW; issue nuova ICH-593 come lotto 9b, prima degli altri lotti.
+- Mie: minimo 4 per `max_partial_bytes` (un carattere UTF-8 spezzato in coda deve starci); `attr_reader` come
+  `max_lines`; `rindex` invece di una regex con backtracking su 64 KiB.
+- Fuori scope: una riga finita che arriva in un solo blocco resta intera, quindi può superare il limite di al massimo
+  un blocco (prova end-to-end del verify: 70 624 byte). La domanda su una issue resta all'utente.
+
+### Review
+
+- Primo giro (`trinity:reviewer` su Sonnet, effort high): APPROVABILE, un finding LOW CONFIRMED: i `"\r"` in coda
+  contavano nel limite (`"abc\r\r\r\r\r"` con limite 4, poi `"\n"`, dava `""`). Corretto in `5fbf6d5`.
+- Review mirata (stesso agente, con un fuzz di 200 000 casi): APPROVABILE, un finding LOW CONFIRMED: anche l'unico
+  `"\r"` contava nel limite (`"😀"`, `"\r"`, `"\n"` con limite 4 dava `""`). Corretto in `2831f61`.
+- Verify su `ncvt`: PASS tre volte (11, 12 e 17 prove), l'ultima su `2831f61`, anche end-to-end con `Subprocess` →
+  `App#post` → `LogView#append` dentro `App#run`; `master` mostrava `10%?20%?30%`.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| Suite locale ferma fino al timeout di 600 s con `--order rand:4242`, in `pty_spec.rb:744` | non trovata: confutata l'ipotesi del nipote `reader` che tiene la pipe di `run_child` | ripetuta con lo stesso seme: verde; ICH-593 |
+| Job Ruby 3.2.11 della PR fermo fino al timeout, in `pty_spec.rb:845` | il nipote `writer` di `fifo_raise_script` resta fermo su `File.open(fifo, "w")` e tiene la pipe di `run_child` | `gh run rerun 45237791816 --failed`: verde; ICH-593 |
+| Posizione dell'esempio fermo letta male (avevo detto «limite inferiore») | il formatter `progress` scrive con `sync = true` | conteggio dei punti e `rspec --dry-run --format json` ([comandi.md](comandi.md)) |
+| Job Ruby 4.0.9 della CI di `master` rosso al passo «Pacchetti dello snapshot» | timeout di `archive.archlinux.org` su `extra.db` | `gh run rerun 45244125178 --failed` |
+| `2_work-simplify` rifiutato il commit con `&&` | la sessione nel worktree non accetta comandi git composti | comandi git separati |
+
+### Verifica finale
+
+- PR: suite con la coverage e semi 1234, 4242 e 7 dopo ogni giro di fix; `.claude/scripts/spec31` sulla spec di
+  `LogView` (14 esempi); RuboCop; YARD. CI della PR verde su `2831f61` dopo il rilancio del job Ruby 3.2.11.
+- `master` su `51aebe3`, 2026-11-23: 1330 esempi, 0 fallimenti, 1 pending (`qrcode` sullo stub), con la coverage e
+  con i semi 1234, 4242 e 7; coverage 98,11 % di righe (6709 / 6838) e 90,11 % di rami (2231 / 2476); RuboCop 0
+  offense (109 file); YARD 100 %; `ruby -w` pulito; gem costruita (i warning di `gem build` vengono da `rdoc` 7.2.0 e
+  8.1.0 installati insieme in Ruby 4.0.7, non dal gemspec); `git diff ad0315b -- lib/notcurses/ffi
+  lib/notcurses/ffi.rb` vuoto. CI di `master` (run `45244125178`) verde su tutta la matrice dopo il rilancio del job
+  Ruby 4.0.9. Nessun cambio a `Gemfile` e `Gemfile.lock`.
+- Linear: ICH-230 a Done. Issue nuova in Backlog: ICH-593 (lotto 9b). Worktree e branch rimossi il 2026-11-23 con
+  `/trinity:workflow:5_remove-worktree bug+ICH-230-opus`; il branch remoto l'aveva già cancellato GitHub.

@@ -20,10 +20,9 @@ Windows.
   Fase 5 blitter su Kitty e Ghostty e porting su macOS (PR #20 e #21). Correzioni della revisione del 2026-11-06:
   17 lotti e ICH-465 fuori dai lotti, PR #2…#19. Log nei file `fase*.md` e in
   [correzioni-review.md](correzioni-review.md).
-- Fase «Issue in Backlog», dal 2026-11-15, base `ad0315b`: lotti 1–8d fatti, PR #22…#34 (un capitolo per lotto in
+- Fase «Issue in Backlog», dal 2026-11-15, base `ad0315b`: lotti 1–9 fatti, PR #22…#35 (un capitolo per lotto in
   [backlog-issue.md](backlog-issue.md)). Modello passato ai comandi del workflow: `opus`.
-- Al 2026-11-23 restano 31 issue aperte: 15 nei lotti 9–15 (con il 9b), 15 senza lotto, ICH-463 in Blocked. Il
-  lotto 9 è in corso: PR #35.
+- Al 2026-11-23 restano 30 issue aperte: 14 nei lotti 9b–15, 15 senza lotto, ICH-463 in Blocked.
 
 ## Criteri dei lotti
 
@@ -44,7 +43,6 @@ Una issue nata da un lotto entra in un lotto con la scelta dell'utente. Un lotto
 
 | Lotto | Prefisso | Issue | Priorità | Titolo |
 | --- | --- | --- | --- | --- |
-| 9 | `bug` | ICH-230 | Medium | Bound the unfinished line in LogView#append by bytes |
 | 9b | `bug` | ICH-593 | Medium | Evitare che un processo fermo nelle spec di pty_spec.rb blocchi l'intera suite fino al timeout di 600 s (nata dal lotto 9; prima degli altri lotti per scelta dell'utente del 2026-11-23) |
 | 10 | `bug` | ICH-220 | Medium | Make the Tabbed header follow plane resizes |
 | 10 | `bug` | ICH-221 | Medium | Fix Tree focus drift with items of different heights |
@@ -60,7 +58,7 @@ Una issue nata da un lotto entra in un lotto con la scelta dell'utente. Un lotto
 | 15 | `improvments` | ICH-469 | Low | Apply the safe RuboCop autocorrections and switch to double quotes |
 | 15 | `improvments` | ICH-470 | Low | Remove the redundant rubocop:disable comment in ui/component.rb |
 
-- ICH-219, ICH-220, ICH-221, ICH-227, ICH-230 e ICH-231 vengono dal gruppo ICH-214…ICH-232, che non ha un formato
+- ICH-219, ICH-220, ICH-221, ICH-227 e ICH-231 vengono dal gruppo ICH-214…ICH-232, che non ha un formato
   controllato. Se una issue non ha `Acceptance criteria`, proponi il testo all'utente e, dopo la conferma, scrivilo
   nella issue su Linear prima del fix.
 
