@@ -85,15 +85,20 @@ autorizzato il merge.
   fallisce, il fix e la suite completa (regola 11). Se il gate segue subito il fix (ultima issue del lotto, ultimo
   fix di un round di review), la suite della regola 11 è la suite con la coverage del gate: non eseguire prima la
   suite senza coverage.
-- **Prima della PR e dopo ogni round di fix della review**: suite completa con la coverage (vale come esecuzione in
-  ordine normale: non ripeterla senza coverage), una suite in ordine casuale con un seme nuovo (`--order rand`: il
-  seme lo sceglie rspec) e `bundle exec rubocop`. La CI controlla l'ordine casuale e la soglia della coverage: un
+- **Prima della PR e dopo ogni round di fix della review** (eccezioni in «Gate leggero»): suite completa con la
+  coverage (vale come esecuzione in ordine normale: non ripeterla senza coverage), una suite in ordine casuale con un
+  seme nuovo (`--order rand`: il seme lo sceglie rspec) e `bundle exec rubocop`. La CI controlla l'ordine casuale e la soglia della coverage: un
   controllo saltato in locale costa un giro di CI (lotto 8c in [memory/backlog-issue.md](memory/backlog-issue.md)).
   Se la suite in ordine casuale fallisce, ripetila con lo stesso seme (`--order rand:N`), non con un seme nuovo: un
   altro seme può nascondere la dipendenza. Se il fallimento si ripete e riguarda spec che il lotto non tocca,
   fermati e chiedi all'utente (regola 16). Se il diff tocca grapheme o Unicode, esegui le spec
   cambiate anche con `.claude/scripts/spec31` (regola 21). Prova sulla superficie ogni consiglio nuovo nei messaggi
   d'errore, nello YARD o nel `CHANGELOG` (regola 22): il piano di `2_work-issue` elenca i consigli e come provarli.
+- **Gate leggero**: alla fine di `2_work-simplify`, e dopo un round di fix della review che non cambia il
+  comportamento (refactor, rinomine, commenti, YARD), esegui solo la suite con la coverage e `bundle exec rubocop`,
+  senza la suite in ordine casuale: il codice è già passato da un gate completo, e la CI prova 5 ordini casuali.
+  Usa il gate completo se il round cambia file in `spec/`: hook, `let!` e helper condivisi possono creare una
+  dipendenza dall'ordine.
 - **PR**: nel corpo scrivi `Fixes ICH-<n>` per ogni issue che la PR risolve, ognuno sulla sua riga. Per una issue del
   lotto che la PR non risolve usa `Refs ICH-<n>` (lotto 4: ICH-463). Non citare issue fuori dal lotto, neanche con
   `Refs`: l'automazione GitHub → Linear le sposta a In Progress. Dopo ogni evento della PR controlla lo stato delle

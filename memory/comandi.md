@@ -9,6 +9,7 @@ scritto nel prompt di sistema: assegnalo a mano. Non esiste una variabile `$SCRA
 S=/percorso/dello/scratchpad   # dal prompt di sistema della sessione
 
 # gate prima della PR (CLAUDE.md): la suite con la coverage e una suite in ordine casuale, 2 esecuzioni.
+# Gate leggero (fine di 2_work-simplify, fix di review senza cambio di comportamento): solo la suite con la coverage
 # COLORTERM serve alle 10 spec dei colori RGB, TERM fisso anche dentro Kitty o Ghostty
 
 # suite con la coverage, in ordine normale (report in coverage/). Eseguita su un solo file di spec fallisce per la
