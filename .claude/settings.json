@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f \"$CLAUDE_PROJECT_DIR/handoff.md\" ]; then echo \"Progetto notcursesruby: il prompt di ripresa è in $CLAUDE_PROJECT_DIR/handoff.md. Se il primo messaggio chiede di riprendere o continuare il lavoro (per esempio: riprendi, continua, vai), leggi quel file per intero con il tool Read ed esegui il prompt che contiene. Se il messaggio chiede altro, segui quella richiesta e non leggere il file.\"; fi; exit 0"
+            "command": "if [ -f \"$CLAUDE_PROJECT_DIR/handoff.md\" ]; then echo \"Progetto notcursesruby: se il primo messaggio chiede di riprendere o continuare il lavoro (per esempio: riprendi, continua, vai), segui la sezione «Come riprendere il lavoro» di CLAUDE.md. Se il messaggio chiede altro, segui quella richiesta.\"; fi; exit 0"
           }
         ]
       }
