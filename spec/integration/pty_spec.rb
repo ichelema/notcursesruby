@@ -7,6 +7,7 @@ require 'io/console'
 require 'pty'
 require 'rbconfig'
 require 'tmpdir'
+require_relative '../support/nc_helpers'
 
 # Le funzioni che aspettano il terminale (init, posizione del cursore, readline)
 # rilasciano il GVL: nella Fase 1 sono collegate con blocking: true. Qui il
@@ -19,25 +20,7 @@ require 'tmpdir'
 RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
   def lib_dir = File.expand_path('../../lib', __dir__)
 
-  # Esegue script in un processo Ruby figlio e lo uccide dopo timeout secondi.
-  # @return [Array(String, Process::Status, Boolean)] output, stato, true se scaduto
-  def run_child(script, timeout:, env: {})
-    reader, writer = IO.pipe
-    pid = spawn(env, RbConfig.ruby, '-I', lib_dir, '-e', script, in: File::NULL, out: writer, err: writer)
-    writer.close
-    output = Thread.new { reader.read }
-    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
-    until (done = Process.wait2(pid, Process::WNOHANG))
-      if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-        Process.kill(:KILL, pid)
-        return [output.value, Process.wait2(pid).last, true]
-      end
-      sleep 0.05
-    end
-    [output.value, done.last, false]
-  ensure
-    reader&.close
-  end
+  def run_child(script, timeout:, env: {}) = NcHelpers.run_child(script, timeout:, env:)
 
   # Terminale finto: risponde a DA1 (\e[c) e alla richiesta della posizione del
   # cursore (\e[6n) nell'ordine delle query; un altro thread conta i passi.
@@ -803,6 +786,8 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
       rescue RuntimeError => e
         e.message
       end
+      # il writer resta fermo in open se il blocco non ha aperto la FIFO (ICH-593)
+      Process.kill(:KILL, writer)
       Process.wait(writer)
       puts "#{name}: #{result}"
     end
@@ -811,6 +796,12 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     Notcurses::Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true,
                             drain_input: true) do |nc|
       fds = Dir.children(fd_dir).size
+      # ICH-593: l'eccezione arriva prima che qualcuno apra la FIFO, e il writer resta fermo in open
+      interrupted.call('prima') do
+        current = Thread.current
+        Thread.new { current.raise(RuntimeError, 'interrotto') }.join
+        'nessuna eccezione'
+      end
       interrupted.call('from_file') do |fifo|
         raise_in.call(Thread.current)
         Notcurses::Visual.from_file(fifo) { }
@@ -846,7 +837,7 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     png = File.expand_path('../fixtures/visual/rgbw.png', __dir__)
     out, status, timed_out = run_child("PNG = #{png.dump}\n#{fifo_raise_script}", timeout: 30)
     expect(timed_out).to be(false), out
-    expect(out).to include('from_file: interrotto', 'fdplane: close', 'Context: descrittori in più 0',
+    expect(out).to include('prima: interrotto', 'from_file: interrotto', 'fdplane: close', 'Context: descrittori in più 0',
                            'load_image: interrotto', 'Direct: descrittori in più 0')
     expect(status.exitstatus).to eq(0), out
   end

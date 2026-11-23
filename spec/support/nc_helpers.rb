@@ -50,6 +50,66 @@ module NcHelpers
     [status.exitstatus, out]
   end
 
+  # Esegue script in un processo Ruby figlio, con lib/ nel load path e stdin
+  # vuoto, e lo uccide dopo timeout secondi: un crash o un blocco non fermano
+  # la suite. Un discendente del figlio (per esempio un nipote di spawn) eredita
+  # la pipe dell'output e la tiene aperta finché vive (ICH-593): al timeout
+  # muore con il figlio, e dopo l'uscita del figlio l'output si aspetta al
+  # massimo grace secondi. I discendenti si trovano con ps e non con un process
+  # group: con spawn(pgroup: true) Process.setsid fallisce con EPERM negli
+  # script che rendono un pty il loro terminale di controllo (ui_pty_spec.rb).
+  #
+  # @param env [Hash] variabili d'ambiente del figlio
+  # @param grace [Numeric] secondi di attesa dell'output dopo l'uscita del figlio
+  # @return [Array(String, Process::Status, Boolean)] output, stato, true se il
+  #   figlio è scaduto o se un discendente tiene ancora aperto l'output
+  def run_child(script, timeout:, env: {}, grace: 5)
+    lib = File.expand_path('../../lib', __dir__)
+    reader, writer = IO.pipe
+    pid = spawn(env, RbConfig.ruby, '-I', lib, '-e', script, in: File::NULL, out: writer, err: writer)
+    writer.close
+    output = ''.b
+    collector = Thread.new do # rubocop:disable ThreadSafety/NewThread -- legge l'output del figlio
+      loop { output << reader.readpartial(65_536) }
+    rescue IOError # anche EOFError
+      nil
+    end
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+    timed_out = false
+    until (done = Process.wait2(pid, Process::WNOHANG))
+      if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+        kill_tree(pid)
+        done = Process.wait2(pid)
+        timed_out = true
+        break
+      end
+      sleep 0.05
+    end
+    unless collector.join(grace)
+      collector.kill.join
+      output << "\n[run_child: dopo #{grace} s un processo discendente tiene aperto l'output]\n"
+      timed_out = true
+    end
+    [output.force_encoding(reader.external_encoding || Encoding.default_external), done.last, timed_out]
+  ensure
+    reader&.close
+  end
+
+  # Uccide con SIGKILL pid e tutti i suoi discendenti, trovati con ps prima del
+  # primo kill: dopo la morte del padre un figlio passa a init e non si trova
+  # più dal ppid.
+  def kill_tree(pid)
+    pairs = IO.popen(%w[ps -A -o pid= -o ppid=], &:read).lines.map { |line| line.split.map(&:to_i) }
+    children = pairs.group_by(&:last).transform_values { |list| list.map(&:first) }
+    tree = [pid]
+    tree.each { |p| tree.concat(children.fetch(p, [])) }
+    tree.each do |p|
+      Process.kill(:KILL, p)
+    rescue Errno::ESRCH
+      nil
+    end
+  end
+
   # Numero dei descrittori aperti del processo, compreso quello con cui Dir
   # legge {FD_DIR}.
   #

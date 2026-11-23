@@ -26,27 +26,7 @@ RSpec.describe 'Ciclo di vita (integrazione)' do
     Notcurses::Visual.from_rgba(([255, 0, 0, 255] * 4).pack('C*'), rows: 2, cols: 2)
   end
 
-  # Esegue script in un processo Ruby figlio e lo uccide dopo timeout secondi:
-  # un crash (SIGSEGV, abort) o un blocco non fermano la suite.
-  # @return [Array(String, Process::Status, Boolean)] output, stato, true se scaduto
-  def run_child(script, timeout:)
-    reader, writer = IO.pipe
-    pid = spawn({ 'TERM' => 'xterm-256color' }, RbConfig.ruby, '-I', LIB, '-e', script,
-                in: File::NULL, out: writer, err: writer)
-    writer.close
-    output = Thread.new { reader.read }
-    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
-    until (done = Process.wait2(pid, Process::WNOHANG))
-      if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-        Process.kill(:KILL, pid)
-        return [output.value, Process.wait2(pid).last, true]
-      end
-      sleep 0.05
-    end
-    [output.value, done.last, false]
-  ensure
-    reader&.close
-  end
+  def run_child(script, timeout:) = NcHelpers.run_child(script, timeout:, env: { 'TERM' => 'xterm-256color' })
 
   # Inizio comune degli script figli: name è la funzione FFI che solleva
   # Interrupt al ritorno, come Ruby consegna un SIGINT arrivato durante la
