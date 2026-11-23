@@ -75,22 +75,18 @@ module NcHelpers
       nil
     end
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
-    timed_out = false
-    until (done = Process.wait2(pid, Process::WNOHANG))
-      if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-        kill_tree(pid)
-        done = Process.wait2(pid)
-        timed_out = true
-        break
-      end
-      sleep 0.05
+    sleep 0.05 until (done = Process.wait2(pid, Process::WNOHANG)) || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+    timed_out = done.nil?
+    if timed_out
+      kill_tree(pid)
+      done = Process.wait2(pid)
     end
     unless collector.join(grace)
       collector.kill.join
       output << "\n[run_child: dopo #{grace} s un processo discendente tiene aperto l'output]\n"
       timed_out = true
     end
-    [output.force_encoding(reader.external_encoding || Encoding.default_external), done.last, timed_out]
+    [output.force_encoding(reader.external_encoding), done.last, timed_out]
   ensure
     reader&.close
   end
