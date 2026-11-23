@@ -519,8 +519,11 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
       Process.wait(monitor)
       stops = mon_r.read.split.map(&:to_f)
       puts "ctrl+z: #{reason} #{stops.size} #{when_s.(stops.first)}"
-      # più di 8192 tasti (la coda di notcurses) mentre un timer dorme, poi Ctrl+C
-      reason, ended = session.(-> { ev.after(0) { sleep 2 } }, 0.3, ('a' * 10_000) + "\e[99;5u")
+      # più di 8192 tasti (la coda di notcurses) mentre un timer dorme, poi Ctrl+C: senza il thread di input la coda
+      # si riempie e notcurses scarta il Ctrl+C. I tasti arrivano a blocchi, entro 1 s: in un blocco solo, con la
+      # CPU occupata, notcurses li mette in coda più in fretta di quanto il thread li legga, e scarta il Ctrl+C anche
+      # con il thread libero (in.c:523-527, limite nello YARD di EventLoop#run; ICH-595)
+      reason, ended = session.(-> { ev.after(0) { sleep 2 } }, 0.3, *(['a' * 1000, 0.05] * 10), "\e[99;5u")
       puts "coda piena: #{reason} #{format('%.1f s', ended - start)}"
       puts "kitty #{kitty.()}"
     end
