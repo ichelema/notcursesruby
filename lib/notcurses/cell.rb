@@ -29,10 +29,12 @@ module Notcurses
   #   {Plane#putstr} li scrive in due celle vicine. Solo da Unicode 15.1
   #   (Ruby 4.0): prima anche Ruby li divide, e Cell.new li rifiuta;
   # - bandiere ("🇮🇹", due indicatori regionali): due caratteri larghi 1
-  #   colonna per notcurses; {Plane#putstr} li scrive in due celle, ma molti
-  #   terminali (per esempio Ghostty) disegnano ogni indicatore largo 2, e il
-  #   testo dopo la bandiera si sposta: dopo una sovrascrittura restano
-  #   caratteri vecchi sullo schermo;
+  #   colonna; {Plane#putstr} li scrive in due celle vicine. Ghostty 1.4 e
+  #   Kitty 0.51 disegnano la bandiera larga 2, come la conta notcurses; un
+  #   terminale che non raggruppa i grapheme (per esempio libghostty-vt senza
+  #   il modo 2027) disegna ogni indicatore largo 2, e il testo dopo la
+  #   bandiera si sposta. Un indicatore regionale da solo, che anche Ghostty e
+  #   Kitty disegnano largo 2, Cell.new e {Plane#putstr} lo rifiutano;
   # - sillabe hangul scritte con i jamo L, V e T ("한"): il
   #   jamo T è largo 0 colonne; la forma composta ("한",
   #   String#unicode_normalize(:nfc)) si scrive;
@@ -62,7 +64,8 @@ module Notcurses
     #   notcurses vengono azzerati)
     # @raise [TypeError] se un argomento non è del tipo giusto
     # @raise [ArgumentError] se egc non è UTF-8 valido, contiene NUL, più di un
-    #   grapheme cluster o un carattere di controllo
+    #   grapheme cluster, un carattere di controllo o un indicatore regionale
+    #   da solo (notcurses lo conta largo 1, i terminali lo disegnano largo 2)
     # @raise [RangeError] se il codepoint non è valido
     def initialize(egc: ' ', styles: [], channels: 0)
       text = Cell.egc!(egc)
@@ -101,6 +104,7 @@ module Notcurses
       raise ArgumentError, "#{name} = #{value.inspect} contiene più di un grapheme cluster" if text.grapheme_clusters.size > 1
       raise ArgumentError, "#{name} = #{value.inspect} contiene un carattere di controllo" if text.match?(/\p{Cc}/)
 
+      Util.lone_regional_indicator!(text, name)
       text.frozen? ? text : text.dup.freeze
     end
 
@@ -126,11 +130,6 @@ module Notcurses
 
       head = "notcurses 3.0.17 divide #{Util.egc_label(egc)} in #{pieces.size} caratteri " \
              "(#{pieces.map { |s, _| Util.egc_label(s) }.join(", ")})"
-      if egc.match?(/\A\p{Grapheme_Cluster_Break=Regional_Indicator}+\z/)
-        # misurato con libghostty-vt: ogni indicatore regionale prende 2 colonne, notcurses ne conta 1
-        return CellError.new("#{head} e una cella ne tiene uno solo. Plane#putstr scrive una bandiera in due celle " \
-                             'larghe 1, ma molti terminali la disegnano più larga: il testo dopo si sposta')
-      end
       zero, = pieces.find { |_, width| width.zero? }
       return CellError.new("#{head} e una cella ne tiene uno solo: usa Plane#putstr, che li scrive in celle vicine") unless zero
 

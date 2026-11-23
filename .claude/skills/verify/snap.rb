@@ -13,9 +13,15 @@ module Screen
 
   module_function
 
-  # Context come lo vuole ncvt: terminfo fisso, niente banner, output sul terminale di ncvt (non /dev/null).
+  # Context come lo vuole ncvt: terminfo fisso, niente banner, output sul terminale di ncvt (non /dev/null). Prima
+  # accende il modo 2027 (larghezza per grapheme cluster), come fa l'app Ghostty: senza, libghostty-vt conta ogni
+  # codepoint da solo e disegna una bandiera larga 4 (ICH-586). notcurses non tocca il modo.
   # @return il valore del blocco; il contesto si chiude alla fine
-  def open(**opts, &block) = Notcurses::Context.open(termtype: "xterm-256color", suppress_banners: true, **opts, &block)
+  def open(**opts, &block)
+    $stdout.write("\e[?2027h")
+    $stdout.flush
+    Notcurses::Context.open(termtype: "xterm-256color", suppress_banners: true, **opts, &block)
+  end
 
   # Fa il render di nc e chiede a ncvt lo snapshot dello schermo, con label nella riga "=== snapshot" (al massimo
   # 255 byte); torna quando ncvt lo ha stampato. ncvt non mostra la larghezza delle celle: per i glifi larghi metti

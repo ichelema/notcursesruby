@@ -79,6 +79,19 @@ RSpec.describe Notcurses::UI::Label do
     expect(label.text).to eq("\u{1F44D} ok")
   end
 
+  # ICH-586: notcurses conta un indicatore regionale da solo largo 1 colonna, Ghostty e Kitty lo disegnano largo 2:
+  # il layout (Text.truncate, Text.wrap) e lo schermo non vanno più d'accordo sulle colonne.
+  it 'un indicatore regionale da solo è ArgumentError, una bandiera no' do
+    lone = "\u{1F1EE}"
+    flag = "\u{1F1EE}\u{1F1F9}"
+    expect { described_class.new(row(1), text: "#{lone} ok", size: 6) }.to raise_error(ArgumentError, /indicatore regionale da solo/)
+    expect { described_class.new(row(1), text: "#{flag}#{lone}", size: 6) }.to raise_error(ArgumentError, /indicatore regionale/)
+    label = described_class.new(row(1), text: "#{flag} ok", size: 6)
+    expect(label.plane.contents(y: 0, rows: 1)).to eq("#{flag} ok")
+    expect { label.text = "a\n#{lone}" }.to raise_error(ArgumentError, /indicatore regionale da solo/)
+    expect(label.text).to eq("#{flag} ok")
+  end
+
   # Review di ICH-232: il controllo del testo prima della creazione carica gli EGC nel pool del contenitore, che non
   # è il piano dove il componente scriverà; con quel pool pieno sollevava PlaneError.
   it "un testo con un EGC lungo è accettato anche con l'egcpool del contenitore pieno (prima: PlaneError)" do

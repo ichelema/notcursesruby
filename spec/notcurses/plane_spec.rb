@@ -1419,6 +1419,32 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    # ICH-586: notcurses conta un indicatore regionale da solo largo 1 colonna (wcwidth), Ghostty 1.4 e Kitty 0.51
+    # lo disegnano largo 2: il testo dopo si sposta e le scritture successive lasciano residui sullo schermo. Una
+    # bandiera (due indicatori) è larga 2 per notcurses e per i due terminali.
+    it 'le scritture rifiutano un indicatore regionale da solo e accettano la bandiera' do
+      with_parent(rows: 2, cols: 10) do |p|
+        lone = "\u{1F1EE}"
+        flag = "\u{1F1EE}\u{1F1F9}"
+        lone_error = [ArgumentError, /indicatore regionale da solo/]
+        {
+          putstr: -> { p.putstr("A#{lone}B", y: 0, x: 0) },
+          putstr_dopo_bandiera: -> { p.putstr("#{flag}#{lone}", y: 0, x: 0) },
+          putegc: -> { p.putegc(lone, y: 0, x: 0) },
+          puttext: -> { p.puttext("A #{lone}", y: 0) },
+          printf: -> { p.printf('%s', lone, y: 0, x: 0) },
+          putc: -> { p.putc(Notcurses::Cell.new(egc: lone), y: 0, x: 0) },
+          set_base: -> { p.set_base(egc: lone) },
+          gradient: -> { p.gradient(lone, 0, 0, 0, 0, rows: 1, cols: 2) }
+        }.each do |name, write|
+          expect { write.call }.to raise_error(*lone_error), name.to_s
+        end
+        expect([p.contents, p.base.egc]).to eq(['', ''])
+        expect(p.putstr("A#{flag}B", y: 0, x: 0)).to eq(4)
+        expect(p.contents).to eq("A#{flag}B")
+      end
+    end
+
     it 'putc scrive una Cell con il suo stile e i suoi colori' do
       with_parent(rows: 1, cols: 10) do |p|
         cell = Notcurses::Cell.new(egc: '★', styles: :bold, channels: red)

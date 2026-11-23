@@ -1772,7 +1772,12 @@ module Notcurses
     #   (U+200B, un segno combinante isolato, il keycap U+20E3 di "1️⃣", le
     #   vocali hangul separate): il C li mette in una cella propria e, con il
     #   cursore a fine riga, fuori dalla riga; U+2028 e U+2029 (il C li tronca a
-    #   un byte).
+    #   un byte);
+    # - un indicatore regionale da solo: notcurses lo conta largo 1 colonna,
+    #   Ghostty 1.4 e Kitty 0.51 lo disegnano largo 2, e il testo dopo si
+    #   sposta sullo schermo. Una bandiera (due indicatori) si scrive in due
+    #   celle larghe 1: Ghostty e Kitty la disegnano larga 2, un terminale che
+    #   non raggruppa i grapheme (libghostty-vt senza il modo 2027) larga 4.
     #
     # Bug di 3.0.17 aggirati:
     # - dopo uno ZWJ (U+200D) il C unisce tutto il resto del testo allo stesso
@@ -3261,6 +3266,7 @@ module Notcurses
       raise ArgumentError, "#{name} contiene un carattere di controllo" if str.match?(/(?!\n)\p{Cc}/)
       raise ArgumentError, "#{name} contiene U+2028 o U+2029, che notcurses tronca a un byte" if str.match?(/[\u2028\u2029]/)
 
+      Util.lone_regional_indicator!(str, name)
       zero_width_egc!(ptr, str, name) if str.match?(ZERO_WIDTH_CANDIDATES)
       str
     end

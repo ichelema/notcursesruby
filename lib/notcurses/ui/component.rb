@@ -38,8 +38,10 @@ module Notcurses
       # @raise [TypeError] se text non è String
       # @raise [ArgumentError] se text non è UTF-8 valido o contiene NUL, TAB,
       #   "\n" (senza newlines), un altro carattere di controllo, U+2028,
-      #   U+2029, un carattere di larghezza zero isolato o un grapheme che
-      #   notcurses scrive con un pezzo largo 0
+      #   U+2029, un carattere di larghezza zero isolato, un indicatore
+      #   regionale da solo (notcurses lo conta largo 1, i terminali lo
+      #   disegnano largo 2) o un grapheme che notcurses scrive con un pezzo
+      #   largo 0
       def check!(text, name, plane, newlines: false)
         str = Util.string!(text, name)
         raise ArgumentError, "#{name} contiene un TAB: espandilo prima (per esempio con String#gsub)" if str.include?("\t")
@@ -49,6 +51,7 @@ module Notcurses
         if str.match?(ZERO_WIDTH) && str.each_grapheme_cluster.any? { |g| zero_width?(g) }
           raise ArgumentError, "#{name} contiene un carattere di larghezza zero isolato"
         end
+        Util.lone_regional_indicator!(str, name)
 
         plane&.check_text!(str, name) unless str.ascii_only?
         -str
