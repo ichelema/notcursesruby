@@ -7,6 +7,7 @@ Aggiornato il 2026-11-23. Questo file dice solo cosa fare nella prossima session
 
 - Ultimo merge su `master`: PR #33 (lotto 8c: ICH-576, ICH-580, ICH-577, ICH-581), commit `38d4a8c`, il
   2026-11-23. Nessun lotto in corso e nessun worktree di lotto aperto.
+- Dopo il merge `master` ha solo commit di documentazione con `[skip ci]`: il codice è quello di `38d4a8c`.
 - Fase «Issue in Backlog»: lotti 1–8c fatti. Restano i lotti 8d–15 e 10 issue senza lotto
   ([memory/piano.md](memory/piano.md)). ICH-463 resta in Blocked, in attesa di un rilascio di notcurses con il fix.
 - Ultima suite su `master` (`38d4a8c`): 1315 esempi, 0 fallimenti, 1 pending, in ordine normale e con i semi 1234,
@@ -17,7 +18,8 @@ Aggiornato il 2026-11-23. Questo file dice solo cosa fare nella prossima session
 1. Se non li hai già fatti, esegui i passi 1–5 di «Come riprendere il lavoro» in [CLAUDE.md](CLAUDE.md).
 2. Il prossimo lotto è il **lotto 8d** (`bug`), scelto dall'utente il 2026-11-22: ICH-582 e ICH-586, tutte e due Low
    e nate dal lotto 8b. Toccano il codice di grapheme ed egcpool del lotto 8b (`plane.rb`, `cell.rb`). Leggi le due
-   issue per intero su Linear: i criteri di accettazione e i test richiesti sono la checklist del lotto.
+   issue per intero su Linear: i criteri di accettazione e i test richiesti sono la checklist del lotto. I bug di
+   notcurses legati alle due issue sono in [memory/bug-notcurses.md](memory/bug-notcurses.md), tabella «Piani».
    - ICH-582: con l'egcpool pieno le scritture con una `Cell` sollevano `CellError` invece di `PlaneError`. La issue
      elenca i metodi (`putc`, `hline`, `vline`, `polyfill`, `box`/`perimeter`, `gradient`) e chiede anche messaggi
      senza l'EGC intero e la misura di `set_base`. Dopo il lotto 8b `gradient` solleva già `PlaneError` dal C:
