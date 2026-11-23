@@ -86,9 +86,12 @@ autorizzato il merge.
   fix di un round di review), la suite della regola 11 è la suite con la coverage del gate: non eseguire prima la
   suite senza coverage.
 - **Prima della PR e dopo ogni round di fix della review**: suite completa con la coverage (vale come esecuzione in
-  ordine normale: non ripeterla senza coverage), suite con i semi 1234, 4242 e 7 e `bundle exec rubocop`. La CI
-  controlla l'ordine casuale e la soglia della coverage: un controllo saltato in locale costa un giro di CI (lotto 8c
-  in [memory/backlog-issue.md](memory/backlog-issue.md)). Se il diff tocca grapheme o Unicode, esegui le spec
+  ordine normale: non ripeterla senza coverage), una suite in ordine casuale con un seme nuovo (`--order rand`: il
+  seme lo sceglie rspec) e `bundle exec rubocop`. La CI controlla l'ordine casuale e la soglia della coverage: un
+  controllo saltato in locale costa un giro di CI (lotto 8c in [memory/backlog-issue.md](memory/backlog-issue.md)).
+  Se la suite in ordine casuale fallisce, ripetila con lo stesso seme (`--order rand:N`), non con un seme nuovo: un
+  altro seme può nascondere la dipendenza. Se il fallimento si ripete e riguarda spec che il lotto non tocca,
+  fermati e chiedi all'utente (regola 16). Se il diff tocca grapheme o Unicode, esegui le spec
   cambiate anche con `.claude/scripts/spec31` (regola 21). Prova sulla superficie ogni consiglio nuovo nei messaggi
   d'errore, nello YARD o nel `CHANGELOG` (regola 22): il piano di `2_work-issue` elenca i consigli e come provarli.
 - **PR**: nel corpo scrivi `Fixes ICH-<n>` per ogni issue che la PR risolve, ognuno sulla sua riga. Per una issue del

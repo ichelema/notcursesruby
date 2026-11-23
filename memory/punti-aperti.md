@@ -8,8 +8,8 @@ voce.
   aprire una issue: resta fuori dalla fase «Issue in Backlog».
 - **Esempio instabile di `getvec` in `spec/integration/pty_spec.rb`**: «get attende senza GVL, getvec legge più
   eventi, il timeout scade con nil e un Interrupt esce da get» (riga 433 al 2026-11-23, prima riga 173). La causa è
-  una gara di tempi: `getvec` si sveglia dopo il primo di 4 tasti. Se fallisce, ripeti la suite prima di cercare una
-  regressione.
+  una gara di tempi: `getvec` si sveglia dopo il primo di 4 tasti. Se fallisce, ripeti la suite con lo stesso seme
+  prima di cercare una regressione.
 - **Blocco non riprodotto in `spec/notcurses/ui/event_loop_spec.rb:716`** (lotto 3, `Thread#kill` durante la pulizia
   di `run`). Alla chiusura del lotto 7 la prima suite su `master` si è fermata lì una volta, con un `F` iniziale in
   `spec/ci_workflow_spec.rb:8` senza messaggio (rspec fermato prima del riepilogo). L'esempio passa da solo 5 volte su

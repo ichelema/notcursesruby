@@ -8,7 +8,7 @@ scritto nel prompt di sistema: assegnalo a mano. Non esiste una variabile `$SCRA
 ```sh
 S=/percorso/dello/scratchpad   # dal prompt di sistema della sessione
 
-# gate prima della PR (CLAUDE.md): la suite con la coverage e i tre semi, 4 esecuzioni.
+# gate prima della PR (CLAUDE.md): la suite con la coverage e una suite in ordine casuale, 2 esecuzioni.
 # COLORTERM serve alle 10 spec dei colori RGB, TERM fisso anche dentro Kitty o Ghostty
 
 # suite con la coverage, in ordine normale (report in coverage/). Eseguita su un solo file di spec fallisce per la
@@ -18,9 +18,11 @@ S=/percorso/dello/scratchpad   # dal prompt di sistema della sessione
 # punti-aperti.md, ripeti questo comando, con la coverage: la suite senza coverage non controlla la soglia
 TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 \
   bundle exec rspec --require ./spec/support/coverage.rb --format documentation --out "$S/coverage.log" < /dev/null
-# con un seme: ripeti con 1234, 4242 e 7
+# in ordine casuale con un seme nuovo, come la CI. rspec stampa "Randomized with seed N" all'inizio e alla fine
+# dell'output, anche se timeout ferma la suite: non filtrare l'output. Se una spec fallisce, ripeti con
+# --order rand:N (stesso ordine), non con un seme nuovo
 TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 \
-  bundle exec rspec --order rand:1234 < /dev/null
+  bundle exec rspec --order rand < /dev/null
 
 # fuori dal gate: suite completa senza coverage, dopo un fix seguito da altro codice prima del gate (regola 11).
 # Se il gate segue subito il fix, la suite della regola 11 è quella con la coverage del gate
