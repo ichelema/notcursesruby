@@ -9,17 +9,21 @@
 - GitHub cancella il branch remoto al merge (`delete_branch_on_merge`, attivo dal 2026-11-22). `5_remove-worktree` lo
   trova assente e non fa il push con `--force-with-lease`, che Blast Radius metterebbe in coda.
 
-## Macchina
+## Macchine
 
-- Checkout in `/Dati/Sviluppo/Progetti/Personali/20261027_notcursesruby` (CachyOS, Linux x86_64). `/Dati` è un link a
-  `/mnt/data`.
+- Il checkout è in `/Dati/Sviluppo/Progetti/Personali/20261027_notcursesruby` (`/Dati` è un link a `/mnt/data`) su due
+  macchine Linux x86_64: la VPS `infomaniak` (Arch Linux, hostname `ov-beb073`) e la macchina Linux locale (CachyOS).
+  Il 2026-11-23 la sessione gira sulla VPS.
+- L'utente può indicare un percorso della VPS con il prefisso `/Infomaniak`, come lo vede da un'altra macchina: sulla
+  VPS `/Infomaniak/Dati/AI/Claude/hindsight-mod` è `/Dati/AI/Claude/hindsight-mod` (correzione dell'utente del
+  2026-11-23).
 - notcurses 3.0.17 di sistema, con `/usr/lib/libnotcurses-ffi.so.3`. Ruby 4.0.7 da mise.
 - Ruby 3.1.7 locale non ha `rspec` né `ffi`, e con Bundler 4 del lockfile `bundle` non parte: usa
   `.claude/scripts/spec31 spec/...` dalla radice del checkout o del worktree. Lo script installa la prima volta
   `rspec` 3.13.2 e `ffi` 1.17.4 in `~/.claude/tmp/gems31`, che resta tra le sessioni, ed esegue rspec senza `bundle`.
-- La sessione di Claude Code non ha un display: il 2026-11-23 `DISPLAY`, `WAYLAND_DISPLAY` e `KITTY_WINDOW_ID` sono
-  vuoti, anche se `kitty` è installato. Una prova su Kitty la fa l'utente; `kitty @ launch` ([comandi.md](comandi.md))
-  funziona solo in una sessione dentro Kitty.
+- Sulla VPS la sessione di Claude Code non ha un display: il 2026-11-23 `DISPLAY`, `WAYLAND_DISPLAY` e
+  `KITTY_WINDOW_ID` sono vuoti, anche se `kitty` è installato. Lì una prova su Kitty la fa l'utente. `kitty @ launch`
+  ([comandi.md](comandi.md)) funziona solo in una sessione dentro Kitty: controlla prima `KITTY_WINDOW_ID`.
 - Con la memoria quasi finita il sistema ferma i comandi in background, e le spec dei pty e la coverage si bloccano
   (lotto 8b): prima di una suite lunga controlla `free -h`.
 - Blast Radius mette in coda per la conferma dell'utente ogni comando con `rm` o `rm -rf`, anche sotto

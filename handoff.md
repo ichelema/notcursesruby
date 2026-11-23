@@ -34,7 +34,8 @@ Aggiornato il 2026-11-23. Questo file dice solo cosa fare nella prossima session
    ```
 
 4. Dopo il worktree, prima di `2_work-issue`, chiedi all'utente la scelta di comportamento di ICH-586 (regola 14).
-   La sessione non ha un display: la misura su Kitty la fa l'utente, oppure proponigli di cambiare il criterio.
+   Sulla VPS la sessione non ha un display: lì la misura su Kitty la fa l'utente, oppure proponigli di cambiare il
+   criterio.
 5. Dopo il lotto 8d continua con l'ordine di [memory/piano.md](memory/piano.md).
 
 ## Decisioni che servono all'utente
