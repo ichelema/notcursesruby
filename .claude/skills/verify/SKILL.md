@@ -69,7 +69,7 @@ Uso: `~/.claude/tmp/libghostty-vt/harness/ncvt [-c COLONNE] [-r RIGHE] [-t SECON
 
 ### Prova rapida: `screen`
 
-Per controllare in un minuto cosa vede l'utente, anche durante l'implementazione (regola 22 di `CLAUDE.md`: un
+Per controllare in un minuto cosa vede l'utente, anche durante l'implementazione (regola 22 di `memory/regole.md`: un
 consiglio in un messaggio o nello YARD si prova sullo schermo prima del commit). Lo script di prova usa la lib del
 checkout che contiene `screen` (anche un worktree) e due helper di `snap.rb`, caricato da `screen`:
 

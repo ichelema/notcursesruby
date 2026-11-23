@@ -2,7 +2,7 @@
 
 Insidie del codice, dei test e delle review emerse dai lotti, da applicare ai lotti futuri. La storia di ogni lotto è
 nei log ([backlog-issue.md](backlog-issue.md), [correzioni-review.md](correzioni-review.md)). Le lezioni diventate
-regole sono in [CLAUDE.md](../CLAUDE.md), sezione «Regole vincolanti» (regole 20–22).
+regole sono in [regole.md](regole.md) (regole 20–22).
 
 ## Glifi larghi, egcpool e celle
 

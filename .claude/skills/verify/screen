@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # screen: esegue uno script Ruby di prova sotto ncvt (libghostty-vt, il nucleo di Ghostty) e stampa gli snapshot
-# dello schermo, per provare in un minuto cosa vede l'utente (regola 22 di CLAUDE.md). Lo script usa l'API pubblica
+# dello schermo, per provare in un minuto cosa vede l'utente (regola 22 di memory/regole.md). Lo script usa l'API pubblica
 # con la lib del checkout che contiene questo file, e Screen.open / Screen.snap(nc, etichetta) di snap.rb.
 #
 # Uso: .claude/skills/verify/screen [-c COLONNE] [-r RIGHE] [-t SECONDI] [-a] prova.rb [argomenti]

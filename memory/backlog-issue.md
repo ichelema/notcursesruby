@@ -1,7 +1,7 @@
 # Issue in Backlog — log
 
 Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti in [piano.md](piano.md), regole in
-[CLAUDE.md](../CLAUDE.md); esito in `RICONSEGNA.md`, sezione "Issue in Backlog".
+[regole.md](regole.md); esito in `RICONSEGNA.md`, sezione "Issue in Backlog".
 
 ## Prima di iniziare (2026-11-15)
 
