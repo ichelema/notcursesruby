@@ -104,8 +104,7 @@ module Notcurses
 
       # Byte del testo più recente di line: l'ultimo pezzo non vuoto fra due "\r", senza i "\r" in coda.
       def latest(line)
-        stop = line.bytesize
-        stop -= 1 while stop.positive? && line.getbyte(stop - 1) == 13 # "\r"
+        stop = line.rindex(/[^\r]/)&.succ || 0
         cr = stop.positive? && line.rindex("\r", stop - 1)
         (cr ? cr + 1 : 0)...stop
       end
