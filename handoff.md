@@ -8,7 +8,7 @@ Aggiornato il 2026-11-23. Questo file dice solo cosa fare nella prossima session
 - Ultimo merge su `master`: PR #35 (lotto 9: ICH-230), commit `51aebe3`, il 2026-11-23. Dopo il merge `master` ha
   solo commit di documentazione con `[skip ci]`: il codice è quello di `51aebe3`. Nessun lotto in corso e nessun
   worktree di lotto aperto.
-- Fase «Issue in Backlog»: lotti 1–9 fatti. Restano i lotti 9b, 9c e 10–15 e 13 issue senza lotto
+- Fase «Issue in Backlog»: lotti 1–9 fatti. Restano i lotti 9b, 9c e 10–15 e 14 issue senza lotto
   ([memory/piano.md](memory/piano.md)). ICH-463 resta in Blocked, in attesa di un rilascio di notcurses con il fix.
 - Ultima suite su `master` (`51aebe3`): 1330 esempi, 0 fallimenti, 1 pending, con la coverage e con i semi 1234, 4242
   e 7; coverage 98,11 % di righe e 90,11 % di rami; RuboCop 0 offense; YARD 100 %. CI di `master` verde (run
@@ -39,10 +39,8 @@ Aggiornato il 2026-11-23. Questo file dice solo cosa fare nella prossima session
 
 ## Decisioni che servono all'utente
 
-- `LogView`: una riga finita che arriva in un solo blocco resta intera, quindi può superare `max_partial_bytes` di al
-  massimo un blocco (fuori scope di ICH-230 per scelta dell'utente). Aprire una issue o no.
-- Il lotto delle 13 issue aperte senza lotto, fra cui ICH-542 (High) e quattro Medium: elenco e note in
-  [memory/piano.md](memory/piano.md), «Issue senza lotto». ICH-591 e ICH-592 toccano lo stesso codice di `plane.rb`
+- Il lotto delle 14 issue aperte senza lotto, fra cui ICH-542 (High), quattro Medium e ICH-596 (righe finite di
+  `LogView`, nata dal lotto 9): elenco e note in [memory/piano.md](memory/piano.md), «Issue senza lotto». ICH-591 e ICH-592 toccano lo stesso codice di `plane.rb`
   di ICH-594 (lotto 9c). La scelta non blocca il lotto 9b.
 - Lingua delle issue su Linear: le issue dal lotto 8d in poi sono in italiano (regola 15, scelta dell'utente del
   2026-11-23); le issue più vecchie sono in inglese. Tradurle o no.
