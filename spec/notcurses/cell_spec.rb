@@ -82,6 +82,13 @@ RSpec.describe Notcurses::Cell do
       end
     end
 
+    # ICH-586: notcurses conta un indicatore regionale da solo largo 1 colonna, Ghostty e Kitty lo disegnano largo 2,
+    # e il testo dopo si sposta sullo schermo
+    it 'Cell.new rifiuta un indicatore regionale da solo e accetta la bandiera' do
+      expect { described_class.new(egc: "\u{1F1EE}") }.to raise_error(ArgumentError, /indicatore regionale da solo/)
+      expect(described_class.new(egc: "\u{1F1EE}\u{1F1F9}").egc).to eq("\u{1F1EE}\u{1F1F9}")
+    end
+
     it 'solleva CellError quando notcurses divide il grapheme (bandiere)' do
       nc.stdplane.create_child(rows: 1, cols: 10) do |p|
         flag = described_class.new(egc: "\u{1F1EE}\u{1F1F9}")
@@ -108,9 +115,9 @@ RSpec.describe Notcurses::Cell do
 
       def message_for(name, egc)
         case name
-        # Plane#putstr scrive la bandiera in due celle larghe 1, ma molti terminali (Ghostty) la disegnano più larga
-        when :flag then /divide #{Regexp.escape(egc.inspect)} in 2 caratteri .*Plane#putstr.*più larga.*si sposta/
-        when :ksha then /divide #{Regexp.escape(egc.inspect)} in 2 caratteri .*usa Plane#putstr/
+        # ICH-586: Ghostty 1.4 e Kitty 0.51 disegnano la bandiera larga 2, come notcurses (prima il messaggio diceva
+        # che molti terminali la disegnano più larga: lo faceva solo ncvt senza il modo 2027)
+        when :flag, :ksha then /divide #{Regexp.escape(egc.inspect)} in 2 caratteri .*usa Plane#putstr(?!.*larga)/
         when :jamo then /#{Regexp.escape(egc.inspect)}.*largo 0.*Plane#putstr.*forma composta "\u{D55C}"/
         else /#{Regexp.escape(egc.inspect)}.*largo 0.*Plane#putstr/
         end

@@ -319,6 +319,30 @@ module Notcurses
     # @return [String] egc.inspect, oppure l'inizio e i byte
     def egc_label(egc) = (egc.bytesize > 32) ? "#{egc[0, 3].inspect}... (#{egc.bytesize} byte)" : egc.inspect
 
+    # Indicatori regionali: due in fila formano una bandiera.
+    REGIONAL_INDICATOR = /[\u{1F1E6}-\u{1F1FF}]/
+
+    # Rifiuta un indicatore regionale da solo (un grapheme cluster con un solo
+    # indicatore): notcurses 3.0.17 lo conta largo 1 colonna (+wcwidth+),
+    # Ghostty 1.4 e Kitty 0.51 lo disegnano largo 2 (misurato il 2026-11-23),
+    # e il testo dopo si sposta sullo schermo (ICH-586). Una bandiera è larga
+    # 2 per notcurses e per i due terminali.
+    # @api private
+    # @param str [String] testo UTF-8 valido
+    # @param name [String] nome usato nel messaggio d'errore
+    # @return [void]
+    # @raise [ArgumentError] se str contiene un indicatore regionale da solo
+    def lone_regional_indicator!(str, name)
+      return unless str.match?(REGIONAL_INDICATOR)
+
+      lone = str.each_grapheme_cluster.find { |g| g.scan(REGIONAL_INDICATOR).size == 1 }
+      return unless lone
+
+      raise ArgumentError, "#{name} contiene #{egc_label(lone)}, un indicatore regionale da solo: notcurses lo conta " \
+                           'largo 1 colonna, i terminali lo disegnano largo 2 e il testo dopo si sposta (due indicatori ' \
+                           'formano una bandiera)'
+    end
+
     # --- dal C a Ruby ---
 
     # Stringa restituita da un :string di FFI (copia BINARY) in UTF-8.

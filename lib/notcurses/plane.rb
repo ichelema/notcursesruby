@@ -1443,7 +1443,9 @@ module Notcurses
     # @param styles [Integer, Symbol, Array<Symbol>] stili
     # @param channels [Channels, Integer] colori
     # @return [self]
-    # @raise [PlaneError] se notcurses rifiuta l'EGC
+    # @raise [PlaneError] se l'egcpool del piano (16 MiB) non ha spazio per
+    #   l'EGC (il messaggio nomina l'egcpool; la base resta com'era), o se
+    #   notcurses rifiuta l'EGC
     # @raise [CellError] se notcurses divide il grapheme in più caratteri (vedi
     #   {Cell}): il C terrebbe solo il primo
     # @raise [TypeError, ArgumentError] se un argomento non è valido (più di un
@@ -1455,10 +1457,12 @@ module Notcurses
         text = Cell.egc!(egc)
         mask = Util.styles_value(styles)
         chans = Util.channels_value(channels)
-        # ncplane_set_base tiene il primo pezzo di un grapheme diviso, senza errore (ICH-217)
-        split = Cell.split_error(ptr, text) unless text.ascii_only?
-        raise split if split
-
+        # ncplane_set_base tiene il primo pezzo di un grapheme diviso, senza errore (ICH-217); single_egc! divide
+        # anche con l'egcpool pieno
+        single_egc!(ptr, text) unless text.ascii_only?
+        # con il pool pieno il C ha già scritto stili e canali e rilasciato l'EGC vecchio (notcurses.h:754-756,
+        # internal.h:1449, 1464)
+        rehearse!(ptr, text) { |copy| FFI.ncplane_set_base(copy, text, mask, chans) }
         Util.check!(FFI.ncplane_set_base(ptr, text, mask, chans), PlaneError, 'ncplane_set_base')
         self
       end
@@ -1768,7 +1772,12 @@ module Notcurses
     #   (U+200B, un segno combinante isolato, il keycap U+20E3 di "1️⃣", le
     #   vocali hangul separate): il C li mette in una cella propria e, con il
     #   cursore a fine riga, fuori dalla riga; U+2028 e U+2029 (il C li tronca a
-    #   un byte).
+    #   un byte);
+    # - un indicatore regionale da solo: notcurses lo conta largo 1 colonna,
+    #   Ghostty 1.4 e Kitty 0.51 lo disegnano largo 2, e il testo dopo si
+    #   sposta sullo schermo. Una bandiera (due indicatori) si scrive in due
+    #   celle larghe 1: Ghostty e Kitty la disegnano larga 2, un terminale che
+    #   non raggruppa i grapheme (libghostty-vt senza il modo 2027) larga 4.
     #
     # Bug di 3.0.17 aggirati:
     # - dopo uno ZWJ (U+200D) il C unisce tutto il resto del testo allo stesso
@@ -1922,8 +1931,10 @@ module Notcurses
     # @raise [TypeError] se cell non è una Cell
     # @raise [ArgumentError] se le coordinate sono fuori dal piano
     # @raise [CellError] se notcurses non accetta l'EGC della cella
-    # @raise [PlaneError] se la cella non entra nel piano, o se notcurses
-    #   rifiuta la scrittura
+    # @raise [PlaneError] se la cella non entra nel piano, se l'egcpool del
+    #   piano (16 MiB) non ha spazio per l'EGC (una scrittura con una Cell ne
+    #   tiene nel pool anche una copia temporanea; il piano resta com'era, il
+    #   messaggio nomina l'egcpool), o se notcurses rifiuta la scrittura
     # @raise [Exception] l'eccezione di un callback Ruby di resize
     # @raise [ClosedError] se il piano è chiuso
     def putc(cell, y: nil, x: nil)
@@ -1933,9 +1944,12 @@ module Notcurses
 
         cols = [cell.width, 1].max
         ty, tx = text_target!(cell.egc, cols, cols, y: y, x: x, align: nil, stained: false)
-        rc = with_nccells(ptr, [cell]) { |nc| FFI.ncplane_putc_yx(ptr, ty, tx, nc) }
+        rc = with_nccells(ptr, [cell]) do |nc|
+          rehearse!(ptr, cell.egc) { |copy| FFI.ncplane_putc_yx(copy, ty, tx, nc) }
+          FFI.ncplane_putc_yx(ptr, ty, tx, nc)
+        end
         @context.raise_callback_errors!
-        Util.check!(rc, PlaneError, "ncplane_putc_yx(#{cell.egc.inspect})")
+        Util.check!(rc, PlaneError, "ncplane_putc_yx(#{Util.egc_label(cell.egc)})")
       end
     end
 
@@ -2329,8 +2343,11 @@ module Notcurses
     # @return [self]
     # @raise [ArgumentError, TypeError] se un argomento non è valido
     # @raise [CellError] se notcurses non accetta il carattere
-    # @raise [PlaneError] se il cursore è oltre il bordo, o se notcurses
-    #   rifiuta la scrittura (la linea può restare disegnata in parte)
+    # @raise [PlaneError] se il cursore è oltre il bordo, se l'egcpool del
+    #   piano (16 MiB) non ha spazio per l'EGC e per le sue copie (il C ne
+    #   tiene una per la linea e una per cella; il piano e il cursore restano
+    #   com'erano, il messaggio nomina l'egcpool), o se notcurses rifiuta la
+    #   scrittura (la linea può restare disegnata in parte)
     # @raise [RenderError] su uno stdplane che scorre, come in {#putstr}
     # @raise [Exception] l'eccezione di un callback Ruby di resize
     # @raise [ClosedError] se il piano è chiuso
@@ -2344,9 +2361,13 @@ module Notcurses
         Util.integer!(len, 'len', 1..max)
         c1, c2 = interp_channels!(from, to)
         sync_scrolling_stdplane!(ptr, len > cols - left)
-        move_cursor(top, left)
         rc = with_nccells(ptr, [line]) do |nc|
-          c1.nil? ? FFI.ncplane_hline(ptr, nc, len) : FFI.ncplane_hline_interp(ptr, nc, len, c1, c2)
+          draw = lambda do |target|
+            Util.check!(FFI.ncplane_cursor_move_yx(target, top, left), PlaneError, "ncplane_cursor_move_yx(#{top}, #{left})")
+            c1.nil? ? FFI.ncplane_hline(target, nc, len) : FFI.ncplane_hline_interp(target, nc, len, c1, c2)
+          end
+          rehearse!(ptr, line.egc, &draw)
+          draw.call(ptr)
         end
         @context.raise_callback_errors!
         Util.check!(rc, PlaneError, 'ncplane_hline_interp')
@@ -2369,8 +2390,9 @@ module Notcurses
     # @return [self]
     # @raise [ArgumentError, TypeError] se un argomento non è valido
     # @raise [CellError] se notcurses non accetta il carattere
-    # @raise [PlaneError] se il cursore è oltre il bordo, o se notcurses
-    #   rifiuta la scrittura
+    # @raise [PlaneError] se il cursore è oltre il bordo, se l'egcpool del
+    #   piano (16 MiB) non ha spazio per l'EGC e per le sue copie (come in
+    #   {#hline}), o se notcurses rifiuta la scrittura
     # @raise [ClosedError] se il piano è chiuso
     def vline(cell, len, y: nil, x: nil, from: nil, to: nil)
       Guard.run do
@@ -2379,9 +2401,13 @@ module Notcurses
         top, left = line_start!(y, x)
         Util.integer!(len, 'len', 1..(dim_y - top))
         c1, c2 = interp_channels!(from, to)
-        move_cursor(top, left)
         rc = with_nccells(ptr, [line]) do |nc|
-          c1.nil? ? FFI.ncplane_vline(ptr, nc, len) : FFI.ncplane_vline_interp(ptr, nc, len, c1, c2)
+          draw = lambda do |target|
+            Util.check!(FFI.ncplane_cursor_move_yx(target, top, left), PlaneError, "ncplane_cursor_move_yx(#{top}, #{left})")
+            c1.nil? ? FFI.ncplane_vline(target, nc, len) : FFI.ncplane_vline_interp(target, nc, len, c1, c2)
+          end
+          rehearse!(ptr, line.egc, &draw)
+          draw.call(ptr)
         end
         Util.check!(rc, PlaneError, 'ncplane_vline_interp')
         self
@@ -2412,8 +2438,10 @@ module Notcurses
     # @raise [ArgumentError, TypeError] se un argomento non è valido (anche un
     #   box che non entra nel piano)
     # @raise [CellError] se notcurses non accetta un glifo
-    # @raise [PlaneError] se notcurses rifiuta il disegno (il box può restare
-    #   disegnato in parte)
+    # @raise [PlaneError] se l'egcpool del piano (16 MiB) non ha spazio per i
+    #   glifi e per le loro copie (come in {#hline}; il piano e il cursore
+    #   restano com'erano, il messaggio nomina l'egcpool), o se notcurses
+    #   rifiuta il disegno (il box può restare disegnato in parte)
     # @raise [ClosedError] se il piano è chiuso
     def box(rows, cols, y: nil, x: nil, set: :light, styles: 0, channels: 0, hide: [], gradient: [], corners: 0)
       Guard.run do
@@ -2425,9 +2453,9 @@ module Notcurses
         raise ArgumentError, "il box #{rows}x#{cols} in (#{top}, #{left}) esce dal piano #{prows}x#{pcols}" if top + rows > prows || left + cols > pcols
 
         ctl = box_ctlword(hide, gradient, corners)
-        move_cursor(top, left)
-        rc = with_box_cells(ptr, set, styles, channels) do |ul, ur, ll, lr, hl, vl|
-          FFI.ncplane_box(ptr, ul, ur, ll, lr, hl, vl, top + rows - 1, left + cols - 1, ctl)
+        rc = with_box_cells(ptr, set, styles, channels) do |target, ul, ur, ll, lr, hl, vl|
+          Util.check!(FFI.ncplane_cursor_move_yx(target, top, left), PlaneError, "ncplane_cursor_move_yx(#{top}, #{left})")
+          FFI.ncplane_box(target, ul, ur, ll, lr, hl, vl, top + rows - 1, left + cols - 1, ctl)
         end
         Util.check!(rc, PlaneError, 'ncplane_box')
         self
@@ -2464,16 +2492,20 @@ module Notcurses
     # @return [Integer] celle riempite (0 se la cella di partenza ha già l'EGC di cell)
     # @raise [ArgumentError, TypeError] se un argomento non è valido
     # @raise [CellError] se notcurses non accetta il carattere
-    # @raise [PlaneError] se il riempimento fallisce
+    # @raise [PlaneError] se l'egcpool del piano (16 MiB) non ha spazio per il
+    #   carattere e per le sue copie (una per cella; il piano resta com'era,
+    #   il messaggio nomina l'egcpool), o se il riempimento fallisce
     # @raise [ClosedError] se il piano è chiuso
     def polyfill(cell, y: nil, x: nil)
       Guard.run do
         ptr = to_ptr
         fill = line_cell!(cell)
         top, left = line_start!(y, x)
-        keep_glyphs_whole(ptr, 0, 0, dim_y, dim_x, all: true, long_fill: fill.egc.bytesize > 4) do # regione non nota
-          rc = with_nccells(ptr, [fill]) { |nc| FFI.ncplane_polyfill_yx(ptr, top, left, nc) }
-          Util.check!(rc, PlaneError, 'ncplane_polyfill_yx')
+        with_nccells(ptr, [fill]) do |nc|
+          rehearse!(ptr, fill.egc) { |copy| FFI.ncplane_polyfill_yx(copy, top, left, nc) }
+          keep_glyphs_whole(ptr, 0, 0, dim_y, dim_x, all: true, long_fill: fill.egc.bytesize > 4) do # regione non nota
+            Util.check!(FFI.ncplane_polyfill_yx(ptr, top, left, nc), PlaneError, 'ncplane_polyfill_yx')
+          end
         end
       end
     end
@@ -2501,23 +2533,27 @@ module Notcurses
     # @return [Integer] celle scritte
     # @raise [ArgumentError, TypeError] se un argomento non è valido
     # @raise [CellError] se notcurses non accetta egc
-    # @raise [PlaneError] se il riempimento fallisce
+    # @raise [PlaneError] se l'egcpool del piano (16 MiB) non ha spazio per le
+    #   copie di egc (una per cella; il piano resta com'era, il messaggio
+    #   nomina l'egcpool), o se il riempimento fallisce
     # @raise [ClosedError] se il piano è chiuso
     def gradient(egc, ul, ur, ll, lr, y: 0, x: 0, rows: nil, cols: nil, styles: 0)
       Guard.run do
         ptr = to_ptr
         text = Cell.egc!(egc)
         unless text.empty?
-          raise ArgumentError, "gradient: egc #{text.inspect} deve essere largo 1 colonna" unless Notcurses.strwidth(text) == 1
+          raise ArgumentError, "gradient: egc #{Util.egc_label(text)} deve essere largo 1 colonna" unless Notcurses.strwidth(text) == 1
 
           single_egc!(ptr, text)
         end
         corners = corner_values([ul, ur, ll, lr], 64)
         top, left, height, width = region!(y, x, rows, cols)
         corners_shape!(corners, height, width, rows_rule: true)
+        mask = Util.styles_value(styles)
+        # con il pool pieno il C ha già scritto le celle prima, e azzerato i canali di quella che fallisce (fill.c:259-263)
+        rehearse!(ptr, text) { |copy| FFI.ncplane_gradient(copy, top, left, height, width, text, mask, *corners) }
         keep_glyphs_whole(ptr, top, left, height, width, long_fill: text.bytesize > 4) do
-          Util.check!(FFI.ncplane_gradient(ptr, top, left, height, width, text, Util.styles_value(styles), *corners),
-                      PlaneError, 'ncplane_gradient')
+          Util.check!(FFI.ncplane_gradient(ptr, top, left, height, width, text, mask, *corners), PlaneError, 'ncplane_gradient')
         end
       end
     end
@@ -3230,6 +3266,7 @@ module Notcurses
       raise ArgumentError, "#{name} contiene un carattere di controllo" if str.match?(/(?!\n)\p{Cc}/)
       raise ArgumentError, "#{name} contiene U+2028 o U+2029, che notcurses tronca a un byte" if str.match?(/[\u2028\u2029]/)
 
+      Util.lone_regional_indicator!(str, name)
       zero_width_egc!(ptr, str, name) if str.match?(ZERO_WIDTH_CANDIDATES)
       str
     end
@@ -3393,17 +3430,65 @@ module Notcurses
       pieces = 0
       return if nc_pieces(ptr, text) { pieces += 1 } == text.bytesize && pieces == 1
 
-      raise Cell.split_error(ptr, text) || CellError.new("notcurses divide #{text.inspect} in più caratteri")
+      raise Cell.split_error(ptr, text) || CellError.new("notcurses non legge #{Util.egc_label(text)} come un solo carattere")
     end
 
     # Copia le Cell in nccell temporanee del piano, esegue il blocco e le
-    # rilascia: una nccell non deve sopravvivere all'operazione.
+    # rilascia: una nccell non deve sopravvivere all'operazione. Una cella che
+    # non si carica è divisa da notcurses (CellError, controllo con il pool
+    # vuoto di {#nc_pieces}) o non trova spazio nell'egcpool (PlaneError).
     def with_nccells(ptr, cells)
       ncs = cells.map { FFI::NcCell.new }
-      cells.each_with_index { |cell, i| cell.load_into(ptr, ncs[i]) }
+      cells.each_with_index do |cell, i|
+        next if cell.load_into(ptr, ncs[i])
+
+        single_egc!(ptr, cell.egc)
+        raise PlaneError, "l'egcpool del piano (16 MiB) non ha spazio per #{Util.egc_label(cell.egc)}"
+      end
       yield(*ncs)
     ensure
       ncs&.each { |nc| FFI.nccell_release(ptr, nc) }
+    end
+
+    # Prova la scrittura del blocco su una copia del piano e solleva
+    # PlaneError se lì fallisce: con un EGC di più di 4 byte una scrittura
+    # fallita cambia il piano. Il C rilascia e ricolora la cella di arrivo
+    # prima di copiare l'EGC nell'egcpool (notcurses.c:1911-1950), le linee e
+    # i box si fermano dopo le prime celle e lasciano nel pool la loro copia
+    # di lavoro (notcurses.c:2207-2211, 2268-2272), polyfill e gradient si
+    # fermano dopo le prime celle (fill.c:40-42, 259-263), set_base perde la
+    # base vecchia (internal.h:1449-1464). Con argomenti già controllati, una
+    # scrittura con un EGC lungo fallisce solo in egcpool_stash
+    # (egcpool.c:27-99). ncplane_dup copia framebuffer, cursore, cella base e
+    # pool byte per byte (notcurses.c:784-798, egcpool.h:215-229), quindi le
+    # nccell caricate su ptr valgono anche sulla copia; non copia scrolling,
+    # autogrow (flags 0, notcurses.c:776) e logrow, che il wrapper ripristina.
+    # Limiti: un callback Ruby di resize che cambia il pool durante la
+    # scrittura vera, e lo sprite di un piano con un bitmap (la copia non lo
+    # ha, ma il C rifiuta comunque prima di cambiare celle, notcurses.c:1850).
+    #
+    # @param egcs [Array<String>] EGC della scrittura: senza EGC lunghi niente prova
+    # @yieldparam copy [::FFI::Pointer] la copia, da usare al posto di ptr
+    # @yieldreturn [Integer] il ritorno della funzione C
+    def rehearse!(ptr, *egcs)
+      long = egcs.select { |egc| egc.bytesize > 4 }
+      return if long.empty?
+
+      copy = Util.check_ptr!(FFI.ncplane_dup(ptr, ::FFI::Pointer::NULL), PlaneError, 'ncplane_dup')
+      begin
+        FFI.ncplane_set_resizecb(copy, ::FFI::Pointer::NULL)
+        FFI.ncplane_set_scrolling(copy, 1) if scrolling?
+        FFI.ncplane_set_autogrow(copy, 1) if autogrow?
+        if (from = internals(ptr)) && (to = internals(copy))
+          to[:logrow] = from[:logrow]
+        end
+        rc = yield copy
+      ensure
+        FFI.ncplane_destroy(copy)
+      end
+      return unless rc.negative?
+
+      raise PlaneError, "l'egcpool del piano (16 MiB) non ha spazio per #{long.map { |egc| Util.egc_label(egc) }.join(', ')}"
     end
 
     # Righe del testo a capo sulle parole, per una larghezza di cols colonne.
@@ -3453,7 +3538,7 @@ module Notcurses
     def line_cell!(cell)
       cell = Cell.new(egc: cell, styles: styles, channels: channels) if cell.is_a?(String)
       raise TypeError, "cell deve essere Notcurses::Cell o String, non #{cell.class}" unless cell.is_a?(Cell)
-      raise ArgumentError, "il carattere #{cell.egc.inspect} deve essere largo 1 colonna" unless cell.width == 1
+      raise ArgumentError, "il carattere #{Util.egc_label(cell.egc)} deve essere largo 1 colonna" unless cell.width == 1
 
       cell
     end
@@ -3529,7 +3614,9 @@ module Notcurses
       BOX_SIDES.fetch(side) { raise ArgumentError, "#{name}: lato #{side.inspect} non valido: usa :top, :right, :bottom o :left" }
     end
 
-    # Le 6 nccell temporanee di un box (ul ur ll lr hl vl).
+    # Le 6 nccell temporanee di un box (ul ur ll lr hl vl). Il blocco riceve
+    # prima il piano su cui disegnare: una copia per la prova di {#rehearse!},
+    # poi ptr.
     def with_box_cells(ptr, set, styles, channels, &block)
       case set
       when Symbol then with_named_box(ptr, set, Util.styles_value(styles), Util.channels_value(channels), &block)
@@ -3549,11 +3636,14 @@ module Notcurses
       end
     end
 
-    def box_cells(ptr, cells, &block)
+    def box_cells(ptr, cells)
       wide = cells.find { |c| c.width != 1 }
-      raise ArgumentError, "i glifi del box devono essere larghi 1 colonna: #{wide.egc.inspect}" if wide
+      raise ArgumentError, "i glifi del box devono essere larghi 1 colonna: #{Util.egc_label(wide.egc)}" if wide
 
-      with_nccells(ptr, cells, &block)
+      with_nccells(ptr, cells) do |*ncs|
+        rehearse!(ptr, *cells.map(&:egc)) { |copy| yield(copy, *ncs) }
+        yield(ptr, *ncs)
+      end
     end
 
     def with_named_box(ptr, set, mask, chans)
@@ -3568,7 +3658,7 @@ module Notcurses
            end
       raise CellError, "nccells_#{set}_box fallita" if rc.negative?
 
-      yield(*ncs)
+      yield(ptr, *ncs) # i glifi dei set hanno al massimo 3 byte: non passano dall'egcpool, niente prova
     ensure
       ncs&.each { |nc| FFI.nccell_release(ptr, nc) }
     end

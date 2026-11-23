@@ -66,6 +66,18 @@ Uso: `~/.claude/tmp/libghostty-vt/harness/ncvt [-c COLONNE] [-r RIGHE] [-t SECON
 - ncvt non mostra la larghezza delle celle: per i glifi larghi stampa `Plane#at` nell'etichetta. `Plane#at` mostra la
   cella di notcurses, non quanto avanza il terminale: per la larghezza disegnata da Ghostty confronta la colonna della
   riga `cursor x=..` prima e dopo la stampa.
+- **Modo 2027.** libghostty-vt misura la larghezza dei grapheme come l'app Ghostty solo con il modo 2027 acceso
+  (`"\e[?2027h"`, larghezza per grapheme cluster). Senza, conta ogni codepoint da solo: una bandiera è larga 4 invece
+  di 2. notcurses non tocca il modo. `Screen.open` di `screen` lo accende; uno script lanciato con ncvt direttamente
+  lo scrive su stdout prima di `Context.open`. Misure del 2026-11-23 (ICH-586), con la colonna del cursore prima e
+  dopo il testo:
+
+  | Testo | notcurses | Ghostty 1.4.0 | Kitty 0.51.0 | ncvt senza 2027 | ncvt con 2027 |
+  | --- | --- | --- | --- | --- | --- |
+  | bandiera `🇮🇹` | 2 | 2 | 2 | 4 | 2 |
+  | indicatore regionale da solo `🇮` | 1 | 2 | 2 | 2 | 2 |
+  | `漢` | 2 | 2 | 2 | 2 | 2 |
+  | coniugato `क्ष` | 2 | 2 | 1 | 2 | 2 |
 
 ### Prova rapida: `screen`
 
@@ -79,7 +91,7 @@ Screen.open do |nc|
   pl.putstr("A🇮🇹B", y: 0, x: 0)
   Screen.snap(nc, "bandiera: contents=#{pl.contents.inspect}")
   pl.putstr("xyz", y: 0, x: 1)
-  Screen.snap(nc, "sovrascritta")   # schermo: "Axyz B", la B vecchia resta (ICH-586)
+  Screen.snap(nc, "sovrascritta")   # schermo: "Axyz"; senza il modo 2027 "Axyz B", con la B vecchia (ICH-586)
 end
 ```
 

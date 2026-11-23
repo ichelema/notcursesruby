@@ -1419,6 +1419,32 @@ RSpec.describe Notcurses::Plane do
       end
     end
 
+    # ICH-586: notcurses conta un indicatore regionale da solo largo 1 colonna (wcwidth), Ghostty 1.4 e Kitty 0.51
+    # lo disegnano largo 2: il testo dopo si sposta e le scritture successive lasciano residui sullo schermo. Una
+    # bandiera (due indicatori) è larga 2 per notcurses e per i due terminali.
+    it 'le scritture rifiutano un indicatore regionale da solo e accettano la bandiera' do
+      with_parent(rows: 2, cols: 10) do |p|
+        lone = "\u{1F1EE}"
+        flag = "\u{1F1EE}\u{1F1F9}"
+        lone_error = [ArgumentError, /indicatore regionale da solo/]
+        {
+          putstr: -> { p.putstr("A#{lone}B", y: 0, x: 0) },
+          putstr_dopo_bandiera: -> { p.putstr("#{flag}#{lone}", y: 0, x: 0) },
+          putegc: -> { p.putegc(lone, y: 0, x: 0) },
+          puttext: -> { p.puttext("A #{lone}", y: 0) },
+          printf: -> { p.printf('%s', lone, y: 0, x: 0) },
+          putc: -> { p.putc(Notcurses::Cell.new(egc: lone), y: 0, x: 0) },
+          set_base: -> { p.set_base(egc: lone) },
+          gradient: -> { p.gradient(lone, 0, 0, 0, 0, rows: 1, cols: 2) }
+        }.each do |name, write|
+          expect { write.call }.to raise_error(*lone_error), name.to_s
+        end
+        expect([p.contents, p.base.egc]).to eq(['', ''])
+        expect(p.putstr("A#{flag}B", y: 0, x: 0)).to eq(4)
+        expect(p.contents).to eq("A#{flag}B")
+      end
+    end
+
     it 'putc scrive una Cell con il suo stile e i suoi colori' do
       with_parent(rows: 1, cols: 10) do |p|
         cell = Notcurses::Cell.new(egc: '★', styles: :bold, channels: red)
@@ -2303,8 +2329,8 @@ RSpec.describe Notcurses::Plane do
       end
 
       it "con l'egcpool pieno dopo il riempimento la pulizia svuota lo stesso la metà orfana (prima: \"XYZ\")" do
-        # [riempimento, solleva?]: 5,2 MB ci stanno tre volte e il C riesce; con 6 MB il C si ferma a metà,
-        # con il glifo dentro il rettangolo
+        # [riempimento, solleva?]: 5,2 MB ci stanno tre volte e il C riesce; 6 MB non ci stanno quattro volte, e
+        # da ICH-582 la prova su una copia del piano lo rifiuta prima di cambiare il piano
         [
           [->(p) { p.gradient('e' + ("\u0301" * 2_600_000), 0, 0, 0, 0, rows: 1, cols: 3) }, false],
           [->(p) { p.gradient('e' + ("\u0301" * 3_000_000), 0, 0, 0, 0, rows: 1, cols: 4) }, true]
@@ -2313,7 +2339,7 @@ RSpec.describe Notcurses::Plane do
             p.putstr('ab漢', y: 0, x: 0)
             p.putstr('WXYZ', y: 1, x: 0)
             if raises
-              expect { fill.call(p) }.to raise_error(Notcurses::PlaneError, /ncplane_gradient/)
+              expect { fill.call(p) }.to raise_error(Notcurses::PlaneError, /egcpool/)
             else
               expect(fill.call(p)).to eq(3)
             end
@@ -2434,6 +2460,160 @@ RSpec.describe Notcurses::Plane do
         expect(c.at(y: 10, x: 21).egc).to eq('')
         c.putstr('中', y: 10, x: 20)
         expect(c.contents(y: 11, rows: 1)).to eq('WXYZ')
+      end
+    end
+
+    # ICH-582: con l'egcpool pieno le scritture con una Cell sollevavano CellError (come se la cella non fosse
+    # valida), con l'EGC intero nel messaggio; con il pool quasi pieno il C cambiava il piano prima di fallire.
+    describe "con l'egcpool pieno (ICH-582)" do
+      let(:grad) { Notcurses::Channels.rgb(10, 20, 30, 40, 50, 60) }
+      let(:dash) { Notcurses::Cell.new(egc: '-', styles: :italic) }
+
+      # Le scritture con l'EGC egc sulla riga 2 (occupata) e sulla riga 3 (vuota).
+      def cell_writes(p, egc)
+        cell = Notcurses::Cell.new(egc: egc, styles: :italic, channels: grad)
+        {
+          putc: -> { p.putc(cell, y: 2, x: 0) },
+          putc_meta_destra: -> { p.putc(cell, y: 2, x: 3) },
+          putc_cursore: -> { p.putc(cell) },
+          hline: -> { p.hline(cell, 3, y: 2, x: 0) },
+          hline_sfumata: -> { p.hline(cell, 3, y: 2, x: 0, from: grad, to: grad) },
+          hline_stringa: -> { p.hline(egc, 3, y: 2, x: 0) },
+          vline: -> { p.vline(cell, 2, y: 2, x: 0) },
+          polyfill: -> { p.polyfill(cell, y: 2, x: 0) },
+          polyfill_vuote: -> { p.polyfill(cell, y: 3, x: 0) },
+          box_celle: -> { p.box(2, 3, y: 2, x: 0, set: [dash, dash, dash, dash, cell, dash]) },
+          box_stringa: -> { p.box(2, 3, y: 2, x: 0, set: "abcd#{egc}f") },
+          perimeter: -> { p.perimeter(set: [dash, dash, dash, dash, dash, cell]) },
+          gradient: -> { p.gradient(egc, grad, grad, grad, grad, y: 2, x: 0, rows: 1, cols: 3) },
+          gradient_vuote: -> { p.gradient(egc, grad, grad, grad, grad, y: 3, x: 0, rows: 1, cols: 3) },
+          set_base: -> { p.set_base(egc: egc, styles: :italic, channels: grad) }
+        }
+      end
+
+      def expect_unchanged_failures(p, egc, except: [])
+        cell_writes(p, egc).except(*except).each do |name, write|
+          p.move_cursor(*((name == :putc_cursore) ? [3, 0] : [0, 1]))
+          before = NcHelpers.plane_snapshot(p)
+          base = p.base
+          error = begin
+            write.call
+            nil
+          rescue => e
+            e
+          end
+          expect(error).to be_a(Notcurses::PlaneError), "#{name}: #{error.class} #{error&.message.to_s[0, 100]}"
+          expect(error.message).to match(/egcpool/), name.to_s
+          expect(error.message.bytesize).to be < 200, name.to_s
+          expect(NcHelpers.plane_snapshot(p)).to eq(before), name.to_s
+          expect(p.base).to eq(base), name.to_s
+        end
+      end
+
+      it 'con due EGC da 6 MB nel piano, una scrittura con un terzo solleva PlaneError e il piano non cambia' do
+        with_parent(rows: 4, cols: 8) do |p|
+          p.set_base(egc: '.', styles: :bold, channels: grad)
+          NcHelpers.fill_egcpool(p)
+          NcHelpers.occupy_row(p, 2)
+          expect_unchanged_failures(p, NcHelpers.big_egc('c'))
+        end
+      end
+
+      it 'con un EGC da 6 MB nel piano la nccell entra e la copia della scrittura no: PlaneError, piano invariato' do
+        with_parent(rows: 4, cols: 8) do |p|
+          p.set_base(egc: '.', styles: :bold, channels: grad)
+          NcHelpers.fill_egcpool(p, ys: [0])
+          NcHelpers.occupy_row(p, 2)
+          # set_base non usa una nccell: 6 + 6 MB entrano
+          expect_unchanged_failures(p, NcHelpers.big_egc('c'), except: [:set_base])
+        end
+      end
+
+      it 'una linea rifiutata non lascia nel pool la copia di lavoro del C (prima: 5 MB persi fino a erase)' do
+        with_parent(rows: 4, cols: 8) do |p|
+          NcHelpers.fill_egcpool(p, ys: [0])
+          NcHelpers.occupy_row(p, 2)
+          cell = Notcurses::Cell.new(egc: NcHelpers.big_egc('c')[0, 1 + 2_500_000]) # 5 MB: nccell e dupc entrano, la cella no
+          {
+            hline: -> { p.hline(cell, 3, y: 2, x: 0) },
+            vline: -> { p.vline(cell, 2, y: 2, x: 0) },
+            box: -> { p.box(2, 3, y: 2, x: 0, set: [dash, dash, dash, dash, cell, dash]) }
+          }.each do |name, write|
+            p.move_cursor(0, 1)
+            before = NcHelpers.plane_snapshot(p)
+            expect { write.call }.to raise_error(Notcurses::PlaneError, /egcpool/), name.to_s
+            expect(NcHelpers.plane_snapshot(p)).to eq(before), name.to_s
+          end
+          # 6 + 6 MB entrano solo se le copie dupc (notcurses.c:2207-2209, 2268-2270) non sono rimaste nel pool
+          expect(p.putstr(NcHelpers.big_egc('d'), y: 1, x: 0)).to eq(1)
+        end
+      end
+
+      it 'le scritture che entrano nel pool riescono come prima' do
+        with_parent(rows: 4, cols: 8) do |p|
+          NcHelpers.fill_egcpool(p)
+          big = NcHelpers.big_egc('c')
+          # gradient non usa una nccell: il C rilascia la cella di arrivo prima di copiare (fill.c:259-261)
+          expect(p.gradient(big, grad, grad, grad, grad, y: 0, x: 0, rows: 2, cols: 1)).to eq(2)
+          expect([p.at(y: 0, x: 0).egc, p.at(y: 1, x: 0).egc]).to eq([big, big])
+        end
+        with_parent(rows: 4, cols: 8) do |p|
+          mid = NcHelpers.big_egc('c')[0, 1 + 1_500_000] # 3 MB
+          cell = Notcurses::Cell.new(egc: mid)
+          expect(p.putc(cell, y: 0, x: 0)).to eq(1)
+          p.hline(cell, 2, y: 1, x: 0) # nccell + dupc + 2 celle + quella della riga 0 = 15 MB
+          expect(p.at(y: 1, x: 1).egc).to eq(mid)
+          expect { p.hline(cell, 3, y: 2, x: 0) }.to raise_error(Notcurses::PlaneError, /egcpool/)
+          expect(p.at(y: 2, x: 0).egc).to eq('')
+          p.set_base(egc: mid)
+          expect(p.base.egc).to eq(mid)
+        end
+      end
+
+      it 'una cella che notcurses divide davvero solleva ancora CellError' do
+        with_parent(rows: 4, cols: 8) do |p|
+          NcHelpers.fill_egcpool(p)
+          before = NcHelpers.plane_snapshot(p)
+          flag = "\u{1F1EE}\u{1F1F9}"
+          expect { p.putc(Notcurses::Cell.new(egc: flag), y: 2, x: 0) }.to raise_error(Notcurses::CellError, /divide/)
+          expect { p.set_base(egc: flag) }.to raise_error(Notcurses::CellError, /divide/)
+          cell_writes(p, "1\uFE0F\u20E3").each do |name, write|
+            expect { write.call }.to raise_error(Notcurses::CellError, /divide/), name.to_s
+          end
+          # una bandiera con 3 milioni di segni combinanti: il secondo pezzo (6 MB) non entra nel pool, e prima
+          # set_base teneva in silenzio il primo indicatore
+          long_flag = "#{flag}#{"\u0301" * 3_000_000}"
+          [-> { p.putc(Notcurses::Cell.new(egc: long_flag), y: 2, x: 0) }, -> { p.set_base(egc: long_flag) }].each do |write|
+            expect { write.call }.to raise_error(Notcurses::CellError) { |e| expect(e.message.bytesize).to be < 300 }
+          end
+          expect(NcHelpers.plane_snapshot(p)).to eq(before)
+          expect(p.base.egc).to eq('')
+        end
+      end
+
+      it 'dopo uno scroll la prova usa le stesse righe del piano (logrow)' do
+        with_parent(rows: 3, cols: 8, vscroll: true) do |p|
+          p.putstr("r1\nr2\nr3\nr4\nr5", y: 0, x: 0) # due scroll
+          p.putstr(NcHelpers.big_egc('a'), y: 0, x: 0)
+          p.putstr(NcHelpers.big_egc('b')[0, 1 + 500_000], y: 1, x: 0) # 6 + 1 MB
+          cell = Notcurses::Cell.new(egc: NcHelpers.big_egc('c')[0, 1 + 2_500_000]) # 5 MB: entra solo sopra i 6 MB della riga 0
+          p.move_cursor(2, 0)
+          before = NcHelpers.plane_snapshot(p)
+          expect { p.putc(cell, y: 2, x: 0) }.to raise_error(Notcurses::PlaneError, /egcpool/)
+          expect(NcHelpers.plane_snapshot(p)).to eq(before)
+          expect(p.putc(cell, y: 0, x: 0)).to eq(1)
+          expect(p.at(y: 0, x: 0).egc).to eq(cell.egc)
+        end
+      end
+
+      it 'i messaggi non contengono un EGC di megabyte' do
+        with_parent(rows: 4, cols: 8) do |p|
+          wide = "漢#{"\u0301" * 1_000_000}"
+          short = ->(e) { expect(e.message.bytesize).to be < 200 }
+          expect { p.hline(Notcurses::Cell.new(egc: wide), 2) }.to raise_error(ArgumentError, &short)
+          expect { p.gradient(wide, grad, grad, grad, grad) }.to raise_error(ArgumentError, &short)
+          expect { p.box(2, 2, set: ([dash] * 5) + [Notcurses::Cell.new(egc: wide)]) }.to raise_error(ArgumentError, &short)
+        end
       end
     end
   end
