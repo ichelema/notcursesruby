@@ -8,14 +8,20 @@ scritto nel prompt di sistema: assegnalo a mano. Non esiste una variabile `$SCRA
 ```sh
 S=/percorso/dello/scratchpad   # dal prompt di sistema della sessione
 
-# suite completa; COLORTERM serve alle 10 spec dei colori RGB, TERM fisso anche dentro Kitty o Ghostty
-TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 bundle exec rspec < /dev/null
+# gate prima della PR (CLAUDE.md): la suite con la coverage e i tre semi, 4 esecuzioni.
+# COLORTERM serve alle 10 spec dei colori RGB, TERM fisso anche dentro Kitty o Ghostty
+
+# suite con la coverage, in ordine normale (report in coverage/; con una sola spec fallisce per la soglia);
+# se si blocca, il log dice quale spec
+TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 \
+  bundle exec rspec --require ./spec/support/coverage.rb --format documentation --out "$S/coverage.log" < /dev/null
 # con un seme: ripeti con 1234, 4242 e 7
 TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 \
   bundle exec rspec --order rand:1234 < /dev/null
-# coverage (report in coverage/; con una sola spec fallisce per la soglia); se si blocca, il log dice quale spec
-TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 \
-  bundle exec rspec --require ./spec/support/coverage.rb --format documentation --out "$S/coverage.log" < /dev/null
+
+# fuori dal gate: suite completa senza coverage, per esempio dopo il fix di una issue (regola 11)
+TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 bundle exec rspec < /dev/null
+
 # il diff tocca grapheme o Unicode? Se sì, esegui le spec cambiate anche con Ruby 3.1.7 (regola 21)
 git diff origin/master...HEAD | grep -E 'grapheme|\\X|\\p\{|unicode_normalize|strwidth|\\u[0-9A-Fa-f{]'
 .claude/scripts/spec31 spec/...
