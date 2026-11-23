@@ -19,7 +19,8 @@ TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5
 TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 \
   bundle exec rspec --order rand:1234 < /dev/null
 
-# fuori dal gate: suite completa senza coverage, per esempio dopo il fix di una issue (regola 11)
+# fuori dal gate: suite completa senza coverage, dopo un fix seguito da altro codice prima del gate (regola 11).
+# Se il gate segue subito il fix, la suite della regola 11 è quella con la coverage del gate
 TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5 -s KILL 600 bundle exec rspec < /dev/null
 
 # il diff tocca grapheme o Unicode? Se sì, esegui le spec cambiate anche con Ruby 3.1.7 (regola 21)

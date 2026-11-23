@@ -82,13 +82,15 @@ autorizzato il merge.
   `2_work-issue`.
 - **Un lotto alla volta**: ogni lotto parte da `master` aggiornato, dopo il merge del lotto precedente.
 - **Commit**: un commit per issue, Conventional Commits in inglese con scope (regola 15). Per ogni issue la spec che
-  fallisce, il fix e la suite completa (regola 11).
+  fallisce, il fix e la suite completa (regola 11). Se il gate segue subito il fix (ultima issue del lotto, ultimo
+  fix di un round di review), la suite della regola 11 è la suite con la coverage del gate: non eseguire prima la
+  suite senza coverage.
 - **Prima della PR e dopo ogni round di fix della review**: suite completa con la coverage (vale come esecuzione in
   ordine normale: non ripeterla senza coverage), suite con i semi 1234, 4242 e 7 e `bundle exec rubocop`. La CI
   controlla l'ordine casuale e la soglia della coverage: un controllo saltato in locale costa un giro di CI (lotto 8c
   in [memory/backlog-issue.md](memory/backlog-issue.md)). Se il diff tocca grapheme o Unicode, esegui le spec
-  cambiate anche con `.claude/scripts/spec31` (regola 21). Prova sulla superficie ogni consiglio nuovo nei messaggi d'errore,
-  nello YARD o nel `CHANGELOG` (regola 22): il piano di `2_work-issue` elenca i consigli e come provarli.
+  cambiate anche con `.claude/scripts/spec31` (regola 21). Prova sulla superficie ogni consiglio nuovo nei messaggi
+  d'errore, nello YARD o nel `CHANGELOG` (regola 22): il piano di `2_work-issue` elenca i consigli e come provarli.
 - **PR**: nel corpo scrivi `Fixes ICH-<n>` per ogni issue che la PR risolve, ognuno sulla sua riga. Per una issue del
   lotto che la PR non risolve usa `Refs ICH-<n>` (lotto 4: ICH-463). Non citare issue fuori dal lotto, neanche con
   `Refs`: l'automazione GitHub → Linear le sposta a In Progress. Dopo ogni evento della PR controlla lo stato delle
