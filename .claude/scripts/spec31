@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # spec31: esegue le spec indicate con Ruby 3.1.7, la versione della matrice della CI con l'Unicode più vecchio
 # (13.0; Ruby 3.2-3.4 usano 15.0, Ruby 4.0 17.0). Serve per le modifiche su grapheme e Unicode (regola 21 di
-# handoff.md): in locale gira Ruby 4.0, e una spec che dà per scontata la sua segmentazione si rompe solo in CI.
+# memory/regole.md): in locale gira Ruby 4.0, e una spec che dà per scontata la sua segmentazione si rompe solo in CI.
 #
 # Uso: .claude/scripts/spec31 [opzioni di rspec] spec/... [spec/...]
 # Esegue rspec dalla radice del checkout che contiene lo script (anche un worktree), senza bundle: con Ruby 3.1

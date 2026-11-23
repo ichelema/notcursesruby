@@ -1,4 +1,4 @@
-# Helper degli script di prova di `screen` (regola 22 di handoff.md): lo carica `screen` con -r, non serve un require.
+# Helper degli script di prova di `screen` (regola 22 di memory/regole.md): lo carica `screen` con -r, non serve un require.
 #
 #   Screen.open do |nc|
 #     pl = nc.stdplane.create_child(rows: 1, cols: 10, y: 2, x: 4)
