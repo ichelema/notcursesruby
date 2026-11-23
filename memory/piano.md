@@ -22,7 +22,7 @@ Windows.
   [correzioni-review.md](correzioni-review.md).
 - Fase «Issue in Backlog», dal 2026-11-15, base `ad0315b`: lotti 1–9 fatti, PR #22…#35 (un capitolo per lotto in
   [backlog-issue.md](backlog-issue.md)). Modello passato ai comandi del workflow: `opus`.
-- Al 2026-11-23 restano 30 issue aperte: 14 nei lotti 9b–15, 15 senza lotto, ICH-463 in Blocked.
+- Al 2026-11-23 restano 30 issue aperte: 16 nei lotti 9b–15 (con il 9c), 13 senza lotto, ICH-463 in Blocked.
 
 ## Criteri dei lotti
 
@@ -44,6 +44,8 @@ Una issue nata da un lotto entra in un lotto con la scelta dell'utente. Un lotto
 | Lotto | Prefisso | Issue | Priorità | Titolo |
 | --- | --- | --- | --- | --- |
 | 9b | `bug` | ICH-593 | Medium | Evitare che un processo fermo nelle spec di pty_spec.rb blocchi l'intera suite fino al timeout di 600 s (nata dal lotto 9; prima degli altri lotti per scelta dell'utente del 2026-11-23) |
+| 9b | `bug` | ICH-595 | Low | Rendere stabile la spec pty di ICH-536 (ui_pty_spec.rb:786), che supera il limite di 4 s sotto carico (nata dall'analisi dei tempi del gate; nel lotto 9b per scelta dell'utente del 2026-11-23: ICH-593 cambia `run_child` anche in `ui_pty_spec.rb`) |
+| 9c | `improvments` | ICH-594 | Low | Accelerare Plane#putstr, che scorre il testo più volte prima della chiamata C (dopo il 9b per scelta dell'utente del 2026-11-23: le suite dei lotti seguenti diventano più rapide) |
 | 10 | `bug` | ICH-220 | Medium | Make the Tabbed header follow plane resizes |
 | 10 | `bug` | ICH-221 | Medium | Fix Tree focus drift with items of different heights |
 | 10 | `bug` | ICH-219 | Low | Fix Menu selection loss on separator click and mouse_selected for right-aligned sections |
@@ -81,11 +83,9 @@ Ognuna aspetta la scelta dell'utente sul lotto.
 | ICH-590 | Low | Bug | Kitty 0.51 disegna il coniugato devanagari "क्ष" largo 1, notcurses e Ghostty lo contano largo 2: su Kitty il testo dopo si sposta | Lotto 8d. La misura su Kitty serve all'utente (display); il comportamento lo sceglie l'utente |
 | ICH-591 | Low | Bug | `putstr`/`putegc` di un EGC lungo con il pool quasi pieno: il ripristino del glifo di arrivo (lotto 8b) fallisce e il glifo va perso | Lotto 8d. `Plane#rehearse!` del lotto 8d può sostituire `with_glyph_kept`; tocca `plane.rb` come ICH-592 |
 | ICH-592 | Low | Bug | `Plane#base` con una base lunga e il pool pieno solleva `PlaneError` senza motivo (`ncplane_base` duplica nel pool) | Lotto 8d. Come ICH-490; tocca `plane.rb` come ICH-591 |
-| ICH-594 | Low | Performance | `Plane#putstr` scorre il testo più volte in Ruby prima del C: ~14x il C con un EGC da 6 MB, da 2,3x a 5x con un testo normale | Analisi dei tempi del gate (2026-11-23): le spec dell'egcpool costano 138 s su ~290 di suite. Tocca `plane.rb` e `with_glyph_kept` come ICH-591 e ICH-592 |
-| ICH-595 | Low | Bug | La spec pty di ICH-536 (`ui_pty_spec.rb:786`) supera a volte il limite di 4 s con la coda piena | Prova del parallelo (2026-11-23): 1 coppia su 4, e una volta in CI con una suite sola. Diversa da ICH-593. Il fix permette di riprovare le suite in parallelo ([comandi.md](comandi.md)) |
 
-- ICH-554, ICH-556 e ICH-594 hanno solo la label `Performance`: `1_create-worktree` può chiedere il prefisso del
-  branch.
+- ICH-554, ICH-556 e ICH-594 (lotto 9c) hanno solo la label `Performance`: `1_create-worktree` può chiedere il
+  prefisso del branch. ICH-591 e ICH-592 toccano `plane.rb` e `with_glyph_kept` come ICH-594.
 - ICH-214: il lotto 2 ha scartato la rotazione del framebuffer da Ruby, che non si rende sicura: un gestore `trap` o
   un altro thread può fare un resize fra la copia e la scrittura, e servirebbe un lock o codice C. La issue ammette
   un'altra strada: dopo uno scroll, `resize`, `duplicate`, `rotate_cw`, `rotate_ccw` e `merge_down` possono sollevare
