@@ -19,7 +19,7 @@ Leggi questo indice, poi apri solo i file che servono. Le regole d'uso sono in [
 | File | Contenuto |
 |---|---|
 | [backlog-issue.md](backlog-issue.md) | Fase «Issue in Backlog»: decisioni iniziali, file per issue e un capitolo per lotto (fix, decisioni, review, problemi e soluzioni, verifica finale) |
-| [correzioni-review.md](correzioni-review.md) | Correzioni della revisione del 2026-11-06: decisioni iniziali e un capitolo per ognuno dei 17 lotti (PR #2…#19) |
+| [correzioni-review.md](correzioni-review.md) | Correzioni della revisione del 2026-11-06: decisioni iniziali, un capitolo per ognuno dei 17 lotti e uno per ICH-465 fuori dai lotti (PR #2…#19) |
 | [review-2026-11-06.md](review-2026-11-06.md) | Revisione completa del 2026-11-06: ogni finding con scenario, prova e issue Linear |
 | [fase1-ffi-raw.md](fase1-ffi-raw.md) | Fase 1, layer FFI raw: decisioni, bug di notcurses 3.0.17, confronto con libnotcurses-sys, funzioni inline reimplementate e saltate |
 | [fase2-wrapper-idiomatico.md](fase2-wrapper-idiomatico.md) | Fase 2, wrapper idiomatico: ciclo di vita e ownership, callback, thread e GVL, segnali, bug di notcurses aggirati e non aggirati, metodi non wrappati |

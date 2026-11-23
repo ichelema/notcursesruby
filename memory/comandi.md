@@ -24,7 +24,9 @@ git diff origin/master...HEAD | grep -E 'grapheme|\\X|\\p\{|unicode_normalize|st
 - Non eseguire due suite in parallelo: il carico della CPU rende instabili le spec dei pty.
 - Prima di una suite lunga controlla `free -h` ([ambiente.md](ambiente.md)).
 - Non lanciare `rspec` con cwd in un checkout per provare il codice di un altro: `rspec` mette il `lib/` del cwd nel
-  load path prima di `-I`. Nei worktree esegui la suite dalla radice del worktree.
+  load path prima di `-I`. Nei worktree esegui la suite dalla radice del worktree. Senza `cd`, usa
+  `mise -C <checkout> x -- bundle exec rspec ...`: il comando gira con cwd in `<checkout>` e carica il suo `lib/`
+  (prova del 2026-11-23).
 - In zsh un comando in una variabile non si divide in parole: usa un array (`E=(env ...)`, `"${E[@]}"`) e scrivi
   `--order "rand:$seed"`. In zsh `echo ====` fallisce: usa `echo '----'`.
 - Le spec instabili note sono in [punti-aperti.md](punti-aperti.md).
@@ -81,8 +83,9 @@ git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb
 ```sh
 # workflow: controllo prima del push
 mise x aqua:rhysd/actionlint@1.7.12 -- actionlint -ignore SC2016 .github/workflows/ci.yml
-# dopo l'apertura della PR: aspetta che la CI parta, poi seguila
-until gh run list --branch <branch> --limit 1 | grep -q .; do sleep 15; done
+# dopo l'apertura della PR o un push: aspetta la run del commit appena spinto, al massimo 10 minuti, poi seguila
+sha=$(git -C <checkout> rev-parse HEAD)
+timeout 600 bash -c "until gh run list --commit $sha --limit 1 | grep -q .; do sleep 15; done" || echo "nessuna run per $sha"
 gh pr checks <n> --watch
 gh run list --limit 5
 gh run view <id> --log-failed

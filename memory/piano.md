@@ -18,7 +18,7 @@ Windows.
 
 - Fasi 1–5 complete: Fase 1 layer FFI, Fase 2 wrapper idiomatico, Fase 3 `Notcurses::UI`, Fase 4 pacchetto e CI,
   Fase 5 blitter su Kitty e Ghostty e porting su macOS (PR #20 e #21). Correzioni della revisione del 2026-11-06:
-  17 lotti, PR #2…#19. Esito nelle sezioni omonime di `RICONSEGNA.md`.
+  17 lotti e ICH-465 fuori dai lotti, PR #2…#19. Esito nelle sezioni omonime di `RICONSEGNA.md`.
 - Fase «Issue in Backlog», dal 2026-11-15, base `ad0315b`: lotti 1–8c fatti, PR #22…#33 (tabella «Lotti» di
   `RICONSEGNA.md`). Modello passato ai comandi del workflow: `opus`.
 - Al 2026-11-23 restano 27 issue aperte: 16 nei lotti 8d–15, 10 senza lotto, ICH-463 in Blocked.
@@ -30,7 +30,8 @@ Proposta del 2026-11-15, approvata dall'utente con 4 cambi (motivi in [backlog-i
 1. prima la priorità di Linear (High, poi Medium, poi Low);
 2. le issue che toccano lo stesso codice stanno nello stesso lotto;
 3. un lotto contiene solo issue dello stesso tipo: `/trinity:workflow:1_create-worktree` ricava un solo prefisso di
-   branch, `bug` dalla label `Bug` e `improvments` dalla label `Improvement`;
+   branch, `bug` per un bug e `improvments` per un miglioramento. Il comando guarda prima il tipo della issue, poi la
+   label (`Bug`, `Improvement`), e chiede se nessuno dei due è chiaro;
 4. il lotto di RuboCop (ICH-469, ICH-470, lotto 15) chiude la lista: cambia le virgolette in quasi tutti i file e
    andrebbe in conflitto con ogni altro lotto.
 
@@ -82,10 +83,13 @@ nate dai lotti».
 | ICH-556 | Low | Performance | Il controllo dei glifi larghi dei blit `:braille` legge tutte le celle del rettangolo: 20 ms su un piano 60x200, contro 0,19 ms prima del lotto 6 | Lotto 6. Nelle celle con soli pixel trasparenti `braille_blit` azzera canali e stile e cambia gli alpha, ma non scrive l'EGC (`blit.c:1193-1215`) |
 | ICH-562 | Low | Bug, Performance | Un blit 1x1 di `Visual.blit_rgba` crea due `ncvisual` | Lotto 6 |
 
-- ICH-554 e ICH-556 hanno solo la label `Performance`: `1_create-worktree` chiede il prefisso del branch.
-- ICH-214: ruotare il framebuffer da Ruby non si rende sicuro, perché un gestore `trap` o un altro thread può fare un
-  resize fra la copia e la scrittura. Serve un lock o codice C: va riprogettata in un lotto suo, forse con un helper
-  approvato nel layer FFI (regola 1). Il lotto 2 azzera già `logrow` nel resize in due passi di `resize_region`.
+- ICH-554 e ICH-556 hanno solo la label `Performance`: `1_create-worktree` può chiedere il prefisso del branch.
+- ICH-214: il lotto 2 ha scartato la rotazione del framebuffer da Ruby, che non si rende sicura: un gestore `trap` o
+  un altro thread può fare un resize fra la copia e la scrittura, e servirebbe un lock o codice C. La issue ammette
+  un'altra strada: dopo uno scroll, `resize`, `duplicate`, `rotate_cw`, `rotate_ccw` e `merge_down` possono sollevare
+  un `PlaneError` chiaro, e `FadeContext` deve seguire l'ordine visibile delle righe. La issue vieta i cambi alla
+  Fase 1: un helper nel layer FFI chiede prima un cambio del criterio, approvato dall'utente. Il lotto 2 azzera già
+  `logrow` nel resize in due passi di `resize_region`.
 
 ## ICH-463 in Blocked
 

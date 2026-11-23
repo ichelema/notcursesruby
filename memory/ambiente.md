@@ -33,9 +33,10 @@
 - `notcurses`: sorgenti C di notcurses 3.0.17 (`v3.0.17-22-gb26048eeb`), da leggere per i percorsi C (regola 20).
   `notcurses/data` contiene le immagini delle spec. Nel checkout principale il submodule è inizializzato; se manca
   `notcurses/data`, esegui `git submodule update --init --depth 1 notcurses`. In un worktree crea il link temporaneo
-  `ln -s <repo>/notcurses/data <worktree>/notcurses/data` prima delle suite e non inizializzare il submodule. Prima di
-  ogni commit, del verify e di `5_remove-worktree` controlla `git status --short --untracked-files=all`: se il link
-  compare, rimuovilo prima (Blast Radius chiede la conferma per `rm`).
+  `ln -s <repo>/notcurses/data <worktree>/notcurses/data` prima delle suite e non inizializzare il submodule. Git non
+  vede il link, perché sta dentro il gitlink del submodule: `git status` resta vuoto, il link non entra nei commit e
+  `git worktree remove` lo toglie senza `--force`, senza toccare la cartella di destinazione (prova del 2026-11-23).
+  Per controllare il link usa `test -L <worktree>/notcurses/data`.
 - `libnotcurses-sys`: binding Rust di notcurses, riferimento della Fase 1.
 - La build di notcurses di Arch ha solo lo stub di `ncplane_qrcode`: la spec di `Plane#qrcode` resta pending. ICH-542
   e ICH-552 si provano solo con una build con libqrcodegen (submodule, `-DUSE_QRCODEGEN=on`).

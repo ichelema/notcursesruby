@@ -51,7 +51,8 @@ PKG_CONFIG_PATH="$B/prefix/lib/pkgconfig" cc -O2 -Wall -Wextra -o "$B/harness/nc
   le altre minor. Usa i tarball di `release.files.ghostty.org`, non l'archivio dei tag GitHub, che costruisce l'app.
 - `minisign` è il pacchetto di sistema (`sudo pacman -S minisign`).
 
-Uso: `ncvt [-c COLONNE] [-r RIGHE] [-t SECONDI] [-m] [-s FILE] -- comando`.
+Uso: `~/.claude/tmp/libghostty-vt/harness/ncvt [-c COLONNE] [-r RIGHE] [-t SECONDI] [-m] [-s FILE] -- comando`
+(`ncvt` non è nel `PATH`).
 
 - `-s FILE`: lo script crea FILE con un'etichetta nella prima riga; ncvt aspetta che l'output si fermi, stampa lo
   snapshot, cancella FILE e crea `FILE.done`; lo script aspetta `FILE.done`, lo cancella e prosegue.
@@ -62,7 +63,9 @@ Uso: `ncvt [-c COLONNE] [-r RIGHE] [-t SECONDI] [-m] [-s FILE] -- comando`.
 - Lancia lo script con `TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8` e
   `Context.open(termtype: 'xterm-256color', suppress_banners: true)`, senza `output:`.
 - Prendi lo snapshot a widget aperto: la chiusura di un Reader con `cursor: true` spegne il cursore.
-- ncvt non mostra la larghezza delle celle: per i glifi larghi stampa `Plane#at` nell'etichetta.
+- ncvt non mostra la larghezza delle celle: per i glifi larghi stampa `Plane#at` nell'etichetta. `Plane#at` mostra la
+  cella di notcurses, non quanto avanza il terminale: per la larghezza disegnata da Ghostty confronta la colonna della
+  riga `cursor x=..` prima e dopo la stampa.
 
 ### Prova rapida: `screen`
 
@@ -133,8 +136,9 @@ contare quello che il programma ha scritto). Per i casi senza terminale basta
   `kill -INT <pid>`.
 - Trappola: uno script bash non interattivo avvia i comandi con `&` e con SIGINT e SIGQUIT ignorati
   (`grep SigIgn /proc/<pid>/status` dà `0x6`). Metti `set -m` nello script che avvia il processo.
-- Un processo fermo nell'init di notcurses (terminale che non risponde mai) non esce né con SIGTERM né con
-  SIGINT: alla fine serve `kill -KILL`.
+- Un processo fermo nell'init di notcurses (terminale che non risponde mai) esce con SIGTERM o SIGINT in circa 2 s
+  dal lotto 8c (ICH-576: `Util.await_init`, `INIT_GRACE`). Prima del lotto 8c serviva `kill -KILL`, e serve ancora
+  per i casi fuori dal limite, per esempio `Thread#kill`.
 
 ## Cosa provare
 

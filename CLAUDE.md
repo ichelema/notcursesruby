@@ -40,7 +40,9 @@ Quando l'utente chiede di riprendere o di continuare (per esempio: riprendi, con
 4. Fai il recall in Hindsight sul lavoro del prossimo passo (sezione «Hindsight»).
 5. Leggi [memory/indice.md](memory/indice.md) e apri solo i file che servono al passo. Per un lotto serve sempre
    [memory/piano.md](memory/piano.md).
-6. Esegui il «Prossimo passo» di `handoff.md`.
+6. Esegui il prossimo passo dello stato reale. Di solito è il «Prossimo passo» di `handoff.md`. Se al passo 3 lo stato
+   non coincide, ricavalo dallo stato reale: per esempio, con il worktree del lotto già creato, il passo del workflow
+   che segue.
 
 ## Workflow di un lotto
 
@@ -64,12 +66,13 @@ worktree, quindi resta lo stesso anche se la sessione usa un altro modello.
 | 2 | `/trinity:workflow:2_work-issue <ID...> <modello>` | Porta le issue a In Progress, scrive il piano, implementa e apre la PR, senza merge |
 | 3 | `/trinity:workflow:2_work-simplify <ID...> <modello>` | Semplifica il codice della PR |
 | 4 | `/trinity:workflow:2_work-verify <ID...> <modello>` | Prova la PR su un terminale headless con `ncvt` (skill `.claude/skills/verify/`) |
-| 5 | `/trinity:workflow:3_independent-review <ID...> <modello> soft` | Review avversaria in sola lettura con Sonnet; dopo i fix dei finding, una review mirata con lo stesso comando |
-| 6 | `/trinity:workflow:4_review-fix-loop <ID...> <modello>` | Solo se la review trova problemi: due review in parallelo e fix in al massimo 3 round |
+| 5 | `/trinity:workflow:3_independent-review <ID...> <modello> soft` | Review avversaria in sola lettura con Sonnet. Con dei finding, correggi quelli che sceglie l'utente, poi lancia una review mirata con lo stesso comando |
+| 6 | `/trinity:workflow:4_review-fix-loop <ID...> <modello>` | Al posto della review mirata, se l'utente lo sceglie: due review in parallelo e fix in al massimo 3 round |
 | 7 | Merge della PR | Lo fa l'utente, alle condizioni della regola «Merge» |
 | 8 | `/trinity:workflow:5_remove-worktree <prefisso>+<ID-numeri>-<modello>` | Rimuove worktree e branch ed esegue «Chiusura dopo il merge» |
 
-I passi 3–5 sono la catena dei lotti 7–8c.
+I passi 3–5 sono la catena dei lotti 7, 8b e 8c. Il lotto 8 ha saltato la review: l'utente era assente e ha
+autorizzato il merge.
 
 ### Regole
 
@@ -93,25 +96,30 @@ I passi 3–5 sono la catena dei lotti 7–8c.
   rosso è emerso solo nella review). Ripeti il controllo dopo ogni push di fix.
 - **Merge**: chiedi il merge all'utente (regola 13) solo quando valgono tre condizioni: CI verde sull'ultimo commit
   della PR (regola 17), nessun `FAIL` o `BLOCKED` aperto del verify, nessun finding BLOCKER o HIGH aperto della
-  review. Il classificatore dei permessi blocca il merge fatto dal modello («Merge Without Review») anche con il sì
-  dell'utente: chiedi all'utente di eseguire `gh pr merge <n> --merge`. Dopo il merge Linear porta le issue a Done.
+  review. Se un fix arrivato dopo il verify cambia quello che si vede (schermo, messaggi, consigli della regola 22),
+  rilancia prima `2_work-verify` sull'ultimo commit. Il classificatore dei permessi blocca il merge fatto dal modello
+  («Merge Without Review») anche con il sì dell'utente: chiedi all'utente di eseguire `gh pr merge <n> --merge`. Dopo
+  il merge Linear porta le issue a Done.
 - **Acceptance criteria**: se un criterio si rivela sbagliato o impossibile, non cambiarlo da solo. Proponi il testo
   nuovo all'utente e, dopo la conferma, aggiorna la issue su Linear.
 - **Review**: `4_review-fix-loop` lancia una review con `gpt-bridge:reviewer` e una con `trinity:reviewer` su Fable.
   Per la seconda passa `model: sonnet` ed `effort: max` al posto di Fable (scelta dell'utente del 2026-11-18). Il
   comando crea le issue dei finding residui senza chiedere: in questo progetto chiedi prima la conferma all'utente
   (regola 16). Passa ai reviewer la sezione «Review» di [memory/lezioni.md](memory/lezioni.md).
-- **Worktree**: `git worktree remove` rifiuta un worktree con il submodule inizializzato. Usa `--force` solo se il
-  worktree ha in più il submodule `notcurses` e `git status` è vuoto (scelta dell'utente del 2026-11-08). Negli altri
-  casi chiedi conferma all'utente.
+- **Worktree**: `git worktree remove` rifiuta un worktree con il submodule inizializzato. In un worktree di lotto usa
+  `--force` solo se il worktree ha in più il submodule `notcurses` e `git status` è vuoto (scelta dell'utente del
+  2026-11-08); negli altri casi chiedi conferma all'utente. Con il link di `notcurses/data`
+  ([memory/ambiente.md](memory/ambiente.md)) il submodule nei worktree non serve. Nei worktree di review vale la
+  «Pulizia» di `3_independent-review`, che vieta `--force`.
 
 ### Chiusura dopo il merge
 
 `5_remove-worktree` esegue questa procedura dopo il merge, per intero e in ordine, senza aspettare che l'utente la
-chieda. Prima di scrivere, controlla che il checkout principale sia su `master`, allineato a `origin/master`, e che i
-file da toccare non abbiano modifiche. Se una condizione manca, non scrivere e non committare: segnala all'utente che
-la chiusura resta da fare. La chiusura si può eseguire anche da sola, senza `5_remove-worktree`, da una sessione nel
-checkout principale.
+chieda. La chiusura si può eseguire anche da sola, senza `5_remove-worktree`, da una sessione nel checkout principale:
+in questo caso porta prima `master` in pari con `git pull --ff-only origin master`. Prima dei controlli e prima di
+scrivere, controlla che il checkout principale sia su `master`, allineato a `origin/master`, e che `git status` sia
+vuoto: così i controlli provano il codice di `origin/master`. Se una condizione manca, non scrivere e non committare:
+segnala all'utente che la chiusura resta da fare.
 
 1. Esegui su `master` i «Controlli finali» di [memory/piano.md](memory/piano.md), compresa la CI della PR e di
    `master`. Controlla in Linear che le issue del lotto siano a Done, oppure nello stato scelto con l'utente (lotto 4:
