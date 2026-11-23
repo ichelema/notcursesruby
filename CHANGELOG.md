@@ -22,6 +22,12 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 
 ### Corretto
 
+- `Notcurses::UI::LogView`: la riga non finita ha un limite in byte, `max_partial_bytes:` di `LogView.new` (default
+  65 536, minimo 4); oltre il limite i byte più vecchi escono, a partire da un inizio di carattere UTF-8 (ICH-230).
+  Prima un produttore senza "\n" faceva crescere la riga senza limite, e ogni `append` costava di più: 4,7 s per il
+  primo MiB in blocchi da 4 KiB, 14 s per il secondo; ora circa 0,6 s per MiB. "\r" sostituisce la riga, anche in
+  una riga finita: resta l'ultimo pezzo non vuoto, quindi "10%\r20%\r30%" mostra "30%" invece di "10%?20%?30%". I
+  "\r" in coda non cancellano niente: "\r\n" vale ancora "\n".
 - `Notcurses::UI`: `Label`, `Button`, `TextInput`, `ListView`, `Dialog` e il titolo di `Container` controllano il
   testo anche con le regole di notcurses: un grapheme che notcurses 3.0.17 divide con un pezzo largo 0, come il
   keycap "1️⃣", solleva `ArgumentError` alla creazione e nei setter, con un messaggio che nomina il grapheme; in
