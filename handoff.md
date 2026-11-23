@@ -6,7 +6,7 @@
 > il workflow di Trinity, come le "Correzioni della revisione del 2026-11-06". Il prompt della Fase 5 resta in
 > `git show ad0315b:RIPRESA.md`; quello dei lotti della revisione in `git show 8a4b5f7:RIPRESA.md`.
 
-## Stato e prossimo step (aggiornato il 2026-11-22, lotto 8b fatto, prossimo lotto 8c)
+## Stato e prossimo step (aggiornato il 2026-11-23, lotto 8c fatto, prossimo lotto 8d)
 
 - Lotto 1 fatto: PR #22, merge `74deb80`. Lotto 2 fatto: PR #23, merge `cb90c4f`. Lotto 2b fatto: PR #24, merge
   `6374e41`. Lotto 2c fatto: PR #25, merge `d2c5f7c`. Lotto 3 fatto: PR #26, merge `e15b40a` (ICH-454, ICH-456,
@@ -85,12 +85,24 @@
   `memory/backlog-issue.md`, esito in `RICONSEGNA.md`, retain in Hindsight fatto il 2026-11-22.
 - **Scelte dell'utente del 2026-11-22:** ICH-581 nel lotto 8c (tocca `widgets/reader.rb` come ICH-580); ICH-582 e
   ICH-586 nel lotto 8d nuovo, dopo l'8c (codice di grapheme ed egcpool del lotto 8b).
-- **Da fare:**
-  - `037c011` (escape dei caratteri invisibili e `spec/source_chars_spec.rb`, 2026-11-22) è su `master` senza CI:
-    il push aveva in cima `d667047` con `[skip ci]`, che salta la CI di tutto il push, e `ci.yml` non ha
-    `workflow_dispatch`. In locale: 1289 esempi, 0 fallimenti; `spec31` e RuboCop verdi. L'utente ha scelto di
-    aspettare il prossimo merge: dopo il merge del lotto 8c controlla la CI di `master` su tutta la matrice. Un commit
-    di codice va su `master` con un push a parte, prima dei commit `[skip ci]`.
+- **Lotto 8c fatto:** PR #33, merge `38d4a8c` (2026-11-23), ICH-576, ICH-580, ICH-577 e ICH-581 a Done, nessuna issue
+  nuova. Catena: analisi di ICH-576 con Fable e GPT in parallelo, simplify, verify con `ncvt` (PASS), review `soft`
+  Sonnet (1 finding MEDIUM, corretto: il limite vale anche per l'`exit` da un `trap`). Scelte dell'utente: attesa di
+  2 s e ripristino del terminale da Ruby (ICH-576), errore del rollback scartato (ICH-577). `master` su `38d4a8c`:
+  1315 esempi, 0 fallimenti, semi 1234, 4242 e 7, coverage 98,16 %, RuboCop 0, YARD 100 %, gem costruita, layer FFI
+  invariato; CI della PR e di `master` verde. La CI di `master` prova anche `037c011`, che era arrivato senza CI. Log
+  in `memory/backlog-issue.md`, esito in `RICONSEGNA.md`, retain in Hindsight fatto il 2026-11-23.
+- **Da fare:** l'utente avvia `/trinity:workflow:5_remove-worktree bug+ICH-576-580-577-581-opus` (si avvia solo a
+  mano). Il worktree ha il link temporaneo `notcurses/data` (non tracciato) verso il submodule del checkout principale.
+- **Lezioni del lotto 8c:**
+  - prima della PR esegui la suite anche con i semi 1234, 4242 e 7 e la coverage, non solo in ordine normale: la prima
+    CI del lotto è fallita per una spec che lasciava il cursore acceso nel contesto condiviso e per la coverage a
+    97,65 %;
+  - il codice che gira solo nei processi figli delle spec pty non conta per SimpleCov: coprilo anche con spec nel
+    processo di rspec (con stub di `Process.exit!`, `Process.kill`, `Signal.trap`), come `spec/notcurses/init_exit_spec.rb`;
+  - dopo una review con script su terminali muti controlla con `pgrep` i processi orfani fermi nell'init prima di
+    rimuovere il worktree di review;
+  - `verify_reader.rb` chiede `ncvt -r 24` (lo scenario 7 usa `cursor_enable(y: 10, x: 5)`).
 - **Lezioni del lotto 8b** (per i lotti con grapheme, egcpool o controlli prima della chiamata C):
   - un controllo che prevede il C va scritto dopo aver letto la funzione C per intero: `ncplane_put` rilascia la
     cella di arrivo prima di copiare e la svuota prima di fallire (`notcurses.c:1911-1950`); ora è la regola 20, con
@@ -101,11 +113,12 @@
     `.claude/skills/verify/screen`;
   - CI rossa in circa 30 secondi su tutti i job = guasto dell'infrastruttura (per esempio `archive.archlinux.org`
     giù, controllalo con `curl`), non il codice.
-- **Prossimo step:** lotto 8c (`bug`): ICH-576, ICH-580, ICH-577, ICH-581 (tabella di "Ordine di lavoro").
-  Spiega prima le issue all'utente (passo 0 della "Procedura per ogni lotto"), poi proponi
-  `/trinity:workflow:1_create-worktree master ICH-576 ICH-580 ICH-577 ICH-581 opus`. ICH-576 chiede la verifica manuale con
-  `/trinity:workflow:2_work-verify` prima della review (`ncvt -m`, terminale muto); ICH-580 ha la verifica con
-  `verify_reader.rb` (scenari 9a e 9b).
+- **Prossimo step:** lotto 8d (`bug`): ICH-582, ICH-586 (tabella di "Ordine di lavoro"). Spiega prima le issue
+  all'utente (passo 0 della "Procedura per ogni lotto"), poi proponi
+  `/trinity:workflow:1_create-worktree master ICH-582 ICH-586 opus`. ICH-586 chiede una scelta di comportamento
+  all'utente prima del fix e la misura delle bandiere su Ghostty (`ncvt`) e su Kitty: qui non c'è un display, quindi
+  la misura su Kitty serve all'utente (o va proposto di cambiare il criterio). Le issue nuove e i commenti su Linear
+  sono in italiano (`lang:it`, dal 2026-11-22).
 - Nata dal lotto 6, in Backlog, Low, da assegnare a un lotto successivo (non blocca la PR #29): ICH-554 (`Visual#rotate`
   chiama il C una volta per pixel, circa 0,9 s su 1024x1024; accelerarlo può servire un cambio del layer FFI, regola 1).
 - Alla chiusura del lotto 6: 3 bug di notcurses nuovi nelle tabelle di `RICONSEGNA.md` (elenco in
