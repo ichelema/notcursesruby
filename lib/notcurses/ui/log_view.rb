@@ -75,7 +75,10 @@ module Notcurses
 
         parts = (@partial + data.b).split("\n", -1)
         partial = parts.pop || ''.b # "".split("\n", -1) è []
-        @partial = bound(partial[latest(partial).begin..])
+        text = partial[latest(partial)]
+        # un solo "\r" in coda basta per "\r\n" in due blocchi; tanti "\r" in coda toglierebbero il testo nel taglio
+        text << "\r" if partial.end_with?("\r")
+        @partial = bound(text)
         @lines.concat(parts.map { |line| line[latest(line)] })
         @lines.shift(@lines.size - @max_lines) if @lines.size > @max_lines
         redraw

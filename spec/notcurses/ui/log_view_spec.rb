@@ -144,6 +144,19 @@ RSpec.describe Notcurses::UI::LogView do
     expect([view.lines, lines(view)]).to eq([['999%'], ['999%', '']])
   end
 
+  # Review di ICH-230: i "\r" in coda contavano nel limite, e il taglio toglieva il testo.
+  it 'i "\r" in coda oltre il limite non cancellano il testo della riga non finita' do
+    view = log(1, max_partial_bytes: 4)
+    view.append("abc\r\r\r\r\r")
+    expect(view.lines).to eq(['abc'])
+    view.append("\n")
+    expect(view.lines).to eq(['abc'])
+    view = log(1)
+    view.append('progress 50%')
+    100.times { view.append("\r" * 1000) } # 100 000 byte di "\r", oltre il default
+    expect([view.lines, partial_bytes(view)]).to eq([['progress 50%'], 13])
+  end
+
   it '"\r" vale anche nelle righe finite: resta l\'ultimo pezzo non vuoto' do
     view = log(3)
     view.append("10%\r20%\nok\r\r\n\r\n")
