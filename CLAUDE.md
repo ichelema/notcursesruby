@@ -87,8 +87,9 @@ autorizzato il merge.
   suite senza coverage.
 - **Prima della PR e dopo ogni round di fix della review** (eccezioni in «Gate leggero»): suite completa con la
   coverage (vale come esecuzione in ordine normale: non ripeterla senza coverage), una suite in ordine casuale con un
-  seme nuovo (`--order rand`: il seme lo sceglie rspec) e `bundle exec rubocop`. La CI controlla l'ordine casuale e la soglia della coverage: un
-  controllo saltato in locale costa un giro di CI (lotto 8c in [memory/backlog-issue.md](memory/backlog-issue.md)).
+  seme nuovo (`--order rand`: il seme lo sceglie rspec) e `bundle exec rubocop`. La CI controlla l'ordine casuale e
+  la soglia della coverage: un controllo saltato in locale costa un giro di CI (lotto 8c in
+  [memory/backlog-issue.md](memory/backlog-issue.md)).
   Se la suite in ordine casuale fallisce, ripetila con lo stesso seme (`--order rand:N`), non con un seme nuovo: un
   altro seme può nascondere la dipendenza. Se il fallimento si ripete e riguarda spec che il lotto non tocca,
   fermati e chiedi all'utente (regola 16). Se il diff tocca grapheme o Unicode, esegui le spec
