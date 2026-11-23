@@ -9,7 +9,6 @@ Leggi questo indice, poi apri solo i file che servono. Le regole d'uso sono in [
 | File | Contenuto |
 |---|---|
 | [piano.md](piano.md) | Fase «Issue in Backlog»: obiettivo, avanzamento, criteri dei lotti, lotti da fare, issue senza lotto, ICH-463 in Blocked, consegne e controlli finali |
-| [regole.md](regole.md) | Le 22 regole vincolanti per i lotti e per il codice |
 | [ambiente.md](ambiente.md) | Progetto, macchina, versioni, submodule, terminale headless `ncvt`, CI, GitHub, Linear |
 | [comandi.md](comandi.md) | Suite, coverage, script di prova, Kitty, RuboCop, YARD, gem, CI e Linear, con le note per eseguirli |
 | [lezioni.md](lezioni.md) | Insidie emerse dai lotti: glifi larghi ed egcpool, gestori trap e segnali, coverage, review |
@@ -34,6 +33,7 @@ Leggi questo indice, poi apri solo i file che servono. Le regole d'uso sono in [
 
 ## Fuori da `memory/`
 
+- Le regole vincolanti 1–22: [CLAUDE.md](../CLAUDE.md), sezione «Regole vincolanti».
 - [RICONSEGNA.md](../RICONSEGNA.md): esito di ogni fase e di ogni lotto, con le tabelle dei bug di notcurses 3.0.17,
   i cambi dell'API pubblica, i cambi a `Gemfile` e `Gemfile.lock` e le issue aperte nate dai lotti.
 - [CHANGELOG.md](../CHANGELOG.md): una voce per ogni fix in `[Non rilasciato]`.

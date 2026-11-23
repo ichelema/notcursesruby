@@ -79,7 +79,7 @@ nate dai lotti».
 | ICH-540 | Low | Bug | `Plane#close`, `#family_destroy`, `Widget#close` e `Context#drop_planes` da un gestore `trap` che torna al codice interrotto non rinviano la distruzione | Lotto 5. Limite nello YARD |
 | ICH-541 | Low | Bug | Un Fiber sospeso dentro un'operazione del wrapper tiene lo stop in attesa per sempre | Lotto 5. Limite nello YARD |
 | ICH-554 | Low | Performance | `Visual#rotate` chiama il C una volta per pixel: circa 0,9 s su 1024x1024 | Lotto 6. Accelerarlo può servire un cambio del layer FFI (regola 1) |
-| ICH-556 | Low | Performance | Il controllo dei glifi larghi dei blit `:braille` legge tutte le celle del rettangolo: 20 ms su un piano 60x200, contro 0,19 ms prima del lotto 6 | Lotto 6. `braille_blit` non tocca le celle con soli pixel trasparenti (`blit.c:1203-1206`) |
+| ICH-556 | Low | Performance | Il controllo dei glifi larghi dei blit `:braille` legge tutte le celle del rettangolo: 20 ms su un piano 60x200, contro 0,19 ms prima del lotto 6 | Lotto 6. Nelle celle con soli pixel trasparenti `braille_blit` azzera canali e stile e cambia gli alpha, ma non scrive l'EGC (`blit.c:1193-1215`) |
 | ICH-562 | Low | Bug, Performance | Un blit 1x1 di `Visual.blit_rgba` crea due `ncvisual` | Lotto 6 |
 
 - ICH-554 e ICH-556 hanno solo la label `Performance`: `1_create-worktree` chiede il prefisso del branch.
@@ -90,13 +90,15 @@ nate dai lotti».
 ## ICH-463 in Blocked
 
 - Stato del team ICH «Waiting on something outside this repo», scelta dell'utente.
-- La correzione è in notcurses (`process_melange`, `in.c:2427`: `consumed < 0` → `<= 0`), proposta upstream con la PR
-  [#2954](https://github.com/dankamongmen/notcurses/pull/2954) (issue #2947), dal fork
+- La correzione è in notcurses (`process_melange`, `in.c:2427`: `consumed < 0` → `<= 0`), proposta con la PR
+  [#2954](https://github.com/dankamongmen/notcurses/pull/2954) (issue #2947) dal fork
   `/mnt/data/Sviluppo/Progetti/Fork/20261118_notcurses` (branch `fix/melange-split-utf8`).
+- La PR #2954 è nel ramo principale di notcurses dal 2026-11-19 (merge `2cb71b8c`) e la issue #2947 è chiusa. Al
+  2026-11-23 l'ultimo rilascio è ancora v3.0.17, e il submodule (`b26048eeb`) ha ancora `consumed < 0`.
 - Nessun workaround nel wrapper e nessun aggiornamento del submodule.
-- Riprendi la issue quando esiste una versione di notcurses corretta e usabile dalla gem: ripeti il repro, aggiungi la
-  spec (processo figlio con timeout), togli il limite da YARD, README e CHANGELOG, chiudi la issue. Se upstream non fa
-  il merge, le alternative sono nella PR #27.
+- Riprendi la issue quando una versione di notcurses con il fix è usabile dalla gem: ripeti il repro, aggiungi la
+  spec (processo figlio con timeout), togli il limite da YARD, README e CHANGELOG, chiudi la issue. Le alternative a
+  una versione upstream sono nella PR #27.
 - L'automazione di Linear ha portato la issue a In Progress e a Done anche con `Refs` (il nome del branch contiene
   l'ID): dopo ogni evento della PR controlla lo stato.
 
@@ -120,7 +122,8 @@ Valgono alla chiusura di ogni lotto e alla fine della fase. I comandi sono in [c
 - `ruby -w -Ilib -e 'require "notcurses"'` senza warning; `bundle exec rubocop` 0 offense.
 - `yard doc --fail-on-warning` 0 warning, `yard stats --list-undoc` 100 %; `gem build` senza warning.
 - Coverage >= 98 % totale e >= 90 % per file; `spec/coverage_spec.rb` e `spec/notcurses/api_spec.rb` passano.
-- CI verde su tutta la matrice sull'ultimo commit di `master`.
+- CI verde su tutta la matrice sull'ultimo commit di `master` che ha una CI: i commit `[skip ci]` dopo di lui cambiano
+  solo documenti o commenti.
 - `git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto, salvo cambi approvati dall'utente.
 - Se un lotto cambia codice usato solo su macOS (per esempio `Context#stop_notcurses`), scrivilo nella PR: la CI gira
   solo su Linux.

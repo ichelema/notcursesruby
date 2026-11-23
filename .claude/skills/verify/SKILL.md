@@ -34,7 +34,7 @@ repository:
 
 ```sh
 B="$HOME/.claude/tmp/libghostty-vt"; V=1.0.1
-mkdir -p "$B/dl" "$B/src" "$B/prefix"
+mkdir -p "$B/dl" "$B/src" "$B/prefix" "$B/harness"
 for f in libghostty-vt-$V.tar.gz libghostty-vt-$V-deps.tar.gz SHA256SUMS SHA256SUMS.minisig; do
   curl -fsSL -o "$B/dl/$f" "https://release.files.ghostty.org/libghostty-vt/$V/$f"
 done
@@ -43,7 +43,7 @@ minisign -V -P RWQlAjJC23149WL2sEpT/l0QKy7hMIFhYdQOFy0Z7z7PbneUgvlsnYcV -m "$B/d
 tar -xzf "$B/dl/libghostty-vt-$V.tar.gz" -C "$B/src"; tar -xzf "$B/dl/libghostty-vt-$V-deps.tar.gz" -C "$B/src"
 (cd "$B/src/libghostty-vt-$V" && mise x zig@0.17.1 -- zig build --prefix "$B/prefix" \
   --system "$B/src/libghostty-vt-$V-deps" -Doptimize=ReleaseFast)
-PKG_CONFIG_PATH="$B/prefix/lib/pkgconfig" cc -O2 -Wall -Wextra -o "$B/ncvt" .claude/skills/verify/ncvt.c \
+PKG_CONFIG_PATH="$B/prefix/lib/pkgconfig" cc -O2 -Wall -Wextra -o "$B/harness/ncvt" .claude/skills/verify/ncvt.c \
   $(PKG_CONFIG_PATH="$B/prefix/lib/pkgconfig" pkg-config --cflags --libs libghostty-vt) -lutil -Wl,-rpath,"$B/prefix/lib"
 ```
 
@@ -66,7 +66,7 @@ Uso: `ncvt [-c COLONNE] [-r RIGHE] [-t SECONDI] [-m] [-s FILE] -- comando`.
 
 ### Prova rapida: `screen`
 
-Per controllare in un minuto cosa vede l'utente, anche durante l'implementazione (regola 22 di `memory/regole.md`: un
+Per controllare in un minuto cosa vede l'utente, anche durante l'implementazione (regola 22 di `CLAUDE.md`: un
 consiglio in un messaggio o nello YARD si prova sullo schermo prima del commit). Lo script di prova usa la lib del
 checkout che contiene `screen` (anche un worktree) e due helper di `snap.rb`, caricato da `screen`:
 

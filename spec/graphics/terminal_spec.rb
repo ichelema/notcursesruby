@@ -67,7 +67,7 @@ RSpec.describe "Blitter e tasti su un terminale vero (Kitty, Ghostty)", if: ENV[
   end
 
   # Dopo un figlio ucciso: modo del tty, schermo normale, cursore visibile,
-  # immagini kitty cancellate (regola 16).
+  # immagini kitty cancellate (regola 16 della Fase 5).
   def restore_terminal
     system("stty", "sane")
     $stdout.write("\e[?1049l\e[?25h\e_Ga=d\e\\")

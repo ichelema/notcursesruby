@@ -91,10 +91,11 @@ gh run view <id> --log-failed
 ## Linear
 
 Per leggere e cambiare le issue usa la skill `trinity:linear` (`LINEAR_API_KEY` è nell'ambiente). Da shell usa lo
-script della skill:
+script della skill. La forma con `mise -C` funziona anche in una sessione entrata in un worktree. Lo script scrive
+su stderr una riga di rate limit: per leggere il JSON con un altro programma usa `2>/dev/null`.
 
 ```sh
-lq() { (cd /Dati/AI/Claude/Trinity/skills/linear && mise x python -- python scripts/linear.py "$@"); }
+lq() { mise -C /Dati/AI/Claude/Trinity/skills/linear x python -- python scripts/linear.py "$@"; }
 
 # una issue, con stato e relazioni
 lq query 'query($id: String!) { issue(id: $id) { identifier title state { name } priority estimate
@@ -115,5 +116,4 @@ lq query 'query { issues(first: 100, filter: { project: { name: { eq: "notcurses
   `spec/source_chars_spec.rb` fallisce e indica file e riga. Nei commenti restano ammessi. Nelle regex delle spec usa
   `Regexp.escape` del valore calcolato.
 - In una sessione entrata in un worktree il controllo rifiuta un heredoc che crea un file, un `cd` in una subshell e
-  `git -C` verso il checkout principale (lotto 8c). Crea i file con Write e usa comandi semplici; per Linear usa
-  `mise -C /Dati/AI/Claude/Trinity/skills/linear` al posto della subshell con `cd`.
+  `git -C` verso il checkout principale (lotto 8c). Crea i file con Write e usa comandi semplici, come `lq` qui sopra.

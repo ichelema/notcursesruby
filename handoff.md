@@ -8,7 +8,8 @@ Aggiornato il 2026-11-23. Questo file dice solo cosa fare nella prossima session
 - Ultimo merge su `master`: PR #33 (lotto 8c: ICH-576, ICH-580, ICH-577, ICH-581), commit `38d4a8c`, il
   2026-11-23. Nessun lotto in corso, nessun worktree aperto.
 - Fase «Issue in Backlog»: lotti 1–8c fatti. Restano i lotti 8d–15 e 10 issue senza lotto
-  ([memory/piano.md](memory/piano.md)). ICH-463 resta in Blocked: aspetta la PR upstream #2954 di notcurses.
+  ([memory/piano.md](memory/piano.md)). ICH-463 resta in Blocked: la correzione è nel ramo principale di notcurses
+  dal 2026-11-19 (PR #2954), ma l'ultimo rilascio è ancora v3.0.17.
 - Ultima suite su `master` (`38d4a8c`): 1315 esempi, 0 fallimenti, 1 pending, in ordine normale e con i semi 1234,
   4242 e 7; coverage 98,16 %; RuboCop 0 offense; YARD 100 %. CI di `master` verde (run `45089245360`).
 
@@ -16,12 +17,15 @@ Aggiornato il 2026-11-23. Questo file dice solo cosa fare nella prossima session
 
 1. Se non li hai già fatti, esegui i passi 1–5 di «Come riprendere il lavoro» in [CLAUDE.md](CLAUDE.md).
 2. Il prossimo lotto è il **lotto 8d** (`bug`), scelto dall'utente il 2026-11-22: ICH-582 e ICH-586, tutte e due Low
-   e nate dal lotto 8b. Toccano il codice di grapheme ed egcpool del lotto 8b (`plane.rb`, `cell.rb`).
-   - ICH-582: con l'egcpool pieno le scritture con una `Cell` (`putc`, `hline`, `vline`, `polyfill`, `box`)
-     sollevano `CellError` invece di `PlaneError`.
-   - ICH-586: notcurses conta 2 colonne per una bandiera e Ghostty ne disegna 4, quindi il testo dopo la bandiera si
-     sposta. La issue chiede una scelta di comportamento all'utente prima del fix, e la misura delle bandiere su
-     Ghostty (`ncvt`) e su Kitty.
+   e nate dal lotto 8b. Toccano il codice di grapheme ed egcpool del lotto 8b (`plane.rb`, `cell.rb`). Leggi le due
+   issue per intero su Linear: i criteri di accettazione e i test richiesti sono la checklist del lotto.
+   - ICH-582: con l'egcpool pieno le scritture con una `Cell` sollevano `CellError` invece di `PlaneError`. La issue
+     elenca i metodi (`putc`, `hline`, `vline`, `polyfill`, `box`/`perimeter`, `gradient`) e chiede anche messaggi
+     senza l'EGC intero e la misura di `set_base`.
+   - ICH-586: notcurses conta 2 colonne per una bandiera, `ncvt` (libghostty-vt 1.0.1) ne disegna 4, quindi il testo
+     dopo la bandiera si sposta. La issue chiede di misurare la bandiera e l'indicatore regionale singolo su Ghostty
+     (`ncvt`) e su Kitty, e una scelta di comportamento dell'utente prima del fix, anche per il testo di
+     `Notcurses::UI`.
 3. Spiega le due issue all'utente (passo 0 del workflow). Poi proponi il comando qui sotto e fermati: lo lancia
    l'utente. Il branch atteso è `bug/ICH-582-586-opus`.
 

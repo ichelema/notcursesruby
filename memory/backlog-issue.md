@@ -1,7 +1,7 @@
 # Issue in Backlog — log
 
 Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti in [piano.md](piano.md), regole in
-[regole.md](regole.md); esito in `RICONSEGNA.md`, sezione "Issue in Backlog".
+[CLAUDE.md](../CLAUDE.md); esito in `RICONSEGNA.md`, sezione "Issue in Backlog".
 
 ## Prima di iniziare (2026-11-15)
 
@@ -1159,4 +1159,5 @@ ICH-577 e ICH-576 dall'orchestratore (concorrenza e segnali).
   su `master` senza CI.
 - Linear: ICH-576, ICH-580, ICH-577 e ICH-581 a Done; nessuna issue nuova. Worktree e branch da rimuovere con
   `/trinity:workflow:5_remove-worktree bug+ICH-576-580-577-581-opus` (si avvia solo a mano); il worktree ha il link
-  temporaneo `notcurses/data` (non tracciato).
+  temporaneo `notcurses/data` (non tracciato). Worktree e branch rimossi il 2026-11-23 con quel comando; il branch
+  remoto l'aveva già cancellato GitHub al merge.

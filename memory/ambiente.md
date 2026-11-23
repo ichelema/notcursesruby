@@ -33,7 +33,9 @@
 - `notcurses`: sorgenti C di notcurses 3.0.17 (`v3.0.17-22-gb26048eeb`), da leggere per i percorsi C (regola 20).
   `notcurses/data` contiene le immagini delle spec. Nel checkout principale il submodule è inizializzato; se manca
   `notcurses/data`, esegui `git submodule update --init --depth 1 notcurses`. In un worktree crea il link temporaneo
-  `ln -s <repo>/notcurses/data <worktree>/notcurses/data`, poi rimuovilo; non inizializzare il submodule.
+  `ln -s <repo>/notcurses/data <worktree>/notcurses/data` prima delle suite e non inizializzare il submodule. Prima di
+  ogni commit, del verify e di `5_remove-worktree` controlla `git status --short --untracked-files=all`: se il link
+  compare, rimuovilo prima (Blast Radius chiede la conferma per `rm`).
 - `libnotcurses-sys`: binding Rust di notcurses, riferimento della Fase 1.
 - La build di notcurses di Arch ha solo lo stub di `ncplane_qrcode`: la spec di `Plane#qrcode` resta pending. ICH-542
   e ICH-552 si provano solo con una build con libqrcodegen (submodule, `-DUSE_QRCODEGEN=on`).
@@ -56,8 +58,8 @@
 - Soglie di coverage: 98 % totale, 90 % per file, layer FFI escluso.
 - I commit di sola documentazione usano `[skip ci]`.
 - La CI gira solo su Linux.
-- Una CI rossa in circa 30 secondi su tutti i job è un guasto dell'infrastruttura, non il codice: per esempio
-  `archive.archlinux.org` giù, da controllare con `curl` (lotto 8b).
+- Una CI rossa in circa 30 secondi su tutti i job indica di solito un guasto dell'infrastruttura, non il codice (lotto
+  8b: `archive.archlinux.org` giù). Conferma con `gh run view <id> --log-failed` e controlla il servizio con `curl`.
 - Dopo l'apertura della PR la CI può partire con qualche minuto di ritardo: il comando di attesa è in
   [comandi.md](comandi.md).
 

@@ -2,7 +2,7 @@
 
 Insidie del codice, dei test e delle review emerse dai lotti, da applicare ai lotti futuri. La storia di ogni lotto è
 nei log ([backlog-issue.md](backlog-issue.md), [correzioni-review.md](correzioni-review.md)). Le lezioni diventate
-regole sono in [regole.md](regole.md) (regole 20–22).
+regole sono in [CLAUDE.md](../CLAUDE.md), sezione «Regole vincolanti» (regole 20–22).
 
 ## Glifi larghi, egcpool e celle
 
@@ -41,7 +41,9 @@ regole sono in [regole.md](regole.md) (regole 20–22).
 - I reviewer provano l'egcpool pieno (EGC da 6 MB), i piani con bitmap su un pty finto (sixel e Kitty:
   `bitmap_plane_script` in `spec/integration/pty_spec.rb`), i piani che hanno fatto scroll, le metà sinistre orfane,
   i callback di resize che cambiano il piano e i gestori `trap` (lotti 1 e 2).
-- I reviewer eseguono gli script da stdin, senza file e senza `.review-tmp`, e rspec in una subshell con cwd nel
-  worktree di review. Non usano `rm` (Blast Radius, [ambiente.md](ambiente.md)).
+- I reviewer eseguono gli script da stdin, senza file e senza `.review-tmp`. `3_independent-review` vieta il `cd`
+  nel worktree di review, ma rspec carica il `lib/` del cwd ([comandi.md](comandi.md)): per rspec usa una subshell
+  `( cd <worktree di review> && ... )`, che non sposta la sessione. I reviewer non usano `rm` (Blast Radius,
+  [ambiente.md](ambiente.md)).
 - Dopo una review con script su terminali muti controlla con `pgrep` i processi orfani fermi nell'init, prima di
   rimuovere il worktree di review (lotto 8c: fermati con SIGTERM, usciti in meno di 3 s).

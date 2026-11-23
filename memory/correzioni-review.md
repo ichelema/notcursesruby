@@ -1,7 +1,7 @@
 # Correzioni della revisione del 2026-11-06 — log
 
 Decisioni, problemi e soluzioni, lotto per lotto. Ordine dei lotti e regole della fase nella storia git
-(`git show 8a4b5f7:RIPRESA.md`), regole in vigore in [regole.md](regole.md); esito in `RICONSEGNA.md`, sezione
+(`git show 8a4b5f7:RIPRESA.md`), regole in vigore in [CLAUDE.md](../CLAUDE.md); esito in `RICONSEGNA.md`, sezione
 "Correzioni della revisione del 2026-11-06".
 
 ## Decisioni iniziali (2026-11-08)
