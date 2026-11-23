@@ -1088,3 +1088,75 @@ Scelte dell'utente, dopo il lotto 8b:
   `widgets/reader.rb` come ICH-580.
 - ICH-582 (scritture con `Cell` e egcpool pieno) e ICH-586 (larghezza delle bandiere) nel lotto 8d nuovo: stesso
   codice di grapheme ed egcpool del lotto 8b (`plane.rb`, `cell.rb`).
+
+## Lotto 8c — ICH-576, ICH-580, ICH-577, ICH-581 (PR #33, merge `38d4a8c`)
+
+Dal 2026-11-22 al 2026-11-23. Branch `bug/ICH-576-580-577-581-opus`, worktree
+`.claude/worktrees/bug+ICH-576-580-577-581-opus`. ICH-581 e ICH-580 implementate da un `trinity:fast-worker`,
+ICH-577 e ICH-576 dall'orchestratore (concorrenza e segnali).
+
+### Fix
+
+- `fc939d6` (ICH-581): `Reader#offer_input`, prima di un Backspace dalla colonna x >= 2, cerca nella copia nascosta
+  l'inizio del glifo largo la cui metà destra è in x - 1 (`wide_glyph_start`, `nccell_wide_right_p`); dopo il C porta
+  i cursori della copia, della vista e (con `cursor: true`) del terminale all'inizio del glifo
+  (`rewind_wide_backspace`). Causa: `do_backspace` fa sempre `--x` (`reader.c:252-268`).
+- `e05764e` (ICH-580): `Context` tiene `@cursor_at` (stato chiesto, nil = nascosto) separato da `@cursor_enabled`
+  (stato noto del C, solo per l'idempotenza di `cursor_disable`); `restore_cursor!` rimette sempre lo stato chiesto.
+- `ae03fbb` (ICH-577): il thread di init scarta l'errore del rollback (l'ensure di `undo` sistema comunque registro,
+  `FILE*` e `TERM`); l'helper delle spec `raise_at_c_return` ha il parametro `error:`.
+- `cbd86a7` (ICH-576): `Util.await_init` (attesa limitata a `INIT_GRACE` = 2 s dopo una `SignalException`),
+  `save_init_tty` prima dell'init (termios del tty di `get_tty_fd`, `fd.c:455-485`, e flag del fd 0),
+  `watch_init` dall'hook `at_exit` (thread nato con `handle_interrupt(Object => :never)`, che eredita la maschera:
+  provato su 3.1.7 e 4.0.7), `restore_init_tty` come il ramo `err:` di `interrogate_terminfo`
+  (`termdesc.c:1538-1552`: pop kitty, `rmcup` per `Context`, termios) e `force_exit` (morte per il segnale con
+  `SYSTEM_DEFAULT` + `Process.kill`, `exit!` per `SystemExit`). L'eccezione per `await_init` viene da un
+  `rescue Exception` in `initialize`, non da `$!` (dentro un `rescue` dell'applicazione `$!` è un'eccezione vecchia).
+- Simplify: `d927ab1` (hook `at_exit` con un solo controllo del proprietario), `a7c8538` (ciclo di lettura della spec).
+- CI: `ee8632c` (`before` che rimette il cursore del contesto condiviso in `reader_spec`), `d4f2947`
+  (`spec/notcurses/init_exit_spec.rb`, coverage dell'uscita nel processo di rspec).
+- Review: `815de73` (il limite vale anche per `SystemExit`, per esempio un `exit` da `trap('TERM')`).
+
+### Decisioni
+
+- Dell'utente: ICH-581 nel lotto 8c, ICH-582 e ICH-586 nel lotto 8d; per ICH-576 ripristino del terminale da Ruby e
+  attesa di 2 s; per ICH-577 l'errore del rollback scartato; per ICH-580 con un reader `cursor: true` e uno
+  `cursor: false` aperti insieme decide l'ultima operazione; fix del finding della review; merge fatto dall'utente.
+- Mie, su ICH-576 (analisi parallele di Fable e GPT, concordi sulla causa): limite solo per i segnali (poi anche
+  `SystemExit`), non per `Thread#kill` e `Timeout`, così ICH-226 non cambia; thread di controllo avviato da `at_exit`
+  con una scadenza (più un secondo per gli altri hook) invece del thread di guardia di Fable che dipende da
+  `Thread.main.alive?`; morte vera per il segnale invece di `exit!(128 + n)`; niente `rmkx` (il C non lo manda nel
+  suo percorso d'errore e dipende dalla terminfo).
+
+### Review
+
+- Review `soft` Sonnet su `d4f2947`: APPROVABILE CON RISERVE, 1 finding (MEDIUM, CONFIRMED: con `trap('TERM') { exit }`
+  il segnale diventa una `SystemExit` e `new` aspettava senza limite), corretto in `815de73` con una spec pty nuova.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| Causa di ICH-576 attesa nella maschera del thread di init | l'attesa è `pthread_cond_wait` senza timeout (`in.c:2924`): nessun segnale né l'ubf di Ruby la sveglia; all'uscita `rb_thread_terminate_all` aspetta il thread per sempre | uscita forzata dall'hook `at_exit` dopo la scadenza |
+| Prima CI rossa: `ContextError` in `reader_spec` su 3.2 e 3.4 | in ordine casuale una spec lasciava il cursore acceso nel contesto condiviso; senza tty `cursor_disable` fallisce | `before` che rende sconosciuto lo stato e spegne il cursore (`ee8632c`); un `after` contava le chiamate nelle aspettative FFI |
+| Prima CI rossa: coverage 97,65 % | il codice dell'uscita gira solo nei processi figli della spec pty | `init_exit_spec.rb` nel processo di rspec (98,08 %) |
+| Ordine casuale non provato prima della PR | in `2_work-issue` solo l'ordine normale | prima della PR: suite con i semi 1234, 4242 e 7 e la coverage |
+| Processi del reviewer fermi nell'init dopo la review | figli dello script di prova del reviewer, rimasti orfani | fermati con SIGTERM (usciti in meno di 3 s), poi `git worktree remove` |
+| `verify_reader.rb` fermo dopo lo scenario 6c | `cursor_enable(y: 10, x: 5)` fuori da un terminale di 8 righe | `ncvt -r 24` |
+| Heredoc, `cd` in subshell e `git -C` verso il checkout principale rifiutati nel worktree | controllo della sessione isolata | Write per i file, `mise -C` per Linear, comandi semplici |
+
+### Verifica finale
+
+- Verify (`2_work-verify`, `ncvt`): PASS, 14 prove. `ncvt -m` con SIGTERM, un Ctrl-C e due Ctrl-C per `Context` e
+  `Direct`: morte per il segnale in 2,05 s, schermo primario (con `master`: vivo, SIGKILL a 10 s, `Context` resta nello
+  schermo alternativo); terminale finto con risposta a 1 s (ICH-226 invariato) e a 3 s (`new` esce a 2,3 s, registro
+  occupato fino alla risposta); `verify_reader.rb` scenari 9a e 9b da `visible=1` a `visible=0`; Backspace sui glifi
+  larghi senza buchi, anche con due Backspace di fila (con `master` due Backspace cancellavano un solo glifo).
+- `master` su `38d4a8c`, 2026-11-23: 1315 esempi, 0 fallimenti, 1 pending (`qrcode` sullo stub), con i semi 1234, 4242
+  e 7; coverage 98,16 % di righe (6663 / 6788, dalla CI); RuboCop 0 offense (109 file); YARD 100 %; `ruby -w` pulito;
+  gem costruita; `git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto. CI della PR (`815de73`) e di
+  `master` (run `45089245360`) verdi su tutta la matrice: la run di `master` prova anche `037c011`, che era arrivato
+  su `master` senza CI.
+- Linear: ICH-576, ICH-580, ICH-577 e ICH-581 a Done; nessuna issue nuova. Worktree e branch da rimuovere con
+  `/trinity:workflow:5_remove-worktree bug+ICH-576-580-577-581-opus` (si avvia solo a mano); il worktree ha il link
+  temporaneo `notcurses/data` (non tracciato).

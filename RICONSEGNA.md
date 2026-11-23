@@ -1296,7 +1296,7 @@ Issue del Backlog incontrate e non corrette: ICH-455 (in Kitty il Ctrl+C che int
 | 7 | [#30](https://github.com/ichelema/notcursesruby/pull/30) | `e6b51e0` | ICH-569, ICH-568, ICH-226, ICH-474, ICH-441, ICH-539 (solo documentazione, scelta dell'utente); ICH-576 e ICH-577 nate dal lotto, in Backlog | nessuno |
 | 8 | [#31](https://github.com/ichelema/notcursesruby/pull/31) | `ee509e1` | ICH-218, ICH-484 (il lotto 8 della tabella diviso in due, scelta dell'utente: ICH-217, ICH-232 e ICH-533 nel lotto 8b); ICH-580 nata dal verify e ICH-581 nata dal lavoro sul lotto, in Backlog | `ncreader_redraw` copia una cella della copia nascosta nella vista solo se EGC, stile o canali sono diversi, senza confrontare la width (`cellcmp_and_dupfar`, `internal.h:1510-1523`, `reader.c:100`): dopo Backspace, Ctrl+U e Ctrl+W le metà destre restano con width 0 (aggirato); già noti e ora aggirati: la cancellazione della colonna 0 (`notcurses.c:1883`) e il cursore acceso a ogni ridisegno (`reader.c:105`); nuovo e non aggirato: Backspace dopo un glifo largo lascia il cursore sulla colonna della metà destra (`do_backspace`, `reader.c:252-266`, ICH-581); tabella "Widget A" di `memory/fase2-wrapper-idiomatico.md` |
 | 8b | [#32](https://github.com/ichelema/notcursesruby/pull/32) | `67164c7` | ICH-533, ICH-217, ICH-232; ICH-582 (nata dal lavoro su ICH-533) e ICH-586 (nata dal verify), in Backlog | con l'egcpool pieno `ncplane_put` svuota il glifo di arrivo e gli dà stili e canali del piano prima di fallire (`notcurses.c:1911-1950`; aggirato); `nccell_load` divide bandiere, coniugati devanagari, hangul con i jamo L, V e T e keycap (già noto, ora spiegato nei messaggi); una bandiera è larga 2 colonne per notcurses e 4 per Ghostty (non aggirato, ICH-586); tabella "Piani" di `memory/fase2-wrapper-idiomatico.md` |
-| 8c | — | — | ICH-581 (con ICH-576, ICH-580 e ICH-577: PR e merge da compilare a lotto chiuso) | Backspace dopo un glifo largo cancella il glifo intero ma sposta il cursore di una sola colonna, sulla metà destra: `do_backspace` scrive `""` in `x - 1` e lascia lì i cursori (`reader.c:252-268`; `ncplane_put` toglie le due metà, `notcurses.c:1917-1923`); aggirato: `Reader#offer_input` porta i cursori sulla prima colonna del glifo (ICH-581); tabella "Widget A" di `memory/fase2-wrapper-idiomatico.md` |
+| 8c | [#33](https://github.com/ichelema/notcursesruby/pull/33) | `38d4a8c` | ICH-576, ICH-580, ICH-577, ICH-581 (ICH-581 aggiunta dall'utente; nessuna issue nuova) | già noto, ora spiegato e aggirato: con un terminale che non risponde mai l'init aspetta DA1 senza timeout (`pthread_cond_wait`, `in.c:2924-2925`), e nessun segnale lo sveglia; Backspace dopo un glifo largo cancella il glifo intero ma sposta il cursore di una sola colonna, sulla metà destra: `do_backspace` scrive `""` in `x - 1` e lascia lì i cursori (`reader.c:252-268`; `ncplane_put` toglie le due metà, `notcurses.c:1917-1923`); aggirato: `Reader#offer_input` porta i cursori sulla prima colonna del glifo (ICH-581); tabella "Widget A" di `memory/fase2-wrapper-idiomatico.md` |
 
 ### Cambi dell'API pubblica
 
@@ -1427,7 +1427,8 @@ del lotto 3. Comportamenti nuovi:
   subito `new`, e finché l'init non torna un nuovo init solleva `InitError`; un `Thread#kill` del chiamante arriva a
   contesto fermato e registro libero. Un errore della chiamata C o del rollback non scrive su stderr e non lascia il
   registro occupato; l'errore del rollback sostituisce l'eccezione originale (ICH-577). Un terminale che non risponde
-  mai lascia il processo fermo nell'init anche con SIGTERM e SIGINT (ICH-576) (lotto 7, ICH-226, ICH-568).
+  mai lascia il processo fermo nell'init anche con SIGTERM e SIGINT (ICH-576) (lotto 7, ICH-226, ICH-568; i due
+  limiti sono risolti nel lotto 8c).
 - `Visual.from_file`, `Direct#load_image`, `Direct::Image.new` e `Direct#render_frame` non perdono la risorsa C con
   un'eccezione asincrona al ritorno della chiamata C; i blit di buffer non perdono il `ncvisual` temporaneo. Su Ruby
   3.1, 3.2 e 3.3 un Ctrl-C può ancora perderla; resta una finestra di un'istruzione al ritorno, a risorsa consegnata
@@ -1443,7 +1444,7 @@ del lotto 3. Comportamenti nuovi:
   chiamata a `Context#cursor_enable` (con la posizione) o `#cursor_disable`; prima restava acceso nel campo. Con
   `cursor: true` il reader mostra il cursore nel campo, come prima. Con `cursor: false` il Backspace a inizio riga non
   sposta più il cursore del terminale. Limite aperto: dopo un reader con `cursor: true` lo stato è sconosciuto e i
-  reader con `cursor: false` non lo rimettono (ICH-580) (lotto 8, ICH-218).
+  reader con `cursor: false` non lo rimettono (ICH-580) (lotto 8, ICH-218; il limite è risolto nel lotto 8c).
 - Nuovo metodo `@api private` di `Context`: `restore_cursor!` (lotto 8).
 - `Plane#putstr`, `#putegc` e `#puttext`: con l'egcpool del piano pieno (16 MiB) un EGC di più di 4 byte solleva
   `PlaneError` con un messaggio che nomina l'egcpool e l'EGC; prima `ArgumentError` con i segni combinanti,
@@ -1463,6 +1464,23 @@ del lotto 3. Comportamenti nuovi:
   (i controlli di `putstr` senza scrittura), usato da `Notcurses::UI::Text.check!`, che ha un parametro `plane` in
   più; nuovi `UI::Text.host`, `Cell.split_error` e `Util.egc_label`, tutti `@api private` (lotto 8b, ICH-232,
   ICH-217).
+- `Context.new` e `Direct.new` con un terminale che non risponde mai: dopo un segnale (SIGTERM, Ctrl-C) o un `exit`
+  (anche da un gestore `trap`) `new` aspetta la risposta al più 2 secondi, poi esce con l'eccezione; con le altre
+  eccezioni e con `Thread#kill` aspetta senza limite, come prima. Se il processo esce con l'init ancora fermo, l'hook
+  `at_exit` lo chiude senza aspettare gli altri thread (morte per il segnale, o lo stato di `exit`; finalizzatori e
+  `atexit` del C non girano) dopo aver rimesso il terminale come l'ha trovato l'init (termios, `O_NONBLOCK` del fd 0,
+  tastiera kitty, schermo alternativo di `Context`). Con un terminale che risponde oltre i 2 secondi un solo Ctrl-C si
+  comporta come prima il secondo (scelte dell'utente: attesa di 2 s, ripristino da Ruby) (lotto 8c, ICH-576).
+- Un errore del rollback dell'init viene scartato: `new` solleva l'eccezione per cui ha rinunciato (scelta
+  dell'utente) (lotto 8c, ICH-577).
+- `Context` tiene separati lo stato del cursore chiesto dall'applicazione e quello noto del C: i reader con
+  `cursor: false` rimettono lo stato chiesto anche dopo un reader con `cursor: true`; con i due tipi aperti insieme
+  decide l'ultima operazione (scelta dell'utente) (lotto 8c, ICH-580).
+- `Reader#offer_input`: Backspace dopo un glifo largo porta i cursori della vista, della copia nascosta e (con
+  `cursor: true`) del terminale sulla prima colonna del glifo (lotto 8c, ICH-581).
+- Nuovi `@api private`: `Context#pending_init`, `Direct#pending_init`, `Util::PendingInit`, `Util::INIT_GRACE` e i
+  metodi di `Util` `monotonic`, `save_init_tty`, `restore_init_tty`, `close_init_tty`, `fd0_fcntl`, `await_init`,
+  `watch_init`, `force_exit`; `Util.init_thread` restituisce un `PendingInit` invece del `Thread` (lotto 8c).
 
 ### Cambi a `Gemfile` e `Gemfile.lock`
 
@@ -1475,6 +1493,9 @@ del lotto 3. Comportamenti nuovi:
 - Lotto 5: nessuno.
 - Lotto 6: nessuno. `lib/notcurses/direct.rb` usa `fcntl` della libreria standard (regola 10).
 - Lotto 7: nessuno.
+- Lotto 8: nessuno.
+- Lotto 8b: nessuno.
+- Lotto 8c: nessuno. `lib/notcurses/util.rb` usa `fcntl` della libreria standard (regola 10).
 
 ### Issue aperte nate dai lotti
 
@@ -1540,19 +1561,18 @@ del lotto 3. Comportamenti nuovi:
 - ICH-569 — un'eccezione asincrona dopo la creazione del `ncvisual` temporaneo di `Visual.blit_rgba` lo perde (lotto 6,
   review-fix loop; Done nel lotto 7).
 - ICH-576 — con un terminale che non risponde mai alle query dell'init, SIGTERM e Ctrl-C non fermano il processo dentro
-  `Context.new` o `Direct.new` (anche su `master` prima del lotto; lotto 7, verify; Medium, in Backlog; da provare
-  anche con `/trinity:workflow:2_work-verify`).
+  `Context.new` o `Direct.new` (anche su `master` prima del lotto; lotto 7, verify; Done nel lotto 8c).
 - ICH-577 — un errore nel rollback dell'init sostituisce l'eccezione originale del chiamante (anche prima del lotto;
-  lotto 7, review; Low, in Backlog).
+  lotto 7, review; Done nel lotto 8c).
 - ICH-580 — dopo un `Reader` con `cursor: true`, che rende sconosciuto lo stato del cursore, i reader con
-  `cursor: false` lasciano acceso il cursore anche dopo `Context#cursor_disable` (lotto 8, verify con `ncvt`; Medium,
-  in Backlog, nel lotto 8c per scelta dell'utente; correzione probabile: tenere separati lo stato chiesto
-  dall'applicazione e quello noto del C).
+  `cursor: false` lasciano acceso il cursore anche dopo `Context#cursor_disable` (lotto 8, verify con `ncvt`; Done nel
+  lotto 8c).
 - ICH-581 — Backspace dopo un glifo largo nel `Reader` cancella il glifo intero ma lascia il cursore sulla colonna
   della metà destra: la scrittura dopo lascia una cella vuota nel campo (bug di notcurses, `reader.c:252-266`; lotto 8;
-  Low, in Backlog, `related` a ICH-218).
+  Done nel lotto 8c, aggirato nel wrapper).
 - ICH-582 — con l'egcpool pieno le scritture con una `Cell` (`putc`, `hline`, `vline`, `polyfill`, `box`) sollevano
   `CellError` ("notcurses non accetta") invece di `PlaneError`; dopo il lotto 8b `gradient` solleva già `PlaneError`
-  dal C (lotto 8b, lavoro su ICH-533; Low, in Backlog, `related` a ICH-533).
+  dal C (lotto 8b, lavoro su ICH-533; Low, in Backlog, `related` a ICH-533; nel lotto 8d per scelta dell'utente).
 - ICH-586 — una bandiera è larga 2 colonne per notcurses e 4 per Ghostty: il testo dopo si sposta e restano residui
-  sullo schermo (lotto 8b, verify con `ncvt`; Low, in Backlog, `related` a ICH-217; Kitty non misurato).
+  sullo schermo (lotto 8b, verify con `ncvt`; Low, in Backlog, `related` a ICH-217; Kitty non misurato; nel lotto 8d
+  per scelta dell'utente).
