@@ -52,9 +52,9 @@ Aggiornato il 2026-11-24. Questo file dice solo cosa fare nella prossima session
 
 ## Decisioni che servono all'utente
 
-Nessuna su ICH-594. Resta un punto:
+Nessuna. Una nota sui permessi:
 
-- Permesso `issueCreate`: il 2026-11-24 la regola `Bash(mise x python -- python scripts/linear.py mutation:*)` non era
-  in `~/.claude/settings.json` né in `.chezmoitemplates/claude-settings.json` (c'è solo in `.claude/settings.local.json`
-  del progetto). Se l'utente l'ha messa altrove, controlla dove. Al primo bisogno di una issue nuova prova
-  `issueCreate`: se il classificatore blocca ancora, torna agli script dell'utente.
+- Permesso `issueCreate`: il 2026-11-24 la regola `Bash(mise x python -- python scripts/linear.py mutation:*)` è stata
+  aggiunta a `~/.claude/settings.json` dal template chezmoi (commit `81d5165` del repository chezmoi, non ancora spinto:
+  il remoto ha commit più nuovi). Non è ancora provata con `issueCreate`. Al primo bisogno di una issue nuova prova:
+  se il classificatore blocca ancora, torna agli script dell'utente.
