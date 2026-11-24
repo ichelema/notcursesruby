@@ -56,13 +56,33 @@ Notcurses::Context.open(output: tty_path, termtype: "xterm-256color", suppress_b
         app.stop
       end
     end
+    # Ciclo fermo, senza input: tre segni dopo 0,2 s, IDLE_S / 4 e IDLE_S, con un timer (thread) o uno
+    # sleep (Fiber). Ognuna delle due finestre fra i segni contiene un risveglio e il render di uno schermo
+    # invariato: run.rb toglie questo costo fisso con la differenza fra le due finestre.
+    waits = [0.2, Float(ENV.fetch("IDLE_S")) / 4, Float(ENV.fetch("IDLE_S"))]
+    idle = []
+    chain = lambda do |rest|
+      app.after(rest.first) do
+        idle << [now, cpu]
+        (rest.size > 1) ? chain.call(rest.drop(1)) : results.puts("idle-done")
+      end
+    end
     app.post do
-      marks[:ready] = [now, cpu]
       results.puts "ready"
+      if model == "threads"
+        chain.call(waits)
+      else
+        app.async do
+          waits.each do |wait|
+            sleep wait
+            idle << [now, cpu]
+          end
+          results.puts "idle-done"
+        end
+      end
     end
     out[:reason] = app.run(**run_opts)
-    out.merge!(t1: stamps, idle_wall: marks[:first][0] - marks[:ready][0],
-      idle_cpu: marks[:first][1] - marks[:ready][1], load_cpu: marks[:end][1] - marks[:first][1],
+    out.merge!(t1: stamps, idle: idle, load_cpu: marks[:end][1] - marks[:first][1],
       renders: marks[:end][2] - marks[:first][2])
 
   when "pipe"

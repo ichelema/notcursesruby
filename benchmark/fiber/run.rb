@@ -18,7 +18,10 @@
 #
 # - keys: latenza dal byte del tasto scritto sul pty all'handler on_input
 #   (KEYS tasti, uno ogni INTERVAL_MS), CPU dell'applicazione per tasto e CPU
-#   con il ciclo fermo (IDLE_S secondi senza eventi).
+#   con il ciclo fermo: due finestre senza input, di IDLE_S / 4 e IDLE_S
+#   secondi, aperte e chiuse da un timer dell'applicazione. Ogni finestra ha
+#   lo stesso costo fisso (un risveglio e il render di uno schermo invariato):
+#   la differenza fra le due dà la CPU a ciclo fermo, il resto il costo fisso.
 # - pipe: latenza dalla riga scritta su un pipe all'handler finito (KEYS
 #   righe), poi throughput di PIPE_MB MB scritti di seguito, con la CPU per MB
 #   e i render fatti durante il flusso. Due handler: append (LogView#append
@@ -114,7 +117,8 @@ class Child
     @res_r, res_w = IO.pipe
     opts = {3 => res_w, :out => :err}
     opts[4] = data if data
-    env = {"KEYS" => KEYS.to_s, "PIPE_BYTES" => (PIPE_MB * 1_048_576).to_s, "BUSY_MS" => BUSY_MS.to_s}.merge(env)
+    env = {"KEYS" => KEYS.to_s, "PIPE_BYTES" => (PIPE_MB * 1_048_576).to_s, "BUSY_MS" => BUSY_MS.to_s,
+           "IDLE_S" => IDLE_S.to_s}.merge(env)
     @pid = Process.spawn(env, RbConfig.ruby, "-I", File.join(ROOT, "lib"), APP, model, bench, term.path, opts)
     res_w.close
   end
@@ -167,7 +171,7 @@ end
 def keys_bench(model)
   with_child(model, "keys") do |child, term|
     child.expect("ready")
-    sleep IDLE_S
+    child.expect("idle-done") # la finestra del ciclo fermo la chiude un timer del figlio
     sent = Array.new(KEYS) do
       t0 = now
       term.type("a")
@@ -179,10 +183,12 @@ def keys_bench(model)
     raise "tasti persi: #{res["t1"].size} di #{KEYS}" unless res["t1"].size == KEYS
 
     lat = res["t1"].zip(sent).map { |t1, t0| (t1 - t0) / 1000.0 }
+    # due finestre di IDLE_S / 4 e IDLE_S con lo stesso costo fisso (risveglio e render invariato)
+    (wall1, cpu1), (wall2, cpu2) = res["idle"].each_cons(2).map { |(t0, c0), (t1, c1)| [t1 - t0, c1 - c0] }
+    idle_rate = (cpu2 - cpu1).to_f / (wall2 - wall1) # ns di CPU per ns
     {model: model, med: median(lat), p99: percentile(lat, 0.99), max: lat.max,
-     cpu_event: res["load_cpu"] / 1000.0 / KEYS,
-     idle_cpu: res["idle_cpu"] / 1000.0 / (res["idle_wall"] / 1e9),
-     renders: res["renders"]}
+     cpu_event: res["load_cpu"] / 1000.0 / KEYS, idle_cpu: idle_rate * 1e6,
+     wake_cpu: (cpu1 - (idle_rate * wall1)) / 1000.0, renders: res["renders"]}
   end
 end
 
@@ -247,11 +253,12 @@ end
 
 def print_keys(rows)
   puts "### keys: tasto → handler (#{KEYS} tasti, uno ogni #{fmt(INTERVAL_MS)} ms)", ""
-  puts "| Modello | Mediana µs | p99 µs | Max µs | CPU per tasto µs | CPU a ciclo fermo µs/s | Render |"
-  puts "| --- | --- | --- | --- | --- | --- | --- |"
+  puts "| Modello | Mediana µs | p99 µs | Max µs | CPU per tasto µs | CPU a ciclo fermo µs/s | " \
+       "Risveglio e render invariato µs | Render |"
+  puts "| --- | --- | --- | --- | --- | --- | --- | --- |"
   rows.each do |r|
     puts "| #{r[:model]} | #{fmt(r[:med])} | #{fmt(r[:p99])} | #{fmt(r[:max])} | #{fmt(r[:cpu_event])} | " \
-         "#{fmt(r[:idle_cpu])} | #{r[:renders]} |"
+         "#{fmt(r[:idle_cpu])} | #{fmt(r[:wake_cpu])} | #{r[:renders]} |"
   end
   puts
 end
