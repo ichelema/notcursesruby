@@ -1,0 +1,205 @@
+# Generated from notcurses 3.0.17
+# Source: notcurses/include/notcurses/notcurses.h
+# frozen_string_literal: true
+
+require_relative "../support/nc_helpers"
+
+# ICH-604: sotto un Fiber scheduler i callback chiamati da notcurses girano in
+# un contesto bloccante, così non si sospendono a metà della chiamata C.
+RSpec.describe "Callback di notcurses sotto un Fiber scheduler" do
+  include_context "con un contesto notcurses"
+
+  # Scheduler minimo: conta le chiamate a kernel_sleep e non sospende mai, così
+  # Fiber.schedule esegue il blocco fino in fondo.
+  let(:scheduler_class) do
+    Class.new do
+      attr_reader :sleeps
+
+      def initialize
+        @sleeps = 0
+      end
+
+      def kernel_sleep(*)
+        @sleeps += 1
+        true
+      end
+
+      def io_wait(_io, events, _timeout) = events
+
+      def block(*) = true
+
+      def unblock(*) = nil
+
+      def fiber_interrupt(*) = nil
+
+      def close = nil
+
+      def fiber(&)
+        Fiber.new(blocking: false, &).tap(&:resume)
+      end
+    end
+  end
+
+  # Fiber#blocking? è false in un Fiber non bloccante; Fiber.blocking esiste da Ruby 3.2.
+  let(:fiber_blocking_api) { Fiber.respond_to?(:blocking) }
+
+  # Esegue il blocco in un Fiber non bloccante sotto lo scheduler di prova.
+  # @return lo scheduler, con le chiamate a kernel_sleep contate
+  def under_scheduler(&)
+    scheduler = scheduler_class.new
+    Fiber.set_scheduler(scheduler)
+    Fiber.schedule(&)
+    scheduler
+  ensure
+    Fiber.set_scheduler(nil)
+  end
+
+  # Figlio dello stdplane; alla fine distrugge l'intera famiglia.
+  def with_parent
+    parent = nc.stdplane.create_child(rows: 10, cols: 20)
+    yield parent
+  ensure
+    parent.family_destroy if parent && !parent.closed?
+  end
+
+  it "lo scheduler di prova riceve sleep da un Fiber non bloccante" do
+    blocking = nil
+    scheduler = under_scheduler do
+      blocking = Fiber.current.blocking?
+      sleep 0
+    end
+    expect(blocking).to be(false)
+    expect(scheduler.sleeps).to eq(1)
+  end
+
+  it "un callback di resize che chiama sleep non passa dallo scheduler" do
+    with_parent do |p|
+      p.create_child(rows: 2, cols: 2, resize: ->(_) { sleep 0 })
+      scheduler = under_scheduler { p.resize(11, 21) }
+      expect(scheduler.sleeps).to eq(0)
+    end
+  end
+
+  it "il blocco di disegno di Tree che chiama sleep non passa dallo scheduler" do
+    calls = 0
+    tree = nil
+    scheduler = under_scheduler do
+      tree = Notcurses::Tree.new(nc.stdplane.create_child(rows: 6, cols: 20), items: %w[a b]) do |_p, _v, _d|
+        calls += 1
+        sleep 0
+        1
+      end
+    end
+    expect(calls).to be_positive
+    expect(scheduler.sleeps).to eq(0)
+  ensure
+    tree&.close
+  end
+
+  it "il blocco di una scheda di Tabbed che chiama sleep non passa dallo scheduler" do
+    calls = 0
+    tabbed = Notcurses::Tabbed.new(nc.stdplane.create_child(rows: 4, cols: 20))
+    tabbed.add("X") do |_tab, _content|
+      calls += 1
+      sleep 0
+    end
+    calls = 0
+    scheduler = under_scheduler { tabbed.redraw }
+    expect(calls).to be_positive
+    expect(scheduler.sleeps).to eq(0)
+  ensure
+    tabbed&.close
+  end
+
+  it "il blocco di Visual#stream che chiama sleep non passa dallo scheduler" do
+    calls = 0
+    mkv = File.expand_path("../fixtures/visual/frames.mkv", __dir__)
+    scheduler = Notcurses::Visual.open(mkv) do |v|
+      under_scheduler do
+        v.stream(blitter: :ascii) do
+          calls += 1
+          sleep 0
+          nil
+        end
+      end
+    end
+    expect(calls).to eq(4)
+    expect(scheduler.sleeps).to eq(0)
+  end
+
+  it "Util.guard esegue il blocco in un contesto bloccante" do
+    blocking = nil
+    scheduler = under_scheduler do
+      Notcurses::Util.guard([], nil) do
+        blocking = Fiber.current.blocking?
+        sleep 0
+      end
+    end
+    expect(blocking).to be_truthy
+    expect(scheduler.sleeps).to eq(0)
+  end
+
+  it "throw nel callback resta un errore del callback: LocalJumpError, UncaughtThrowError su Ruby 3.1" do
+    error = nil
+    with_parent do |p|
+      p.create_child(rows: 2, cols: 2, resize: ->(_) { throw :fuori })
+      under_scheduler do
+        catch(:fuori) { p.resize(11, 21) }
+      rescue => e
+        error = e
+      end
+    end
+    expect(error).to be_a(fiber_blocking_api ? LocalJumpError : UncaughtThrowError)
+    expect(nc.callback_errors).to be_empty
+  end
+
+  it "il callback vede Fiber.current e i valori locali al Fiber del chiamante, non su Ruby 3.1" do
+    seen = []
+    outer = nil
+    with_parent do |p|
+      p.create_child(rows: 2, cols: 2, resize: ->(_) { seen.push(Fiber.current, Thread.current[:ich604]) })
+      under_scheduler do
+        outer = Fiber.current
+        Thread.current[:ich604] = :chiamante
+        p.resize(11, 21)
+      end
+    end
+    if fiber_blocking_api
+      expect(seen).to eq([outer, :chiamante])
+    else
+      expect(seen.first).not_to equal(outer)
+      expect(seen.last).to be_nil
+    end
+  end
+
+  it "senza scheduler il callback gira nel Fiber del chiamante, come prima" do
+    seen = []
+    with_parent do |p|
+      Thread.current[:ich604] = :chiamante
+      p.create_child(rows: 2, cols: 2, resize: ->(_) { seen.push(Fiber.current, Thread.current[:ich604]) })
+      p.resize(11, 21)
+    ensure
+      Thread.current[:ich604] = nil
+    end
+    expect(seen).to eq([Fiber.current, :chiamante])
+  end
+
+  it "in un Fiber non bloccante senza scheduler il callback gira nel Fiber del chiamante, anche su Ruby 3.1" do
+    seen = []
+    outer = nil
+    error = nil
+    with_parent do |p|
+      p.create_child(rows: 2, cols: 2, resize: ->(_) { seen.push(Fiber.current, Thread.current[:ich604]) })
+      p.create_child(rows: 2, cols: 2, resize: ->(_) { throw :fuori })
+      Fiber.new do
+        outer = Fiber.current
+        Thread.current[:ich604] = :chiamante
+        catch(:fuori) { p.resize(11, 21) }
+      rescue => e
+        error = e
+      end.resume
+    end
+    expect(seen).to eq([outer, :chiamante])
+    expect(error).to be_a(LocalJumpError)
+  end
+end

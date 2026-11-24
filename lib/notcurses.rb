@@ -15,6 +15,17 @@
 # notcurses permette in parallelo al render. L'unico lock interno protegge il
 # registro del contesto attivo (notcurses ammette un solo contesto per processo).
 #
+# Fiber scheduler: i blocchi che notcurses chiama dentro una chiamata C (il
+# resize di un piano, {Notcurses::Visual#stream}, {Notcurses::Tree},
+# {Notcurses::Tabbed}) girano in un contesto bloccante. Dentro questi blocchi
+# sleep e l'I/O fermano il thread e non passano dallo scheduler, così nessun
+# altro Fiber rientra in notcurses a metà della chiamata. Senza scheduler non
+# cambia niente. Su Ruby 3.1, che non ha Fiber.blocking, sotto uno scheduler
+# il blocco gira in un Fiber bloccante nuovo: Fiber.current è un altro Fiber,
+# i valori locali al Fiber (Thread.current[:chiave]) del chiamante non si
+# vedono, e un throw verso fuori dal blocco diventa UncaughtThrowError al
+# posto di LocalJumpError.
+#
 # @example
 #   require 'notcurses'
 #   Notcurses::Context.open do |nc|

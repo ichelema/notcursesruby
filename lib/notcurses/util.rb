@@ -585,12 +585,14 @@ module Notcurses
     # Anche break, return e throw, che non sono eccezioni, si fermano qui: in box
     # finisce una LocalJumpError. Thread#kill invece passa (FdPlane e
     # Subprocess fermano così il thread di lettura).
+    # Il blocco gira in un contesto bloccante ({blocking}): sotto un Fiber
+    # scheduler il callback non si sospende a metà della chiamata C.
     # @param box [Array<Exception>] contenitore della prima eccezione
     # @param fallback [Object] valore restituito al C se il blocco solleva
     # @return [Object] il valore del blocco, o fallback se solleva
     def guard(box, fallback)
       state = :running
-      result = yield
+      result = blocking { yield }
       state = :done
       result
     rescue Exception => e # rubocop:disable Lint/RescueException
@@ -602,6 +604,28 @@ module Notcurses
         box << LocalJumpError.new('break, return o throw non possono uscire da un callback chiamato da notcurses') if box.empty?
         return fallback # rubocop:disable Lint/EnsureReturn
       end
+    end
+
+    # Esegue il blocco in un contesto bloccante, dove sleep e I/O non passano
+    # dal Fiber scheduler (ICH-604). Un callback chiamato da notcurses gira
+    # dentro una chiamata C: se si sospende, un altro Fiber può rientrare in
+    # notcurses, e la pila dei frame di ffi, che tiene l'eccezione del
+    # callback, è per thread e non per Fiber (ffi 1.17.4,
+    # ext/ffi_c/Thread.c:57-91, Function.c:613-616 e 1017). Su Ruby 4.0 il
+    # Fiber si sospende anche senza I/O: dopo un segnale i punti bloccanti
+    # chiamano l'hook yield dello scheduler (thread.c:207-235). Senza uno
+    # scheduler per il Fiber corrente (nessuno scheduler, oppure Fiber già
+    # bloccante) esegue il blocco e basta: Fiber.current.blocking? non basta,
+    # perché è falso in ogni Fiber.new anche senza scheduler. Su Ruby 3.1,
+    # senza Fiber.blocking, usa un Fiber bloccante nuovo: dentro il blocco
+    # cambiano Fiber.current e i valori locali al Fiber, e un throw diventa
+    # UncaughtThrowError.
+    # @return [Object] il valore del blocco
+    def blocking(&block)
+      return yield unless Fiber.current_scheduler
+      return Fiber.blocking(&block) if Fiber.respond_to?(:blocking)
+
+      Fiber.new(blocking: true, &block).resume
     end
 
     # Rilancia la prima eccezione salvata da {guard} e svuota box.
