@@ -22,7 +22,8 @@ Windows.
   [correzioni-review.md](correzioni-review.md).
 - Fase «Issue in Backlog», dal 2026-11-15, base `ad0315b`: lotti 1–9b fatti, PR #22…#36 (un capitolo per lotto in
   [backlog-issue.md](backlog-issue.md)). Modello passato ai comandi del workflow: `opus`.
-- Al 2026-11-24 restano 29 issue aperte: 14 nei lotti 9c–15, 14 senza lotto, ICH-463 in Blocked.
+- Al 2026-11-24 restano 32 issue aperte: 14 nei lotti 9c–15, 14 senza lotto, 3 studi di design (ICH-600, ICH-601,
+  ICH-602), ICH-463 in Blocked.
 
 ## Criteri dei lotti
 
@@ -91,6 +92,18 @@ Ognuna aspetta la scelta dell'utente sul lotto.
   un `PlaneError` chiaro, e `FadeContext` deve seguire l'ordine visibile delle righe. La issue vieta i cambi alla
   Fase 1: un helper nel layer FFI chiede prima un cambio del criterio, approvato dall'utente. Il lotto 2 azzera già
   `logrow` nel resize in due passi di `resize_region`.
+
+## Studi di design
+
+Creati il 2026-11-24 su richiesta dell'utente, dopo l'analisi delle prestazioni e della concorrenza
+([prestazioni.md](prestazioni.md)). Vengono dopo il lotto 9c; l'ordine rispetto ai lotti 10–15 lo sceglie l'utente.
+Ogni studio produce un design approvato dall'utente, un prototipo misurato e le issue di implementazione.
+
+| Issue | Priorità | Label | Studio | Note |
+| --- | --- | --- | --- | --- |
+| ICH-600 | Low | Improvement | Fiber al posto dei thread per l'input, i pipe e i timer di `Notcurses::UI` | Async si scarica solo come spunto: il codice si scrive nel progetto, senza dipendenze (scelta dell'utente), con la nota MIT in `NOTICE` per le parti adattate. Collegata a ICH-541 |
+| ICH-601 | Low | Improvement | Calcolo parallelo in Ractor per le applicazioni; il wrapper resta nel Ractor principale | API dei Ractor diversa fra Ruby 3.x e 4.0 |
+| ICH-602 | Low | Performance | Rilasciare il GVL durante il rasterize: a 100 KB/s il render ferma gli altri thread per 132 ms | Tocca la Fase 1 (regola 1) e la regola 3. Collegata a ICH-600 |
 
 ## ICH-463 in Blocked
 

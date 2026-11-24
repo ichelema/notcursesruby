@@ -2,7 +2,8 @@
 
 Costi misurati del wrapper e dei modelli di concorrenza di Ruby, con il metodo di misura. Le misure sono del
 2026-11-24 (Ruby 4.0.7, ffi 1.17.4, 4 core, `master` `a30715d`). Il lavoro che ne segue è in Linear: ICH-594
-(scritture) e i tre studi di design su Fiber, Ractor e GVL del rasterize ([piano.md](piano.md)).
+(scritture) e gli studi di design ICH-600 (Fiber), ICH-601 (Ractor) e ICH-602 (GVL del rasterize)
+([piano.md](piano.md)).
 
 ## Metodo
 
