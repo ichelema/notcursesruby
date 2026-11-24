@@ -30,15 +30,25 @@ che cambia solo `run`: stesso `dispatch`, stesso `LogView`, stesso render).
 
 ### Tasto → handler `on_input`
 
-| Ruby | Modello | Mediana µs | p99 µs | Max µs | CPU per tasto µs |
-| --- | --- | --- | --- | --- | --- |
-| 4.0.7 | threads | 112,9 | 770,6 | 3423,9 | 443,3 |
-| 4.0.7 | fibers | 70,4 | 419,8 | 761,7 | 400,0 |
-| 3.1.7 | threads | 153,6 | 510,2 | 3259,6 | 499,3 |
-| 3.1.7 | fibers | 69,3 | 352,7 | 1362,8 | 399,8 |
+3 corse su Ruby 4.0.7 e 4 su 3.1.7, 500 tasti per corsa. `fibers` legge l'input con un Fiber al posto del thread
+di input.
 
-- La CPU per tasto comprende un render per tasto (circa 0,35 ms): la differenza fra i modelli è piccola.
-- La CPU a ciclo fermo è fra 350 e 560 µs/s in tutti e due i modelli: non dipende dal modello.
+| Ruby | Modello | Mediana di ogni corsa µs | p99 µs | CPU per tasto µs |
+| --- | --- | --- | --- | --- |
+| 4.0.7 | threads | 112,9; 127,4; 188,3 | 690–1086 | 443–576 |
+| 4.0.7 | fibers | 70,4; 53,4; 115,9 | 270–722 | 383–509 |
+| 3.1.7 | threads | 153,6; 143,8; 173,5; 117,8 | 338–510 | 435–538 |
+| 3.1.7 | fibers | 69,3; 135,7; 122,9; 155,1 | 353–775 | 400–565 |
+
+- Su 4.0.7 il Fiber è più veloce in tutte e 3 le corse, da 40 a 70 µs; su 3.1.7 la differenza sta dentro la
+  variazione fra le corse. In ogni caso la mediana resta sotto 0,2 ms.
+- I valori `fibers` sono del Fiber di input del prototipo, che D1 scarta: con il thread di input il design tiene la
+  latenza di `threads`. Il guadagno dei Fiber è nel trasporto dei dati (tabella sotto), non nell'input.
+- La CPU per tasto comprende un render per tasto (circa 0,4–0,5 ms): la differenza fra i modelli è piccola.
+- CPU a ciclo fermo (2 corse su 4.0.7 e 3 su 3.1.7 con il metodo delle due finestre, `run.rb`): fra −35 e 61 µs/s
+  in tutti e due i modelli, cioè zero entro il rumore della misura. Un risveglio con il render di uno schermo
+  invariato costa 455–624 µs. Le prime corse davano 350–560 µs/s perché la finestra comprendeva il render dopo
+  `ready` e la lettura del primo tasto (finding 2 della review).
 
 ### Pipe → handler
 
@@ -59,9 +69,11 @@ che cambia solo `run`: stesso `dispatch`, stesso `LogView`, stesso render).
 - `read` misura il trasporto. `append` chiama `LogView#append` per ogni blocco: costa circa 400–510 ms di CPU per MB
   (2 MB/s) e copre la differenza. Su 3.1.7 due ripetizioni con 4 MB danno 716–772 µs di mediana per tutti e tre i
   modelli.
-- `fibers` senza `pass` fa 0 render mentre il pipe resta pieno: `readpartial` trova sempre dati, il Fiber non passa
-  mai da `io_wait` e ferma ciclo, input e render. Con un render a ogni `pass` il throughput scende a 24,5 MB/s
-  (misura preliminare, 2 MB); con un render al massimo ogni 16 ms quando un Fiber è ancora pronto torna a 546 MB/s.
+- `fibers` senza `pass` fa 0 render con `append`: il Fiber legge più lento di quanto il padre scrive, il pipe resta
+  pieno, `readpartial` trova sempre dati, il Fiber non passa mai da `io_wait` e ferma ciclo, input e render. Con
+  `read` il Fiber svuota il pipe prima della scrittura successiva del padre, passa da `io_wait`, e il ciclo fa
+  qualche render (8 e 18). Con un render a ogni `pass` il throughput scende a 24,5 MB/s (misura preliminare, 2 MB);
+  con un render al massimo ogni 16 ms quando un Fiber è ancora pronto torna a 546 MB/s.
 
 ### Ctrl+C con un handler occupato per 500 ms
 
@@ -109,7 +121,7 @@ Causa: Ruby passa dall'hook solo `rb_nogvl` con il flag `RB_NOGVL_OFFLOAD_SAFE` 
    (`Timeout::Error` su 3.1.7, `Timeout::ExitException` su 3.4.12 e 4.0.7).
 5. io-event riprende i Fiber con `transfer` (`selector/select.rb:71-83`): `Fiber.yield` torna a chi ha fatto
    `resume`, che con Fiber annidati non è il ciclo. Il prototipo usa `resume`, il design `transfer`.
-6. Il risveglio di io-event 1.11.2 in Ruby puro scrive sul pipe solo se il ciclo è fermo (`interrupt.rb:38-46`): un
+6. Il risveglio di io-event 1.11.2 in Ruby puro scrive sul pipe solo se il ciclo è fermo (`selector/select.rb:38-46`): un
    `unblock` da un altro thread o da un `trap` fra il controllo della coda e `IO.select` si perde (inferenza dal
    codice). Il nostro risveglio resta incondizionato, come `EventLoop#wake`.
 7. Un callback Ruby chiamato da notcurses (resize, stream, widget) gira dentro una chiamata C. Se il callback si
@@ -155,9 +167,11 @@ altri thread e trap ──► post: Queue + un byte sul pipe di risveglio (invar
 5. **Callback C.** Un helper privato (`Util.blocking`) esegue i trampolini sincroni in un contesto bloccante:
    `Fiber.blocking` da 3.2, un Fiber bloccante su 3.1, niente se il Fiber è già bloccante. I cinque
    `::FFI::Function.new` sono `visual.rb:1164`, `plane.rb:481`, `plane.rb:4009` (`NOOP_FADER`, restituisce solo 0),
-   `widgets/tree.rb:123`, `widgets/tabbed.rb:462`; i tre di `visual.rb`, `plane.rb:481` e `tabbed.rb` passano già da
-   `Util.guard`, che può ospitare la guardia. Il Fiber di ripiego su 3.1 cambia `Fiber.current` e i valori locali
-   al Fiber dentro il callback.
+   `widgets/tree.rb:123`, `widgets/tabbed.rb:462`. Quattro su cinque passano già da `Util.guard`, che può ospitare
+   la guardia: `visual.rb:1165`, `plane.rb:482`, `widgets/tabbed.rb:463` e `widgets/tree.rb:365` (in `draw_item`,
+   chiamato dal trampolino); fa eccezione solo `NOOP_FADER`. `Util.guard` ha anche un quinto chiamante,
+   `fd_plane.rb:204`, nel thread di lettura di `FdPlane`: lì il Fiber è già bloccante e la guardia non fa niente. Il
+   Fiber di ripiego su 3.1 cambia `Fiber.current` e i valori locali al Fiber dentro il callback.
 6. **`FdPlane` e `Subprocess`.** Restano come sono: si usano anche senza `Notcurses::UI`, e cambiarli rompe l'API
    della Fase 2. Nella UI un pipe o un socket si legge in un task.
 7. **Warning di Ruby 4.0.** Lo scheduler consuma il warning di `IO::Buffer` all'avvio (D6): dopo, Ruby non lo

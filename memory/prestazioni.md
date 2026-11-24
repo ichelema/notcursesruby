@@ -62,9 +62,11 @@ ICH-602 (GVL del rasterize) ([piano.md](piano.md)).
   4.0.7 (`benchmark/fiber/hook.rb`). Ruby passa dall'hook solo `rb_nogvl` con `RB_NOGVL_OFFLOAD_SAFE`; ruby-ffi 1.17.4
   usa `rb_thread_call_without_gvl` (flag 0).
 - Thread di oggi contro Fiber (studio ICH-600, `benchmark/fiber/run.rb`, Ruby 4.0.7 e 3.1.7, dettagli in
-  [studio-fiber.md](studio-fiber.md)): tasto → handler 113–154 µs contro 70 µs di mediana; pipe in sola lettura
-  60–85 contro 465–595 MB/s e 12–17 contro 1,6–1,9 ms di CPU per MB; con `LogView#append` tutti i modelli fanno circa
-  2 MB/s e 400–510 ms di CPU per MB. Ctrl+C di kitty con un handler occupato: 101 ms con il thread di input, 450 ms
-  con un Fiber.
+  [studio-fiber.md](studio-fiber.md)): pipe in sola lettura 60–85 contro 465–595 MB/s e 12–17 contro 1,6–1,9 ms di
+  CPU per MB; con `LogView#append` tutti i modelli fanno circa 2 MB/s e 400–510 ms di CPU per MB. Tasto → handler,
+  mediane di più corse: 113–188 µs con il thread di input, 53–155 µs con un Fiber di input; il design tiene il
+  thread (D1), quindi la sua latenza. Ctrl+C di kitty con un handler occupato: 101 ms con il thread di input, 450 ms
+  con un Fiber. A ciclo fermo nessuno dei due modelli usa CPU misurabile; un risveglio con il render di uno schermo
+  invariato 60x200 costa circa 0,5 ms.
 - La gem `async` 2.46.0 chiede Ruby ≥ 3.3; l'ultima versione per Ruby 3.1 è la 2.24.0. `async` e `io-event` sono MIT.
   Scelta dell'utente del 2026-11-24: Async non diventa una dipendenza, lo studio sui Fiber la legge solo come spunto.
