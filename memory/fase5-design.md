@@ -70,7 +70,7 @@ nessun cambio a `.rubocop_todo.yml`. Nessuna dipendenza nuova: niente cambi a `G
 | capacità e rilevamento | `detected_terminal` inizia con `Kitty ` o `ghostty `; `pixel_support` `:kitty_animated` (Kitty) o `:kitty_static` (Ghostty); quadranti, sestanti, braille e semiblocchi sì; ottanti no; `pixel_geom` con celle e area > 0 |
 | blit con ogni blitter | `:pixel`, `:quad`, `:sextant`, `:braille`, `:half`, `:ascii` riusciti con `no_degrade: true`; `:octant` solleva `VisualError` |
 | `Direct` | `can_pixel?` true; `render_image(..., blitter: :pixel)` riuscito |
-| `Direct#stream` (ICH-284) | `frames.mkv` con `scale: :none`: dopo ogni frame il cursore arriva a una posizione successiva a quella iniziale e uguale per tutti e quattro i blitter (`spec/graphics/terminal_spec.rb:131-137`). Le misure sono +4 righe per `:half` e `:quad` e +1 per `:pixel`: sono misure, non il criterio |
+| `Direct#stream` (ICH-284) | `frames.mkv` (8×8 px, 4 frame) con `scale: :none`: per ogni blitter il cursore è alla stessa riga dopo tutti e quattro i frame, sotto la riga iniziale. La spec controlla +4 righe per `:half` e `:quad`; per `:pixel` controlla solo che il cursore scenda (misurato: +1 riga) (`spec/graphics/terminal_spec.rb:126-138`) |
 | tasti (solo Kitty, ICH-280) | `send-key` di Ctrl+C con CapsLock, con NumLock e da solo durante `EventLoop#run`: ogni run restituisce `:interrupt` e `on_key` non riceve niente |
 | glifo largo (solo Kitty, ICH-281) | `TextInput` con `cols - 1` lettere più `漢`, `send-key left`: `kitty @ get-text` mostra la prima riga che finisce con `漢` |
 

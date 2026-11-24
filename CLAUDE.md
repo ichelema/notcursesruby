@@ -151,7 +151,7 @@ segnala all'utente che la chiusura resta da fare.
    lezioni durevoli nel file del tema in `memory/`.
 4. In `memory/piano.md` togli il lotto da «Lotti» e metti le issue nuove in «Gruppi». In
    [memory/fase-backlog.md](memory/fase-backlog.md) aggiorna «Avanzamento».
-5. Committa i file dei passi 2 e 4 con `docs(memory): lotto <n> ... [skip ci]`.
+5. Committa i file di `memory/` dei passi 2–4 con `docs(memory): lotto <n> ... [skip ci]`.
 6. Fai il retain in Hindsight (sezione «Hindsight»).
 7. Riscrivi [handoff.md](handoff.md) (sezione «Come scrivere handoff.md»).
 

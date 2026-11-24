@@ -44,6 +44,10 @@ in git, nelle PR e in Linear ([indice.md](indice.md), «Fuori da `memory/`»). L
   Il registro dei bug descrive `logrow`; questa è la ragione per cui il rimedio è scartato.
 - Un `trap` che scarta i segnali delle ripetizioni non sostituisce il filtro dei tasti: per Ctrl+Z notcurses alza
   `SIGSTOP`, che non si intercetta. La distinzione fra pressione e ripetizione va prima del segnale (lotto 3).
+- In Ruby il gestore di un segnale si legge solo sostituendolo: `Signal.trap('CONT', 'SYSTEM_DEFAULT')` in uno script
+  di prova toglie la `sigaction` di notcurses, e il gestore C non riceve più il segnale. Per controllare che il wrapper
+  non installi trap usa uno stub (`expect(Signal).not_to receive(:trap)`), non una lettura (correzioni del
+  2026-11-06, lotto 6).
 
 ## Test e coverage
 
@@ -104,6 +108,8 @@ in git, nelle PR e in Linear ([indice.md](indice.md), «Fuori da `memory/`»). L
   l'attesa del chiamante, non l'`open()` del thread proprietario (lotto 7).
 - Nel test della raffica su pty `Stats#input_errors` distingue una perdita da un ritardo: i timeout sotto carico
   coincidono con eventi scartati, e allungare il timeout non recupera il Ctrl+C perso (lotto 9b).
+- Le aspettative di rspec-mocks valgono per tutto l'esempio: uno stub `not_to receive` messo per il primo blocco di
+  un esempio vale anche per il secondo. Due comportamenti con stub diversi vanno in due esempi.
 - `max_partial_bytes` non è un limite alla memoria di ogni riga: con `Subprocess` la riga terminata lo supera al
   massimo di un blocco da 8192 byte, con `append` diretto una riga consegnata intera in un blocco solo resta intera.
 
@@ -143,3 +149,9 @@ Le istruzioni per i reviewer sono le regole 23 e 24 di [regole.md](regole.md). Q
   subagente (studio ICH-600, Gemini 4 Neon). Una skill che gira come agente separato, per esempio `trinity:linear`,
   dentro quel reviewer fallisce con 404 `model_not_found`: usa il modello base dell'agente gpt-bridge, senza la riga
   `[gpt-model: ...]`. Nel prompt metti il testo delle issue e indica `linear.py query` per altre letture.
+- Un reviewer GPT può finire senza report. Cause viste nel 2026-11: il tunnel SSH verso LiteLLM (porta 4000, host
+  `litellm-vps`) cadeva dopo pochi minuti, con `ssh` uscito con 144 e nessun errore; il modello rispondeva
+  `usage_limit_reached` (si vede con una richiesta diretta al proxy); il subagente non chiamava l'hand-back. Prima di
+  rilanciare manda all'agente `SendMessage` con la richiesta del report: dopo una caduta del tunnel ha recuperato il
+  report. Un agente nuovo con l'istruzione esplicita di consegnare il report ha funzionato quando l'agente si
+  fermava di nuovo.

@@ -7,7 +7,10 @@ voce.
   fermato fino al timeout di 600 s. Lo stack mostra `notcurses_stop → free_terminfo_cache → stop_inputlayer →
   pthread_join`, con il thread di input di notcurses in `poll` anche dopo il `pthread_cancel` e nessun altro thread
   Ruby attivo. Non si è riprodotto in 61 ripetizioni né in 2.000 aperture e chiusure: non è provato che dipenda dal
-  GVL o da una gara di Darwin. Alla prossima occorrenza traccia inizio e fine di ogni esempio e prendi
+  GVL o da una gara di Darwin. Due ipotesi, nessuna provata: su macOS `block_on_input` chiama `poll` senza la maschera
+  dei segnali (`in.c:2556-2558`, «FIXME smask?»), e alcune spec mandano USR1, USR2, TERM, WINCH e CONT al processo
+  (`lifecycle_spec.rb`, `event_loop_spec.rb`, `dialog_spec.rb`); oppure una gara su Darwin fra `pthread_cancel` e
+  l'entrata del thread di input in `poll`. Alla prossima occorrenza traccia inizio e fine di ogni esempio e prendi
   `sample <pid> 2` durante il blocco. L'utente ha scelto il 2026-11-15 di non aprire una issue: resta fuori dalla fase
   «Issue in Backlog».
 - **`ncdirect_render_frame` non libera `ncv`** quando `rgba_blitter_low` restituisce NULL (`direct.c:750-752`). Letto

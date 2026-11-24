@@ -351,5 +351,6 @@ scelta dell'utente riguardava le regioni lette da un piano.
 Regole di `on_key` (D5): il blocco scatta per le pressioni e le ripetizioni, non per i rilasci. `key` è un carattere
 (String di un grapheme) o un Integer (codepoint o costante `Key`). Con `ctrl: true` una lettera ASCII corrisponde
 anche in maiuscolo, perché notcurses consegna Ctrl+c come `'C'` con Ctrl (`in.c`, `load_ncinput`). Shift conta solo
-per le costanti `Key` (Tab e Shift+Tab sono diversi); per i caratteri è già nel carattere (`'Q'`). CapsLock e NumLock
+per le costanti `Key` (Tab e Shift+Tab sono diversi: notcurses consegna Shift+Tab, `kcbt`, come `'\t'` con Shift,
+`in.c:190`); per i caratteri è già nel carattere (`'Q'`). CapsLock e NumLock
 non contano; Meta, Super e Hyper devono mancare.

@@ -103,7 +103,9 @@ TERM=xterm-256color ruby -I"$S/old/lib" benchmark/plane_writes.rb < /dev/null
 
 Solo in una sessione dentro Kitty ([ambiente.md](ambiente.md)). Per una prova a vista chiedi all'utente di confermare
 quello che vede. Dopo la prova il terminale torna pulito (regola 25 di [regole.md](regole.md)). `kitty @ send-key`
-non manda il testo associato ai tasti.
+non manda il testo associato ai tasti. Su Linux il Kitty dell'utente ha già `allow_remote_control yes` e
+`listen_on unix:/tmp/kitty-{kitty_pid}` in `~/.config/kitty/userprefs.conf` (Fase 5; il file c'è anche sulla VPS il
+2026-11-24): `kitty @` trova il socket in `KITTY_LISTEN_ON`.
 
 ```sh
 # finestra nuova di Kitty, con il PATH del Ruby di mise; --foreground evita SIGTTOU

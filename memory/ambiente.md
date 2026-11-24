@@ -60,7 +60,9 @@
   (`unshare --map-root-user --mount`), il `mount --bind` delle librerie di prova e il controllo degli inode in
   `/proc/self/maps` (lotto 4).
 - La build di notcurses di Arch ha solo lo stub di `ncplane_qrcode`: la spec di `Plane#qrcode` resta pending. ICH-542
-  e ICH-552 si provano solo con una build con libqrcodegen (submodule, `-DUSE_QRCODEGEN=on`).
+  e ICH-552 si provano solo con una build con libqrcodegen (submodule, `-DUSE_QRCODEGEN=on`). Con
+  `-DUSE_MULTIMEDIA=none` la stessa build dà 11 fallimenti in `spec/notcurses/visual_spec.rb`, uguali su `master`:
+  sono dell'ambiente, non del lotto (lotto 6).
 
 ## Terminale headless `ncvt`
 
@@ -86,7 +88,11 @@
   la chiave della cache dei pacchetti cambia da sola. Insieme aggiorna lo SHA di `codecov/codecov-action` e il
   commento della versione (`gh api repos/codecov/codecov-action/commits/<tag> --jq .sha`, ICH-311). Poi controlla nei
   log della CI che `spec/ffi_layout_spec.rb` non abbia esempi `pending`: senza `gcc` o senza gli header di notcurses
-  la spec va in skip e la CI resta verde (ICH-309).
+  la spec va in skip e la CI resta verde (ICH-309). La spec confronta `sizeof` e offset: un campo C nuovo nel padding
+  finale di una struct non cambia né l'uno né gli altri, e la spec non lo vede.
+- Il minimo `ffi ~> 1.16` di gemspec e `Gemfile` non gira mai: suite, CI e `Gemfile.lock` usano ffi 1.17.4. La review
+  del lotto 15 delle correzioni del 2026-11-06 ha letto il changelog di ffi dalla 1.16.0 alla 1.17.4 senza trovare API
+  più recenti in uso.
 - Podman riproduce in locale il container della CI: l'immagine `archlinux:base` con il digest di `ci.yml`, il mirror
   dello snapshot, poi `pacman -Syuu` con i pacchetti di `ci.yml`. Sulla VPS c'è Podman 6.2.0 (2026-11-23).
 - Soglie di coverage: 98 % totale, 90 % per file, layer FFI escluso.

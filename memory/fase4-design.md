@@ -65,7 +65,7 @@ Spec nuova `spec/gemspec_spec.rb`, con `Gem::Specification.load`:
 | --- | --- |
 | `README.md` | per gli utenti: dipendenze di sistema, installazione, due esempi (`Context.open` e `Notcurses::UI::App`), limiti noti, compatibilità, come generare la documentazione e la coverage |
 | `LICENSE` | testo completo di Apache-2.0 |
-| `NOTICE` | attribuzione a notcurses (titolari da `notcurses/COPYRIGHT`, Apache-2.0) per il layer FFI generato dagli header e per il C nei commenti; notcurses non ha un proprio NOTICE |
+| `NOTICE` | attribuzione a notcurses (titolari da `notcurses/COPYRIGHT`, Apache-2.0) per il layer FFI generato dagli header e per il C nei commenti; notcurses non ha un proprio NOTICE. La parte MIT di `notcurses/COPYRIGHT` riguarda solo `src/fetch/ncart.c`, che il binding non usa |
 | `CHANGELOG.md` | formato Keep a Changelog; prima versione 0.1.0 con le Fasi 1–3 e ICH-229 |
 
 - Intestazione di due righe: nei file Markdown come commento HTML (`<!-- ... -->`), invisibile nel rendering; nel
