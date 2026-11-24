@@ -23,9 +23,8 @@ citano le regole per numero: non rinumerarle. Una regola nuova prende il numero 
     va in [bug-notcurses.md](bug-notcurses.md), nella tabella della sua area. Ogni fix ha una voce in "Corretto" di
     `[Non rilasciato]` in `CHANGELOG.md`.
 12. Una dipendenza di sviluppo nuova richiede l'approvazione dell'utente e va in un gruppo del `Gemfile`. Elenca ogni
-    cambio a `Gemfile` e `Gemfile.lock` nel corpo della PR e nel capitolo del lotto in
-    [backlog-issue.md](backlog-issue.md). Dopo un cambio del lockfile controlla il job Ruby 3.2.11 della CI
-    (`parallel < 2`).
+    cambio a `Gemfile` e `Gemfile.lock` nel corpo della PR. Dopo un cambio del lockfile controlla il job Ruby 3.2.11
+    della CI (`parallel < 2`).
 13. Le azioni esterne o difficili da annullare richiedono la conferma esplicita dell'utente: merge di una PR, tag,
     release, impostazioni del repository, secret, GitHub Pages. Il push dei branch dei lotti, l'apertura delle PR e
     il push su `origin/master` dei commit di sola documentazione sono autorizzati.

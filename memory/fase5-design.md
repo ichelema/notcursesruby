@@ -3,7 +3,8 @@
 Data: 2026-11-15. Base: `667e5bc`. Stato: **approvato dall'utente il 2026-11-15**.
 
 La Fase 5 prova i blitter grafici su un terminale vero e porta il binding su macOS. Non aggiunge funzionalità al
-binding. Risultati delle prove della Parte 1, ambiente e problemi: `memory/fase5-terminali-macos.md`. Le scelte segnate
+binding. Risultati delle prove della Parte 1, ambiente e problemi: [ambiente.md](ambiente.md), [comandi.md](comandi.md)
+e [punti-aperti.md](punti-aperti.md). Le scelte segnate
 con «utente» sono state decise dall'utente con AskUserQuestion il 2026-11-15.
 
 ## 0. Scelte dell'utente
@@ -47,6 +48,10 @@ nessun cambio a `.rubocop_todo.yml`. Nessuna dipendenza nuova: niente cambi a `G
    terminale atteso non è Kitty né Ghostty. Il terminale atteso viene dall'ambiente: `TERM=xterm-kitty` → Kitty;
    `TERM=xterm-ghostty` o `TERM_PROGRAM=ghostty` → Ghostty.
 3. Gli esempi dei tasti vanno in skip fuori da Kitty, o se `kitty @ ls` non risponde (remote control spento).
+4. `TERM` sceglie l'atteso della spec, non è il rilevamento di notcurses: per Kitty e Ghostty notcurses legge le
+   risposte XTVERSION o XTGETTCAP `TN`, non `KITTY_WINDOW_ID`. In Ghostty 1.4 la risposta `EINVAL: dimensions
+   required` alla query della grafica kitty conta come risposta, perché `kittygraph_cb` imposta il flag senza esaminare
+   l'esito (`notcurses/src/lib/in.c:1409`): `:kitty_static` è corretto anche se il log mostra l'errore.
 
 ### 2.2 Processi figli
 
@@ -65,7 +70,7 @@ nessun cambio a `.rubocop_todo.yml`. Nessuna dipendenza nuova: niente cambi a `G
 | capacità e rilevamento | `detected_terminal` inizia con `Kitty ` o `ghostty `; `pixel_support` `:kitty_animated` (Kitty) o `:kitty_static` (Ghostty); quadranti, sestanti, braille e semiblocchi sì; ottanti no; `pixel_geom` con celle e area > 0 |
 | blit con ogni blitter | `:pixel`, `:quad`, `:sextant`, `:braille`, `:half`, `:ascii` riusciti con `no_degrade: true`; `:octant` solleva `VisualError` |
 | `Direct` | `can_pixel?` true; `render_image(..., blitter: :pixel)` riuscito |
-| `Direct#stream` (ICH-284) | `frames.mkv` con `scale: :none`, blitter `:half`, `:quad`, `:pixel`: dopo ogni frame il cursore è sotto un solo frame (4 righe, 4 righe, 1 riga), sempre alla stessa riga |
+| `Direct#stream` (ICH-284) | `frames.mkv` con `scale: :none`: dopo ogni frame il cursore arriva a una posizione successiva a quella iniziale e uguale per tutti e quattro i blitter (`spec/graphics/terminal_spec.rb:131-137`). Le misure sono +4 righe per `:half` e `:quad` e +1 per `:pixel`: sono misure, non il criterio |
 | tasti (solo Kitty, ICH-280) | `send-key` di Ctrl+C con CapsLock, con NumLock e da solo durante `EventLoop#run`: ogni run restituisce `:interrupt` e `on_key` non riceve niente |
 | glifo largo (solo Kitty, ICH-281) | `TextInput` con `cols - 1` lettere più `漢`, `send-key left`: `kitty @ get-text` mostra la prima riga che finisce con `漢` |
 
@@ -117,11 +122,13 @@ rimozione: suite completa, coverage, `yard stats --list-undoc` al 100 %.
 Rischio noto per macOS: notcurses spegne sestanti e ottanti se `wcwidth` della libc non conosce i glifi
 (`termdesc.c:1065-1075`). Se la libc di macOS non conosce U+1FB38, i sestanti risultano assenti anche in Kitty e
 Ghostty, e la tabella esatta fallisce. In quel caso la tabella riceve una riga per macOS, con il motivo scritto nella
-spec: è una differenza della libc, non del terminale.
+spec: è una differenza della libc, non del terminale. Sul macOS 26.5.2 provato U+1FB38 non ha disattivato i sestanti,
+quindi quella riga non è servita. Esiti delle prove di caricamento e delle spec: [ambiente.md](ambiente.md) e
+[comandi.md](comandi.md).
 
 ## 5. Ordine di lavoro e commit
 
-1. Commit di sola documentazione su `master`, con `[skip ci]`: questo design e il log.
+1. Commit di sola documentazione su `master`, con `[skip ci]`: questo design e la storia delle prove.
 2. Branch `test/fase5-linux`: commit `test(grafica): ...` per `spec/graphics/`, `refactor(util): rimuovi
    Util.timespec` con la voce di `CHANGELOG.md`.
 3. Suite completa (ordine normale e semi `1234`, `4242`, `7`), coverage, `bundle exec rubocop`, poi la spec grafica in

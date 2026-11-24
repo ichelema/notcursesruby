@@ -3,9 +3,15 @@
 Difetti sospetti e spec instabili che non sono issue. Quando un punto diventa una issue o si chiude, rimuovi la sua
 voce.
 
-- **Blocco raro in `Context#close` su macOS.** I dettagli sono nel log della Fase 5
-  ([fase5-terminali-macos.md](fase5-terminali-macos.md), «Punti aperti»). L'utente ha scelto il 2026-11-15 di non
-  aprire una issue: resta fuori dalla fase «Issue in Backlog».
+- **Blocco raro in `Context#close` su macOS, causa ignota.** Una volta in 62 suite con `--order rand:2026` rspec si è
+  fermato fino al timeout di 600 s. Lo stack mostra `notcurses_stop → free_terminfo_cache → stop_inputlayer →
+  pthread_join`, con il thread di input di notcurses in `poll` anche dopo il `pthread_cancel` e nessun altro thread
+  Ruby attivo. Non si è riprodotto in 61 ripetizioni né in 2.000 aperture e chiusure: non è provato che dipenda dal
+  GVL o da una gara di Darwin. Alla prossima occorrenza traccia inizio e fine di ogni esempio e prendi
+  `sample <pid> 2` durante il blocco. L'utente ha scelto il 2026-11-15 di non aprire una issue: resta fuori dalla fase
+  «Issue in Backlog».
+- **`ncdirect_render_frame` non libera `ncv`** quando `rgba_blitter_low` restituisce NULL (`direct.c:750-752`). Letto
+  nel C dalla revisione del 2026-11-06, mai riprodotto e senza issue.
 - **Esempio instabile di `getvec` in `spec/integration/pty_spec.rb`**: «get attende senza GVL, getvec legge più
   eventi, il timeout scade con nil e un Interrupt esce da get» (riga 433 al 2026-11-23, prima riga 173). La causa è
   una gara di tempi: `getvec` si sveglia dopo il primo di 4 tasti. Se fallisce, ripeti la suite con lo stesso seme

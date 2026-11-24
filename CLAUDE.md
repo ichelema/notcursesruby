@@ -39,8 +39,9 @@ Quando l'utente chiede di riprendere o di continuare (per esempio: riprendi, con
 3. Leggi [handoff.md](handoff.md) per intero. Confronta lo stato che descrive con git, la CI e Linear: se non
    coincide, vale lo stato reale; dillo all'utente in una riga.
 4. Fai il recall in Hindsight sul lavoro del prossimo passo (sezione «Hindsight»).
-5. Leggi [memory/indice.md](memory/indice.md) e apri solo i file che servono al passo. Per un lotto servono sempre
-   [memory/regole.md](memory/regole.md) e [memory/piano.md](memory/piano.md).
+5. Leggi per intero [memory/regole.md](memory/regole.md) e la coda in [memory/piano.md](memory/piano.md). Apri gli
+   altri file solo quando `handoff.md` li cita per il lotto, oppure quando [memory/indice.md](memory/indice.md) te li
+   indica. La storia dei lotti sta in git, nelle PR e in Linear.
 6. Esegui il prossimo passo dello stato reale. Di solito è il «Prossimo passo» di `handoff.md`. Se al passo 3 lo stato
    non coincide, ricavalo dallo stato reale: per esempio, con il worktree del lotto già creato, il passo del workflow
    che segue.
@@ -48,8 +49,9 @@ Quando l'utente chiede di riprendere o di continuare (per esempio: riprendi, con
 ## Workflow di un lotto
 
 Un lotto è un gruppo di issue corrette in un worktree, un branch e una PR. Le issue sono nel progetto Linear
-`notcursesruby` (team `ICH`): per leggerle e cambiarle usa la skill `trinity:linear`. L'ordine dei lotti, i criteri
-per comporli e le issue senza lotto sono in [memory/piano.md](memory/piano.md). Le regole vincolanti sono in
+`notcursesruby` (team `ICH`): per leggerle e cambiarle usa la skill `trinity:linear`. L'ordine dei lotti e i gruppi
+sono in [memory/piano.md](memory/piano.md); i criteri per comporre un lotto e le note delle issue in
+[memory/fase-backlog.md](memory/fase-backlog.md). Le regole vincolanti sono in
 [memory/regole.md](memory/regole.md): leggile per intero prima di `2_work-issue`. Valgono come regole di questo file,
 anche per le review. I comandi di suite, coverage e prove sono in [memory/comandi.md](memory/comandi.md).
 
@@ -89,8 +91,7 @@ autorizzato il merge.
 - **Prima della PR e dopo ogni round di fix della review** (eccezioni in «Gate leggero»): suite completa con la
   coverage (vale come esecuzione in ordine normale: non ripeterla senza coverage), una suite in ordine casuale con un
   seme nuovo (`--order rand`: il seme lo sceglie rspec) e `bundle exec rubocop`. La CI controlla l'ordine casuale e
-  la soglia della coverage: un controllo saltato in locale costa un giro di CI (lotto 8c in
-  [memory/backlog-issue.md](memory/backlog-issue.md)).
+  la soglia della coverage: un controllo saltato in locale costa un giro di CI.
   Se la suite in ordine casuale fallisce, ripetila con lo stesso seme (`--order rand:N`), non con un seme nuovo: un
   altro seme può nascondere la dipendenza. Se il fallimento si ripete e riguarda spec che il lotto non tocca,
   fermati e chiedi all'utente (regola 16). Se il diff tocca grapheme o Unicode, esegui le spec
@@ -141,15 +142,16 @@ scrivere, controlla che il checkout principale sia su `master`, allineato a `ori
 vuoto: così i controlli provano il codice di `origin/master`. Se una condizione manca, non scrivere e non committare:
 segnala all'utente che la chiusura resta da fare.
 
-1. Esegui su `master` i «Controlli finali» di [memory/piano.md](memory/piano.md), compresa la CI della PR e di
+1. Esegui su `master` i «Controlli finali» di [memory/fase-backlog.md](memory/fase-backlog.md), compresa la CI della PR e di
    `master`. Controlla in Linear che le issue del lotto siano a Done, oppure nello stato scelto con l'utente (lotto 4:
    ICH-463 in Blocked).
 2. In `memory/bug-notcurses.md` i bug di notcurses nuovi del lotto, nella tabella della loro area (regola 11).
-3. In `memory/backlog-issue.md` il capitolo del lotto: Fix, Decisioni, Review, Problemi e soluzioni, cambi a `Gemfile`
-   e `Gemfile.lock` (regola 12), Verifica finale.
-4. In `memory/piano.md` togli il lotto da «Lotti da fare», aggiorna «Avanzamento» e metti le issue nuove in «Issue
-   senza lotto». Le lezioni durevoli del lotto vanno nel file del tema in `memory/`.
-5. Committa i file dei passi 2–4 con `docs(memory): lotto <n> ... [skip ci]`.
+3. Le decisioni dell'utente del lotto in un commento sulla issue Linear (la skill permette `commentCreate`;
+   `issueUpdate` è bloccato dal classificatore dei permessi). L'esito di review e verify in un commento sulla PR. Le
+   lezioni durevoli nel file del tema in `memory/`.
+4. In `memory/piano.md` togli il lotto da «Lotti» e metti le issue nuove in «Gruppi». In
+   [memory/fase-backlog.md](memory/fase-backlog.md) aggiorna «Avanzamento».
+5. Committa i file dei passi 2 e 4 con `docs(memory): lotto <n> ... [skip ci]`.
 6. Fai il retain in Hindsight (sezione «Hindsight»).
 7. Riscrivi [handoff.md](handoff.md) (sezione «Come scrivere handoff.md»).
 
@@ -166,7 +168,7 @@ una sessione nel checkout principale. Tre sezioni:
   «Come riprendere il lavoro».
 - **Decisioni che servono all'utente**: le domande aperte, oppure «Nessuna».
 
-Non scrivere in `handoff.md` la storia del lavoro (è in git, in Linear e in `memory/backlog-issue.md`) né i fatti
+Non scrivere in `handoff.md` la storia del lavoro (è in git, in Linear e nelle PR) né i fatti
 durevoli (vanno in `memory/`).
 
 ## Memoria del progetto
@@ -178,8 +180,8 @@ durevoli (vanno in `memory/`).
 - Scrivi solo fatti durevoli e controllati sul codice o con un test.
 - Aggiorna il file del tema e non creare duplicati. Per un tema nuovo crea un file e aggiungi la sua riga all'indice.
 - Quando un fatto cambia, correggi la riga: la storia resta in git.
-- I log delle fasi e dei lotti (`backlog-issue.md`, `correzioni-review.md`, `review-2026-11-06.md`, `fase*.md`) sono
-  storia: aggiungi solo il capitolo di un lotto nuovo.
+- La storia dei lotti sta in git, nelle PR e in Linear: `memory/` tiene solo fatti durevoli. Come leggere i file di
+  storia rimossi è in [memory/indice.md](memory/indice.md), sezione «Fuori da `memory/`».
 - Non scrivere in `memory/` il prossimo passo (va in `handoff.md`), le regole di lavoro (vanno in questo file) e i
   segreti. Le regole vincolanti stanno solo in `memory/regole.md`.
 - Bug nuovi e lavoro futuro vanno in Linear, con la conferma dell'utente (regola 16). In

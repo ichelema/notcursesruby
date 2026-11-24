@@ -3,7 +3,8 @@
 - Data: 2026-10-26. Base: commit `e710a92` (Parte 0 applicata).
 - Stato: **approvato dall'utente il 2026-10-26** e implementato (commit `6c55106`…`692c455`). Le scelte con due
   letture valide (D1–D7) sono decise dall'utente (sezione 9) e il testo le applica. Le decisioni prese durante
-  l'implementazione sono in `memory/fase3-ui.md`.
+  l'implementazione sono nel codice e in [lezioni.md](lezioni.md); la storia della Fase 3 è in git
+  ([indice.md](indice.md), «Fuori da `memory/`»).
 
 ## Principi
 
@@ -65,6 +66,10 @@ end
 | `Timer#cancel` → self, `#active?`, `#interval` | ciclo | ferma il timer; `interval` è nil per `after` |
 
 Gli handler sono blocchi che ricevono i valori già esistenti: `Input`, `(rows, cols)`, `Timer` (D2).
+
+Il ciclo non aspetta direttamente `Context#inputready_fd`: `run` avvia `Context#input_reader_start` e attende il pipe
+del lettore Ruby, che legge dal C e filtra i tasti di segnale anche quando un handler è impegnato. Il lettore non parte
+con `drain_input`. Lo studio ICH-600 tiene questo percorso: lo scheduler dei Fiber non lo cambia.
 
 ### Un giro del ciclo
 
@@ -227,7 +232,11 @@ quello che prende il focus, e ogni componente disegna lo stato di focus da `focu
 Costruzione: `Classe.new(parent, ..., size: nil, weight: nil)`. `parent` è un `Container` (o `App` per `root` e
 `Dialog`). `size:` è la dimensione fissa lungo l'asse del contenitore (righe in uno verticale, colonne in uno
 orizzontale); `weight:` è la quota dello spazio restante (default 1). Il componente nasce già disposto: il
-contenitore rifà subito il layout.
+contenitore rifà subito il layout. Le keyword interne `layout_size` e `layout_weight` hanno nomi intenzionali: `size`
+nei widget navigabili è il numero di elementi, non lo spazio assegnato dal contenitore. I rilasci dei tasti non
+arrivano ai componenti, quelli del mouse sì; i widget ignorano i rilasci anche quando li ricevono da `offer_input`.
+Il testo che il widget dichiara passa da `Text.check!`, che usa `Plane#check_text!` alla costruzione e nel setter;
+`LogView` riceve byte qualsiasi e al disegno scrive `"?"` per un grapheme che notcurses divide diversamente da Ruby.
 
 Un componente nascosto (0 righe o colonne) ha il piano 1×1 spostato fuori dallo schermo: niente disegni sovrapposti
 quando il terminale è troppo piccolo; Tab e mouse lo saltano.
@@ -314,6 +323,10 @@ subito e non durante un layout successivo.
 
 Scelta dell'utente (D6): predicati in `Context`. L'alternativa scartata erano due keyword di `EventLoop.new`
 (`input:`, `trap_winch:`) da tenere coerenti a mano con le opzioni del contesto.
+
+La regione condivisa vale per `Visual.from_plane` e `Plane#as_rgba` (`y:`, `x:`, `rows:`, `cols:`). `Visual#blit`,
+`#geometry` e `#create_plane` tengono `begy:`, `begx:`, `leny:`, `lenx:` in pixel (`0` = fino al bordo), perché la
+scelta dell'utente riguardava le regioni lette da un piano.
 
 ## 8. Limiti e cose escluse
 

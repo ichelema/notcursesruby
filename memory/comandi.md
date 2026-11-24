@@ -77,6 +77,12 @@ TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5
 
 - Le prove di un crash o di una heap corrotta girano con `timeout -s KILL 20`: dopo l'abort il gestore `[BUG]` di Ruby
   non esce (lotto 6).
+- Non cambiare `lib/` mentre gira una suite in background: i figli avviati da `heap_check` caricano i sorgenti quando
+  partono, e una sola corsa può provare due versioni (lotto 2c).
+- Per provare l'input di notcurses 3.0.17 usa l'eseguibile `notcurses-input` alimentato da una pipe, con il timeout di
+  CTest: i simboli interni di `in.c` non sono esportati a `notcurses-tester`. Con doctest in un prefisso privato
+  aggiungi `-isystem <prefisso>/include` a `CMAKE_CXX_FLAGS`, perché `CMAKE_PREFIX_PATH` copre il pacchetto ma non
+  l'header.
 
 ## Benchmark delle scritture
 
@@ -90,6 +96,8 @@ TERM=xterm-256color ruby -I"$S/old/lib" benchmark/plane_writes.rb < /dev/null
 - Il criterio 5 di ICH-594 usa la mediana di 5 esecuzioni per riga: il rapporto di `vline` oscilla fra 4,8x e 5,1x
   con lo stesso codice. Esegui il benchmark con la macchina scarica (`uptime`), senza suite in parallelo.
 - `benchmark/` non entra nella gem.
+- Su Ruby 4.0 la gem `benchmark` non è più predefinita e non è nel bundle: per cronometrare usa
+  `Process.clock_gettime(Process::CLOCK_MONOTONIC)`.
 
 ## Terminale vero (Kitty)
 
@@ -105,6 +113,11 @@ kitty @ launch --type=os-window --cwd="$PWD" --env PATH="$(dirname "$(command -v
 NC_GRAPHICS=1 bundle exec rspec spec/graphics --format documentation --out "$S/graphics.log"
 ```
 
+- Su macOS `ghostty -e` non apre la finestra. La forma verificata è
+  `open -na /Applications/Ghostty.app --args -e <script>`; la finestra aperta da launchd vuole un `PATH` esplicito per
+  il Ruby di mise e per le gem. Kitty parte con `-o allow_remote_control=yes -o listen_on=unix:<socket>` senza toccare
+  la configurazione, e su Kitty prevale `TERM=xterm-kitty` anche quando eredita `TERM_PROGRAM=ghostty`.
+
 ## RuboCop, YARD e gem
 
 ```sh
@@ -119,6 +132,11 @@ git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb
 
 - `gem build` può stampare warning di rdoc dell'installazione locale, non del gemspec: conta che la gem si costruisca
   e che la CI sia verde. Usa `--output` con un file nello scratchpad.
+- Non aggiungere `-q` a `yard doc`. In YARD 0.9.45 `--quiet` alza il livello a `ERROR` e il logger scarta il warning
+  prima di impostare `warned`, che è la variabile controllata da `--fail-on-warning`.
+- Inventario della Fase 1: confronta gli insiemi di nomi, non i conteggi. `gcc -aux-info` dà i prototipi degli header,
+  `nm -D --defined-only` dà i simboli (`T` di core e multimedia per gli `attach_function`, `T` di `libnotcurses-ffi`
+  per le inline). `spec/coverage_spec.rb` parte dai nomi già in Ruby e non vede una funzione mancante all'origine.
 
 ## CI e GitHub
 
@@ -165,3 +183,5 @@ lq query 'query { issues(first: 100, filter: { project: { name: { eq: "notcurses
   `Regexp.escape` del valore calcolato.
 - In una sessione entrata in un worktree il controllo rifiuta un heredoc che crea un file, un `cd` in una subshell e
   `git -C` verso il checkout principale (lotto 8c). Crea i file con Write e usa comandi semplici, come `lq` qui sopra.
+- Per un commit per issue quando un file contiene cambi di più issue: `git diff -U0`, poi
+  `git apply --cached --unidiff-zero`. Con `-U1` due cambi vicini formano un hunk solo e finiscono entrambi in stage.

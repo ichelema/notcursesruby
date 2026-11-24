@@ -1,8 +1,8 @@
 # Lezioni dei lotti
 
 Insidie del codice, dei test e delle review emerse dai lotti, da applicare ai lotti futuri. La storia di ogni lotto è
-nei log ([backlog-issue.md](backlog-issue.md), [correzioni-review.md](correzioni-review.md)). Le lezioni diventate
-regole sono in [regole.md](regole.md) (regole 20–22).
+in git, nelle PR e in Linear ([indice.md](indice.md), «Fuori da `memory/`»). Le lezioni diventate regole sono in
+[regole.md](regole.md) (regole 20–22).
 
 ## Glifi larghi, egcpool e celle
 
@@ -39,6 +39,11 @@ regole sono in [regole.md](regole.md) (regole 20–22).
 - Con kitty `run` spegne il flag dei segnali di notcurses e lo lascia spento dopo `run` (scelta dell'utente, lotto 3).
 - Con la coda di input piena (8192 eventi) notcurses scarta il tasto nuovo (`in.c:523`). Sotto carico della CPU anche
   il Ctrl+C dopo 10000 tasti si è perso, di rado (commento su ICH-536, lotto 3).
+- Dopo uno scroll non riordinare il framebuffer da Ruby copiandolo e riscrivendolo: fra la copia e la scrittura un
+  `trap` o un altro thread può ridimensionare il piano e invalidare la destinazione (lotto 2 delle issue in Backlog).
+  Il registro dei bug descrive `logrow`; questa è la ragione per cui il rimedio è scartato.
+- Un `trap` che scarta i segnali delle ripetizioni non sostituisce il filtro dei tasti: per Ctrl+Z notcurses alza
+  `SIGSTOP`, che non si intercetta. La distinzione fra pressione e ripetizione va prima del segnale (lotto 3).
 
 ## Test e coverage
 
@@ -78,6 +83,46 @@ regole sono in [regole.md](regole.md) (regole 20–22).
 - `rspec file:riga` con una riga calcolata prima di un edit esegue un altro esempio, quello che precede la riga
   nuova: ricalcola la riga dopo ogni edit del file. Nel lotto 9b una misura sbagliata («l'esempio è più rapido di
   1,3 s») è finita nel corpo della PR per questo motivo.
+- `TracePoint` crea il punto d'interruzione che la prova vuole osservare: con il tracing `Array#<<` appare come
+  chiamata C, senza il tracing la VM usa `opt_ltlt`. Un'eccezione iniettata a un `:c_return` non dimostra una finestra
+  per un SIGINT reale (lotto 5).
+- `can_fade?` è false con l'output su `/dev/null`: le spec dei fade vanno in skip, quindi `FadeContext` si prova su un
+  terminale vero o si legge soltanto.
+- `component_at(y, x)` trova sempre `root` sotto ogni punto: confronta con `equal` sul componente atteso oppure usa
+  `not_to equal(root)` (lotto 12).
+- Per una prova di timer usa un `EventLoop` nuovo per ogni coppia di tasti: i timer di sicurezza dei run precedenti
+  sono già scaduti e svegliano il ciclo (lotto 13).
+- `findReferences` di ruby-lsp su un `attach_function` restituisce tutte le chiamate e indicizza il repository
+  principale: per i chiamanti delle funzioni FFI usa `ugrep`.
+- YARD: un `@` in un commento apre un tag sconosciuto (`@held`) e `--fail-on-warning` fallisce; il link a una classe
+  annidata si scrive `{Direct::Image#initialize}`.
+- Nei prompt dei reviewer vieta i segnali al process group (`Process.kill(signal, 0)`) e tieni i comandi con `rm`
+  separati e brevi: gli hook li mettono in coda (lotto 7).
+- La geometria di `scale: :scale` si legge da `ncvisual_geom`: un secondo calcolo con i `Float` di Ruby non dà lo
+  stesso rettangolo del C, che lavora in `float` (lotto 6).
+- L'`open()` di una risorsa in un thread interno non dà la semantica di un'apertura bloccante: Ctrl+C interrompe
+  l'attesa del chiamante, non l'`open()` del thread proprietario (lotto 7).
+- Nel test della raffica su pty `Stats#input_errors` distingue una perdita da un ritardo: i timeout sotto carico
+  coincidono con eventi scartati, e allungare il timeout non recupera il Ctrl+C perso (lotto 9b).
+- `max_partial_bytes` non è un limite alla memoria di ogni riga: con `Subprocess` la riga terminata lo supera al
+  massimo di un blocco da 8192 byte, con `append` diretto una riga consegnata intera in un blocco solo resta intera.
+
+## Scelte di design chiuse
+
+- Un indirizzo di oggetto Ruby non è stabile, perché il GC compatta: non conservarlo in un `userptr` di notcurses. Per
+  lo stesso motivo `nctab_userptr` non serve: i dati stanno in `Tab` e nella closure (Fase 2).
+- Le scritture brevi e il render non rilasciano il GVL, per non aprire altre occasioni di ingresso concorrente nel C.
+  Per i callback sincroni non serve una coda di errori per thread: con il contesto serializzato l'errore viene
+  rilanciato prima che l'operazione ceda il contesto (Fase 2).
+- Tre alternative escluse dalla superficie idiomatica: niente `Plane#putchar`, perché l'unità a schermo è l'EGC e
+  `putegc` accetta già un codepoint; niente troncamento silenzioso di una riga troppo lunga, perché maschera una
+  richiesta che non entra; niente seconda classe per il plot `double`, perché le due famiglie C condividono operazioni e
+  opzioni e cambia il tipo del campione (Fase 2).
+- `Direct` e `Plane` restano diversi per scelta chiusa: `channels:` in `Direct` nomina i colori della scrittura,
+  `from:` in `Plane` l'inizio della sfumatura; `Direct#print_aligned` resta separato, perché `Direct#putstr` rispecchia
+  la primitiva non allineata (review della Fase 2).
+- Il callback FFI può riprendere il GVL, ma `rb_rescue2` di ruby-ffi intercetta le eccezioni e non i trasferimenti
+  `throw`, `break`, `return`: l'`ensure` del trampolino resta obbligatorio (review della Fase 2).
 
 ## Review
 

@@ -8,6 +8,8 @@ Aggiornato il 2026-11-24. Questo file dice solo cosa fare nella prossima session
 - Ultimo merge su `master`: PR #38 (studio ICH-600, Fiber al posto dei thread), commit `e90c5d3`. Dopo il merge
   `master` ha solo commit di documentazione con `[skip ci]`: il codice è quello di `e90c5d3`.
 - Nessun lotto in corso: nessun worktree, nessuna PR aperta.
+- Il 2026-11-24 la memoria è stata riorganizzata: i log dei lotti non sono più in `memory/` e si leggono con `git show`
+  ([memory/indice.md](memory/indice.md), «Fuori da `memory/`»). La coda dei lavori è [memory/piano.md](memory/piano.md).
 - Ultima suite su `master` (`e90c5d3`): 1357 esempi, 0 fallimenti, 1 pending, con la coverage (98,1 % righe, 90,2 %
   rami) e con il seme 3680. CI di `master` verde (run `45459613886`).
 - Fase «Issue in Backlog»: lotti 1–9c e studio ICH-600 fatti. Ordine scelto dall'utente dopo lo studio

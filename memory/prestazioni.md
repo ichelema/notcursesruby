@@ -52,6 +52,11 @@ ICH-602 (GVL del rasterize) ([piano.md](piano.md)).
 - Il render di uno schermo cambiato costa circa 0,3 ms con un terminale veloce. A 100 KB/s dura 132 ms di mediana
   (201 ms al massimo) e ferma tutti gli altri thread Ruby: `ncpile_rasterize` scrive sul terminale tenendo il GVL
   (senza `blocking: true`). A 1 MB/s dura 1,4 ms.
+- Blit con l'output su `/dev/null`, `xterm-256color`, media di 50 ripetizioni: `blit_rgba` 1x1 con il controllo
+  circoscritto costa 0,017–0,019 ms su piani da 24x80 a 100x300, e `:half` a piano intero su 60x200 costa
+  0,11–0,17 ms. Il controllo dei glifi larghi di `:braille` porta un blit a piano intero a 20 ms, da 0,19 ms senza
+  (lotto 6 delle issue in Backlog, ICH-556).
+- `Plane#rehearse!` (copia del piano con `ncplane_dup`) costa circa 0,6 ms con un egcpool da 16 MiB (lotto 8d).
 
 ## Concorrenza in Ruby
 

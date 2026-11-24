@@ -34,7 +34,7 @@ File `notcursesruby.gemspec`, con l'intestazione di due righe del progetto.
 | `required_ruby_version` | `>= 3.1` | regola 10 |
 | dipendenze runtime | solo `ffi`, `~> 1.15` | regola 10, stessa versione del `Gemfile` |
 | `requirements` | `notcurses 3.0.17 (libnotcurses.so.3, libnotcurses-core.so.3)` | il layer FFI chiama `attach_function` al caricamento: con una 3.0.x più vecchia un simbolo può mancare e il `require` fallisce |
-| `metadata` | `source_code_uri`, `changelog_uri`, `rubygems_mfa_required = 'true'` | `homepage_uri` = repository; niente `documentation_uri` (nessuna pubblicazione) |
+| `metadata` | `source_code_uri`, `changelog_uri`, `rubygems_mfa_required = 'true'` | `homepage_uri` coincide con `source_code_uri` e RubyGems avvisa che mostrerà solo il primo, quindi è omesso e `spec.homepage` copre il campo; niente `documentation_uri` (nessuna pubblicazione) |
 | `files` | `Dir.glob` con `base: __dir__`: `lib/**/*.rb`, `examples/*.rb`, `README.md`, `LICENSE`, `NOTICE`, `CHANGELOG.md`, `.yardopts` | vedi sotto |
 
 **Perché `Dir.glob` e non `git ls-files`:** la gem si costruisce anche da un tarball o da una copia senza `.git`, e
@@ -122,8 +122,8 @@ Richiesta dell'utente, sul modello di Switchyard (`simplecov` 0.22, `simplecov-c
 - **Dipendenze:** `simplecov ~> 0.22` e `simplecov-cobertura ~> 3.0` nel gruppo `:test` del `Gemfile` (regola 12).
 - **Avvio:** file nuovo `spec/support/coverage.rb`, caricato solo con `bundle exec rspec --require
   ./spec/support/coverage.rb`. Il progetto non ha `spec_helper.rb` né `.rspec`: le altre spec non cambiano.
-- **Configurazione:** branch coverage attiva; filtri per `spec/`, `notcurses/`, `libnotcurses-sys/` e
-  `lib/notcurses/ffi/`; gruppi «Wrapper (Fase 2)» e «UI (Fase 3)»; formatter HTML e Cobertura
+- **Configurazione:** branch coverage attiva; filtri per `spec/`, `notcurses/`, `libnotcurses-sys/`, `lib/notcurses/ffi/`
+  e `lib/notcurses/ffi.rb` (`spec/support/coverage.rb`); gruppi «Wrapper (Fase 2)» e «UI (Fase 3)»; formatter HTML e Cobertura
   (`coverage/coverage.xml` per Codecov).
 - **Soglie (utente):** `minimum_coverage 98` sulle righe e `minimum_coverage_by_file 90`. I branch sono solo nel
   report.
@@ -192,7 +192,8 @@ differenziale andrebbe in skip) e setup-ruby non ha Ruby 3.1; su Ubuntu 24.04 se
      soglie, artifact HTML, riepilogo nel job summary da `coverage/.last_run.json`, upload su Codecov se il secret
      esiste. Un job in meno rispetto a un job di coverage separato.
    - Ruby 3.1.7: `BUNDLE_GEMFILE` su una copia del `Gemfile` in `$RUNNER_TEMP`, come in locale.
-2. **`package`**, Ruby 4.0.9 nello stesso container:
+2. **`package`**, nella voce Ruby 4.0.9 della matrice e non in un job separato, che ripeterebbe il setup di pacchetti,
+   Ruby e gem (`ci.yml` crea cinque job):
    - `gem build notcursesruby.gemspec` senza warning;
    - `gem install` in un `GEM_HOME` temporaneo e prova di caricamento da fuori del repository con
      `Context.open(output: '/dev/null', termtype: 'xterm-256color', suppress_banners: true) { }`;
@@ -252,7 +253,7 @@ end
 | 3 | `.yardopts`, `yard` nel `Gemfile`, commenti di `format.rb`, `Key`, `Visual::Internal` | `docs(yard): ...` |
 | 3b | `simplecov` nel `Gemfile`, `spec/support/coverage.rb`, spec nuove per la soglia 98 | `test(coverage): ...` |
 | 4 | `.github/workflows/ci.yml`, run fino a una matrice verde | `ci(actions): ...` |
-| 5 | controlli finali, `RICONSEGNA.md`, log `memory/fase4-pacchetto-ci.md`, Hindsight | `docs(riconsegna): ...` |
+| 5 | controlli finali, `RICONSEGNA.md`, Hindsight | `docs(riconsegna): ...` |
 
 ## 9. Controlli di accettazione
 

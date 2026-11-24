@@ -22,11 +22,15 @@
   `.claude/scripts/spec31 spec/...` dalla radice del checkout o del worktree. Lo script installa la prima volta
   `rspec` 3.13.2 e `ffi` 1.17.4 in `~/.claude/tmp/gems31`, che resta tra le sessioni, ed esegue rspec senza `bundle`.
 - Su una macchina senza Ruby 3.1.7, mise lo compila con ruby-build. Da gcc 15 lo standard C di default è C23, e
-  Ruby 3.1 compila solo con `CFLAGS=-std=gnu17` e `RUBY_CFLAGS=-std=gnu17`, come in `ci.yml`. Metti `TMPDIR` in una
+  Ruby 3.1 compila solo con `CFLAGS=-std=gnu17` e `RUBY_CFLAGS=-std=gnu17`, come in `ci.yml`: mise 2026.10.19 non
+  passa `RUBY_CFLAGS` a ruby-build e gcc 16 compila in C23. Metti `TMPDIR` in una
   cartella temporanea: il build scrive circa 340 MB.
 - Sulla VPS la sessione di Claude Code non ha un display: il 2026-11-23 `DISPLAY`, `WAYLAND_DISPLAY` e
   `KITTY_WINDOW_ID` sono vuoti, anche se `kitty` è installato. Lì una prova su Kitty la fa l'utente. `kitty @ launch`
   ([comandi.md](comandi.md)) funziona solo in una sessione dentro Kitty: controlla prima `KITTY_WINDOW_ID`.
+- Sul macOS 26.5.2 provato, Homebrew 3.0.17_1 fornisce anche `libnotcurses-ffi.3.dylib`: runtime e oracolo si caricano
+  senza `DYLD_FALLBACK_LIBRARY_PATH`. Il `types.conf` arm64-darwin di ffi 1.17.4 contiene `wchar_t` e `uintmax_t`, e
+  U+1FB38 non disattiva i sestanti: nessuna tabella separata per piattaforma. Sono risultati di quelle versioni.
 - Con la memoria quasi finita il sistema ferma i comandi in background, e le spec dei pty e la coverage si bloccano
   (lotto 8b): prima di una suite lunga controlla `free -h`.
 - Blast Radius mette in coda per la conferma dell'utente ogni comando con `rm` o `rm -rf`, anche sotto
@@ -44,7 +48,17 @@
   vede il link, perché sta dentro il gitlink del submodule: `git status` resta vuoto, il link non entra nei commit e
   `git worktree remove` lo toglie senza `--force`, senza toccare la cartella di destinazione (prova del 2026-11-23).
   Per controllare il link usa `test -L <worktree>/notcurses/data`.
-- `libnotcurses-sys`: binding Rust di notcurses, riferimento della Fase 1.
+- `libnotcurses-sys`: binding Rust di notcurses, riferimento della Fase 1. Il checkout dichiara la compatibilità con
+  notcurses 3.0.11: i suoi `reimplemented.rs` non sono una checklist per la 3.0.17, e helper come `ncchannel_set_r`
+  non hanno una controparte pubblica, quindi non sono metodi Ruby mancanti.
+- Le macro `wcwidth` e `wcswidth` di `ncport.h` sono sostituti per Hurd e MinGW: sulle piattaforme POSIX del progetto
+  si collega la libc. `_Static_assert`, `RESTRICT`, `API` e `ALLOC` non sono entry point Ruby.
+- Il loader tiene i nomi con ABI major (`libnotcurses.so.3`) fra le alternative: una distribuzione può installare la
+  libreria runtime senza il link non versionato del pacchetto di sviluppo.
+- Il Ruby di mise ha `DT_RPATH=/./lib`, che il loader cerca prima di `LD_LIBRARY_PATH`: una prova su una build locale
+  può usare le librerie di sistema. Il confronto affidabile usa un mount namespace privato
+  (`unshare --map-root-user --mount`), il `mount --bind` delle librerie di prova e il controllo degli inode in
+  `/proc/self/maps` (lotto 4).
 - La build di notcurses di Arch ha solo lo stub di `ncplane_qrcode`: la spec di `Plane#qrcode` resta pending. ICH-542
   e ICH-552 si provano solo con una build con libqrcodegen (submodule, `-DUSE_QRCODEGEN=on`).
 
@@ -76,6 +90,8 @@
 - Podman riproduce in locale il container della CI: l'immagine `archlinux:base` con il digest di `ci.yml`, il mirror
   dello snapshot, poi `pacman -Syuu` con i pacchetti di `ci.yml`. Sulla VPS c'è Podman 6.2.0 (2026-11-23).
 - Soglie di coverage: 98 % totale, 90 % per file, layer FFI escluso.
+- `codecov.yml` tiene `codecov/patch` e `codecov/project` come status informativi: i rami nuovi girano solo nei
+  processi figli delle spec, che SimpleCov non misura.
 - I commit di sola documentazione usano `[skip ci]`.
 - La CI gira solo su Linux: l'utente ha escluso un job macOS (Fase 5). Dopo un cambio a `notcurses_stop` o a
   `Context#close`, esegui la suite a mano su macOS: i 2 esempi della chiusura del contesto passano su Linux anche
