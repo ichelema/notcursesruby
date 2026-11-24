@@ -3483,8 +3483,28 @@ module Notcurses
     def text_segments(str, graphemes)
       return str.split(/(?=\n)/).map { |seg| [seg, false] } unless graphemes
 
-      pieces = graphemes.slice_when { |a, b| a.bytesize > 4 || b.bytesize > 4 || b == "\n" || a.include?("\u200D") }
-      pieces.map { |gs| [gs.join, gs.size == 1] }
+      segments = []
+      seg = +''
+      count = 0
+      prev_long = false
+      graphemes.each do |g|
+        long = g.bytesize > 4
+        if count.positive? && (g == "\n" || long || prev_long)
+          segments << [seg, count == 1]
+          seg = +''
+          count = 0
+        end
+        seg << g
+        count += 1
+        prev_long = long
+        next unless g.include?("\u200D")
+
+        segments << [seg, count == 1]
+        seg = +''
+        count = 0
+      end
+      segments << [seg, count == 1] if count.positive?
+      segments
     end
 
     # Esegue il blocco, la scrittura C di text in (y, x) (-1 = cursore), e ne
