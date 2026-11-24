@@ -52,12 +52,11 @@ Aggiornato il 2026-11-24. Questo file dice solo cosa fare nella prossima session
 
 ## Decisioni che servono all'utente
 
-Nessuna su ICH-594. Restano aperte due decisioni di prima:
+Nessuna su ICH-594. Restano due punti:
 
-- Permesso `issueCreate`: l'utente prova la regola `Bash(mise x python -- python scripts/linear.py mutation:*)` in
-  `~/.claude/settings.json`, cioè in `.chezmoitemplates/claude-settings.json` del sorgente chezmoi (lista `allow`),
-  poi `chezmoi apply`. Il classificatore ha bloccato la modifica del modello («Self-Modification»). Al primo bisogno
-  di una issue nuova prova `issueCreate`: se il classificatore blocca ancora, torna agli script dell'utente.
-- Traduzione delle issue inglesi: fatta il 2026-11-24 per 24 issue, con un controllo con script. L'utente non ha ancora
-  riletto un campione: se trova errori nei criteri di accettazione, gli originali inglesi sono nella cronologia delle
-  issue su Linear. I titoli in `memory/piano.md` sono ancora in inglese.
+- Permesso `issueCreate`: il 2026-11-24 la regola `Bash(mise x python -- python scripts/linear.py mutation:*)` non era
+  in `~/.claude/settings.json` né in `.chezmoitemplates/claude-settings.json` (c'è solo in `.claude/settings.local.json`
+  del progetto). Se l'utente l'ha messa altrove, controlla dove. Al primo bisogno di una issue nuova prova
+  `issueCreate`: se il classificatore blocca ancora, torna agli script dell'utente.
+- I titoli delle issue tradotte sono già in italiano su Linear (controllati il 2026-11-24), ma in `memory/piano.md`
+  sono ancora in inglese: l'utente decide se allinearli.
