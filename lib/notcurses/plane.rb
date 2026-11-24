@@ -2048,6 +2048,9 @@ module Notcurses
             row = state.rows - 1
           end
           unless line.empty?
+            # wrap_lines toglie lo spazio dove va a capo: un segno combinante o uno ZWJ che nel testo si
+            # legava a quello spazio apre la riga da solo, e output_text! non lo ha controllato così
+            zero_width_egc!(ptr, [line[/\A\X/]], 'text') if ZERO_WIDTH_CANDIDATES.match?(line[0])
             # le righe sono pezzi del testo già controllato: una riga che è tutto il testo ne riusa i grapheme
             line_graphemes = graphemes if line == str
             written += write_text!(ptr, line, line_graphemes, columns, state, y: row, x: nil, align: align, stained: false)

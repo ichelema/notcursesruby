@@ -1504,6 +1504,21 @@ RSpec.describe Notcurses::Plane do
         expect { p.puttext('a', align: :top) }.to raise_error(ArgumentError)
       end
     end
+
+    # Review di ICH-594: wrap_lines toglie lo spazio dove va a capo, e un segno combinante o uno ZWJ che nel testo
+    # si legava a quello spazio apre la riga da solo.
+    it 'puttext rifiuta un carattere di larghezza zero che il ritorno a capo stacca dallo spazio' do
+      scrolls = [false, true]
+      { "a \u0301b" => 2, "abc \u200Dx" => 3, "ab \u0301\u0301c" => 2 }.each do |text, cols|
+        scrolls.each do |scroll|
+          with_parent(rows: 4, cols: cols) do |p|
+            p.scrolling = scroll
+            expect { p.puttext(text, y: 0) }.to raise_error(ArgumentError, /larghezza zero/), "#{text.dump}, scrolling #{scroll}"
+            expect(p.contents(y: 1, rows: 1)).to eq('')
+          end
+        end
+      end
+    end
   end
 
   describe 'stile e colori' do
