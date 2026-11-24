@@ -28,6 +28,13 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   4,6x a 2,7x, `vline` da 8,2x a 4,9–5,1x, `putstr` con un EGC da 6 MB da 18,5x a 4,4x (ICH-594). `putegc` ricorda
   gli EGC di al massimo 4 byte che ha già controllato, finché il contesto è aperto: `putegc("é")` e `putegc("漢")`
   ripetuti costano 8x la FFI diretta, e 19x la prima volta di ogni carattere.
+- Sotto un Fiber scheduler i blocchi che notcurses chiama dentro una chiamata C (resize di un piano, `Visual#stream`,
+  `Tree`, `Tabbed`) girano in un contesto bloccante: `sleep` e l'I/O nel blocco fermano il thread e non passano dallo
+  scheduler (ICH-604). Prima il Fiber si poteva sospendere a metà della chiamata C, e un altro Fiber poteva rientrare
+  in notcurses mentre la pila dei frame di ffi, che è per thread, era ancora aperta. Senza scheduler, e nel Fiber
+  radice, non cambia niente. Su Ruby 3.1 il blocco gira in un Fiber bloccante nuovo: `Fiber.current` e i valori
+  locali al Fiber del chiamante cambiano, e un `throw` verso fuori dal blocco diventa `UncaughtThrowError` al posto
+  di `LocalJumpError`.
 
 ### Rimosso
 

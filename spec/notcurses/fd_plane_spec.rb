@@ -225,6 +225,20 @@ RSpec.describe Notcurses::FdPlane do
       expect(reader).to be_closed
     end
 
+    it 'il blocco gira sempre nel Fiber bloccante del thread di lettura: Util.guard non crea Fiber (ICH-604)' do
+      reader, writer = IO.pipe
+      fibers = Queue.new
+      fdp = described_class.new(plane, reader) { |_f, _bytes| fibers << [Fiber.current, Fiber.current.blocking?] }
+      writer.write('a')
+      first = pop(fibers)
+      writer.write('b')
+      second = pop(fibers)
+      expect(second.first).to equal(first.first)
+      expect(first.last).to be_truthy
+      writer.close
+      fdp.close
+    end
+
     it 'un\'eccezione in on_done: viene rilanciata da close' do
       reader, writer = IO.pipe
       fdp = described_class.new(plane, reader, on_done: ->(*) { raise 'fine rotta' }) { nil }
