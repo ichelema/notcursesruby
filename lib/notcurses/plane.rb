@@ -3695,18 +3695,19 @@ module Notcurses
     #
     # @param egcs [Array<String>] EGC della scrittura: senza EGC lunghi niente prova
     # @param state [WriteState, nil] stato già letto del piano: scrolling e
-    #   autogrow non si rileggono (ICH-594)
+    #   autogrow non si rileggono (ICH-594); nil = li legge rehearse!
     # @yieldparam copy [::FFI::Pointer] la copia, da usare al posto di ptr
     # @yieldreturn [Integer] il ritorno della funzione C
     def rehearse!(ptr, *egcs, state: nil)
       long = egcs.select { |egc| egc.bytesize > 4 }
       return if long.empty?
 
+      state ||= WriteState.new(ptr)
       copy = Util.check_ptr!(FFI.ncplane_dup(ptr, ::FFI::Pointer::NULL), PlaneError, 'ncplane_dup')
       begin
         FFI.ncplane_set_resizecb(copy, ::FFI::Pointer::NULL)
-        FFI.ncplane_set_scrolling(copy, 1) if state ? state.scrolling? : scrolling?
-        FFI.ncplane_set_autogrow(copy, 1) if state ? state.autogrow? : autogrow?
+        FFI.ncplane_set_scrolling(copy, 1) if state.scrolling?
+        FFI.ncplane_set_autogrow(copy, 1) if state.autogrow?
         if (from = internals(ptr)) && (to = internals(copy))
           to[:logrow] = from[:logrow]
         end
