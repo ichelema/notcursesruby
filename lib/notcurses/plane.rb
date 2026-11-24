@@ -3421,11 +3421,12 @@ module Notcurses
 
     # Scrive str, già controllato da output_text!, come {#putstr}. graphemes
     # sono i suoi grapheme cluster e columns le colonne dei grapheme che ha
-    # misurato, se output_text! li ha già (nil = non segmentato). state è lo stato letto del piano: {#puttext} lo passa a ogni
-    # riga, e il piano si legge una volta sola (ICH-594). Sui piani che non
-    # scorrono e non crescono i segmenti non rileggono niente: il C sposta il
-    # cursore della larghezza scritta (notcurses.c:1953-1975) e non cambia le
-    # dimensioni. Sugli altri, dopo ogni segmento si rilegge.
+    # misurato, se output_text! li ha già (nil = non segmentato). state è lo
+    # stato letto del piano: {#puttext} lo passa a ogni riga, e il piano si
+    # legge una volta sola (ICH-594). Sui piani che non scorrono e non
+    # crescono i segmenti non rileggono niente: il C sposta il cursore della
+    # larghezza scritta (notcurses.c:1953-1975) e non cambia le dimensioni.
+    # Sugli altri, dopo ogni segmento si rilegge.
     def write_text!(ptr, str, graphemes, columns, state, y:, x:, align:, stained:)
       graphemes ||= str.grapheme_clusters if !str.ascii_only? && str.match?(GRAPHEME_JOINERS)
       if state.cols == 1 && (graphemes || str.grapheme_clusters).any? { |g| Notcurses.strwidth(g) > 1 }
