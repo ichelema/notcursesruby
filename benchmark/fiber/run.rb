@@ -36,7 +36,8 @@ require "etc"
 require "json"
 require "pty"
 require "io/console"
-require "io/wait" # IO#wait_readable su Ruby 3.1
+# IO#wait_readable è nel core da Ruby 3.2: su 4.0 require "io/wait" stampa un avviso (come context.rb)
+require "io/wait" unless IO.method_defined?(:wait_readable)
 require "rbconfig"
 
 ROOT = File.expand_path("../..", __dir__)
