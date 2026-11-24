@@ -1291,3 +1291,74 @@ fix, review mirata `soft`, fix, `2_work-verify` sull'ultimo commit.
   Ruby 4.0.9. Nessun cambio a `Gemfile` e `Gemfile.lock`.
 - Linear: ICH-230 a Done. Issue nuova in Backlog: ICH-593 (lotto 9b). Worktree e branch rimossi il 2026-11-23 con
   `/trinity:workflow:5_remove-worktree bug+ICH-230-opus`; il branch remoto l'aveva già cancellato GitHub.
+
+## Lotto 9b — ICH-593, ICH-595 (PR #36, merge `31370a6`)
+
+Dal 2026-11-23 al 2026-11-24. Branch `bug/ICH-593-595-opus`, worktree `.claude/worktrees/bug+ICH-593-595-opus`.
+Implementazione dell'orchestratore; catena: `2_work-issue`, `2_work-simplify`, `3_independent-review soft`, fix del
+finding. Verify saltato: il lotto cambia solo `spec/`.
+
+### Fix
+
+- `35a3ba7` (ICH-593): `NcHelpers.run_child` (`spec/support/nc_helpers.rb`) sostituisce le 4 copie di `run_child`
+  in `pty_spec.rb`, `ui_pty_spec.rb`, `close_guard_spec.rb` e `lifecycle_spec.rb` (la issue ne citava 3). Al timeout
+  `kill_tree` legge l'albero con `ps -A -o pid= -o ppid=` prima del primo kill e uccide il figlio e i discendenti;
+  dopo l'uscita del figlio l'output si aspetta al massimo `grace` secondi (default 5), poi `timed_out` è vero, con
+  una nota nell'output. `fifo_raise_script` uccide il writer prima di `Process.wait(writer)`; il caso forzato
+  `prima` consegna `Thread#raise` in un `join`, prima che qualcuno apra la FIFO. Spec nuova
+  `spec/integration/run_child_spec.rb`: rossa prima del fix (guardia di 15 s), verde dopo.
+- `80bb5ef` (ICH-595): il caso «coda piena» di `kitty_busy_script` scrive i 10 000 tasti in 10 blocchi da 1000,
+  con pause di 50 ms, mentre il timer dorme.
+- `d4fa016` (simplify): l'attesa del figlio usa un solo `sleep 0.05 until ...`; tolto l'encoding di riserva inutile.
+- `f37c48f` (review): `pipe_holders` trova in `/proc/*/fd` gli altri processi che tengono la pipe dell'output, e
+  `run_child` li uccide nel ramo `grace`, anche se sono orfani. Solo Linux: su macOS l'orfano resta vivo.
+
+### Decisioni
+
+- Dell'utente: un helper comune per le 4 copie, anche `lifecycle_spec.rb`; circa 30 minuti per riprodurre
+  `pty_spec.rb:744`; nessuna voce nel `CHANGELOG` per i fix delle sole spec; push del simplify con la CI rossa per
+  l'infrastruttura; fix del finding LOW della review.
+- Mie: niente `spawn(pgroup: true)`, perché `Process.setsid` solleva `EPERM` in tre script di `ui_pty_spec.rb` e un
+  figlio in un gruppo in background si fermerebbe su `SIGTTOU` (lezione in [lezioni.md](lezioni.md)); per ICH-595 i
+  blocchi e non un limite più alto, perché il Ctrl+C arriva subito oppure è perso, mai in ritardo; per il finding
+  `/proc` invece della lettura periodica dell'albero proposta all'utente, che non vede il nipote di un figlio che
+  esce subito; nel simplify saltato il riuso di `raise_in` nel caso `prima` (+0,2 s a ogni suite).
+
+### Diagnosi
+
+- ICH-595: 30 corse del solo caso «coda piena» con 4 processi `ruby -e 'loop {}'` su 4 core. 10 finiscono con
+  `stop 4.00 s`, ognuna con input scartati da notcurses (`Stats#input_errors` da 187 a 1807); 20 con `interrupt` a
+  0,32 s, senza input scartati. Senza carico: 10 su 10 a 0,32 s. Con i blocchi: 30 su 30 sotto lo stesso carico, con
+  il Ctrl+C scritto a 0,80–0,82 s. Il limite della coda piena era già in [bug-notcurses.md](bug-notcurses.md).
+- ICH-593, `pty_spec.rb:744`: non riprodotto in 200 corse con 4 processi di carico, né in due suite con
+  `rand:4242` e 2 processi di carico (sul branch del lotto e su `2831f61`). La mappa del lotto 9 non regge
+  ([punti-aperti.md](punti-aperti.md)); resoconto nel commento di ICH-593 su Linear.
+
+### Review
+
+- `trinity:reviewer` su Sonnet, effort high: APPROVABILE CON RISERVE, un finding LOW CONFIRMED: se il figlio esce e
+  un nipote tiene l'output, `run_child` torna dopo `grace` ma il nipote orfano resta vivo. Corretto in `f37c48f`. Il
+  reviewer non ha rifatto le 10 coppie di suite in parallelo: il comando vieta il parallelo.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| CI della PR rossa in 4 run o tentativi al passo «Pacchetti dello snapshot», per circa 3 ore | `archive.archlinux.org` lento: `Connection timed out` e `Operation too slow` | `gh run rerun <id> --failed`; verde al tentativo 2 della run `45297652249` |
+| Frase falsa nel corpo della PR: «l'esempio della FIFO è più rapido di 1,3 s» | `rspec pty_spec.rb:834` con la riga calcolata prima di un edit: girava l'esempio precedente | frase tolta dalla PR; lezione in [lezioni.md](lezioni.md) |
+| Un comando con `rm -rf` nello scratchpad messo in coda da Blast Radius | `rm` di cartelle | cartelle nuove con `mktemp -d`, senza `rm` |
+| La sessione nel worktree rifiuta `git -C <checkout principale>` e i comandi git composti | isolamento del worktree | comandi git semplici; `git archive -o` per esportare un commit |
+| Il reviewer risultava in attesa di lavoro suo dopo il report | — | `TaskStop` prima di rimuovere il worktree di review |
+
+### Verifica finale
+
+- PR: gate completo dopo ogni giro (suite con la coverage, seme nuovo, RuboCop): semi 15085, 64805 e 6383; 10 coppie
+  di suite in parallelo su 10 verdi (semi 36979, 25022, 60505, 43177, 36078, 53254, 21206, 59499, 36168, 31137). CI
+  della PR verde su `f37c48f` (run `45297652249`, tentativo 2).
+- `master` su `31370a6`, 2026-11-24: 1333 esempi, 0 fallimenti, 1 pending (`qrcode` sullo stub), con la coverage e
+  con il seme 17887; coverage 98,11 % di righe (6709 / 6838) e 90,19 % di rami (2233 / 2476); RuboCop 0 offense (110
+  file); YARD 100 % e `yard doc --fail-on-warning` pulito; `ruby -w` pulito; gem costruita; `git diff ad0315b --
+  lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto. CI di `master` (run `45304171970`) verde su tutta la matrice.
+  Nessun cambio a `Gemfile` e `Gemfile.lock`.
+- Linear: ICH-593 e ICH-595 a Done. Nessuna issue nuova. Worktree e branch rimossi il 2026-11-24 con
+  `/trinity:workflow:5_remove-worktree bug+ICH-593-595-opus`; il branch remoto l'aveva già cancellato GitHub.

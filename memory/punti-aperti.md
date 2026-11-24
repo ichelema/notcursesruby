@@ -13,5 +13,12 @@ voce.
 - **Blocco non riprodotto in `spec/notcurses/ui/event_loop_spec.rb:716`** (lotto 3, `Thread#kill` durante la pulizia
   di `run`). Alla chiusura del lotto 7 la prima suite su `master` si è fermata lì una volta, con un `F` iniziale in
   `spec/ci_workflow_spec.rb:8` senza messaggio (rspec fermato prima del riepilogo). L'esempio passa da solo 5 volte su
-  5 e la suite in ordine definito passa. Lo script di verifica ora ha un timeout per suite. ICH-593 (lotto 9b) tratta
-  due blocchi simili in `spec/integration/pty_spec.rb` e cita questo come dato non spiegato.
+  5 e la suite in ordine definito passa. Lo script di verifica ora ha un timeout per suite.
+- **Blocco non spiegato della suite locale del 2026-11-23** (`--order rand:4242`, Ruby 4.0.7, 886 esempi finiti).
+  Il lotto 9 lo attribuiva a `spec/integration/pty_spec.rb:744`. Il lotto 9b non ha ritrovato quella mappa: sugli
+  alberi dei 4 commit della PR #35 il 887° esempio è `./spec/inline_reimpl_spec.rb[3:5:6]`
+  (`ncplane_rounded_box_sized`), che chiama notcurses nel processo di rspec, e `:744` è in posizione 1044–1045.
+  Non si è riprodotto in 200 corse di `:744` con la CPU occupata, né in due suite con `rand:4242` sotto carico (sul
+  branch del lotto e su `2831f61`). Dettagli nel commento di ICH-593 su Linear. `NcHelpers.run_child` ora ferma i
+  blocchi nei processi figli; un blocco nel processo di rspec non ha un timeout per esempio e ferma la suite fino al
+  `timeout -k 5 -s KILL 600`.

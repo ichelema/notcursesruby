@@ -36,8 +36,9 @@ git diff origin/master...HEAD | grep -E 'grapheme|\\X|\\p\{|unicode_normalize|st
 
 - Non eseguire due suite in parallelo: il carico della CPU rende instabili le spec dei pty. Prova del 2026-11-23 su
   `master`: la suite con la coverage e la suite casuale insieme durano ~5 minuti invece di ~10, ma 1 coppia su 4 è
-  fallita in `spec/integration/ui_pty_spec.rb:786` (caso «coda piena», limite di 4 s). Riprova il parallelo solo
-  dopo il fix di ICH-595. Il vincolo vale anche fra sessioni diverse: prima di una suite controlla con
+  fallita in `spec/integration/ui_pty_spec.rb:786` (caso «coda piena», limite di 4 s). Dopo il fix di ICH-595
+  (lotto 9b) 10 coppie su 10 sono verdi, il 2026-11-23 sul branch del lotto; il vincolo resta finché l'utente non
+  sceglie di cambiare il gate. Il vincolo vale anche fra sessioni diverse: prima di una suite controlla con
   `pgrep -af rspec` che non giri la suite di un'altra sessione, per esempio quella del worktree di un lotto.
 - Prima di una suite lunga controlla `free -h` ([ambiente.md](ambiente.md)).
 - Non lanciare `rspec` con cwd in un checkout per provare il codice di un altro: `rspec` mette il `lib/` del cwd nel
@@ -51,7 +52,10 @@ git diff origin/master...HEAD | grep -E 'grapheme|\\X|\\p\{|unicode_normalize|st
   scrive con `sync = true` (`rspec-core` 3.13.6, `formatters/base_formatter.rb:57`), anche nel log della CI. Conta
   `.`, `*` e `F` delle righe di avanzamento e trova l'esempio con
   `rspec --dry-run [--order rand:N] --format json`, nel checkout della corsa (il numero di esempi cambia fra
-  branch) e con le stesse variabili d'ambiente. Prova del 2026-11-23 (ICH-593).
+  branch) e con le stesse variabili d'ambiente. Prova del 2026-11-23 (ICH-593). Con `--order rand:N` l'ordine
+  cambia molto con il numero dei gruppi: con un file di spec in più `pty_spec.rb:744` è passato dalla posizione 1045
+  alla 1268. Per un albero diverso da quello della corsa, esporta il commit con `git archive` in una cartella dello
+  scratchpad e fai lì il dry-run (lotto 9b).
 
 ## Script di prova
 

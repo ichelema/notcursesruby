@@ -20,9 +20,9 @@ Windows.
   Fase 5 blitter su Kitty e Ghostty e porting su macOS (PR #20 e #21). Correzioni della revisione del 2026-11-06:
   17 lotti e ICH-465 fuori dai lotti, PR #2…#19. Log nei file `fase*.md` e in
   [correzioni-review.md](correzioni-review.md).
-- Fase «Issue in Backlog», dal 2026-11-15, base `ad0315b`: lotti 1–9 fatti, PR #22…#35 (un capitolo per lotto in
+- Fase «Issue in Backlog», dal 2026-11-15, base `ad0315b`: lotti 1–9b fatti, PR #22…#36 (un capitolo per lotto in
   [backlog-issue.md](backlog-issue.md)). Modello passato ai comandi del workflow: `opus`.
-- Al 2026-11-23 restano 31 issue aperte: 16 nei lotti 9b–15 (con il 9c), 14 senza lotto, ICH-463 in Blocked.
+- Al 2026-11-24 restano 29 issue aperte: 14 nei lotti 9c–15, 14 senza lotto, ICH-463 in Blocked.
 
 ## Criteri dei lotti
 
@@ -43,9 +43,7 @@ Una issue nata da un lotto entra in un lotto con la scelta dell'utente. Un lotto
 
 | Lotto | Prefisso | Issue | Priorità | Titolo |
 | --- | --- | --- | --- | --- |
-| 9b | `bug` | ICH-593 | Medium | Evitare che un processo fermo nelle spec di pty_spec.rb blocchi l'intera suite fino al timeout di 600 s (nata dal lotto 9; prima degli altri lotti per scelta dell'utente del 2026-11-23) |
-| 9b | `bug` | ICH-595 | Low | Rendere stabile la spec pty di ICH-536 (ui_pty_spec.rb:786), che supera il limite di 4 s sotto carico (nata dall'analisi dei tempi del gate; nel lotto 9b per scelta dell'utente del 2026-11-23: ICH-593 cambia `run_child` anche in `ui_pty_spec.rb`) |
-| 9c | `improvments` | ICH-594 | Low | Accelerare Plane#putstr, che scorre il testo più volte prima della chiamata C (dopo il 9b per scelta dell'utente del 2026-11-23: le suite dei lotti seguenti diventano più rapide) |
+| 9c | `improvments` | ICH-594 | Low | Accelerare Plane#putstr, che scorre il testo più volte prima della chiamata C (prima dei lotti 10–15 per scelta dell'utente del 2026-11-23: le suite dei lotti seguenti diventano più rapide) |
 | 10 | `bug` | ICH-220 | Medium | Make the Tabbed header follow plane resizes |
 | 10 | `bug` | ICH-221 | Medium | Fix Tree focus drift with items of different heights |
 | 10 | `bug` | ICH-219 | Low | Fix Menu selection loss on separator click and mouse_selected for right-aligned sections |

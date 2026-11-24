@@ -49,11 +49,19 @@ regole sono in [regole.md](regole.md) (regole 20–22).
   vuoto (`ci: retrigger CI`, scelta dell'utente) l'ha fatta partire. Un job che fallisce al passo «Pacchetti dello
   snapshot» per un timeout di `archive.archlinux.org` non dipende dal codice: `gh run rerun <id> --failed`.
 
-- Un processo nipote che eredita la pipe di `run_child` (per esempio un `spawn` dentro lo script del figlio) può
-  fermare l'intera suite: al timeout `run_child` uccide solo il figlio, e `output.value` aspetta la fine della pipe
-  finché il nipote resta vivo. In `fifo_raise_script` di `spec/integration/pty_spec.rb` il nipote `writer` resta
-  fermo in `File.open(fifo, "w")` se nessuno apre la FIFO (ICH-593, lotto 9). Un nipote che esce da solo quando il
-  figlio muore, come il `reader` di `stop_raise_script`, non ferma la suite (prova del 2026-11-23).
+- Un processo nipote che eredita la pipe dell'output di un figlio tiene la pipe aperta finché vive: chi legge fino
+  alla fine della pipe resta fermo anche dopo la morte del figlio. Prima di ICH-593 (lotto 9b) questo fermava
+  l'intera suite in `fifo_raise_script`. Per le spec con un processo figlio usa `NcHelpers.run_child`
+  (`spec/support/nc_helpers.rb`): al timeout uccide il figlio e tutti i discendenti (`kill_tree`, con `ps`), e dopo
+  l'uscita del figlio aspetta l'output al massimo `grace` secondi, poi su Linux uccide chi tiene ancora la pipe
+  (`pipe_holders`, da `/proc/*/fd`: un orfano non si trova più dal ppid).
+- `spawn(..., pgroup: true)` non serve a fermare i discendenti: nel figlio capo del gruppo `Process.setsid`
+  solleva `Errno::EPERM`, e tre script di `spec/integration/ui_pty_spec.rb` lo chiamano per avere un terminale di
+  controllo. Inoltre notcurses apre `/dev/tty` quando l'output non è un terminale (`fd.c:469-470`): un figlio in un
+  gruppo in background, lanciato da un terminale vero, si fermerebbe su `SIGTTOU` (lotto 9b).
+- `rspec file:riga` con una riga calcolata prima di un edit esegue un altro esempio, quello che precede la riga
+  nuova: ricalcola la riga dopo ogni edit del file. Nel lotto 9b una misura sbagliata («l'esempio è più rapido di
+  1,3 s») è finita nel corpo della PR per questo motivo.
 
 ## Review
 
