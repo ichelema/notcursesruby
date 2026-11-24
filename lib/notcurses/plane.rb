@@ -988,14 +988,7 @@ module Notcurses
 
     # @return [Array(Integer, Integer)] [righe, colonne] (+ncplane_dim_yx+)
     # @raise [ClosedError] se il piano è chiuso
-    def dims
-      Guard.run do
-        rows = ::FFI::MemoryPointer.new(:uint)
-        cols = ::FFI::MemoryPointer.new(:uint)
-        FFI.ncplane_dim_yx(to_ptr, rows, cols)
-        [rows.read_uint, cols.read_uint]
-      end
-    end
+    def dims = Guard.run { WriteState.new(to_ptr).dims }
 
     # Geometria in pixel (+ncplane_pixel_geom+).
     #
@@ -1457,14 +1450,7 @@ module Notcurses
 
     # @return [Array(Integer, Integer)] posizione del cursore [y, x] (+ncplane_cursor_yx+)
     # @raise [ClosedError] se il piano è chiuso
-    def cursor
-      Guard.run do
-        y = ::FFI::MemoryPointer.new(:uint)
-        x = ::FFI::MemoryPointer.new(:uint)
-        FFI.ncplane_cursor_yx(to_ptr, y, x)
-        [y.read_uint, x.read_uint]
-      end
-    end
+    def cursor = Guard.run { WriteState.new(to_ptr).cursor }
     alias cursor_yx cursor
 
     # @return [Integer] riga del cursore (+ncplane_cursor_y+)
