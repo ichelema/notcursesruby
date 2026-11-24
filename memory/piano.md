@@ -65,7 +65,21 @@ Una issue nata da un lotto entra in un lotto con la scelta dell'utente. Un lotto
 
 ## Issue senza lotto
 
-Ognuna aspetta la scelta dell'utente sul lotto.
+Il 2026-11-24 l'utente ha scelto l'ordine: High e Medium prima del lotto 10. Ordine di esecuzione: lotto 9c, studi
+ICH-600/601/602, gruppo A, gruppo B, gruppo C (dopo la riprogettazione), lotti 10–14, gruppi D, E, F, G, lotto 15. I
+gruppi prendono i numeri di lotto 16 e seguenti quando partono: i numeri 10–15 restano quelli dei log. I gruppi:
+
+| Gruppo | Issue | Note |
+| --- | --- | --- |
+| A | ICH-542 | Bug High, da solo |
+| B | ICH-560, ICH-567, ICH-561 | Bug Medium: `Direct` e blit `:pixel`; ICH-560 chiede l'approvazione della regola 1 |
+| C | ICH-214 | Bug Medium, da riprogettare prima del fix |
+| D | ICH-591, ICH-592 | Bug Low: stesso codice di ICH-594 (`plane.rb`), dopo il lotto 9c |
+| E | ICH-554, ICH-556, ICH-562 | Performance Low: `Visual` e blit; ICH-554 può chiedere un cambio della Fase 1 |
+| F | ICH-540, ICH-541 | Bug Low: dopo lo studio ICH-600 (ICH-541 è collegata) |
+| G | ICH-590, ICH-596 | Bug Low: ognuna chiede una scelta dell'utente prima del fix |
+
+Elenco delle issue:
 
 | Issue | Priorità | Label | Problema | Note |
 | --- | --- | --- | --- | --- |
@@ -96,8 +110,8 @@ Ognuna aspetta la scelta dell'utente sul lotto.
 ## Studi di design
 
 Creati il 2026-11-24 su richiesta dell'utente, dopo l'analisi delle prestazioni e della concorrenza
-([prestazioni.md](prestazioni.md)). Vengono dopo il lotto 9c; l'ordine rispetto ai lotti 10–15 lo sceglie l'utente.
-Ogni studio produce un design approvato dall'utente, un prototipo misurato e le issue di implementazione.
+([prestazioni.md](prestazioni.md)). Vengono subito dopo il lotto 9c, prima dei lotti 10–15 (scelta dell'utente del
+2026-11-24), nell'ordine ICH-600, ICH-601, ICH-602. Ogni studio produce un design approvato dall'utente, un prototipo misurato e le issue di implementazione.
 
 | Issue | Priorità | Label | Studio | Note |
 | --- | --- | --- | --- | --- |

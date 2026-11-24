@@ -36,22 +36,18 @@ Aggiornato il 2026-11-24. Questo file dice solo cosa fare nella prossima session
 
 3. Dopo il worktree e prima di `2_work-issue`, le domande della regola 14. Aperta, per esempio: dove sta nel
    repository lo script di misura del criterio 4.
-4. Dopo il lotto 9c continua con l'ordine di [memory/piano.md](memory/piano.md).
+4. Dopo il lotto 9c l'ordine è quello di [memory/piano.md](memory/piano.md): studi ICH-600, ICH-601, ICH-602, poi i
+   gruppi A e B, poi i lotti 10–14 (sezioni «Studi di design» e «Issue senza lotto»).
 
 ## Decisioni che servono all'utente
 
-- Ordine degli studi di design ICH-600 (Fiber), ICH-601 (Ractor) e ICH-602 (GVL del rasterize) rispetto ai lotti
-  10–15. Non blocca il lotto 9c.
-- Permesso per creare issue su Linear: una regola nuova per `issueCreate`, oppure script eseguiti dall'utente come il
-  2026-11-24.
-- Gate con due suite in parallelo: dopo il fix di ICH-595, 10 coppie su 10 (suite con la coverage e suite casuale
-  insieme) sono verdi, in circa 5 minuti invece di 10. Oggi [memory/comandi.md](memory/comandi.md) tiene le suite in
-  serie. Passare al parallelo o no.
-- Il blocco non spiegato della suite locale del 2026-11-23 ([memory/punti-aperti.md](memory/punti-aperti.md)): forse
-  era in `spec/inline_reimpl_spec.rb`, nel processo di rspec, dove nessun timeout per esempio protegge la suite.
-  Aprire una issue o lasciarlo come punto aperto.
-- Il lotto delle 14 issue aperte senza lotto, fra cui ICH-542 (High), quattro Medium e ICH-596 (righe finite di
-  `LogView`): elenco e note in [memory/piano.md](memory/piano.md), «Issue senza lotto». La scelta non blocca il
-  lotto 9c.
-- Lingua delle issue su Linear: le issue dal lotto 8d in poi sono in italiano (regola 15, scelta dell'utente del
-  2026-11-23); le issue più vecchie sono in inglese. Tradurle o no.
+Il 2026-11-24 l'utente ha deciso: ordine degli studi (subito dopo il 9c), gruppi A–G delle issue senza lotto (piano.md),
+gate con le due suite in parallelo ([memory/comandi.md](memory/comandi.md)), blocco della suite del 2026-11-23 lasciato
+in [memory/punti-aperti.md](memory/punti-aperti.md), traduzione in italiano di tutte le issue aperte in inglese.
+
+- Permesso `issueCreate`: l'utente prova la regola `Bash(mise x python -- python scripts/linear.py mutation:*)` in
+  `~/.claude/settings.json`, cioè in `.chezmoitemplates/claude-settings.json` del sorgente chezmoi (lista `allow`),
+  poi `chezmoi apply`. Il classificatore ha bloccato la modifica del modello («Self-Modification»). Al primo bisogno
+  di una issue nuova prova `issueCreate`: se il classificatore blocca ancora, torna agli script dell'utente.
+- Traduzione delle issue aperte in inglese (circa 30): da fare con un campione rivisto dall'utente prima del resto.
+  Non cambiare i criteri di accettazione nel significato (regola «Acceptance criteria»).
