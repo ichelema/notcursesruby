@@ -9,30 +9,24 @@ require_relative "../support/nc_helpers"
 RSpec.describe "Callback di notcurses sotto un Fiber scheduler" do
   include_context "con un contesto notcurses"
 
-  # Scheduler minimo: conta le chiamate agli hook e non sospende mai, così
+  # Scheduler minimo: conta le chiamate a kernel_sleep e non sospende mai, così
   # Fiber.schedule esegue il blocco fino in fondo.
   let(:scheduler_class) do
     Class.new do
-      attr_reader :calls
+      attr_reader :sleeps
 
       def initialize
-        @calls = Hash.new(0)
+        @sleeps = 0
       end
 
       def kernel_sleep(*)
-        @calls[:kernel_sleep] += 1
+        @sleeps += 1
         true
       end
 
-      def io_wait(_io, events, _timeout)
-        @calls[:io_wait] += 1
-        events
-      end
+      def io_wait(_io, events, _timeout) = events
 
-      def block(*)
-        @calls[:block] += 1
-        true
-      end
+      def block(*) = true
 
       def unblock(*) = nil
 
@@ -50,7 +44,7 @@ RSpec.describe "Callback di notcurses sotto un Fiber scheduler" do
   let(:fiber_blocking_api) { Fiber.respond_to?(:blocking) }
 
   # Esegue il blocco in un Fiber non bloccante sotto lo scheduler di prova.
-  # @return lo scheduler, con le chiamate contate
+  # @return lo scheduler, con le chiamate a kernel_sleep contate
   def under_scheduler(&)
     scheduler = scheduler_class.new
     Fiber.set_scheduler(scheduler)
@@ -75,14 +69,14 @@ RSpec.describe "Callback di notcurses sotto un Fiber scheduler" do
       sleep 0
     end
     expect(blocking).to be(false)
-    expect(scheduler.calls[:kernel_sleep]).to eq(1)
+    expect(scheduler.sleeps).to eq(1)
   end
 
   it "un callback di resize che chiama sleep non passa dallo scheduler" do
     with_parent do |p|
       p.create_child(rows: 2, cols: 2, resize: ->(_) { sleep 0 })
       scheduler = under_scheduler { p.resize(11, 21) }
-      expect(scheduler.calls[:kernel_sleep]).to eq(0)
+      expect(scheduler.sleeps).to eq(0)
     end
   end
 
@@ -95,7 +89,7 @@ RSpec.describe "Callback di notcurses sotto un Fiber scheduler" do
       end
     end
     expect(blocking).to be_truthy
-    expect(scheduler.calls[:kernel_sleep]).to eq(0)
+    expect(scheduler.sleeps).to eq(0)
   end
 
   it "throw nel callback resta un errore del callback: LocalJumpError, UncaughtThrowError su Ruby 3.1" do
