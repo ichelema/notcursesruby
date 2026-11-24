@@ -15,7 +15,7 @@ idiomatico e framework `Notcurses::UI`. Questo file contiene le regole di lavoro
 | `lib/notcurses/ui/` | Fase 3, framework `Notcurses::UI`: `EventLoop`, `App`, contenitori, `Dialog`, `TextInput` e gli altri componenti |
 | `spec/` | Suite RSpec: unità in `spec/notcurses/`, pty in `spec/integration/`, prove grafiche in `spec/graphics/` (`NC_GRAPHICS=1`), helper in `spec/support/` |
 | `examples/` | `demo.rb`, nel pacchetto della gem |
-| `benchmark/` | `plane_writes.rb`: scritture di `Plane` contro la FFI diretta (ICH-594), fuori dal pacchetto della gem |
+| `benchmark/` | `plane_writes.rb`: scritture di `Plane` contro la FFI diretta (ICH-594); `fiber/`: thread di `Notcurses::UI` contro Fiber (studio ICH-600). Fuori dal pacchetto della gem |
 | `notcurses/` | Submodule: sorgenti C di notcurses 3.0.17, per leggere i percorsi C (regola 20) |
 | `libnotcurses-sys/` | Submodule: binding Rust di notcurses, riferimento della Fase 1 |
 | `.github/workflows/ci.yml` | CI: matrice Ruby 3.1–4.0 in un container Arch Linux |

@@ -33,6 +33,7 @@ Leggi questo indice, poi apri solo i file che servono. Le regole d'uso sono in [
 | [fase4-pacchetto-ci.md](fase4-pacchetto-ci.md) | Fase 4: gemspec, YARD, coverage e CI, con i controlli |
 | [fase5-design.md](fase5-design.md) | Design della Fase 5: blitter su un terminale vero, spec grafiche, piano per macOS |
 | [fase5-terminali-macos.md](fase5-terminali-macos.md) | Fase 5: prove su Kitty e Ghostty, porting su macOS, punti aperti |
+| [studio-fiber.md](studio-fiber.md) | Studio ICH-600: Fiber al posto dei thread in `Notcurses::UI`, misure del prototipo `benchmark/fiber/`, design e scelte D1–D6 |
 
 ## Fuori da `memory/`
 

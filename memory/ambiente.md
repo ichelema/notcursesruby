@@ -96,4 +96,6 @@
   del branch, è andata a In Progress e a Done anche con `Refs` (lotto 4).
 - Il classificatore dei permessi di Claude Code, il 2026-11-24, ha lasciato passare `issueCreate` (ICH-603) e ha
   bloccato `issueUpdate` sulla descrizione di ICH-594 («External System Writes»). La skill prepara la mutation in
-  file dello scratchpad, e l'utente la lancia con `linear.py mutation <file> --variables @<file>`.
+  file dello scratchpad, e l'utente la lancia con `linear.py mutation <file> --variables @<file>`. Sempre il
+  2026-11-24 sono passati anche `issueRelationCreate` e `commentCreate` (studio ICH-600: ICH-604…ICH-607 e il
+  commento su ICH-602).
