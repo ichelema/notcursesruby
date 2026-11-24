@@ -98,14 +98,23 @@ module Notcurses
     # Controlla un EGC per Cell.new.
     # @api private
     # @return [String] EGC UTF-8 frozen
-    def self.egc!(value, name = 'egc')
+    def self.egc!(value, name = 'egc') = egc_with_graphemes!(value, name).first
+
+    # Come {egc!}, e restituisce anche i grapheme cluster del testo, così
+    # {Plane#putegc} non li segmenta una seconda volta (ICH-594).
+    # @api private
+    # @return [Array(String, Array<String>)] EGC UTF-8 frozen e i suoi grapheme
+    #   cluster; nil al posto dei grapheme per un testo di un solo carattere, che
+    #   è un solo grapheme
+    def self.egc_with_graphemes!(value, name)
       value = value.chr(Encoding::UTF_8) if value.is_a?(Integer)
       text = Util.string!(value, name)
-      raise ArgumentError, "#{name} = #{value.inspect} contiene più di un grapheme cluster" if text.grapheme_clusters.size > 1
+      graphemes = text.grapheme_clusters if text.length > 1
+      raise ArgumentError, "#{name} = #{value.inspect} contiene più di un grapheme cluster" if graphemes && graphemes.size > 1
       raise ArgumentError, "#{name} = #{value.inspect} contiene un carattere di controllo" if text.match?(/\p{Cc}/)
 
-      Util.lone_regional_indicator!(text, name)
-      text.frozen? ? text : text.dup.freeze
+      Util.lone_regional_indicator!(text, name, graphemes)
+      [text.frozen? ? text : text.dup.freeze, graphemes]
     end
 
     # CellError per un EGC che notcurses 3.0.17 divide in più caratteri: il

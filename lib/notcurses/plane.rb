@@ -90,6 +90,109 @@ module Notcurses
     WORD_SPACES = /[\p{Zs}&&[^   ]]+/
     private_constant :WORD_SPACES
 
+    # Caratteri che output_text! controlla uno per uno: controlli (tranne
+    # "\n"), U+2028, U+2029 e indicatori regionali. Una sola scansione del
+    # testo dice se serve guardare oltre. Cerca i byte UTF-8 di quei caratteri
+    # (C2 80..9F, E2 80 A8..A9, F0 9F 87 A6..BF) in un testo UTF-8 valido, dove
+    # non possono comparire a metà di un altro carattere: su un EGC da 6 MB
+    # costa 5 ms, contro 210 ms della stessa ricerca con le proprietà Unicode.
+    TEXT_SUSPECTS = /\xC2[\x80-\x9F]|[\x00-\x09\x0B-\x1F\x7F]|\xE2\x80[\xA8\xA9]|\xF0\x9F\x87[\xA6-\xBF]/n
+    private_constant :TEXT_SUSPECTS
+
+    # Un solo carattere ASCII stampabile: larghezza 1, un solo EGC e niente da
+    # controllare (putegc salta nccell_load e ncstrwidth).
+    PRINTABLE_ASCII_CHAR = /\A[ -~]\z/
+    private_constant :PRINTABLE_ASCII_CHAR
+
+    # Stato di un piano letto per una scrittura (ICH-594). Ogni lettura è una
+    # chiamata FFI con due MemoryPointer: dimensioni, cursore, scrolling e
+    # autogrow si leggono la prima volta che servono, e poi si ricordano finché
+    # il C non può averli cambiati. Una scrittura C sposta il cursore di una
+    # larghezza nota; su un piano che scorre o cresce cambia anche le
+    # dimensioni e il cursore in modo non noto (notcurses.c:1873-1904:
+    # scroll_down o ncplane_resize_simple a fine riga; 1978-1981: render dello
+    # stdplane che scorre). {#advance!} calcola il cursore sul primo caso e
+    # dimentica lo stato nel secondo: la lettura dopo lo rilegge. Lo crea un
+    # metodo del piano dentro Guard.run, con il puntatore già controllato.
+    class WriteState
+      # @return [::FFI::Pointer] ncplane* del piano
+      attr_reader :ptr
+
+      # @param ptr [::FFI::Pointer] ncplane* del piano
+      def initialize(ptr)
+        @ptr = ptr
+      end
+
+      # @return [Array(Integer, Integer)] righe e colonne (+ncplane_dim_yx+)
+      def dims
+        @dims ||= begin
+          rows = ::FFI::MemoryPointer.new(:uint)
+          cols = ::FFI::MemoryPointer.new(:uint)
+          FFI.ncplane_dim_yx(ptr, rows, cols)
+          [rows.read_uint, cols.read_uint]
+        end
+      end
+
+      # @return [Integer] righe
+      def rows = dims[0]
+
+      # @return [Integer] colonne
+      def cols = dims[1]
+
+      # @return [Array(Integer, Integer)] riga e colonna del cursore (+ncplane_cursor_yx+)
+      def cursor
+        @cursor ||= begin
+          y = ::FFI::MemoryPointer.new(:uint)
+          x = ::FFI::MemoryPointer.new(:uint)
+          FFI.ncplane_cursor_yx(ptr, y, x)
+          [y.read_uint, x.read_uint]
+        end
+      end
+
+      # @return [Boolean] lo scrolling del piano (+ncplane_scrolling_p+)
+      def scrolling?
+        @scrolling = FFI.ncplane_scrolling_p(ptr) if @scrolling.nil?
+        @scrolling
+      end
+
+      # @return [Boolean] l'autogrow del piano (+ncplane_autogrow_p+)
+      def autogrow?
+        @autogrow = FFI.ncplane_autogrow_p(ptr) if @autogrow.nil?
+        @autogrow
+      end
+
+      # @return [Boolean] true se una scrittura C non fa scorrere né crescere il piano
+      def fixed? = !(scrolling? || autogrow?)
+
+      # Il cursore è in (y, x): il chiamante lo ha appena spostato con il C.
+      def move_to(y, x)
+        @cursor = [y, x]
+      end
+
+      # Dopo una scrittura C riuscita di width colonne in (y, x), con -1 per
+      # "dal cursore". Se il cursore non è noto resta da leggere: la lettura dopo
+      # una scrittura dà la posizione giusta.
+      def advance!(y, x, width)
+        at = @cursor
+        if fixed? && (at || (y >= 0 && x >= 0))
+          @cursor = [y.negative? ? at[0] : y, (x.negative? ? at[1] : x) + width]
+        else
+          forget!
+        end
+      end
+
+      # La prossima lettura del cursore rilegge dal C.
+      def forget_cursor!
+        @cursor = nil
+      end
+
+      # La prossima lettura di dimensioni e cursore rilegge dal C.
+      def forget!
+        @dims = @cursor = nil
+      end
+    end
+    private_constant :WriteState
+
     CORNERS = %w[ul ur ll lr].freeze
     private_constant :CORNERS
 
@@ -1403,7 +1506,7 @@ module Notcurses
     def at(y: nil, x: nil)
       Guard.run do
         ptr = to_ptr
-        y, x = cell_coords!(y, x)
+        y, x = cell_coords!(y, x, WriteState.new(ptr))
         st = internals(ptr)
         raise PlaneError, "at(#{y}, #{x}): il piano ha un bitmap e notcurses non ne legge le celle" if st && !st[:sprite].null?
 
@@ -1814,49 +1917,13 @@ module Notcurses
     def putstr(text, y: nil, x: nil, align: nil, stained: false)
       Guard.run do
         ptr = to_ptr
-        str = output_text!(ptr, text, 'text')
+        str, graphemes, columns = output_text!(ptr, text, 'text')
         raise ArgumentError, 'putstr: usa x: oppure align:, non entrambi' if x && align
 
         Util.bool!(stained, 'stained')
         return 0 if str.empty?
 
-        if dim_x == 1 && str.each_grapheme_cluster.any? { |g| Notcurses.strwidth(g) > 1 }
-          raise PlaneError, 'un carattere largo 2 colonne non entra in un piano largo 1'
-        end
-
-        segments = Util.zwj_segments(str).flat_map { |seg| seg.split(/(?=\n)/) }
-        # ogni EGC di più di 4 byte in una chiamata C sua (vedi with_glyph_kept)
-        if str.match?(GRAPHEME_JOINERS)
-          segments = segments.flat_map do |seg|
-            seg.each_grapheme_cluster.slice_when { |a, b| a.bytesize > 4 || b.bytesize > 4 }.map(&:join)
-          end
-        end
-        widths = segments.map { |seg| Notcurses.strwidth(seg) }
-        first = Notcurses.strwidth(str.grapheme_clusters.first)
-        sync_scrolling_stdplane!(ptr, str.include?("\n") || widths.sum > dim_x - (x.is_a?(Integer) ? x : cursor_x))
-        ty, tx = text_target!(str, widths.sum, first, y: y, x: x, align: align, stained: stained)
-        written = 0
-        segments.each_with_index do |seg, i|
-          # lo scroll dello stdplane fa un render, che può restringerlo a metà testo
-          clear_cut_glyphs!(ptr) if i.positive?
-          # "\n" con il cursore oltre l'ultima colonna: due a capo nel C (vedi il YARD)
-          if seg.start_with?("\n") && (i.positive? || tx == -1) && cursor_x == dim_x
-            Util.check!(FFI.ncplane_cursor_move_yx(ptr, i.zero? ? ty : -1, dim_x - 1), PlaneError, 'ncplane_cursor_move_yx')
-          end
-          rc = with_glyph_kept(ptr, seg, i.zero? ? ty : -1, i.zero? ? tx : -1) do
-            if stained then FFI.ncplane_putstr_stained(ptr, seg)
-            elsif i.zero? then FFI.ncplane_putstr_yx(ptr, ty, tx, seg)
-            else FFI.ncplane_putstr(ptr, seg)
-            end
-          end
-          @context.raise_callback_errors!
-          written += rc.abs
-          next if rc == widths[i]
-
-          raise PlaneError, "putstr: notcurses ha scritto #{written} colonne su #{widths.sum}" \
-                            "#{egcpool_hint(ptr, seg, rc.abs)}"
-        end
-        written
+        write_text!(ptr, str, graphemes, columns, WriteState.new(ptr), y: y, x: x, align: align, stained: stained)
       end
     end
 
@@ -1902,15 +1969,10 @@ module Notcurses
     def putegc(egc, y: nil, x: nil, stained: false)
       Guard.run do
         ptr = to_ptr
-        text = Cell.egc!(egc)
-        raise ArgumentError, 'egc vuoto: serve un carattere' if text.empty?
-
-        output_text!(ptr, text, 'egc')
-        Util.bool!(stained, 'stained')
-        single_egc!(ptr, text)
-        cols = Notcurses.strwidth(text)
-        ty, tx = text_target!(text, cols, cols, y: y, x: x, align: nil, stained: stained)
-        rc = with_glyph_kept(ptr, text, ty, tx) do
+        text, cols = egc_to_write!(ptr, egc, stained)
+        state = WriteState.new(ptr)
+        ty, tx = text_target!(text, cols, cols, state, y: y, x: x, align: nil, stained: stained)
+        rc = with_glyph_kept(ptr, text, ty, tx, state, width: cols, single: true) do
           stained ? FFI.ncplane_putegc_stained(ptr, text, nil) : FFI.ncplane_putegc_yx(ptr, ty, tx, text, nil)
         end
         @context.raise_callback_errors!
@@ -1943,9 +2005,10 @@ module Notcurses
         raise TypeError, "cell deve essere Notcurses::Cell, non #{cell.class}" unless cell.is_a?(Cell)
 
         cols = [cell.width, 1].max
-        ty, tx = text_target!(cell.egc, cols, cols, y: y, x: x, align: nil, stained: false)
-        rc = with_nccells(ptr, [cell]) do |nc|
-          rehearse!(ptr, cell.egc) { |copy| FFI.ncplane_putc_yx(copy, ty, tx, nc) }
+        state = WriteState.new(ptr)
+        ty, tx = text_target!(cell.egc, cols, cols, state, y: y, x: x, align: nil, stained: false)
+        rc = with_nccell(ptr, cell) do |nc|
+          rehearse!(ptr, cell.egc, state: state) { |copy| FFI.ncplane_putc_yx(copy, ty, tx, nc) } if cell.egc.bytesize > 4
           FFI.ncplane_putc_yx(ptr, ty, tx, nc)
         end
         @context.raise_callback_errors!
@@ -1980,23 +2043,30 @@ module Notcurses
     def puttext(text, y: nil, align: :left)
       Guard.run do
         ptr = to_ptr
-        str = output_text!(ptr, text, 'text')
+        str, graphemes, columns = output_text!(ptr, text, 'text')
         raise ArgumentError, "align = #{align.inspect} non valido: usa :left, :center o :right" unless TEXT_ALIGNS.include?(align)
 
-        rows, cols = dims
-        row = y.nil? ? cursor_y : Util.integer!(y, 'y', 0...rows)
+        state = WriteState.new(ptr)
+        rows, cols = state.dims
+        row = y.nil? ? state.cursor[0] : Util.integer!(y, 'y', 0...rows)
         lines = wrap_lines(str, cols)
-        unless scrolling? || row + lines.size <= rows
+        unless row + lines.size <= rows || state.scrolling?
           raise PlaneError, "puttext: il testo occupa #{lines.size} righe, dalla riga #{row} ne restano #{rows - row}"
         end
 
         written = 0
         lines.each do |line|
-          if row >= dim_y
+          if row >= state.rows
             scrollup(lines: 1)
-            row = dim_y - 1
+            state.forget!
+            row = state.rows - 1
           end
-          written += putstr(line, y: row, align: align) unless line.empty?
+          unless line.empty?
+            # le righe sono pezzi del testo già controllato: una riga che è tutto il testo ne riusa i grapheme
+            line_graphemes = graphemes if line == str
+            written += write_text!(ptr, line, line_graphemes, columns, state, y: row, x: nil, align: align, stained: false)
+            state.fixed? ? state.forget_cursor! : state.forget!
+          end
           row += 1
         end
         written
@@ -2015,7 +2085,7 @@ module Notcurses
     # @raise [ArgumentError, TypeError] se {#putstr} rifiuterebbe il testo
     #   (caratteri rifiutati); lo spazio nell'egcpool non è controllato
     # @raise [ClosedError] se il piano è chiuso
-    def check_text!(text, name) = Guard.run { output_text!(to_ptr, text, name) }
+    def check_text!(text, name) = Guard.run { output_text!(to_ptr, text, name).first }
 
     # --- stile e colori dell'output ---
 
@@ -2354,19 +2424,22 @@ module Notcurses
     def hline(cell, len, y: nil, x: nil, from: nil, to: nil)
       Guard.run do
         ptr = to_ptr
-        line = line_cell!(cell)
-        top, left = line_start!(y, x)
-        rows, cols = dims
-        max = scrolling? || autogrow? ? rows * cols : cols - left
+        line = line_cell!(cell, ptr)
+        state = WriteState.new(ptr)
+        top, left = line_start!(y, x, state)
+        rows, cols = state.dims
+        max = cols - left
+        # una linea più lunga della riga serve solo su un piano che scorre o cresce
+        max = rows * cols if !(len.is_a?(Integer) && len.between?(1, max)) && (state.scrolling? || state.autogrow?)
         Util.integer!(len, 'len', 1..max)
         c1, c2 = interp_channels!(from, to)
-        sync_scrolling_stdplane!(ptr, len > cols - left)
-        rc = with_nccells(ptr, [line]) do |nc|
+        sync_scrolling_stdplane!(ptr, state) { len > cols - left }
+        rc = with_nccell(ptr, line) do |nc|
           draw = lambda do |target|
             Util.check!(FFI.ncplane_cursor_move_yx(target, top, left), PlaneError, "ncplane_cursor_move_yx(#{top}, #{left})")
             c1.nil? ? FFI.ncplane_hline(target, nc, len) : FFI.ncplane_hline_interp(target, nc, len, c1, c2)
           end
-          rehearse!(ptr, line.egc, &draw)
+          rehearse!(ptr, line.egc, state: state, &draw) if line.egc.bytesize > 4
           draw.call(ptr)
         end
         @context.raise_callback_errors!
@@ -2397,16 +2470,17 @@ module Notcurses
     def vline(cell, len, y: nil, x: nil, from: nil, to: nil)
       Guard.run do
         ptr = to_ptr
-        line = line_cell!(cell)
-        top, left = line_start!(y, x)
-        Util.integer!(len, 'len', 1..(dim_y - top))
+        line = line_cell!(cell, ptr)
+        state = WriteState.new(ptr)
+        top, left = line_start!(y, x, state)
+        Util.integer!(len, 'len', 1..(state.rows - top))
         c1, c2 = interp_channels!(from, to)
-        rc = with_nccells(ptr, [line]) do |nc|
+        rc = with_nccell(ptr, line) do |nc|
           draw = lambda do |target|
             Util.check!(FFI.ncplane_cursor_move_yx(target, top, left), PlaneError, "ncplane_cursor_move_yx(#{top}, #{left})")
             c1.nil? ? FFI.ncplane_vline(target, nc, len) : FFI.ncplane_vline_interp(target, nc, len, c1, c2)
           end
-          rehearse!(ptr, line.egc, &draw)
+          rehearse!(ptr, line.egc, state: state, &draw) if line.egc.bytesize > 4
           draw.call(ptr)
         end
         Util.check!(rc, PlaneError, 'ncplane_vline_interp')
@@ -2499,7 +2573,7 @@ module Notcurses
     def polyfill(cell, y: nil, x: nil)
       Guard.run do
         ptr = to_ptr
-        fill = line_cell!(cell)
+        fill = line_cell!(cell, ptr)
         top, left = line_start!(y, x)
         with_nccells(ptr, [fill]) do |nc|
           rehearse!(ptr, fill.egc) { |copy| FFI.ncplane_polyfill_yx(copy, top, left, nc) }
@@ -2834,10 +2908,10 @@ module Notcurses
 
     # Coordinate di una cella: nil = quella del cursore.
     # @return [Array(Integer, Integer)]
-    def cell_coords!(y, x)
-      rows, cols = dims
-      cy, cx = cursor
+    def cell_coords!(y, x, state)
+      rows, cols = state.dims
       if y.nil? || x.nil?
+        cy, cx = state.cursor
         # dopo un output che riempie la riga il cursore resta a x == colonne
         raise PlaneError, "il cursore (#{cy}, #{cx}) è oltre il bordo del piano" unless cy < rows && cx < cols
       end
@@ -3149,12 +3223,13 @@ module Notcurses
     # un piano che scorre con autogrow cresce di una riga a ogni a capo.
     # Le metà orfane che nascono senza resize (erase_region, gradient,
     # gradient2x1 e polyfill su una sola metà) le svuotano quei metodi.
-    def clear_cut_glyphs!(ptr, force: false)
-      rows, cols = dims
+    # Con size ([righe, colonne] già lette) non rilegge le dimensioni.
+    def clear_cut_glyphs!(ptr, force: false, size: nil)
+      rows, cols = size || dims
       owner = cut_glyphs_owner
       return if !force && owner&.cut_glyphs_cols == cols
 
-      clear_orphan_halves!(ptr, 0...rows, [0, cols - 1])
+      clear_orphan_halves!(ptr, 0...rows, [0, cols - 1], cols)
       owner&.cut_glyphs_cols = cols
     end
 
@@ -3166,8 +3241,7 @@ module Notcurses
     # Svuota le metà orfane dei glifi larghi nelle colonne xs delle righe ys
     # (colonne fuori dal piano ignorate). ncplane_put di 3.0.17 scrive fuori
     # dalla riga partendo da una metà destra orfana (notcurses.c:1956-1962).
-    def clear_orphan_halves!(ptr, ys, xs)
-      cols = dim_x
+    def clear_orphan_halves!(ptr, ys, xs, cols = dim_x)
       xs = xs.select { |x| x >= 0 && x < cols }.uniq
       ys.each do |y|
         xs.each do |x|
@@ -3237,15 +3311,18 @@ module Notcurses
     # Su uno stdplane che scorre ogni a capo ("\n" o a capo automatico) fa un
     # render dentro ncplane_put (notcurses.c:1978-1981), che lo restringe se il
     # terminale si è ristretto: il resto della stessa chiamata C scriverebbe su
-    # una metà orfana. Con wraps (la scrittura può andare a capo) ncpile_render
-    # porta prima lo stdplane alle dimensioni del terminale (render.c:1579).
-    def sync_scrolling_stdplane!(ptr, wraps)
-      return unless wraps && scrolling? && address == @context.stdplane.address
+    # una metà orfana. Se il blocco dà true (la scrittura può andare a capo)
+    # ncpile_render porta prima lo stdplane alle dimensioni del terminale
+    # (render.c:1579). Il render può cambiare le dimensioni: lo stato si
+    # rilegge.
+    def sync_scrolling_stdplane!(ptr, state)
+      return unless address == @context.stdplane.address && state.scrolling? && yield
 
       rc = FFI.ncpile_render(ptr)
       @context.raise_callback_errors!
       Util.check!(rc, RenderError, 'ncpile_render')
-      clear_cut_glyphs!(ptr)
+      state.forget!
+      clear_cut_glyphs!(ptr, size: state.dims)
     end
 
     # true se la cella (y, x) è la metà sinistra di un glifo largo.
@@ -3259,35 +3336,61 @@ module Notcurses
     # --- helper dell'output ---
 
     # Testo da scrivere: String UTF-8 senza i caratteri che notcurses 3.0.17
-    # scrive male (vedi {#putstr}).
-    def output_text!(ptr, text, name)
+    # scrive male (vedi {#putstr}). Il testo si segmenta in grapheme al massimo
+    # una volta, solo se serve (indicatori regionali, caratteri di larghezza
+    # zero): chi scrive riusa i grapheme (ICH-594). Una sola scansione cerca i
+    # caratteri rifiutati; se ne trova uno sospetto, i controlli in ordine
+    # dicono quale.
+    # @return [Array(String, Array<String>, Hash)] il testo, i suoi grapheme
+    #   cluster e le colonne dei grapheme che ha misurato (vedi
+    #   {#zero_width_egc!}); nil al posto degli ultimi due se il testo non li ha
+    #   richiesti
+    def output_text!(ptr, text, name, graphemes = nil)
       str = Util.string!(text, name)
-      raise ArgumentError, "#{name} contiene un TAB: espandilo prima (per esempio con String#gsub)" if str.include?("\t")
-      raise ArgumentError, "#{name} contiene un carattere di controllo" if str.match?(/(?!\n)\p{Cc}/)
-      raise ArgumentError, "#{name} contiene U+2028 o U+2029, che notcurses tronca a un byte" if str.match?(/[\u2028\u2029]/)
+      ascii = str.ascii_only?
+      if (ascii ? str : str.b).match?(TEXT_SUSPECTS)
+        raise ArgumentError, "#{name} contiene un TAB: espandilo prima (per esempio con String#gsub)" if str.include?("\t")
+        raise ArgumentError, "#{name} contiene un carattere di controllo" if str.match?(/(?!\n)\p{Cc}/)
+        raise ArgumentError, "#{name} contiene U+2028 o U+2029, che notcurses tronca a un byte" if str.match?(/[\u2028\u2029]/)
 
-      Util.lone_regional_indicator!(str, name)
-      zero_width_egc!(ptr, str, name) if str.match?(ZERO_WIDTH_CANDIDATES)
-      str
+        graphemes ||= str.grapheme_clusters if str.match?(Util::REGIONAL_INDICATOR)
+        Util.lone_regional_indicator!(str, name, graphemes)
+      end
+      return [str, graphemes, nil] if ascii || !str.match?(ZERO_WIDTH_CANDIDATES)
+
+      graphemes ||= str.grapheme_clusters
+      [str, graphemes, zero_width_egc!(ptr, graphemes, name)]
     end
 
     # Rifiuta i caratteri che notcurses scrive come EGC di larghezza zero: il
     # C li mette in una cella propria e, con il cursore a fine riga
     # (x == colonne), scrive fuori dalla riga (sull'ultima riga fuori dal
     # framebuffer). La segmentazione è quella di notcurses (+nccell_load+),
-    # che può dividere un grapheme di Ruby.
-    def zero_width_egc!(ptr, str, name)
-      str.each_grapheme_cluster do |g|
+    # che può dividere un grapheme di Ruby. Un grapheme corto già controllato
+    # nella chiamata non si ricarica (ICH-594).
+    # @return [Hash{String => Integer}] le colonne di ogni grapheme controllato,
+    #   cioè la somma dei suoi pezzi: ncstrwidth le somma allo stesso modo
+    #   (notcurses.c:3311-3333), e chi scrive non rimisura il grapheme
+    def zero_width_egc!(ptr, graphemes, name)
+      columns = {}
+      graphemes.each do |g|
         next unless g.match?(ZERO_WIDTH_CANDIDATES)
+        next if g.bytesize <= 32 && columns.key?(g)
 
+        cols = 0
         read = nc_pieces(ptr, g) do |piece, width|
-          next unless width.zero?
+          if width.zero?
+            raise ArgumentError, "#{name}: notcurses 3.0.17 scrive #{Util.egc_label(piece)} (in #{Util.egc_label(g)}) " \
+                                 'come un carattere di larghezza zero, in una cella propria'
+          end
 
-          raise ArgumentError, "#{name}: notcurses 3.0.17 scrive #{Util.egc_label(piece)} (in #{Util.egc_label(g)}) " \
-                               'come un carattere di larghezza zero, in una cella propria'
+          cols += width
         end
         raise ArgumentError, "#{name}: notcurses non accetta #{Util.egc_label(g)}" if read < g.bytesize
+
+        columns[g] = cols
       end
+      columns
     end
 
     # Passa al blocco i pezzi in cui notcurses divide str (+nccell_load+), con
@@ -3330,23 +3433,111 @@ module Notcurses
       Util.check_ptr!(FFI.ncplane_create(ptr, opts), PlaneError, 'ncplane_create')
     end
 
+    # Scrive str, già controllato da output_text!, come {#putstr}. graphemes
+    # sono i suoi grapheme cluster e columns le colonne dei grapheme che ha
+    # misurato, se output_text! li ha già (nil = non segmentato). state è lo stato letto del piano: {#puttext} lo passa a ogni
+    # riga, e il piano si legge una volta sola (ICH-594). Sui piani che non
+    # scorrono e non crescono i segmenti non rileggono niente: il C sposta il
+    # cursore della larghezza scritta (notcurses.c:1953-1975) e non cambia le
+    # dimensioni. Sugli altri, dopo ogni segmento si rilegge.
+    def write_text!(ptr, str, graphemes, columns, state, y:, x:, align:, stained:)
+      graphemes ||= str.grapheme_clusters if !str.ascii_only? && str.match?(GRAPHEME_JOINERS)
+      if state.cols == 1 && (graphemes || str.grapheme_clusters).any? { |g| Notcurses.strwidth(g) > 1 }
+        raise PlaneError, 'un carattere largo 2 colonne non entra in un piano largo 1'
+      end
+
+      segments = text_segments(str, graphemes)
+      # le colonne di un grapheme già misurato da output_text! non si misurano di nuovo
+      widths = segments.map { |seg, single| (single && columns&.[](seg)) || Util.segments_width(seg, [seg]) }
+      total = widths.sum
+      first = -> { Notcurses.strwidth(graphemes ? graphemes.first : str[0]) }
+      sync_scrolling_stdplane!(ptr, state) do
+        str.include?("\n") || total > state.cols - (x.is_a?(Integer) ? x : state.cursor[1])
+      end
+      ty, tx = text_target!(str, total, first, state, y: y, x: x, align: align, stained: stained)
+      written = 0
+      last = segments.size - 1
+      segments.each_with_index do |(seg, single), i|
+        # un piano che scorre o cresce cambia dimensioni e cursore a ogni scrittura, e lo scroll
+        # dello stdplane fa un render, che può restringerlo a metà testo
+        clear_cut_glyphs!(ptr, size: state.dims) if i.positive? && !state.fixed?
+        sy = i.zero? ? ty : -1
+        sx = i.zero? ? tx : -1
+        # "\n" con il cursore oltre l'ultima colonna: due a capo nel C (vedi il YARD)
+        if seg.start_with?("\n") && (i.positive? || tx == -1) && state.cursor[1] == state.cols
+          Util.check!(FFI.ncplane_cursor_move_yx(ptr, sy, state.cols - 1), PlaneError, 'ncplane_cursor_move_yx')
+          state.forget_cursor!
+        end
+        rc = with_glyph_kept(ptr, seg, sy, sx, state, width: widths[i], single: single) do
+          if stained then FFI.ncplane_putstr_stained(ptr, seg)
+          elsif i.zero? then FFI.ncplane_putstr_yx(ptr, ty, tx, seg)
+          else FFI.ncplane_putstr(ptr, seg)
+          end
+        end
+        @context.raise_callback_errors!
+        written += rc.abs
+        if rc != widths[i]
+          raise PlaneError, "putstr: notcurses ha scritto #{written} colonne su #{total}#{egcpool_hint(ptr, seg, rc.abs)}"
+        end
+
+        state.advance!(sy, sx, widths[i]) if i < last
+      end
+      written
+    end
+
+    # Pezzi in cui putstr divide str per il C: dopo ogni grapheme con uno ZWJ
+    # (notcurses 3.0.17 unisce a quel carattere tutto il resto), prima di ogni
+    # "\n" e intorno a ogni EGC di più di 4 byte, che passa dal pool e si
+    # scrive a parte (vedi {#with_glyph_kept}). Senza grapheme (un testo senza
+    # caratteri che si legano) ogni codepoint è un grapheme cluster: si
+    # divide solo prima di "\n".
+    # @return [Array<Array(String, Boolean)>] [pezzo, true se è un solo grapheme cluster]
+    def text_segments(str, graphemes)
+      return str.split(/(?=\n)/).map { |seg| [seg, false] } unless graphemes
+
+      segments = []
+      seg = +''
+      count = 0
+      prev_long = false
+      graphemes.each do |g|
+        long = g.bytesize > 4
+        if count.positive? && (g == "\n" || long || prev_long)
+          segments << [seg, count == 1]
+          seg = +''
+          count = 0
+        end
+        seg << g
+        count += 1
+        prev_long = long
+        next unless g.include?("\u200D")
+
+        segments << [seg, count == 1]
+        seg = +''
+        count = 0
+      end
+      segments << [seg, count == 1] if count.positive?
+      segments
+    end
+
     # Esegue il blocco, la scrittura C di text in (y, x) (-1 = cursore), e ne
     # restituisce il valore. Con l'egcpool pieno ncplane_put svuota il glifo di
     # arrivo e gli dà gli stili e i colori del piano prima di fallire
     # (notcurses.c:1911-1950): per un solo EGC di più di 4 byte, l'unico che
     # passa dal pool, il wrapper legge prima quel glifo e, se la scrittura
     # fallisce, lo riscrive e rimette il cursore (review di ICH-533). Una
-    # scrittura che andrà a capo non tocca la riga di arrivo.
-    def with_glyph_kept(ptr, text, y, x)
-      return yield unless text.bytesize > 4 && text.each_grapheme_cluster.first(2).size == 1
+    # scrittura che andrà a capo non tocca la riga di arrivo. single dice se
+    # text è un solo grapheme cluster, e width quante colonne occupa: il
+    # chiamante li sa già, e il testo non si segmenta né si misura di nuovo
+    # (ICH-594). Cursore e colonne vengono dallo stato letto.
+    def with_glyph_kept(ptr, text, y, x, state, width:, single:)
+      return yield unless single && text.bytesize > 4
 
-      cy, cx = cursor
+      cy, cx = state.cursor
       ty = y.negative? ? cy : y
       tx = x.negative? ? cx : x
-      cols = Notcurses.strwidth(text)
-      kept = kept_glyph(ptr, ty, tx) if tx + cols <= dim_x
+      kept = kept_glyph(ptr, ty, tx) if tx + width <= state.cols
       rc = yield
-      restore_glyph!(ptr, kept, cy, cx) if kept && rc != cols
+      restore_glyph!(ptr, kept, cy, cx, state.cols) if kept && rc != width
       rc
     end
 
@@ -3364,13 +3555,14 @@ module Notcurses
       egc && [y, left, egc, styles.read_uint16, channels.read_uint64]
     end
 
-    # Riscrive il glifo di kept_glyph e porta il cursore in (cy, cx). Il C ha
-    # già rilasciato la copia vecchia, quindi nel pool lo spazio c'è.
-    def restore_glyph!(ptr, kept, cy, cx)
+    # Riscrive il glifo di kept_glyph e porta il cursore in (cy, cx), su un
+    # piano di cols colonne. Il C ha già rilasciato la copia vecchia, quindi
+    # nel pool lo spazio c'è.
+    def restore_glyph!(ptr, kept, cy, cx, cols)
       y, x, egc, styles, channels = kept
       cell = FFI::NcCell.new
       FFI.ncplane_putc_yx(ptr, y, x, cell) if FFI.nccell_prime(ptr, cell, egc, styles, channels) == egc.bytesize
-      restore_cursor!(ptr, cy, cx, dim_x)
+      restore_cursor!(ptr, cy, cx, cols)
     ensure
       FFI.nccell_release(ptr, cell) if cell
     end
@@ -3389,46 +3581,101 @@ module Notcurses
       FFI.nccell_release(ptr, cell) if cell
     end
 
-    # Controlla dove scrivere un testo di total colonne, con il primo
-    # carattere largo first, e restituisce [y, x] per il C (-1 = cursore). Con
-    # stained porta il cursore nella posizione di partenza.
-    def text_target!(str, total, first, y:, x:, align:, stained:)
-      Guard.run do
-        clear_cut_glyphs!(to_ptr)
-        rows, cols = dims
-        cy, cx = cursor
-        newline = str.include?("\n")
-        row = y.nil? ? cy : Util.integer!(y, 'y', 0...rows)
-        col = if align
-                raise ArgumentError, "align = #{align.inspect} non valido: usa :left, :center o :right" unless TEXT_ALIGNS.include?(align)
-                raise ArgumentError, 'align: non ammette "\n"' if newline
-                raise PlaneError, "il testo (#{total} colonne) è più largo del piano (#{cols})" if total > cols
+    # Controlla dove scrivere un testo di total colonne e restituisce [y, x]
+    # per il C (-1 = cursore). first è la larghezza del primo carattere, o un
+    # blocco che la calcola: serve solo se il testo non entra, e un carattere
+    # non è mai più largo del testo che lo contiene. Con stained porta il
+    # cursore nella posizione di partenza. Legge lo stato dal state, solo ciò
+    # che serve. Lo chiamano metodi che sono già dentro Guard.run.
+    def text_target!(str, total, first, state, y:, x:, align:, stained:)
+      ptr = state.ptr
+      clear_cut_glyphs!(ptr, size: state.dims)
+      rows, cols = state.dims
+      newline = str.include?("\n")
+      row = y.nil? ? state.cursor[0] : coord!(y, 'y', rows)
+      col = if align
+              raise ArgumentError, "align = #{align.inspect} non valido: usa :left, :center o :right" unless TEXT_ALIGNS.include?(align)
+              raise ArgumentError, 'align: non ammette "\n"' if newline
+              raise PlaneError, "il testo (#{total} colonne) è più largo del piano (#{cols})" if total > cols
 
-                halign(align, total)
-              else
-                x.nil? ? cx : Util.integer!(x, 'x', 0...cols)
-              end
-        raise PlaneError, '"\n" richiede un piano che scorre (scrolling = true)' if newline && !scrolling?
-        raise PlaneError, "un carattere largo #{first} non entra nel piano largo #{cols}" if first > cols
+              FFI.notcurses_align(cols, Util.placement_align_value(align), total) # come halign, senza rileggere le colonne
+            else
+              x.nil? ? state.cursor[1] : coord!(x, 'x', cols)
+            end
+      raise PlaneError, '"\n" richiede un piano che scorre (scrolling = true)' if newline && !state.scrolling?
 
-        explicit_x = !(x.nil? && align.nil?)
-        raise PlaneError, "il carattere largo #{first} non entra nella riga dalla colonna #{col}" if explicit_x && col + first > cols
-        if (stained || !(scrolling? || autogrow?)) && (col >= cols || col + total > cols)
-          raise PlaneError, "il testo (#{total} colonne) non entra nella riga dalla colonna #{col} (piano largo #{cols})"
-        end
-        return [y.nil? ? -1 : row, explicit_x ? col : -1] unless stained
-
-        raise ArgumentError, 'stained: non ammette "\n"' if newline
-
-        move_cursor(row, col) unless row == cy && col == cx
-        [-1, -1]
+      if total > cols && (width = first_width(first)) > cols
+        raise PlaneError, "un carattere largo #{width} non entra nel piano largo #{cols}"
       end
+
+      explicit_x = !(x.nil? && align.nil?)
+      if explicit_x && col + total > cols && (width = first_width(first)) + col > cols
+        raise PlaneError, "il carattere largo #{width} non entra nella riga dalla colonna #{col}"
+      end
+      if (col >= cols || col + total > cols) && (stained || state.fixed?)
+        raise PlaneError, "il testo (#{total} colonne) non entra nella riga dalla colonna #{col} (piano largo #{cols})"
+      end
+      return [y.nil? ? -1 : row, explicit_x ? col : -1] unless stained
+
+      raise ArgumentError, 'stained: non ammette "\n"' if newline
+
+      cy, cx = state.cursor
+      unless row == cy && col == cx
+        Util.check!(FFI.ncplane_cursor_move_yx(ptr, row, col), PlaneError, "ncplane_cursor_move_yx(#{row}, #{col})")
+        state.move_to(row, col)
+      end
+      [-1, -1]
     end
 
-    # Controlla che notcurses legga text come un solo EGC (+nccell_load+).
+    # Larghezza del primo carattere di text_target!: un numero, o il blocco che la calcola.
+    def first_width(first) = first.respond_to?(:call) ? first.call : first
+
+    # Come Util.integer!(value, name, 0...limit), senza creare l'intervallo
+    # quando il valore è valido.
+    def coord!(value, name, limit)
+      value.is_a?(Integer) && value >= 0 && value < limit ? value : Util.integer!(value, name, 0...limit)
+    end
+
+    # Controlla l'EGC di {#putegc} e restituisce il testo UTF-8 e le sue colonne.
+    # Un EGC di al massimo 4 byte che ha già passato tutti i controlli si ricorda
+    # nel contesto (vedi {Context#checked_egcs}): la volta dopo non si controlla
+    # di nuovo. Un EGC che solleva un errore non si ricorda mai.
+    # @return [Array(String, Integer)]
+    def egc_to_write!(ptr, egc, stained)
+      checked = @context.checked_egcs
+      if egc.is_a?(String) && (cols = checked[egc])
+        Util.bool!(stained, 'stained')
+        return [egc, cols]
+      end
+
+      text, graphemes = Cell.egc_with_graphemes!(egc, 'egc')
+      raise ArgumentError, 'egc vuoto: serve un carattere' if text.empty?
+
+      # un carattere ASCII stampabile: niente da controllare, largo 1 colonna
+      ascii = text.match?(PRINTABLE_ASCII_CHAR)
+      output_text!(ptr, text, 'egc', graphemes) unless ascii
+      Util.bool!(stained, 'stained')
+      return [text, 1] if ascii
+
+      cols = single_egc!(ptr, text)
+      if text.bytesize <= 4
+        checked.clear if checked.size >= 4096
+        checked[text] = cols
+      end
+      [text, cols]
+    end
+
+    # Controlla che notcurses legga text come un solo EGC (+nccell_load+), e ne
+    # restituisce le colonne: sono quelle che +ncstrwidth+ somma sui pezzi
+    # (notcurses.c:3311-3333), senza una seconda chiamata (ICH-594).
     def single_egc!(ptr, text)
       pieces = 0
-      return if nc_pieces(ptr, text) { pieces += 1 } == text.bytesize && pieces == 1
+      cols = 0
+      read = nc_pieces(ptr, text) do |_piece, width|
+        pieces += 1
+        cols += width
+      end
+      return cols if read == text.bytesize && pieces == 1
 
       raise Cell.split_error(ptr, text) || CellError.new("notcurses non legge #{Util.egc_label(text)} come un solo carattere")
     end
@@ -3442,12 +3689,27 @@ module Notcurses
       cells.each_with_index do |cell, i|
         next if cell.load_into(ptr, ncs[i])
 
-        single_egc!(ptr, cell.egc)
-        raise PlaneError, "l'egcpool del piano (16 MiB) non ha spazio per #{Util.egc_label(cell.egc)}"
+        unloadable_cell!(ptr, cell)
       end
       yield(*ncs)
     ensure
       ncs&.each { |nc| FFI.nccell_release(ptr, nc) }
+    end
+
+    # {#with_nccells} per una sola cella: senza gli array (ICH-594).
+    def with_nccell(ptr, cell)
+      nc = FFI::NcCell.new
+      unloadable_cell!(ptr, cell) unless cell.load_into(ptr, nc)
+      yield nc
+    ensure
+      FFI.nccell_release(ptr, nc) if nc
+    end
+
+    # Una cella che non si carica è divisa da notcurses (CellError, controllo
+    # con il pool vuoto di {#nc_pieces}) o non trova spazio nell'egcpool.
+    def unloadable_cell!(ptr, cell)
+      single_egc!(ptr, cell.egc)
+      raise PlaneError, "l'egcpool del piano (16 MiB) non ha spazio per #{Util.egc_label(cell.egc)}"
     end
 
     # Prova la scrittura del blocco su una copia del piano e solleva
@@ -3468,17 +3730,19 @@ module Notcurses
     # ha, ma il C rifiuta comunque prima di cambiare celle, notcurses.c:1850).
     #
     # @param egcs [Array<String>] EGC della scrittura: senza EGC lunghi niente prova
+    # @param state [WriteState, nil] stato già letto del piano: scrolling e
+    #   autogrow non si rileggono (ICH-594)
     # @yieldparam copy [::FFI::Pointer] la copia, da usare al posto di ptr
     # @yieldreturn [Integer] il ritorno della funzione C
-    def rehearse!(ptr, *egcs)
+    def rehearse!(ptr, *egcs, state: nil)
       long = egcs.select { |egc| egc.bytesize > 4 }
       return if long.empty?
 
       copy = Util.check_ptr!(FFI.ncplane_dup(ptr, ::FFI::Pointer::NULL), PlaneError, 'ncplane_dup')
       begin
         FFI.ncplane_set_resizecb(copy, ::FFI::Pointer::NULL)
-        FFI.ncplane_set_scrolling(copy, 1) if scrolling?
-        FFI.ncplane_set_autogrow(copy, 1) if autogrow?
+        FFI.ncplane_set_scrolling(copy, 1) if state ? state.scrolling? : scrolling?
+        FFI.ncplane_set_autogrow(copy, 1) if state ? state.autogrow? : autogrow?
         if (from = internals(ptr)) && (to = internals(copy))
           to[:logrow] = from[:logrow]
         end
@@ -3535,8 +3799,15 @@ module Notcurses
 
     # Cella di linee e riempimenti, larga 1 colonna. Una String usa stile e
     # colori del piano.
-    def line_cell!(cell)
-      cell = Cell.new(egc: cell, styles: styles, channels: channels) if cell.is_a?(String)
+    def line_cell!(cell, ptr)
+      if cell.is_a?(String)
+        # come Cell.new con stili e colori del piano, senza convertirli in simboli e di nuovo in numeri (ICH-594)
+        # un carattere ASCII stampabile passa i controlli di Cell.egc! ed è largo 1 colonna
+        printable = cell.bytesize == 1 && cell.ascii_only? && cell.match?(PRINTABLE_ASCII_CHAR)
+        text = printable ? cell : Cell.egc!(cell)
+        cols = printable ? 1 : Util.segments_width(text, [text])
+        cell = Cell.from_c(text, FFI.ncplane_styles(ptr), FFI.ncplane_channels(ptr), cols)
+      end
       raise TypeError, "cell deve essere Notcurses::Cell o String, non #{cell.class}" unless cell.is_a?(Cell)
       raise ArgumentError, "il carattere #{Util.egc_label(cell.egc)} deve essere largo 1 colonna" unless cell.width == 1
 
@@ -3544,10 +3815,10 @@ module Notcurses
     end
 
     # Posizione di partenza di linee, box e riempimenti (nil = cursore).
-    def line_start!(y, x)
+    def line_start!(y, x, state = WriteState.new(to_ptr))
       Guard.run do
-        clear_cut_glyphs!(to_ptr)
-        cell_coords!(y, x)
+        clear_cut_glyphs!(to_ptr, size: state.dims)
+        cell_coords!(y, x, state)
       end
     end
 

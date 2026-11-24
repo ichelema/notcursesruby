@@ -313,6 +313,30 @@ module Notcurses
       segments
     end
 
+    # Colonne di un testo già spezzato da {zwj_segments}: la somma di
+    # +ncstrwidth+ sui pezzi. {Notcurses.strwidth} la usa, e {Plane#putstr}
+    # la chiama sui pezzi che ha già spezzato, senza segmentare di nuovo il
+    # testo (ICH-594).
+    # @api private
+    # @param text [String] testo intero, per il messaggio d'errore
+    # @param segments [Array<String>] i pezzi di text
+    # @return [Integer] colonne, >= 0
+    # @raise [ArgumentError] se notcurses non riesce a misurare un pezzo
+    def segments_width(text, segments)
+      validbytes = ::FFI::MemoryPointer.new(:int)
+      offset = 0
+      segments.sum do |seg|
+        cols = FFI.ncstrwidth(seg, validbytes, nil)
+        if cols.negative?
+          raise ArgumentError,
+            "text = #{text.inspect}: notcurses non riesce a misurare il testo dal byte #{offset + validbytes.read_int}"
+        end
+
+        offset += seg.bytesize
+        cols
+      end
+    end
+
     # EGC per un messaggio d'errore: l'inizio e i byte di un EGC lungo (un EGC
     # può avere milioni di segni combinanti).
     # @param egc [String] EGC UTF-8
@@ -330,12 +354,14 @@ module Notcurses
     # @api private
     # @param str [String] testo UTF-8 valido
     # @param name [String] nome usato nel messaggio d'errore
+    # @param graphemes [Array<String>, nil] i grapheme cluster di str, se il
+    #   chiamante li ha già: evita una nuova passata sul testo (ICH-594)
     # @return [void]
     # @raise [ArgumentError] se str contiene un indicatore regionale da solo
-    def lone_regional_indicator!(str, name)
+    def lone_regional_indicator!(str, name, graphemes = nil)
       return unless str.match?(REGIONAL_INDICATOR)
 
-      lone = str.each_grapheme_cluster.find { |g| g.scan(REGIONAL_INDICATOR).size == 1 }
+      lone = (graphemes || str.each_grapheme_cluster).find { |g| g.scan(REGIONAL_INDICATOR).size == 1 }
       return unless lone
 
       raise ArgumentError, "#{name} contiene #{egc_label(lone)}, un indicatore regionale da solo: notcurses lo conta " \

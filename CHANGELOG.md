@@ -15,6 +15,19 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 - Spec grafiche su un terminale vero (`spec/graphics/`), solo con `NC_GRAPHICS=1` in Kitty o Ghostty: rilevamento
   del terminale, capacità, blit con ogni blitter (anche `:pixel`), `Direct#render_image` e `Direct#stream` con
   `:pixel`, e in Kitty i tasti di controllo con `kitty @ send-key`. Senza la variabile la suite non le esegue.
+- `benchmark/plane_writes.rb`: misura le scritture di `Plane` contro la FFI diretta su un piano 60x200 e stampa
+  una tabella markdown (ICH-594).
+
+### Modificato
+
+- `Notcurses::Plane#putstr`, `#printf`, `#puttext`, `#putegc`, `#putc`, `#hline` e `#vline` leggono dimensioni,
+  cursore, scrolling e autogrow del piano una volta sola per chiamata, e segmentano il testo in grapheme una volta
+  sola: prima `putegc` leggeva le dimensioni due volte e `putstr` fino a cinque, con tre ricerche su tutto il testo.
+  Il comportamento, le firme e i messaggi d'errore non cambiano. Su un piano 60x200 (Ruby 4.0.7), rispetto alla FFI
+  diretta: `putegc("x")` da 38x a 11,7x, `putc` da 29x a 14,3x, `putstr` con gli accenti da 4,5x a 1,6x, `hline` da
+  4,6x a 2,7x, `vline` da 8,2x a 4,9x, `putstr` con un EGC da 6 MB da 18,5x a 4,4x (ICH-594). `putegc` ricorda gli
+  EGC di al massimo 4 byte che ha già controllato, finché il contesto è aperto: `putegc("é")` e `putegc("漢")`
+  ripetuti costano 8x la FFI diretta, e 19x la prima volta di ogni carattere.
 
 ### Rimosso
 
@@ -383,12 +396,12 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   riga in meno, ogni frame scendeva di una riga, la prima riga dei frame precedenti restava sullo schermo e in fondo
   al terminale lo schermo scorreva a ogni frame (ICH-284). Con il blitter `:pixel` e un frame più basso dello schermo
   in fondo al terminale l'esito non dipende più dal terminale: vedi la voce di ICH-458.
-- `Notcurses.strwidth` misura anche il testo dopo una sequenza ZWJ (U+200D): `"👩‍🚀abc"` vale 5 colonne, non 2. Il
+- `Notcurses.strwidth` misura anche il testo dopo una sequenza ZWJ (U+200D): `"👩\u200D🚀abc"` vale 5 colonne, non 2. Il
   workaround del bug di notcurses 3.0.17, prima solo in `Plane#putstr`, ora vale per `Direct#putegc` (scrive solo il
   primo EGC, non anche il resto del testo), `Direct#print_aligned` (colonna e valore restituito giusti; `ArgumentError`
   per un carattere di controllo dopo la sequenza), `Plane#puttext` (una parola con ZWJ più larga del piano va a capo
   invece di sollevare `PlaneError`) e la UI, che taglia e allinea il testo con `strwidth`: una `Label` con
-  `"👩‍💻 sviluppatrice molto brava"` e `size: 10` non solleva più `PlaneError` (ICH-285, ICH-286).
+  `"👩\u200D💻 sviluppatrice molto brava"` e `size: 10` non solleva più `PlaneError` (ICH-285, ICH-286).
 - `Tree#redraw` adatta i piani delle voci alla larghezza corrente dell'albero: dopo un `Plane#resize` in larghezza
   il blocco di disegno riceveva piani larghi come prima, e su un albero più stretto disegnava fuori dall'albero
   (ICH-287).

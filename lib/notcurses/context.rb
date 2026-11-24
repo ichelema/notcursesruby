@@ -388,6 +388,7 @@ module Notcurses
         @owner = nil
         @generation = 0
         @planes = {}
+        @checked_egcs = {}
         @children = {}.compare_by_identity
         @callback_errors = []
         @base_restores = []
@@ -1408,6 +1409,14 @@ module Notcurses
 
       tracked_plane(ptr.address) || Plane.new(ptr, owned: false, context: self, tracked: false)
     end
+
+    # EGC già controllati da {Plane#putegc}, con le loro colonne: un solo EGC di
+    # al massimo 4 byte, che non passa dall'egcpool. Il controllo dipende solo
+    # dal testo e dalla locale, che notcurses fissa all'avvio, quindi la memoria
+    # vale finché il contesto è aperto (ICH-594). Si svuota a 4096 voci.
+    # @api private
+    # @return [Hash{String => Integer}] testo UTF-8 e colonne
+    attr_reader :checked_egcs
 
     # @api private
     # @return [Plane, nil] il piano tracciato e aperto con questo indirizzo
