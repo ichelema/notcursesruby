@@ -193,18 +193,7 @@ module Notcurses
     #   carattere che notcurses rifiuta (per esempio un carattere di controllo)
     def strwidth(text)
       str = Util.string!(text, 'text')
-      validbytes = ::FFI::MemoryPointer.new(:int)
-      offset = 0
-      Util.zwj_segments(str).sum do |seg|
-        cols = FFI.ncstrwidth(seg, validbytes, nil)
-        if cols.negative?
-          raise ArgumentError,
-                "text = #{text.inspect}: notcurses non riesce a misurare il testo dal byte #{offset + validbytes.read_int}"
-        end
-
-        offset += seg.bytesize
-        cols
-      end
+      Util.segments_width(text, Util.zwj_segments(str))
     end
 
     private

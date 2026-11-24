@@ -15,6 +15,19 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
 - Spec grafiche su un terminale vero (`spec/graphics/`), solo con `NC_GRAPHICS=1` in Kitty o Ghostty: rilevamento
   del terminale, capacità, blit con ogni blitter (anche `:pixel`), `Direct#render_image` e `Direct#stream` con
   `:pixel`, e in Kitty i tasti di controllo con `kitty @ send-key`. Senza la variabile la suite non le esegue.
+- `benchmark/plane_writes.rb`: misura le scritture di `Plane` contro la FFI diretta su un piano 60x200 e stampa
+  una tabella markdown (ICH-594).
+
+### Modificato
+
+- `Notcurses::Plane#putstr`, `#printf`, `#puttext`, `#putegc`, `#putc`, `#hline` e `#vline` leggono dimensioni,
+  cursore, scrolling e autogrow del piano una volta sola per chiamata, e segmentano il testo in grapheme una volta
+  sola: prima `putegc` leggeva le dimensioni due volte e `putstr` fino a cinque, con tre ricerche su tutto il testo.
+  Il comportamento, le firme e i messaggi d'errore non cambiano. Su un piano 60x200 (Ruby 4.0.7), rispetto alla FFI
+  diretta: `putegc("x")` da 38x a 11,7x, `putc` da 29x a 14,3x, `putstr` con gli accenti da 4,5x a 1,6x, `hline` da
+  4,6x a 2,7x, `vline` da 8,2x a 4,9–5,1x, `putstr` con un EGC da 6 MB da 18,5x a 4,4x (ICH-594). `putegc` ricorda
+  gli EGC di al massimo 4 byte che ha già controllato, finché il contesto è aperto: `putegc("é")` e `putegc("漢")`
+  ripetuti costano 8x la FFI diretta, e 19x la prima volta di ogni carattere.
 
 ### Rimosso
 
