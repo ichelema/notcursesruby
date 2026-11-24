@@ -45,19 +45,19 @@ Una issue nata da un lotto entra in un lotto con la scelta dell'utente. Un lotto
 | Lotto | Prefisso | Issue | Priorità | Titolo |
 | --- | --- | --- | --- | --- |
 | 9c | `improvments` | ICH-594 | Low | Accelerare le scritture di Plane, che ripetono controlli e letture dello stato prima della chiamata C (prima dei lotti 10–15 per scelta dell'utente del 2026-11-23: le suite dei lotti seguenti diventano più rapide; allargata da `putstr` a `printf`, `puttext`, `putegc`, `putc`, `hline` e `vline` il 2026-11-24, con i criteri nuovi approvati dall'utente) |
-| 10 | `bug` | ICH-220 | Medium | Make the Tabbed header follow plane resizes |
-| 10 | `bug` | ICH-221 | Medium | Fix Tree focus drift with items of different heights |
-| 10 | `bug` | ICH-219 | Low | Fix Menu selection loss on separator click and mouse_selected for right-aligned sections |
-| 11 | `bug` | ICH-459 | Low | Close every child of a UI container when a child close or the focus change raises |
-| 11 | `bug` | ICH-460 | Low | Keep every Dialog button visible on a very narrow area |
-| 11 | `bug` | ICH-461 | Low | Give the focus to a component that becomes visible when nothing has the focus |
-| 11 | `bug` | ICH-473 | Low | Print the result after Context.open in the YARD example of Notcurses::UI::App |
-| 12 | `improvments` | ICH-227 | Low | Keep FdPlane close interruptions out of wrapper text methods on Ruby 3.1 |
-| 13 | `improvments` | ICH-231 | Low | Add an optional queue limit and a non-blocking post to EventLoop (funzionalità nuova: scelta dell'utente) |
-| 13 | `improvments` | ICH-457 | Low | Deliver mouse drag motion to the component where the drag started (pointer capture) (funzionalità nuova: scelta dell'utente) |
-| 14 | `bug` | ICH-483 | Low | Free ncplane_putwegc strings with the allocator notcurses used (FFI layer) (nata dal lotto 1; Fase 1: approvazione dell'utente prima del fix, regola 1) |
-| 15 | `improvments` | ICH-469 | Low | Apply the safe RuboCop autocorrections and switch to double quotes |
-| 15 | `improvments` | ICH-470 | Low | Remove the redundant rubocop:disable comment in ui/component.rb |
+| 10 | `bug` | ICH-220 | Medium | Fai seguire l'intestazione di Tabbed ai ridimensionamenti del piano |
+| 10 | `bug` | ICH-221 | Medium | Correggi lo scostamento del focus in Tree con elementi di altezza diversa |
+| 10 | `bug` | ICH-219 | Low | Correggi la perdita della selezione in Menu al clic su un separatore e mouse_selected per le sezioni allineate a destra |
+| 11 | `bug` | ICH-459 | Low | Chiudi ogni figlio di un contenitore UI quando la chiusura di un figlio o il cambio di focus solleva un'eccezione |
+| 11 | `bug` | ICH-460 | Low | Mantieni visibili tutti i pulsanti di Dialog su un'area molto stretta |
+| 11 | `bug` | ICH-461 | Low | Dai il focus a un componente che diventa visibile quando nessuno ha il focus |
+| 11 | `bug` | ICH-473 | Low | Stampare il risultato dopo Context.open nell'esempio YARD di Notcurses::UI::App |
+| 12 | `improvments` | ICH-227 | Low | Impedisci alle interruzioni di close di FdPlane di raggiungere i metodi di testo del wrapper su Ruby 3.1 |
+| 13 | `improvments` | ICH-231 | Low | Aggiungi un limite opzionale alla coda e un post non bloccante a EventLoop (funzionalità nuova: scelta dell'utente) |
+| 13 | `improvments` | ICH-457 | Low | Consegna il movimento del trascinamento del mouse al componente da cui è iniziato il trascinamento (cattura del puntatore) (funzionalità nuova: scelta dell'utente) |
+| 14 | `bug` | ICH-483 | Low | Liberare le stringhe di ncplane_putwegc con l'allocatore usato da notcurses (layer FFI) (nata dal lotto 1; Fase 1: approvazione dell'utente prima del fix, regola 1) |
+| 15 | `improvments` | ICH-469 | Low | Applica le autocorrezioni sicure di RuboCop e passa alle virgolette doppie |
+| 15 | `improvments` | ICH-470 | Low | Rimuovere il commento rubocop:disable ridondante in ui/component.rb |
 
 - ICH-219, ICH-220, ICH-221, ICH-227 e ICH-231 vengono dal gruppo ICH-214…ICH-232, che non ha un formato
   controllato. Se una issue non ha `Acceptance criteria`, proponi il testo all'utente e, dopo la conferma, scrivilo
