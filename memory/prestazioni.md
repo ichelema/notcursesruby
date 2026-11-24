@@ -13,6 +13,11 @@ ICH-602 (GVL del rasterize) ([piano.md](piano.md)).
 - Terminale lento: un processo separato apre il pty, lo legge a velocità fissa e risponde a DA1 (`\e[c` →
   `\e[?62;22c`) e alla posizione del cursore (`\e[6n` → `\e[5;7R`). Il terminale finto delle spec gira nello stesso
   processo: il suo thread di lettura si ferma con il GVL, quindi non misura le pause del GVL.
+- Latenze di pochi µs o decine di µs: confronta le mediane di più corse. La latenza tasto → handler di
+  `benchmark/fiber/run.rb` cambia fino a 2 volte fra due corse uguali (studio ICH-600).
+- CPU a ciclo fermo: due finestre senza input di durata diversa, aperte e chiuse da timer dell'applicazione, e la
+  differenza fra le due. Una finestra sola contiene un costo fisso (risveglio e render, circa 0,5 ms) che, diviso per
+  la durata, sembra CPU a ciclo fermo (finding 2 della review dello studio ICH-600).
 
 ## Costi base
 

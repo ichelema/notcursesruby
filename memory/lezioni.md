@@ -93,3 +93,8 @@ Le istruzioni per i reviewer sono le regole 23 e 24 di [regole.md](regole.md). Q
   lib di `master` e con quella della PR, e confronta gli output con `diff`: deve cambiare solo il pid. `screen` usa la
   lib del proprio checkout: per il confronto lancia `ncvt` direttamente con `ruby -I<lib> -r<skill>/snap.rb`,
   con le variabili d'ambiente di `screen`.
+- `3_independent-review` sceglie solo reviewer Claude (`hard` Fable, `soft` Sonnet). Per un modello GPT o Gemini la
+  sessione lancia `gpt-bridge:reviewer` con la riga `[gpt-model: <alias>]` e il prompt che il comando darebbe al suo
+  subagente (studio ICH-600, Gemini 4 Neon). Una skill che gira come agente separato, per esempio `trinity:linear`,
+  dentro quel reviewer fallisce con 404 `model_not_found`: usa il modello base dell'agente gpt-bridge, senza la riga
+  `[gpt-model: ...]`. Nel prompt metti il testo delle issue e indica `linear.py query` per altre letture.

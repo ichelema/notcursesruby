@@ -1445,3 +1445,71 @@ Implementazione dell'orchestratore; catena: `2_work-issue`, `2_work-simplify`, `
   `archive.archlinux.org` al passo «Pacchetti dello snapshot».
 - Linear: ICH-594 a Done, ICH-603 nuova in Backlog. Worktree e branch rimossi il 2026-11-24 con
   `/trinity:workflow:5_remove-worktree improvments+ICH-594-opus`; il branch remoto l'aveva già cancellato GitHub.
+
+## Studio ICH-600 — Fiber al posto dei thread (PR #38, merge `e90c5d3`)
+
+2026-11-24. Branch `improvments/ICH-600-opus`, worktree `.claude/worktrees/improvments+ICH-600-opus`. Studio di
+design, fuori dalla catena dei lotti: `1_create-worktree`, lettura dei sorgenti di async e io-event
+(`trinity:deep-reasoner`), prototipo e misure, design con le scelte dell'utente, issue in Linear, PR,
+`3_independent-review` con Gemini 4 Neon, fix dei 7 finding. Niente `2_work-issue`, simplify e verify: `lib/` e
+`spec/` non cambiano. Design e misure in [studio-fiber.md](studio-fiber.md).
+
+### Lavoro
+
+- `452432c`: prototipo in `benchmark/fiber/`, fuori dalla gem: `scheduler.rb` (scheduler `IO.select` in Ruby puro),
+  `fiber_app.rb` (`FiberApp`, sottoclasse di `App` che cambia solo `run`), `app.rb` e `run.rb` (banco con il
+  terminale finto nel processo padre), `hook.rb` (hook `blocking_operation_wait`).
+- `c3b3695`: [studio-fiber.md](studio-fiber.md), numeri in [prestazioni.md](prestazioni.md), permessi Linear in
+  [ambiente.md](ambiente.md), riga dell'indice, tabella delle cartelle di `CLAUDE.md`.
+- Review: `79f1878` (CPU a ciclo fermo con due finestre di timer), `ad7f6ef` (`require "io/wait"` con la guardia di
+  `context.rb`), `d5c296f` (`ProtoScheduler#close` ferma tutti i Fiber e chiude il pipe in un `ensure`), `2ed9675`
+  (correzioni del documento).
+- Linear: ICH-604, ICH-605, ICH-606, ICH-607 create in Backlog, Low (ICH-604 blocca ICH-606, che blocca ICH-607;
+  tutte collegate a ICH-600); commenti su ICH-602 (l'hook non copre le chiamate FFI) e su ICH-604 (quattro
+  trampolini con `Util.guard`, non tre).
+
+### Decisioni
+
+- Dell'utente, su come condurre lo studio: worktree e PR; prototipo in `benchmark/fiber/`; design in `memory/`;
+  prima il prototipo, poi il design; quattro misure (tasto → handler, pipe → `LogView`, Ctrl+C a ciclo occupato,
+  hook di Ruby 3.4) su Ruby 3.1.7 e 4.0.7.
+- Dell'utente, sul design: le scelte D1–D6 di [studio-fiber.md](studio-fiber.md), sezione 6.
+- Dell'utente: le quattro issue e il commento su ICH-602; la review con Gemini 4 Neon; il fix di tutti i finding;
+  dopo lo studio il gruppo H, una issue alla volta, poi gli studi ICH-601 e ICH-602, poi ICH-605, poi il resto del
+  piano ([piano.md](piano.md)).
+- Mie: `FiberApp` sottoclasse di `App`, perché i due modelli usino lo stesso `dispatch`, `LogView` e render; le
+  varianti `fibers-pass` e `fibers-native` e il limite di frame di 16 ms nel prototipo; il nome
+  `memory/studio-fiber.md`.
+
+### Review
+
+- `3_independent-review` con `gpt-bridge:reviewer` e `[gpt-model: claude-gemini-4-neon]`, lanciato dalla sessione,
+  su `c3b3695`; verify dei candidati su Sonnet: APPROVABILE CON RISERVE, 3 MEDIUM e 4 LOW (6 CONFIRMED, 1
+  PLAUSIBLE), 3 candidati confutati. MEDIUM: i 70 µs tasto → handler vengono dal Fiber di input che D1 scarta;
+  `idle_cpu` comprendeva il render dopo `ready` e il primo tasto; i trampolini con `Util.guard` sono quattro. LOW:
+  citazione di io-event, nota sui «0 render», warning di `io/wait` su Ruby 4.0, `ensure` in `ProtoScheduler#close`.
+  Tutti corretti, e le corse ripetute hanno mostrato che su Ruby 3.1.7 il Fiber di input non è sempre più veloce.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| `trinity:linear` lanciata dal reviewer Gemini fallisce con 404 `model_not_found` | la skill gira con il modello base dell'agente gpt-bridge | testo della issue mandato al reviewer con `SendMessage` ([lezioni.md](lezioni.md)) |
+| Warning di Ruby 4.0 su stderr: `fiber_interrupt` e «IO::Buffer is experimental» | hook mancante; un `IO::Buffer` per ogni scrittura da un Fiber | hook `fiber_interrupt` e `yield`; warning consumato all'avvio dello scheduler |
+| `Timeout.timeout` in un Fiber solleva nel ciclo | manca l'hook `timeout_after` | requisito di ICH-606 |
+| Un Fiber che legge un pipe sempre pieno ferma input e render | `readpartial` trova sempre dati e non passa da `io_wait` | `pass` e limite di frame; `max_fps:` (D4) |
+| CPU a ciclo fermo che scala con `1/IDLE_S` | costo fisso di risveglio e render dentro la finestra | due finestre di timer e la loro differenza ([prestazioni.md](prestazioni.md)) |
+| Latenza tasto → handler diversa fino a 2 volte fra corse uguali | rumore della misura | mediane di più corse |
+| Due fix nello stesso file da tenere in due commit | `git add -p` non disponibile | riga del secondo fix tolta per un momento, commit, riga rimessa |
+
+### Verifica finale
+
+- PR: gate completo prima della PR (seme 44644) e dopo i fix della review (seme 9508); RuboCop 0 offense. CI della
+  PR verde su `c3b3695` (run `45444068523`) e su `2ed9675` (run `45456246065`).
+- `master` su `e90c5d3`, 2026-11-24: 1357 esempi, 0 fallimenti, 1 pending, con la coverage e con il seme 3680;
+  coverage 98,1 % di righe (6824 / 6956) e 90,2 % di rami (2291 / 2540); RuboCop 0 offense (117 file); YARD 100 % e
+  `yard doc --fail-on-warning` pulito; `ruby -w` pulito; gem costruita; `git diff ad0315b -- lib/notcurses/ffi
+  lib/notcurses/ffi.rb` vuoto. Nessun cambio a `Gemfile` e `Gemfile.lock`. CI di `master` (run `45459613886`) verde.
+- Linear: ICH-600 a Done, ICH-604…607 in Backlog. Worktree di review rimosso dopo la review; worktree e branch dello
+  studio rimossi il 2026-11-24 con `/trinity:workflow:5_remove-worktree improvments+ICH-600-opus`; il branch remoto
+  l'aveva già cancellato GitHub.
