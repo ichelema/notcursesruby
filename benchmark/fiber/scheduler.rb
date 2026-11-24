@@ -132,14 +132,21 @@ class ProtoScheduler
 
   # Hook: Fiber.set_scheduler(nil) e la fine del thread. Non esegue i Fiber
   # in attesa fino alla fine (un Fiber di input non finisce mai): li sblocca
-  # con Stop, così i loro ensure girano.
+  # con Stop, così i loro ensure girano. Se l'ensure di un Fiber solleva,
+  # gli altri ricevono Stop lo stesso e close rilancia la prima eccezione,
+  # dopo aver chiuso il pipe di risveglio.
   def close
+    failure = nil
     waiting = (@readers.values + @writers.values + @deadlines.keys + @blocked.keys).uniq
     waiting.each do |fiber|
       fiber.raise(Stop) if fiber.alive?
     rescue Stop
       nil
+    rescue Exception => e # rubocop:disable Lint/RescueException -- gli altri Fiber vanno fermati lo stesso
+      failure ||= e
     end
+    raise failure if failure
+  ensure
     @wake_r.close
     @wake_w.close
   end
