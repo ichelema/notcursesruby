@@ -1,88 +1,92 @@
 ---
 name: notcurses-man
-description: Look up the notcurses C API in the installed man pages and headers before writing, reviewing or debugging code that touches it. Use this skill whenever the task involves a notcurses C function, struct, flag or constant — adding or checking `attach_function` signatures, structs, enums or constants in `lib/notcurses/ffi/`, reimplementing a `static inline` function in `inline_reimpl.rb`, deciding what a wrapper in `lib/notcurses/` should return or raise, ownership and lifetime of returned pointers, or a question like "what does ncplane_putstr_yx return on error?" — even if the user does not mention man pages. Do not use it for Ruby, gems or Ruby tooling (that is the context7-mcp skill).
+description: Consulta l'API C di notcurses nelle man page e negli header installati prima di scrivere, rivedere o fare il debug di codice che la usa. Usa questa skill ogni volta che il compito riguarda una funzione, una struct, un flag o una costante C di notcurses — aggiungere o controllare le firme di `attach_function`, struct, enum o costanti in `lib/notcurses/ffi/`, reimplementare una funzione `static inline` in `inline_reimpl.rb`, decidere cosa deve restituire o sollevare un wrapper in `lib/notcurses/`, proprietà e ciclo di vita dei puntatori restituiti, oppure una domanda come «cosa restituisce ncplane_putstr_yx in caso di errore?» — anche se l'utente non nomina le man page. Non usarla per Ruby, gem o strumenti Ruby (per quelli c'è la skill context7-mcp).
 ---
 
-# notcurses man pages
+# Man page di notcurses
 
-`Notcurses::FFI` maps the C API 1:1 and has no YARD documentation: the project
-delegates its semantics to the notcurses man pages (README, `memory/fase4-design.md`).
-So read the C documentation instead of answering from memory — notcurses has many
-near-identical functions (`_yx`, `_aligned`, `_stained` variants) and details like
-error returns or who frees a pointer are easy to misremember.
+`Notcurses::FFI` mappa l'API C 1:1 e non ha documentazione YARD: il progetto rimanda
+la semantica alle man page di notcurses (README, `memory/fase4-design.md`).
+Quindi leggi la documentazione C invece di rispondere a memoria: notcurses ha molte
+funzioni quasi identiche (varianti `_yx`, `_aligned`, `_stained`) e dettagli come i
+valori di ritorno in caso di errore o chi libera un puntatore si ricordano male con
+facilità.
 
-## Look up a symbol
+## Cercare un simbolo
 
-Run the bundled script from the repository root (the same path works in worktrees):
+Esegui lo script incluso dalla radice del repository (lo stesso percorso vale nei worktree):
 
 ```sh
 .claude/skills/notcurses-man/scripts/ncman.sh ncplane_putstr_yx
 ```
 
-It accepts any C identifier: function, struct, typedef, flag or macro. Output:
+Accetta qualsiasi identificatore C: funzione, struct, typedef, flag o macro. Output:
 
-1. a version line for the installed man pages and headers (they must match);
-2. **MAN PAGES**: for each `notcurses*(3)` page that mentions the symbol, its
-   SYNOPSIS line, the paragraphs that name it (or its base form, e.g.
-   `ncplane_putstr()` for `ncplane_putstr_yx`), and the generic RETURN VALUES rules;
-3. **HEADERS**: the comment and definition in `/usr/include/notcurses/*.h`,
-   including the full body of `static inline` functions and struct fields.
+1. una riga con la versione delle man page e degli header installati (devono coincidere);
+2. **MAN PAGES**: per ogni pagina `notcurses*(3)` che nomina il simbolo, la riga
+   SYNOPSIS, i paragrafi che lo nominano (o ne nominano la forma base, per esempio
+   `ncplane_putstr()` per `ncplane_putstr_yx`) e le regole generiche di RETURN VALUES;
+3. **HEADERS**: il commento e la definizione in `/usr/include/notcurses/*.h`,
+   compreso il corpo completo delle funzioni `static inline` e i campi delle struct.
 
-Other modes:
+Altre modalità:
 
 ```sh
-.claude/skills/notcurses-man/scripts/ncman.sh --search 'scroll(ing)?'   # concept search, all pages
-.claude/skills/notcurses-man/scripts/ncman.sh --page plane              # whole notcurses_plane(3)
-.claude/skills/notcurses-man/scripts/ncman.sh --list                    # pages and descriptions
+.claude/skills/notcurses-man/scripts/ncman.sh --search 'scroll(ing)?'   # ricerca per concetto, in tutte le pagine
+.claude/skills/notcurses-man/scripts/ncman.sh --page plane              # tutta la pagina notcurses_plane(3)
+.claude/skills/notcurses-man/scripts/ncman.sh --list                    # pagine e descrizioni
 ```
 
-Use `--page` when the excerpt is not enough: some paragraphs describe a whole
-family ("`ncplane_putc_yx()`, etc.") without naming every member.
+Usa `--page` quando l'estratto non basta: alcuni paragrafi descrivono un'intera
+famiglia («`ncplane_putc_yx()`, etc.») senza nominare ogni membro.
 
-## Reconcile man page and header
+## Conciliare man page e header
 
-The man pages and the headers sometimes disagree. Both come from the same
-release (3.0.17), so the disagreement is in notcurses itself, not a version skew.
-Decide by what the question is about:
+Le man page e gli header a volte non concordano. Vengono dalla stessa release
+(3.0.17), quindi la discordanza è in notcurses stesso, non in una differenza di
+versione. Decidi in base a ciò che riguarda la domanda:
 
-- **Linkage and signature → header.** A function defined `static inline` in the
-  header is not exported by `libnotcurses`, so `attach_function` cannot bind it,
-  even when the man page SYNOPSIS shows a plain prototype. Example:
-  `notcurses_output(3)` lists `int ncplane_putstr_yx(...)`, but `notcurses.h`
-  defines it `static inline`. Reimplement such functions in Ruby
-  (`lib/notcurses/ffi/inline_reimpl.rb`) following the header body. Take
-  parameter and return types from the header too.
-- **Behavior → the code that runs.** For `static inline` code the header body is
-  the implementation. For exported functions, check the source in the
-  `notcurses/` submodule (`notcurses/src/lib/`) if the texts conflict. Example:
-  for `ncplane_putstr_yx` the man page says a negative return is an input error,
-  while the header body returns `-ret`, the negated count of columns written
-  before the failure (so `0` can also mean an error after zero columns).
-- **Intent and guarantees → man page.** Thread safety, ownership ("heap-allocated
-  copy, the caller must free it"), and when a call is valid are usually described
-  only in the man page.
+- **Linkage e firma → header.** Una funzione definita `static inline` nell'header
+  non è esportata da `libnotcurses`, quindi `attach_function` non può collegarla,
+  anche quando il SYNOPSIS della man page mostra un prototipo normale. Esempio:
+  `notcurses_output(3)` elenca `int ncplane_putstr_yx(...)`, ma `notcurses.h` la
+  definisce `static inline`. Reimplementa queste funzioni in Ruby
+  (`lib/notcurses/ffi/inline_reimpl.rb`) seguendo il corpo dell'header. Prendi
+  dall'header anche i tipi dei parametri e del valore di ritorno.
+- **Comportamento → il codice che gira.** Per il codice `static inline` il corpo
+  nell'header è l'implementazione. Per le funzioni esportate, controlla il sorgente
+  nel submodule `notcurses/` (`notcurses/src/lib/`) se i testi sono in conflitto.
+  Esempio: per `ncplane_putstr_yx` la man page dice che un valore negativo è un
+  errore di input, mentre il corpo nell'header restituisce `-ret`, il conteggio
+  negato delle colonne scritte prima del fallimento (quindi anche `0` può indicare
+  un errore dopo zero colonne).
+- **Intento e garanzie → man page.** Thread safety, proprietà della memoria («copia
+  allocata sull'heap, il chiamante deve liberarla») e quando una chiamata è valida
+  sono di solito descritti solo nella man page.
 
-When they conflict, say so in your answer and name both sources. A silent pick
-hides a trap for the next reader.
+Quando i due testi sono in conflitto, scrivilo nella risposta e nomina entrambe le
+fonti. Scegliere in silenzio nasconde una trappola al prossimo lettore.
 
-## Symbols without a man page
+## Simboli senza man page
 
-About 20 notcurses functions bound in `lib/notcurses/ffi/functions.rb` appear in no
-man page (e.g. `ncdirect_flush`, `ncblit_rgba`, `notcurses_version`). The script then prints
-`no man page mentions …`; the header comment is the only documentation. State
-that in the answer instead of filling the gap from memory. Symbols that are not
-in the notcurses headers at all (`free`, `wcwidth`, `tcgetattr`) belong to libc:
-use the libc man pages (`man 3 wcwidth`).
+Circa 20 funzioni di notcurses collegate in `lib/notcurses/ffi/functions.rb` non
+compaiono in nessuna man page (per esempio `ncdirect_flush`, `ncblit_rgba`,
+`notcurses_version`). In quel caso lo script stampa `no man page mentions …`: il
+commento nell'header è l'unica documentazione. Scrivilo nella risposta invece di
+colmare il vuoto a memoria. I simboli che non sono affatto negli header di notcurses
+(`free`, `wcwidth`, `tcgetattr`) appartengono a libc: usa le man page di libc
+(`man 3 wcwidth`).
 
-## Raw sources
+## Sorgenti grezzi
 
-- `notcurses/doc/man/man3/*.md`: pandoc sources of the same pages, identical to
-  the installed ones at tag `v3.0.17`. Handy for Grep across pages.
-- `notcurses/include/notcurses/`: same headers as `/usr/include/notcurses`, except
-  `version.h`, which CMake generates.
-- `notcurses/src/lib/`: implementation, for behavior the documentation leaves open.
+- `notcurses/doc/man/man3/*.md`: sorgenti pandoc delle stesse pagine, identici a
+  quelli installati al tag `v3.0.17`. Comodi per cercare con Grep tra le pagine.
+- `notcurses/include/notcurses/`: gli stessi header di `/usr/include/notcurses`,
+  tranne `version.h`, che genera CMake.
+- `notcurses/src/lib/`: l'implementazione, per il comportamento che la
+  documentazione lascia aperto.
 
-## Citing
+## Citare
 
-Cite the page as `notcurses_plane(3)` and the header as `path:line` (the script
-prints both), so the user can check the claim.
+Cita la pagina come `notcurses_plane(3)` e l'header come `percorso:riga` (lo script
+stampa entrambi), così l'utente può controllare l'affermazione.
