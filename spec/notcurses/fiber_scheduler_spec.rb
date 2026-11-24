@@ -80,6 +80,53 @@ RSpec.describe "Callback di notcurses sotto un Fiber scheduler" do
     end
   end
 
+  it "il blocco di disegno di Tree che chiama sleep non passa dallo scheduler" do
+    calls = 0
+    tree = nil
+    scheduler = under_scheduler do
+      tree = Notcurses::Tree.new(nc.stdplane.create_child(rows: 6, cols: 20), items: %w[a b]) do |_p, _v, _d|
+        calls += 1
+        sleep 0
+        1
+      end
+    end
+    expect(calls).to be_positive
+    expect(scheduler.sleeps).to eq(0)
+  ensure
+    tree&.close
+  end
+
+  it "il blocco di una scheda di Tabbed che chiama sleep non passa dallo scheduler" do
+    calls = 0
+    tabbed = Notcurses::Tabbed.new(nc.stdplane.create_child(rows: 4, cols: 20))
+    tabbed.add("X") do |_tab, _content|
+      calls += 1
+      sleep 0
+    end
+    calls = 0
+    scheduler = under_scheduler { tabbed.redraw }
+    expect(calls).to be_positive
+    expect(scheduler.sleeps).to eq(0)
+  ensure
+    tabbed&.close
+  end
+
+  it "il blocco di Visual#stream che chiama sleep non passa dallo scheduler" do
+    calls = 0
+    mkv = File.expand_path("../fixtures/visual/frames.mkv", __dir__)
+    scheduler = Notcurses::Visual.open(mkv) do |v|
+      under_scheduler do
+        v.stream(blitter: :ascii) do
+          calls += 1
+          sleep 0
+          nil
+        end
+      end
+    end
+    expect(calls).to eq(4)
+    expect(scheduler.sleeps).to eq(0)
+  end
+
   it "Util.guard esegue il blocco in un contesto bloccante" do
     blocking = nil
     scheduler = under_scheduler do
