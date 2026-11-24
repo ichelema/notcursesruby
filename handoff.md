@@ -5,56 +5,30 @@ Aggiornato il 2026-11-24. Questo file dice solo cosa fare nella prossima session
 
 ## Stato
 
-- Ultimo merge su `master`: PR #36 (lotto 9b: ICH-593, ICH-595), commit `31370a6`. Dopo il merge `master` ha solo
-  commit di documentazione con `[skip ci]`: il codice è quello di `31370a6`.
-- Lotto 9c in corso, ICH-594 (In Progress): branch `improvments/ICH-594-opus`, worktree
-  `.claude/worktrees/improvments+ICH-594-opus`, PR [#37](https://github.com/ichelema/notcursesruby/pull/37) con due
-  commit: `6eaf4c0` (il codice) e `6aa6e7a` (il target di `vline` nel benchmark). Il passo 2 del workflow
-  (`2_work-issue`) è fatto. Nel worktree c'è il link `notcurses/data` ([memory/ambiente.md](memory/ambiente.md)): senza
-  il link 12 spec delle immagini falliscono. La sessione è uscita dal worktree con `ExitWorktree(keep)`.
-- CI della PR: la run `45331648868` sul commit `6aa6e7a` era in corso e non verificata. Il commit `6eaf4c0` era verde
-  (run `45328491441`).
-- Ultima suite sul branch (`6eaf4c0`; `6aa6e7a` cambia solo una stringa del benchmark): 1356 esempi, 0 fallimenti,
-  1 pending, con la coverage (98,1 % righe, 90,13 % rami) e in ordine casuale (seme 43544). RuboCop 0 offense, YARD
-  100 %, `spec31` 291 esempi senza fallimenti. Le misure prima e dopo sono nel corpo della PR #37 e nel `CHANGELOG.md`.
-- Decisioni dell'utente del 2026-11-24 su ICH-594, già scritte su Linear: criterio 1 riscritto (stato letto una volta
-  prima della prima scrittura C, riletture solo dopo una scrittura che il C può cambiare), `vline` ≤ 5x, e la memoria
-  `Context#checked_egcs` di `putegc` resta (vale se la locale non cambia a contesto aperto).
-- Le trappole del lotto sono in Hindsight (retain del 2026-11-24): scrivile in `memory/lezioni.md` alla chiusura.
-- Fase «Issue in Backlog»: lotti 1–9b fatti, il 9c è alla PR. Restano i lotti 10–15, 14 issue senza lotto e 3 studi di
-  design (ICH-600, ICH-601, ICH-602) ([memory/piano.md](memory/piano.md)). ICH-463 resta in Blocked, in attesa di un
-  rilascio di notcurses con il fix.
+- Ultimo merge su `master`: PR #37 (lotto 9c: ICH-594), commit `dc17aa2`. Dopo il merge `master` ha solo commit di
+  documentazione con `[skip ci]`: il codice è quello di `dc17aa2`.
+- Nessun lotto in corso: nessun worktree, nessuna PR aperta.
+- Ultima suite su `master` (`dc17aa2`): 1357 esempi, 0 fallimenti, 1 pending, con la coverage (98,1 % righe, 90,2 %
+  rami) e con il seme 42889. CI di `master` verde (run `45419175222`, tentativo 2: il primo ha avuto un timeout di
+  `archive.archlinux.org`).
+- Fase «Issue in Backlog»: lotti 1–9c fatti. Il prossimo lavoro sono i 3 studi di design, nell'ordine ICH-600 (Fiber
+  al posto dei thread di `Notcurses::UI`), ICH-601 (Ractor), ICH-602 (GVL del rasterize); poi i gruppi A, B, C, i
+  lotti 10–14, i gruppi D–G e il lotto 15 ([memory/piano.md](memory/piano.md)). ICH-603, nata nel lotto 9c, è in
+  Backlog senza gruppo. ICH-463 resta in Blocked, in attesa di un rilascio di notcurses con il fix.
 
 ## Prossimo passo
 
-1. Se non li hai già fatti, esegui i passi 1–5 di «Come riprendere il lavoro» in [CLAUDE.md](CLAUDE.md). Il lotto 9c è
-   già al passo 2: al passo 6 il prossimo passo è il 3 della tabella dei comandi.
-2. Controlla la CI della PR con `gh pr checks 37` (exit 0 verde, 8 in corso, altro rosso). Se è rossa, fermati e
-   mostrala. Poi proponi il comando qui sotto e fermati: lo lancia l'utente.
-
-   ```text
-   /trinity:workflow:2_work-simplify ICH-594 opus
-   ```
-
-3. Dopo la semplificazione: `2_work-verify` (passo 4), `3_independent-review ... soft` (passo 5), merge dell'utente
-   (passo 7), poi `5_remove-worktree improvments+ICH-594-opus` (passo 8).
-4. Per il verify con `ncvt`: prova sullo schermo le scritture che le spec contano ma non guardano: `putstr` con "\n" su
-   un piano che scorre e sullo stdplane che scorre (il render a metà testo), `putstr` e `putegc` con `stained: true`,
-   `puttext` con `align:` su più righe, glifi larghi sul bordo destro, `hline` e `vline` con una stringa e con una
-   `Cell`.
-5. Per la review (regole 23 e 24), punti nuovi da provare: lo stato di `WriteState` dopo una scrittura che cambia il
-   piano (resize callback, autogrow, scroll dello stdplane), il calcolo del cursore su un piano fermo (`advance!`), la
-   larghezza del primo carattere calcolata solo se il testo non entra, la scansione dei byte di `TEXT_SUSPECTS`, e la
-   memoria `Context#checked_egcs` (errori mai ricordati, 4096 voci). Limite noto, scritto anche nella PR: `puttext` su
-   più righe con caratteri composti segmenta ancora ogni riga una volta, oltre al controllo del testo intero.
-6. Alla chiusura dopo il merge, oltre ai passi di CLAUDE.md: aggiorna `memory/prestazioni.md` con le misure «dopo» e
-   aggiungi `benchmark/plane_writes.rb` ai comandi in `memory/comandi.md`.
+1. Esegui i passi 1–5 di «Come riprendere il lavoro» in [CLAUDE.md](CLAUDE.md).
+2. Prepara lo studio ICH-600: leggi la issue su Linear, [memory/prestazioni.md](memory/prestazioni.md) (sezione
+   «Concorrenza in Ruby») e [memory/fase3-design.md](memory/fase3-design.md). Uno studio produce un design approvato
+   dall'utente, un prototipo misurato e le issue di implementazione ([memory/piano.md](memory/piano.md), «Studi di
+   design»). Il workflow dei lotti non copre gli studi: proponi all'utente come condurlo (dove sta il prototipo,
+   quali misure, dove va il design) e aspetta la sua scelta prima di scrivere codice.
 
 ## Decisioni che servono all'utente
 
-Nessuna. Una nota sui permessi:
-
-- Permesso `issueCreate`: il 2026-11-24 la regola `Bash(mise x python -- python scripts/linear.py mutation:*)` è stata
-  aggiunta a `~/.claude/settings.json` dal template chezmoi (commit `81d5165` del repository chezmoi, non ancora spinto:
-  il remoto ha commit più nuovi). Non è ancora provata con `issueCreate`. Al primo bisogno di una issue nuova prova:
-  se il classificatore blocca ancora, torna agli script dell'utente.
+- Come condurre gli studi di design ICH-600…ICH-602: worktree e branch per il prototipo, forma e posto del design.
+- Gruppo e momento di ICH-603. Prima del fix serve una prova su Ghostty e Kitty con un display: su `ncvt` lo schermo
+  perde l'allineamento con lo stdplane che scorre, ma il difetto può essere di `ncvt`.
+- Permessi Linear: il classificatore lascia passare `issueCreate` e blocca `issueUpdate` («External System Writes»).
+  Per cambiare una issue serve una regola di permesso, oppure l'utente lancia la mutation che la skill prepara.
