@@ -1957,7 +1957,7 @@ module Notcurses
         ptr = to_ptr
         text, cols = egc_to_write!(ptr, egc, stained)
         state = WriteState.new(ptr)
-        ty, tx = text_target!(text, cols, cols, state, y: y, x: x, align: nil, stained: stained)
+        ty, tx = text_target!(text, cols, state, y: y, x: x, align: nil, stained: stained) { cols }
         rc = with_glyph_kept(ptr, text, ty, tx, state, width: cols, single: true) do
           stained ? FFI.ncplane_putegc_stained(ptr, text, nil) : FFI.ncplane_putegc_yx(ptr, ty, tx, text, nil)
         end
@@ -1992,7 +1992,7 @@ module Notcurses
 
         cols = [cell.width, 1].max
         state = WriteState.new(ptr)
-        ty, tx = text_target!(cell.egc, cols, cols, state, y: y, x: x, align: nil, stained: false)
+        ty, tx = text_target!(cell.egc, cols, state, y: y, x: x, align: nil, stained: false) { cols }
         rc = with_nccell(ptr, cell) do |nc|
           rehearse!(ptr, cell.egc, state: state) { |copy| FFI.ncplane_putc_yx(copy, ty, tx, nc) } if cell.egc.bytesize > 4
           FFI.ncplane_putc_yx(ptr, ty, tx, nc)
@@ -3436,11 +3436,12 @@ module Notcurses
       # le colonne di un grapheme già misurato da output_text! non si misurano di nuovo
       widths = segments.map { |seg, single| (single && columns&.[](seg)) || Util.segments_width(seg, [seg]) }
       total = widths.sum
-      first = -> { Notcurses.strwidth(graphemes ? graphemes.first : str[0]) }
       sync_scrolling_stdplane!(ptr, state) do
         str.include?("\n") || total > state.cols - (x.is_a?(Integer) ? x : state.cursor[1])
       end
-      ty, tx = text_target!(str, total, first, state, y: y, x: x, align: align, stained: stained)
+      ty, tx = text_target!(str, total, state, y: y, x: x, align: align, stained: stained) do
+        Notcurses.strwidth(graphemes ? graphemes.first : str[0])
+      end
       written = 0
       last = segments.size - 1
       segments.each_with_index do |(seg, single), i|
@@ -3568,12 +3569,12 @@ module Notcurses
     end
 
     # Controlla dove scrivere un testo di total colonne e restituisce [y, x]
-    # per il C (-1 = cursore). first è la larghezza del primo carattere, o un
-    # blocco che la calcola: serve solo se il testo non entra, e un carattere
-    # non è mai più largo del testo che lo contiene. Con stained porta il
-    # cursore nella posizione di partenza. Legge lo stato dal state, solo ciò
-    # che serve. Lo chiamano metodi che sono già dentro Guard.run.
-    def text_target!(str, total, first, state, y:, x:, align:, stained:)
+    # per il C (-1 = cursore). Il blocco dà la larghezza del primo carattere:
+    # serve solo se il testo non entra, e un carattere non è mai più largo del
+    # testo che lo contiene. Con stained porta il cursore nella posizione di
+    # partenza. Legge lo stato dal state, solo ciò che serve. Lo chiamano
+    # metodi che sono già dentro Guard.run.
+    def text_target!(str, total, state, y:, x:, align:, stained:)
       ptr = state.ptr
       clear_cut_glyphs!(ptr, size: state.dims)
       rows, cols = state.dims
@@ -3590,12 +3591,12 @@ module Notcurses
             end
       raise PlaneError, '"\n" richiede un piano che scorre (scrolling = true)' if newline && !state.scrolling?
 
-      if total > cols && (width = first_width(first)) > cols
+      if total > cols && (width = yield) > cols
         raise PlaneError, "un carattere largo #{width} non entra nel piano largo #{cols}"
       end
 
       explicit_x = !(x.nil? && align.nil?)
-      if explicit_x && col + total > cols && (width = first_width(first)) + col > cols
+      if explicit_x && col + total > cols && (width = yield) + col > cols
         raise PlaneError, "il carattere largo #{width} non entra nella riga dalla colonna #{col}"
       end
       if (col >= cols || col + total > cols) && (stained || state.fixed?)
@@ -3612,9 +3613,6 @@ module Notcurses
       end
       [-1, -1]
     end
-
-    # Larghezza del primo carattere di text_target!: un numero, o il blocco che la calcola.
-    def first_width(first) = first.respond_to?(:call) ? first.call : first
 
     # Come Util.integer!(value, name, 0...limit), senza creare l'intervallo
     # quando il valore è valido.
