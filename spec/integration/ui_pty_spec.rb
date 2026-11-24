@@ -2,34 +2,14 @@
 # Source: notcurses/include/notcurses/notcurses.h
 # frozen_string_literal: true
 
-require 'rbconfig'
+require_relative '../support/nc_helpers'
 
 # Il ciclo completo di Notcurses::UI::App con un terminale vero: un processo
 # figlio apre un pty, ne fa il proprio terminale di controllo (così Ctrl-C e il
 # cambio di dimensioni mandano SIGINT e SIGWINCH dal kernel) e un thread
 # "utente" scrive i tasti sul lato master, come una persona alla tastiera.
 RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
-  def lib_dir = File.expand_path('../../lib', __dir__)
-
-  # Esegue script in un processo Ruby figlio e lo uccide dopo timeout secondi.
-  # @return [Array(String, Process::Status, Boolean)] output, stato, true se scaduto
-  def run_child(script, timeout:)
-    reader, writer = IO.pipe
-    pid = spawn(RbConfig.ruby, '-I', lib_dir, '-e', script, in: File::NULL, out: writer, err: writer)
-    writer.close
-    output = Thread.new { reader.read }
-    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
-    until (done = Process.wait2(pid, Process::WNOHANG))
-      if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-        Process.kill(:KILL, pid)
-        return [output.value, Process.wait2(pid).last, true]
-      end
-      sleep 0.05
-    end
-    [output.value, done.last, false]
-  ensure
-    reader&.close
-  end
+  def run_child(script, timeout:) = NcHelpers.run_child(script, timeout:)
 
   def app_script = <<~'RUBY'
     require 'notcurses'
@@ -539,8 +519,11 @@ RSpec.describe 'Notcurses::UI con un terminale (integrazione, pty)' do
       Process.wait(monitor)
       stops = mon_r.read.split.map(&:to_f)
       puts "ctrl+z: #{reason} #{stops.size} #{when_s.(stops.first)}"
-      # più di 8192 tasti (la coda di notcurses) mentre un timer dorme, poi Ctrl+C
-      reason, ended = session.(-> { ev.after(0) { sleep 2 } }, 0.3, ('a' * 10_000) + "\e[99;5u")
+      # più di 8192 tasti (la coda di notcurses) mentre un timer dorme, poi Ctrl+C: senza il thread di input la coda
+      # si riempie e notcurses scarta il Ctrl+C. I tasti arrivano a blocchi, entro 1 s: in un blocco solo, con la
+      # CPU occupata, notcurses li mette in coda più in fretta di quanto il thread li legga, e scarta il Ctrl+C anche
+      # con il thread libero (in.c:523-527, limite nello YARD di EventLoop#run; ICH-595)
+      reason, ended = session.(-> { ev.after(0) { sleep 2 } }, 0.3, *(['a' * 1000, 0.05] * 10), "\e[99;5u")
       puts "coda piena: #{reason} #{format('%.1f s', ended - start)}"
       puts "kitty #{kitty.()}"
     end

@@ -2,7 +2,7 @@
 # Source: notcurses/include/notcurses/notcurses.h
 # frozen_string_literal: true
 
-require "rbconfig"
+require_relative "../support/nc_helpers"
 
 # Chiusura di Context, Direct e Visual mentre un'operazione del wrapper è in
 # corso: da un gestore trap che torna al codice interrotto (ICH-464) o da un
@@ -12,30 +12,12 @@ require "rbconfig"
 # puntatore già passato al suo distruttore fa uscire il figlio con 6, anche
 # quando l'use-after-free non andrebbe in crash.
 RSpec.describe "Chiusura durante un'operazione in corso (integrazione)" do
-  def lib_dir = File.expand_path("../../lib", __dir__)
   def mkv_path = File.expand_path("../fixtures/visual/frames.mkv", __dir__)
 
-  # Esegue script in un processo Ruby figlio e lo uccide dopo timeout secondi.
   # MALLOC_PERTURB_ riempie la memoria liberata: un use-after-free sfuggito
   # agli hook va più spesso in crash.
-  # @return [Array(String, Process::Status, Boolean)] output, stato, true se scaduto
   def run_child(script, timeout: 20)
-    reader, writer = IO.pipe
-    env = {"TERM" => "xterm-256color", "MALLOC_PERTURB_" => "165"}
-    pid = spawn(env, RbConfig.ruby, "-I", lib_dir, "-e", script, in: File::NULL, out: writer, err: writer)
-    writer.close
-    output = Thread.new { reader.read } # rubocop:disable ThreadSafety/NewThread -- legge l'output del figlio
-    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
-    until (done = Process.wait2(pid, Process::WNOHANG))
-      if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-        Process.kill(:KILL, pid)
-        return [output.value, Process.wait2(pid).last, true]
-      end
-      sleep 0.05
-    end
-    [output.value, done.last, false]
-  ensure
-    reader&.close
+    NcHelpers.run_child(script, timeout:, env: {"TERM" => "xterm-256color", "MALLOC_PERTURB_" => "165"})
   end
 
   def expect_exit(script, status: 0, timeout: 20)
