@@ -15,6 +15,7 @@ Leggi questo indice, poi apri solo i file che servono. Le regole d'uso sono in [
 | [lezioni.md](lezioni.md) | Insidie emerse dai lotti: glifi larghi ed egcpool, gestori trap e segnali, coverage, review |
 | [bug-notcurses.md](bug-notcurses.md) | Registro dei bug e dei limiti di notcurses 3.0.17: file C, riga e gestione nel wrapper, per area; un bug nuovo va qui (regola 11) |
 | [punti-aperti.md](punti-aperti.md) | Difetti sospetti e spec instabili che non sono issue |
+| [prestazioni.md](prestazioni.md) | Costi misurati del wrapper, del render e dei modelli di concorrenza (Thread, Fiber, Ractor, Async), con il metodo di misura |
 
 ## Log delle fasi e dei lotti
 

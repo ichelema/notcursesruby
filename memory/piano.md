@@ -43,7 +43,7 @@ Una issue nata da un lotto entra in un lotto con la scelta dell'utente. Un lotto
 
 | Lotto | Prefisso | Issue | Priorità | Titolo |
 | --- | --- | --- | --- | --- |
-| 9c | `improvments` | ICH-594 | Low | Accelerare Plane#putstr, che scorre il testo più volte prima della chiamata C (prima dei lotti 10–15 per scelta dell'utente del 2026-11-23: le suite dei lotti seguenti diventano più rapide) |
+| 9c | `improvments` | ICH-594 | Low | Accelerare le scritture di Plane, che ripetono controlli e letture dello stato prima della chiamata C (prima dei lotti 10–15 per scelta dell'utente del 2026-11-23: le suite dei lotti seguenti diventano più rapide; allargata da `putstr` a `printf`, `puttext`, `putegc`, `putc`, `hline` e `vline` il 2026-11-24, con i criteri nuovi approvati dall'utente) |
 | 10 | `bug` | ICH-220 | Medium | Make the Tabbed header follow plane resizes |
 | 10 | `bug` | ICH-221 | Medium | Fix Tree focus drift with items of different heights |
 | 10 | `bug` | ICH-219 | Low | Fix Menu selection loss on separator click and mouse_selected for right-aligned sections |
