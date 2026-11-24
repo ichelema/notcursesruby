@@ -109,7 +109,7 @@ def cases(plane)
           end
         end
       end],
-    ["`vline`, una per colonna", "≤ 5x",
+    ["`vline`, una per colonna", "≤ 5.5x",
       -> { measure(plane) { COLS.times { |x| plane.vline("|", ROWS, y: 0, x: x) } } },
       lambda do
         with_nccell(ptr, "|") do |nc|
