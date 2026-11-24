@@ -94,3 +94,6 @@
 - L'automazione GitHub → Linear cambia lo stato delle issue citate da una PR. Con un `Refs ICH-<n>` nel corpo una
   issue fuori dal lotto va a In Progress (lotto 2 della revisione; lotto 6 con ICH-542). ICH-463, con l'ID nel nome
   del branch, è andata a In Progress e a Done anche con `Refs` (lotto 4).
+- Il classificatore dei permessi di Claude Code, il 2026-11-24, ha lasciato passare `issueCreate` (ICH-603) e ha
+  bloccato `issueUpdate` sulla descrizione di ICH-594 («External System Writes»). La skill prepara la mutation in
+  file dello scratchpad, e l'utente la lancia con `linear.py mutation <file> --variables @<file>`.

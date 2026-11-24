@@ -78,6 +78,19 @@ TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5
 - Le prove di un crash o di una heap corrotta girano con `timeout -s KILL 20`: dopo l'abort il gestore `[BUG]` di Ruby
   non esce (lotto 6).
 
+## Benchmark delle scritture
+
+```sh
+# scritture di Plane contro la FFI diretta (ICH-594): tabella markdown con tempo, rapporto e obiettivo, circa 1 minuto
+TERM=xterm-256color ruby -Ilib benchmark/plane_writes.rb < /dev/null
+# un altro albero (per esempio master, per i numeri «prima»): git archive del suo lib/ nello scratchpad, poi
+TERM=xterm-256color ruby -I"$S/old/lib" benchmark/plane_writes.rb < /dev/null
+```
+
+- Il criterio 5 di ICH-594 usa la mediana di 5 esecuzioni per riga: il rapporto di `vline` oscilla fra 4,8x e 5,1x
+  con lo stesso codice. Esegui il benchmark con la macchina scarica (`uptime`), senza suite in parallelo.
+- `benchmark/` non entra nella gem.
+
 ## Terminale vero (Kitty)
 
 Solo in una sessione dentro Kitty ([ambiente.md](ambiente.md)). Per una prova a vista chiedi all'utente di confermare

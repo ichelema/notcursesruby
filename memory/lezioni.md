@@ -17,6 +17,12 @@ regole sono in [regole.md](regole.md) (regole 20–22).
 - Una misura delle larghezze su `ncvt` vale per Ghostty solo con il modo 2027 acceso ([ambiente.md](ambiente.md)):
   nel lotto 8b la bandiera larga 4 di `ncvt` sembrava un difetto di Ghostty, e Ghostty 1.4 e Kitty la disegnano
   larga 2 (lotto 8d, ICH-586).
+- Le righe di `Plane#wrap_lines` non sono pezzi contigui del testo: lo spazio dove va a capo sparisce, e un segno
+  combinante o uno ZWJ che formava un grapheme con quello spazio apre la riga dopo da solo. Un controllo fatto solo
+  sul testo intero non vale per le righe: `puttext` ricontrolla il primo grapheme di ogni riga (review del lotto 9c).
+  Un carattere `Prepend` (U+0600) staccato a fine riga dà lo stesso risultato di `master`.
+- Una regex con proprietà Unicode su un testo enorme costa: `/(?!\n)\p{Cc}/` su un EGC da 6 MB costa 150–210 ms, la
+  stessa ricerca sui byte di `str.b` 5 ms (`TEXT_SUSPECTS` in `plane.rb`, lotto 9c).
 
 ## Gestori trap, segnali e thread
 
@@ -43,7 +49,17 @@ regole sono in [regole.md](regole.md) (regole 20–22).
   dipendono dai tempi dei thread.
 - Lo strumento Edit di Claude Code e il testo dei comandi Bash (anche un heredoc) trasformano `\u0301` e gli altri escape `\uXXXX` del testo nuovo nei caratteri veri;
   la forma con le graffe (`\u{1F1EE}`) resta. `spec/source_chars_spec.rb` lo trova: riscrivi gli escape con uno script
-  che costruisce i caratteri dai codici, senza scriverli nel testo (lotto 8d).
+  che costruisce i caratteri dai codici, senza scriverli nel testo (lotto 8d). Vale anche per Write e per il testo da
+  cercare: Edit non sostituisce una sequenza letterale backslash-`u200D` con il carattere, perché vede i due testi
+  uguali. Nel lotto 9c lo script Ruby ha costruito i due testi con `[92].pack('U')` e `[0x200D].pack('U')`.
+- Uno spy su `ncplane_dim_x`, `ncplane_dim_y`, `ncplane_cursor_x` o `ncplane_cursor_y` conta due volte una lettura:
+  `inline_reimpl.rb` le reimplementa sopra `ncplane_dim_yx` e `ncplane_cursor_yx`, e `ncplane_halign` chiama
+  `ncplane_dim_x`. Una spec che conta le letture conta solo le primitive (`plane_write_cost_spec.rb`, lotto 9c).
+- Un rapporto con la FFI diretta oscilla fra un'esecuzione e l'altra del benchmark: con lo stesso codice `vline` ha
+  dato da 4,8x a 5,1x. Un obiettivo vicino alla soglia si misura sulla mediana di 5 esecuzioni (criterio 5 di
+  ICH-594). Per sapere quale commit cambia un tempo, esporta il `lib/` di ogni commit con `git archive` e alterna lo
+  stesso micro-benchmark su tutti, per 3 giri: nel lotto 9c una semplificazione con `slice_when` costava il 17 % su
+  `putstr` con gli accenti, e il benchmark completo da solo non distingueva il commit dal rumore.
 - Se `gh pr checks --watch` dice "no checks reported" subito dopo un push, aspetta che compaia la run
   (`gh run list --branch`). Nel lotto 8d GitHub non ha creato la run del `pull_request`: dopo 30 minuti un commit
   vuoto (`ci: retrigger CI`, scelta dell'utente) l'ha fatta partire. Un job che fallisce al passo «Pacchetti dello
@@ -73,3 +89,7 @@ Le istruzioni per i reviewer sono le regole 23 e 24 di [regole.md](regole.md). Q
   file; dal 2026-11-22 la cartella è in `.gitignore`. `rm` resta fuori per Blast Radius ([ambiente.md](ambiente.md)).
 - Il controllo con `pgrep` (regola 24) viene dal lotto 8c: gli script di prova del reviewer su terminali muti hanno
   lasciato processi orfani fermi nell'init, fermati con SIGTERM e usciti in meno di 3 s.
+- Il verify di una PR che non deve cambiare il comportamento (lotto 9c, prestazioni) lancia lo stesso script con la
+  lib di `master` e con quella della PR, e confronta gli output con `diff`: deve cambiare solo il pid. `screen` usa la
+  lib del proprio checkout: per il confronto lancia `ncvt` direttamente con `ruby -I<lib> -r<skill>/snap.rb`,
+  con le variabili d'ambiente di `screen`.

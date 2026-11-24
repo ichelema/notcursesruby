@@ -1,9 +1,9 @@
 # Prestazioni e concorrenza
 
 Costi misurati del wrapper e dei modelli di concorrenza di Ruby, con il metodo di misura. Le misure sono del
-2026-11-24 (Ruby 4.0.7, ffi 1.17.4, 4 core, `master` `a30715d`). Il lavoro che ne segue è in Linear: ICH-594
-(scritture) e gli studi di design ICH-600 (Fiber), ICH-601 (Ractor) e ICH-602 (GVL del rasterize)
-([piano.md](piano.md)).
+2026-11-24 (Ruby 4.0.7, ffi 1.17.4, 4 core, `master` `a30715d`), salvo quelle «dopo il lotto 9c». Il lavoro che ne
+segue è in Linear: ICH-594 (scritture, lotto 9c, fatto) e gli studi di design ICH-600 (Fiber), ICH-601 (Ractor) e
+ICH-602 (GVL del rasterize) ([piano.md](piano.md)).
 
 ## Metodo
 
@@ -31,11 +31,19 @@ Costi misurati del wrapper e dei modelli di concorrenza di Ruby, con il metodo d
 
 ## Scritture e render
 
-- Schermo 200x60, wrapper contro FFI diretta: `putegc` e `putc` da 34x a 43x (costo fisso di circa 9 µs per
-  chiamata contro 0,26 µs), `putstr` 1,8x con ASCII, 2,2x con CJK, 5,0x con gli accenti combinanti, `hline` 3,6x,
-  `vline` 8,8x, `gradient` 1,1x. Tabella e passi in ICH-594.
-- In `putegc("x")` `text_target!` costa 4,4 µs su 9,1: rilegge `dims` e `cursor`, e ogni lettura alloca due
-  `MemoryPointer`.
+- Prima del lotto 9c, schermo 200x60, wrapper contro FFI diretta: `putegc` e `putc` da 34x a 43x (costo fisso di
+  circa 9 µs per chiamata contro 0,26 µs), `putstr` 1,8x con ASCII, 2,2x con CJK, 5,0x con gli accenti combinanti,
+  `hline` 3,6x, `vline` 8,8x, `gradient` 1,1x. Tabella e passi in ICH-594. In `putegc("x")` `text_target!` costava
+  4,4 µs su 9,1: rileggeva `dims` e `cursor`, e ogni lettura allocava due `MemoryPointer`.
+- Dopo il lotto 9c (`7484deb`, 2026-11-24), `benchmark/plane_writes.rb` su un piano 60x200 con l'output su
+  `/dev/null`, mediana di 5 esecuzioni, e tra parentesi `master` `5600391` sulla stessa macchina: `putegc("x")` 12,1x
+  (38,4x), `putegc("é")` 8,9x (39,1x), `putegc("漢")` 8,5x (38,2x), `putc` 14,1x (30,4x), `putstr` con ASCII 1,0x
+  (1,7x), con CJK 1,5x (2,3x), con gli accenti 1,5x (4,5x), `hline` 2,6x (4,7x), `vline` 5,0x (8,2x), EGC da 6 MB 4,4x
+  (16,2x). `putegc("é")` e `putegc("漢")` scendono sotto 9x perché il contesto ricorda gli EGC già controllati: la
+  prima volta di ogni carattere costa circa 19x.
+- Dopo il lotto 9c il costo fisso di `vline` è circa 6,4 µs per chiamata contro 1,65 µs del C per una linea di 60
+  celle: costruire la cella, caricarla nel C, leggere le dimensioni e controllare gli argomenti. Un percorso a parte
+  è stimato a 3,4x, non provato.
 - Il render di uno schermo cambiato costa circa 0,3 ms con un terminale veloce. A 100 KB/s dura 132 ms di mediana
   (201 ms al massimo) e ferma tutti gli altri thread Ruby: `ncpile_rasterize` scrive sul terminale tenendo il GVL
   (senza `blocking: true`). A 1 MB/s dura 1,4 ms.

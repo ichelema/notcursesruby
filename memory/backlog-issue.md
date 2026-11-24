@@ -1362,3 +1362,86 @@ finding. Verify saltato: il lotto cambia solo `spec/`.
   Nessun cambio a `Gemfile` e `Gemfile.lock`.
 - Linear: ICH-593 e ICH-595 a Done. Nessuna issue nuova. Worktree e branch rimossi il 2026-11-24 con
   `/trinity:workflow:5_remove-worktree bug+ICH-593-595-opus`; il branch remoto l'aveva già cancellato GitHub.
+
+## Lotto 9c — ICH-594 (PR #37, merge `dc17aa2`)
+
+Dal 2026-11-23 al 2026-11-24. Branch `improvments/ICH-594-opus`, worktree `.claude/worktrees/improvments+ICH-594-opus`.
+Implementazione dell'orchestratore; catena: `2_work-issue`, `2_work-simplify`, `2_work-verify`,
+`3_independent-review soft`, fix dei 2 finding, review mirata, `2_work-verify` (FAIL su `vline`), criterio 5 nuovo,
+`2_work-verify` (PASS).
+
+### Fix
+
+- `6eaf4c0` (ICH-594): `putstr`, `printf`, `puttext`, `putegc`, `putc`, `hline` e `vline` usano la classe privata
+  `Plane::WriteState`, che legge dimensioni, cursore, scrolling e autogrow al massimo una volta prima della prima
+  scrittura C e li rilegge solo dopo una scrittura che il C può cambiare (`notcurses.c:1873-1904`, `1978-1981`).
+  `output_text!` scandisce i byte del testo una volta (`TEXT_SUSPECTS`) e segmenta in grapheme solo se serve;
+  `putegc` salta i controlli di un carattere ASCII stampabile e ricorda in `Context#checked_egcs` gli EGC fino a 4
+  byte già controllati (mai gli errori, al massimo 4096 voci); `Util.segments_width` è il ciclo di
+  `Notcurses.strwidth`. Spec nuova `spec/notcurses/plane_write_cost_spec.rb`, che conta letture, `ncstrwidth` e
+  passate in grapheme, senza soglie di tempo; script `benchmark/plane_writes.rb`, fuori dalla gem.
+- `6aa6e7a`: obiettivo di `vline` a 5x nel benchmark.
+- Simplify: `4c8d62b` (`Plane#dims` e `Plane#cursor` passano da `WriteState`), `bc95c7e` (larghezza del primo
+  carattere di `text_target!` come blocco, tolto `first_width`), `4e0c401` (`rehearse!` con `state ||=`), `ed55e2f`
+  (commento). `7c46e5a` (`slice_when` in `text_segments`) annullato da `5646915`.
+- Review: `cf20464`, `puttext` ricontrolla con `zero_width_egc!` il primo grapheme di una riga che inizia con un
+  carattere di larghezza zero; `4aa12e8`, ZWJ ripristinato in due voci vecchie del `CHANGELOG`.
+- `7484deb`: obiettivo di `vline` a 5,5x nel benchmark e misura 4,9–5,1x nel `CHANGELOG` (criterio 5 nuovo).
+
+### Decisioni
+
+- Dell'utente: perimetro allargato da `putstr` a tutte le scritture di testo e celle, EGC da 6 MB ≤ 5x; criterio 1
+  riscritto (letture prima della prima scrittura C, riletture solo dopo una scrittura che il C può cambiare);
+  `vline` ≤ 5x invece di ≤ 3x; la memoria `Context#checked_egcs` resta; fix di tutti e due i finding della review;
+  dopo il verify FAIL, criterio 5 nuovo (mediana di 5 esecuzioni, `vline` ≤ 5,5x) invece di un percorso a parte per
+  `vline`; ICH-603 in Backlog, Low.
+- Mie: nel simplify scartato `slice_when` (+17 % su `putstr` con gli accenti); revert e commit nuovi dopo il push,
+  senza riscrivere la storia; nessuna voce del `CHANGELOG` per il finding 1, perché il difetto non è mai arrivato su
+  `master`; nel finding 1 il controllo solo a inizio riga, perché un carattere `Prepend` staccato a fine riga dà lo
+  stesso risultato di `master`.
+
+### Verify
+
+- Primo verify (`5646915`): PASS. Lo stesso script su `ncvt` con la lib di `master` e con quella della PR dà output
+  identici, a parte il pid (21 prove). Trovata ICH-603: su uno stdplane che scorre un "\n" che lo fa scorrere lascia
+  sullo schermo una riga vuota prima dell'ultima; il piano è giusto e `Context#refresh` riallinea lo schermo; uguale
+  su `master` e con la FFI diretta.
+- Secondo verify (`4aa12e8`): FAIL, `vline` 5,1x, 5,1x, 4,9x, 5,1x, 4,9x contro ≤ 5x, con il codice di `vline`
+  invariato dalla semplificazione.
+- Terzo verify (`7484deb`): PASS con il criterio 5 nuovo; mediane di 5 esecuzioni `putc` 14,1x, `vline` 5,0x, EGC da
+  6 MB 4,4x; nessuna riga peggiora rispetto a `master` ([prestazioni.md](prestazioni.md)).
+
+### Review
+
+- `trinity:reviewer` su Sonnet, effort high, su `5646915`: APPROVABILE CON RISERVE, 2 finding CONFIRMED. MEDIUM:
+  `wrap_lines` toglie lo spazio dove va a capo, e un segno combinante o uno ZWJ legato a quello spazio apriva la riga
+  dopo senza controllo (`PlaneError` invece di `ArgumentError`, o con scrolling un carattere di larghezza zero in una
+  cella propria). LOW: due voci del `CHANGELOG` con la sequenza letterale backslash-`u200D` al posto del carattere. Il
+  reviewer ha confrontato `master` e la PR su circa 190 000 scritture.
+- Review mirata su `4aa12e8`: APPROVABILE, 0 finding; 879 testi rifiutati da `master` su 9698, tutti rifiutati
+  anche dalla PR.
+
+### Problemi e soluzioni
+
+| Problema | Causa | Soluzione |
+| --- | --- | --- |
+| `slice_when` in `text_segments` più lento del 17 % su `putstr` con gli accenti | allocazioni e chiamate del blocco a coppie | revert `5646915`; misura per commit con `git archive` ([lezioni.md](lezioni.md)) |
+| Gate dei fix rosso in `spec/source_chars_spec.rb` | Edit ha scritto i segni combinanti della spec come caratteri (trappola nota del lotto 8d) | riga riscritta con uno script Ruby e `pack`; commit rifatti con `git reset --soft` prima del push |
+| Edit non sostituisce la sequenza letterale del `CHANGELOG` con lo ZWJ | Edit vede i due testi uguali | script Ruby con `[92].pack('U')` e `[0x200D].pack('U')` |
+| `vline` sopra 5x in 3 esecuzioni su 5 | rumore della misura sulla soglia | criterio 5 nuovo, scelto dall'utente |
+| `issueUpdate` di ICH-594 bloccato dal classificatore dei permessi | «External System Writes» | mutation preparata dalla skill, lanciata dall'utente ([ambiente.md](ambiente.md)) |
+| Comandi git composti rifiutati nella sessione entrata nel worktree; un comando composto messo in coda da Blast Radius | isolamento del worktree; `rm` in un comando composto | comandi semplici e separati |
+
+### Verifica finale
+
+- PR: gate completo dopo `2_work-issue` e dopo i fix della review (semi 43544 e 52622), gate leggero dopo
+  `2_work-simplify` e dopo `7484deb`; `spec31` sulle spec cambiate. CI della PR verde su `7484deb` (run
+  `45411622298`).
+- `master` su `dc17aa2`, 2026-11-24: 1357 esempi, 0 fallimenti, 1 pending (`qrcode` sullo stub), con la coverage e
+  con il seme 42889; coverage 98,1 % di righe (6824 / 6956) e 90,2 % di rami (2291 / 2540); RuboCop 0 offense (112
+  file); YARD 100 % e `yard doc --fail-on-warning` pulito; `ruby -w` pulito; gem costruita; `git diff ad0315b --
+  lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto. Nessun cambio a `Gemfile` e `Gemfile.lock`. CI di `master` (run
+  `45419175222`) verde su tutta la matrice al tentativo 2: il primo è fallito nel job Ruby 3.4.12 per un timeout di
+  `archive.archlinux.org` al passo «Pacchetti dello snapshot».
+- Linear: ICH-594 a Done, ICH-603 nuova in Backlog. Worktree e branch rimossi il 2026-11-24 con
+  `/trinity:workflow:5_remove-worktree improvments+ICH-594-opus`; il branch remoto l'aveva già cancellato GitHub.

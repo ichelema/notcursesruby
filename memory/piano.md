@@ -20,10 +20,10 @@ Windows.
   Fase 5 blitter su Kitty e Ghostty e porting su macOS (PR #20 e #21). Correzioni della revisione del 2026-11-06:
   17 lotti e ICH-465 fuori dai lotti, PR #2…#19. Log nei file `fase*.md` e in
   [correzioni-review.md](correzioni-review.md).
-- Fase «Issue in Backlog», dal 2026-11-15, base `ad0315b`: lotti 1–9b fatti, PR #22…#36 (un capitolo per lotto in
+- Fase «Issue in Backlog», dal 2026-11-15, base `ad0315b`: lotti 1–9c fatti, PR #22…#37 (un capitolo per lotto in
   [backlog-issue.md](backlog-issue.md)). Modello passato ai comandi del workflow: `opus`.
-- Al 2026-11-24 restano 32 issue aperte: 14 nei lotti 9c–15, 14 senza lotto, 3 studi di design (ICH-600, ICH-601,
-  ICH-602), ICH-463 in Blocked.
+- Al 2026-11-24, dopo il lotto 9c, restano 32 issue aperte: 13 nei lotti 10–15, 15 senza lotto (con ICH-603, nata
+  nel lotto 9c), 3 studi di design (ICH-600, ICH-601, ICH-602), ICH-463 in Blocked.
 
 ## Criteri dei lotti
 
@@ -44,7 +44,6 @@ Una issue nata da un lotto entra in un lotto con la scelta dell'utente. Un lotto
 
 | Lotto | Prefisso | Issue | Priorità | Titolo |
 | --- | --- | --- | --- | --- |
-| 9c | `improvments` | ICH-594 | Low | Accelerare le scritture di Plane, che ripetono controlli e letture dello stato prima della chiamata C (prima dei lotti 10–15 per scelta dell'utente del 2026-11-23: le suite dei lotti seguenti diventano più rapide; allargata da `putstr` a `printf`, `puttext`, `putegc`, `putc`, `hline` e `vline` il 2026-11-24, con i criteri nuovi approvati dall'utente) |
 | 10 | `bug` | ICH-220 | Medium | Fai seguire l'intestazione di Tabbed ai ridimensionamenti del piano |
 | 10 | `bug` | ICH-221 | Medium | Correggi lo scostamento del focus in Tree con elementi di altezza diversa |
 | 10 | `bug` | ICH-219 | Low | Correggi la perdita della selezione in Menu al clic su un separatore e mouse_selected per le sezioni allineate a destra |
@@ -65,16 +64,17 @@ Una issue nata da un lotto entra in un lotto con la scelta dell'utente. Un lotto
 
 ## Issue senza lotto
 
-Il 2026-11-24 l'utente ha scelto l'ordine: High e Medium prima del lotto 10. Ordine di esecuzione: lotto 9c, studi
+Il 2026-11-24 l'utente ha scelto l'ordine: High e Medium prima del lotto 10. Ordine di esecuzione: studi
 ICH-600/601/602, gruppo A, gruppo B, gruppo C (dopo la riprogettazione), lotti 10–14, gruppi D, E, F, G, lotto 15. I
-gruppi prendono i numeri di lotto 16 e seguenti quando partono: i numeri 10–15 restano quelli dei log. I gruppi:
+gruppi prendono i numeri di lotto 16 e seguenti quando partono: i numeri 10–15 restano quelli dei log. ICH-603, nata
+nel lotto 9c, non ha ancora un gruppo: lo sceglie l'utente. I gruppi:
 
 | Gruppo | Issue | Note |
 | --- | --- | --- |
 | A | ICH-542 | Bug High, da solo |
 | B | ICH-560, ICH-567, ICH-561 | Bug Medium: `Direct` e blit `:pixel`; ICH-560 chiede l'approvazione della regola 1 |
 | C | ICH-214 | Bug Medium, da riprogettare prima del fix |
-| D | ICH-591, ICH-592 | Bug Low: stesso codice di ICH-594 (`plane.rb`), dopo il lotto 9c |
+| D | ICH-591, ICH-592 | Bug Low: `plane.rb` e `with_glyph_kept`, cambiati dal lotto 9c (`Plane::WriteState`) |
 | E | ICH-554, ICH-556, ICH-562 | Performance Low: `Visual` e blit; ICH-554 può chiedere un cambio della Fase 1 |
 | F | ICH-540, ICH-541 | Bug Low: dopo lo studio ICH-600 (ICH-541 è collegata) |
 | G | ICH-590, ICH-596 | Bug Low: ognuna chiede una scelta dell'utente prima del fix |
@@ -97,9 +97,10 @@ Elenco delle issue:
 | ICH-591 | Low | Bug | `putstr`/`putegc` di un EGC lungo con il pool quasi pieno: il ripristino del glifo di arrivo (lotto 8b) fallisce e il glifo va perso | Lotto 8d. `Plane#rehearse!` del lotto 8d può sostituire `with_glyph_kept`; tocca `plane.rb` come ICH-592 |
 | ICH-592 | Low | Bug | `Plane#base` con una base lunga e il pool pieno solleva `PlaneError` senza motivo (`ncplane_base` duplica nel pool) | Lotto 8d. Come ICH-490; tocca `plane.rb` come ICH-591 |
 | ICH-596 | Low | Bug | Le righe finite di `LogView` non hanno un limite in byte: con `Subprocess` superano `max_partial_bytes` di al massimo un blocco da 8192 byte, con `append` diretto di un blocco solo restano intere | Lotto 9. Prima del fix l'utente sceglie la keyword e quale parte tenere oltre il limite |
+| ICH-603 | Low | Bug | Su uno stdplane che scorre, un "\n" che lo fa scorrere lascia sullo schermo una riga vuota prima dell'ultima; il piano è giusto e `Context#refresh` riallinea lo schermo | Lotto 9c. Anche su `master` e con la FFI diretta. Visto solo su `ncvt`: prima del fix serve una prova su Ghostty e Kitty con un display (utente) |
 
-- ICH-554, ICH-556 e ICH-594 (lotto 9c) hanno solo la label `Performance`: `1_create-worktree` può chiedere il
-  prefisso del branch. ICH-591 e ICH-592 toccano `plane.rb` e `with_glyph_kept` come ICH-594.
+- ICH-554 e ICH-556 hanno solo la label `Performance`: `1_create-worktree` può chiedere il prefisso del branch.
+  ICH-591 e ICH-592 toccano `plane.rb` e `with_glyph_kept`, cambiati dal lotto 9c.
 - ICH-214: il lotto 2 ha scartato la rotazione del framebuffer da Ruby, che non si rende sicura: un gestore `trap` o
   un altro thread può fare un resize fra la copia e la scrittura, e servirebbe un lock o codice C. La issue ammette
   un'altra strada: dopo uno scroll, `resize`, `duplicate`, `rotate_cw`, `rotate_ccw` e `merge_down` possono sollevare
@@ -110,7 +111,7 @@ Elenco delle issue:
 ## Studi di design
 
 Creati il 2026-11-24 su richiesta dell'utente, dopo l'analisi delle prestazioni e della concorrenza
-([prestazioni.md](prestazioni.md)). Vengono subito dopo il lotto 9c, prima dei lotti 10–15 (scelta dell'utente del
+([prestazioni.md](prestazioni.md)). Sono il prossimo lavoro, prima dei lotti 10–15 (scelta dell'utente del
 2026-11-24), nell'ordine ICH-600, ICH-601, ICH-602. Ogni studio produce un design approvato dall'utente, un prototipo misurato e le issue di implementazione.
 
 | Issue | Priorità | Label | Studio | Note |
