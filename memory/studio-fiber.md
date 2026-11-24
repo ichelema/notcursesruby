@@ -164,8 +164,10 @@ altri thread e trap ──► post: Queue + un byte sul pipe di risveglio (invar
    ricevono `Stop` e i loro `ensure` girano. Un'eccezione non gestita di un task esce da `run` dopo la pulizia, come
    quella di un handler (D3). Un task che legge un flusso sempre pronto deve cedere il ciclo (`task.pass`).
    Dentro `run` funziona anche `Fiber.schedule`.
-5. **Callback C.** Un helper privato (`Util.blocking`) esegue i trampolini sincroni in un contesto bloccante:
-   `Fiber.blocking` da 3.2, un Fiber bloccante su 3.1, niente se il Fiber è già bloccante. I cinque
+5. **Callback C.** Fatto in ICH-604 (PR #39, merge `185cb82`): `Util.guard` esegue il blocco con `Util.blocking`.
+   L'helper esegue il blocco e basta se `Fiber.current_scheduler` è `nil` (nessuno scheduler, oppure Fiber già
+   bloccante); altrimenti usa `Fiber.blocking` da 3.2 e un Fiber bloccante nuovo su 3.1. `Fiber.current.blocking?` non
+   basta: è falso in ogni `Fiber.new` anche senza scheduler (finding 1 della review di ICH-604). I cinque
    `::FFI::Function.new` sono `visual.rb:1164`, `plane.rb:481`, `plane.rb:4009` (`NOOP_FADER`, restituisce solo 0),
    `widgets/tree.rb:123`, `widgets/tabbed.rb:462`. Quattro su cinque passano già da `Util.guard`, che può ospitare
    la guardia: `visual.rb:1165`, `plane.rb:482`, `widgets/tabbed.rb:463` e `widgets/tree.rb:365` (in `draw_item`,
@@ -207,7 +209,7 @@ Create in Linear il 2026-11-24 con la conferma dell'utente, in Backlog, priorit�
 
 | Issue | Label | Contenuto | Relazioni |
 | --- | --- | --- | --- |
-| ICH-604 | Improvement | Guardia «blocking» dei callback C sincroni (punto 5) | blocca ICH-606 |
+| ICH-604 | Improvement | Guardia «blocking» dei callback C sincroni (punto 5). Fatta: PR #39, merge `185cb82` | blocca ICH-606 |
 | ICH-606 | Improvement | Scheduler di `EventLoop` (punti 1, 2, 7; D1, D4–D6), con `benchmark/fiber/run.rb` adattato al codice finale | bloccata da ICH-604, blocca ICH-607 |
 | ICH-607 | Improvement | `app.async` e `Task` (punto 4; D2, D3), con un esempio in `examples/demo.rb` | bloccata da ICH-606 |
 | ICH-605 | Performance | `LogView#append` costa circa 400–510 ms di CPU per MB (2 MB/s) su uno schermo 60x200: difetto trovato dallo studio | — |
