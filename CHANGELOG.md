@@ -396,12 +396,12 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   riga in meno, ogni frame scendeva di una riga, la prima riga dei frame precedenti restava sullo schermo e in fondo
   al terminale lo schermo scorreva a ogni frame (ICH-284). Con il blitter `:pixel` e un frame più basso dello schermo
   in fondo al terminale l'esito non dipende più dal terminale: vedi la voce di ICH-458.
-- `Notcurses.strwidth` misura anche il testo dopo una sequenza ZWJ (U+200D): `"👩\u200D🚀abc"` vale 5 colonne, non 2. Il
+- `Notcurses.strwidth` misura anche il testo dopo una sequenza ZWJ (U+200D): `"👩‍🚀abc"` vale 5 colonne, non 2. Il
   workaround del bug di notcurses 3.0.17, prima solo in `Plane#putstr`, ora vale per `Direct#putegc` (scrive solo il
   primo EGC, non anche il resto del testo), `Direct#print_aligned` (colonna e valore restituito giusti; `ArgumentError`
   per un carattere di controllo dopo la sequenza), `Plane#puttext` (una parola con ZWJ più larga del piano va a capo
   invece di sollevare `PlaneError`) e la UI, che taglia e allinea il testo con `strwidth`: una `Label` con
-  `"👩\u200D💻 sviluppatrice molto brava"` e `size: 10` non solleva più `PlaneError` (ICH-285, ICH-286).
+  `"👩‍💻 sviluppatrice molto brava"` e `size: 10` non solleva più `PlaneError` (ICH-285, ICH-286).
 - `Tree#redraw` adatta i piani delle voci alla larghezza corrente dell'albero: dopo un `Plane#resize` in larghezza
   il blocco di disegno riceveva piani larghi come prima, e su un albero più stretto disegnava fuori dall'albero
   (ICH-287).
