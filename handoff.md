@@ -49,5 +49,8 @@ in [memory/punti-aperti.md](memory/punti-aperti.md), traduzione in italiano di t
   `~/.claude/settings.json`, cioè in `.chezmoitemplates/claude-settings.json` del sorgente chezmoi (lista `allow`),
   poi `chezmoi apply`. Il classificatore ha bloccato la modifica del modello («Self-Modification»). Al primo bisogno
   di una issue nuova prova `issueCreate`: se il classificatore blocca ancora, torna agli script dell'utente.
-- Traduzione delle issue aperte in inglese (circa 30): da fare con un campione rivisto dall'utente prima del resto.
-  Non cambiare i criteri di accettazione nel significato (regola «Acceptance criteria»).
+- Traduzione delle issue inglesi: fatta il 2026-11-24 per 24 issue (ICH-214, 219–221, 227, 231, 457, 459–461, 463,
+  469, 470, 473, 483, 540–542, 554, 556, 560–562, 567), titolo e descrizione, con 4 agenti `trinity:bulk-worker` e
+  un controllo con script (backtick, blocchi di codice, checkbox, numeri, intestazioni). Linear coincide con i file
+  tradotti. L'utente non ha ancora riletto un campione: se trova errori nei criteri di accettazione, gli originali
+  inglesi sono nella cronologia delle issue su Linear. I titoli in `memory/piano.md` sono ancora in inglese.
