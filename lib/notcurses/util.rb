@@ -613,14 +613,16 @@ module Notcurses
     # callback, è per thread e non per Fiber (ffi 1.17.4,
     # ext/ffi_c/Thread.c:57-91, Function.c:613-616 e 1017). Su Ruby 4.0 il
     # Fiber si sospende anche senza I/O: dopo un segnale i punti bloccanti
-    # chiamano l'hook yield dello scheduler (thread.c:207-235). In un Fiber già
-    # bloccante (Fiber radice, thread senza scheduler) esegue il blocco e basta.
-    # Su Ruby 3.1, senza Fiber.blocking, usa un Fiber bloccante nuovo: dentro
-    # il blocco cambiano Fiber.current e i valori locali al Fiber, e un throw
-    # diventa UncaughtThrowError.
+    # chiamano l'hook yield dello scheduler (thread.c:207-235). Senza uno
+    # scheduler per il Fiber corrente (nessuno scheduler, oppure Fiber già
+    # bloccante) esegue il blocco e basta: Fiber.current.blocking? non basta,
+    # perché è falso in ogni Fiber.new anche senza scheduler. Su Ruby 3.1,
+    # senza Fiber.blocking, usa un Fiber bloccante nuovo: dentro il blocco
+    # cambiano Fiber.current e i valori locali al Fiber, e un throw diventa
+    # UncaughtThrowError.
     # @return [Object] il valore del blocco
     def blocking(&block)
-      return yield if Fiber.current.blocking?
+      return yield unless Fiber.current_scheduler
       return Fiber.blocking(&block) if Fiber.respond_to?(:blocking)
 
       Fiber.new(blocking: true, &block).resume

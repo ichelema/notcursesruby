@@ -32,9 +32,9 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   `Tree`, `Tabbed`) girano in un contesto bloccante: `sleep` e l'I/O nel blocco fermano il thread e non passano dallo
   scheduler (ICH-604). Prima il Fiber si poteva sospendere a metà della chiamata C, e un altro Fiber poteva rientrare
   in notcurses mentre la pila dei frame di ffi, che è per thread, era ancora aperta. Senza scheduler, e nel Fiber
-  radice, non cambia niente. Su Ruby 3.1 il blocco gira in un Fiber bloccante nuovo: `Fiber.current` e i valori
-  locali al Fiber del chiamante cambiano, e un `throw` verso fuori dal blocco diventa `UncaughtThrowError` al posto
-  di `LocalJumpError`.
+  radice, non cambia niente, anche dentro un `Fiber.new`. Su Ruby 3.1, sotto uno scheduler, il blocco gira in un
+  Fiber bloccante nuovo: `Fiber.current` e i valori locali al Fiber del chiamante cambiano, e un `throw` verso fuori
+  dal blocco diventa `UncaughtThrowError` al posto di `LocalJumpError`.
 
 ### Rimosso
 

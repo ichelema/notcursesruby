@@ -136,4 +136,23 @@ RSpec.describe "Callback di notcurses sotto un Fiber scheduler" do
     end
     expect(seen).to eq([Fiber.current, :chiamante])
   end
+
+  it "in un Fiber non bloccante senza scheduler il callback gira nel Fiber del chiamante, anche su Ruby 3.1" do
+    seen = []
+    outer = nil
+    error = nil
+    with_parent do |p|
+      p.create_child(rows: 2, cols: 2, resize: ->(_) { seen.push(Fiber.current, Thread.current[:ich604]) })
+      p.create_child(rows: 2, cols: 2, resize: ->(_) { throw :fuori })
+      Fiber.new do
+        outer = Fiber.current
+        Thread.current[:ich604] = :chiamante
+        catch(:fuori) { p.resize(11, 21) }
+      rescue => e
+        error = e
+      end.resume
+    end
+    expect(seen).to eq([outer, :chiamante])
+    expect(error).to be_a(LocalJumpError)
+  end
 end
