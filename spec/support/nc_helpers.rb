@@ -55,7 +55,8 @@ module NcHelpers
   # la suite. Un discendente del figlio (per esempio un nipote di spawn) eredita
   # la pipe dell'output e la tiene aperta finché vive (ICH-593): al timeout
   # muore con il figlio, e dopo l'uscita del figlio l'output si aspetta al
-  # massimo grace secondi. I discendenti si trovano con ps e non con un process
+  # massimo grace secondi; poi muore chi tiene ancora la pipe (solo Linux, vedi
+  # {pipe_holders}). I discendenti si trovano con ps e non con un process
   # group: con spawn(pgroup: true) Process.setsid fallisce con EPERM negli
   # script che rendono un pty il loro terminale di controllo (ui_pty_spec.rb).
   #
@@ -82,13 +83,33 @@ module NcHelpers
       done = Process.wait2(pid)
     end
     unless collector.join(grace)
-      collector.kill.join
+      pipe_holders(reader).each do |holder|
+        Process.kill(:KILL, holder)
+      rescue Errno::ESRCH
+        nil
+      end
+      collector.join(1) || collector.kill.join
       output << "\n[run_child: dopo #{grace} s un processo discendente tiene aperto l'output]\n"
       timed_out = true
     end
     [output.force_encoding(reader.external_encoding), done.last, timed_out]
   ensure
     reader&.close
+  end
+
+  # Pid degli altri processi che tengono aperta la pipe di io. Un discendente
+  # rimasto orfano non si trova più dal ppid, ma tiene ancora la pipe. Solo
+  # Linux (/proc); su macOS restituisce [] e l'orfano resta vivo.
+  def pipe_holders(io)
+    pipe = File.readlink("/proc/self/fd/#{io.fileno}")
+    holders = Dir.glob('/proc/[0-9]*/fd/*').filter_map do |fd|
+      fd.split('/')[2].to_i if File.readlink(fd) == pipe
+    rescue SystemCallError # processo uscito o di un altro utente
+      nil
+    end
+    holders.uniq - [Process.pid]
+  rescue SystemCallError
+    []
   end
 
   # Uccide con SIGKILL pid e tutti i suoi discendenti, trovati con ps prima del

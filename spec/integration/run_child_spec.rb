@@ -76,4 +76,12 @@ RSpec.describe "NcHelpers.run_child (integrazione)" do
     expect(out).to include("nipote avviato", "un processo discendente tiene aperto l'output")
     expect(elapsed).to be < 5
   end
+
+  it "se il figlio esce e un nipote tiene aperto l'output, dopo grace secondi ferma anche il nipote orfano" do
+    skip "i processi che tengono la pipe si trovano in /proc: solo Linux" unless File.directory?("/proc/self/fd")
+
+    result, = bounded_run("", timeout: 10, grace: 1)
+    expect(result).not_to be_nil, "run_child non è tornato entro 15 s: il nipote tiene aperta la pipe"
+    expect(gone?(File.read(@pid_file).to_i)).to be(true)
+  end
 end
