@@ -104,9 +104,11 @@ module Notcurses
       # Ferma il task: il task riceve {Stop} nel punto in cui attende, e il
       # suo ensure gira prima che stop ritorni, salvo un ensure che attende di
       # nuovo (il task finisce allora in un giro successivo). Chiamato da un
-      # altro task, quel task cede il ciclo e riparte dopo. Un task non ancora
-      # partito non parte più; chiamato dal task stesso, solleva {Stop} lì.
-      # Un task finito resta com'è.
+      # altro task, quel task cede il ciclo e riparte dopo. Da un Fiber che un
+      # handler riprende con resume (per esempio +Enumerator#next+) il task
+      # riceve {Stop} dopo la fine dell'handler: subito dopo stop {#alive?} è
+      # ancora true. Un task non ancora partito non parte più; chiamato dal
+      # task stesso, solleva {Stop} lì. Un task finito resta com'è.
       #
       # @return [self]
       # @raise [Error] da un thread diverso da quello del ciclo

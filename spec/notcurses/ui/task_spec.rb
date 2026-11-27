@@ -296,6 +296,26 @@ RSpec.describe Notcurses::UI::Task do
       expect(task.wait).to eq(:valore)
     end
 
+    it "da un Fiber che un handler riprende con resume: Task::Stop arriva dopo la fine dell'handler" do
+      ev = new_loop
+      seen = []
+      ev.post do
+        victim = ev.async do
+          sleep 10
+        ensure
+          seen << :ensure
+        end
+        Enumerator.new { |y| y << victim.stop }.next
+        seen << [:after_stop, victim.alive?]
+        ev.post do
+          seen << [:next_turn, victim.alive?]
+          ev.stop
+        end
+      end
+      expect(run_loop(ev)).to eq(:stop)
+      expect(seen).to eq([[:after_stop, true], :ensure, [:next_turn, false]])
+    end
+
     it "da un altro thread solleva Error, e il consiglio dell'errore funziona" do
       ev = new_loop
       error = nil
@@ -320,6 +340,25 @@ RSpec.describe Notcurses::UI::Task do
       expect(error.message).to include("post { task.stop }")
       expect(seen).to eq([:ensure])
     end
+  end
+
+  it "un run annidato usa lo scheduler del run esterno: i suoi task restano vivi fino all'uscita di quello" do
+    ev = new_loop
+    seen = []
+    ev.post do
+      inner = Notcurses::UI::EventLoop.new(nc)
+      task = inner.async do
+        sleep 10
+      ensure
+        seen << :ensure
+      end
+      inner.post { inner.stop }
+      inner.run
+      seen << [:inner_done, task.alive?]
+      ev.stop
+    end
+    expect(run_loop(ev)).to eq(:stop)
+    expect(seen).to eq([[:inner_done, true], :ensure])
   end
 
   it "un task che run scarta prima che parta risulta finito, e sveglia un thread in wait" do

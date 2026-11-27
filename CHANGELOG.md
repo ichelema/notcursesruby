@@ -33,10 +33,12 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   `Task#wait` restituisce il valore del blocco (`nil` per un task fermato o uscito con un'eccezione); da un handler,
   su un task non finito, solleva `Error`, perché l'attesa fermerebbe il ciclo: attendi da un altro task
   (`app.async { task.wait }`). `Task#stop` manda `Task::Stop`, che non deriva da `StandardError`, e l'`ensure` del
-  task gira prima che `stop` ritorni; da un altro thread solleva `Error` (usa `post { task.stop }`). `Task#pass`
-  cede il ciclo: serve a un task che legge un flusso sempre pronto, che altrimenti ferma input e render.
-  All'uscita di `run` i task vivi, anche quelli di `Fiber.schedule`, ricevono `Task::Stop`. `examples/demo.rb`
-  legge il processo figlio con un task e `IO.popen`, al posto di `Subprocess` e `post`.
+  task gira prima che `stop` ritorni, salvo da un Fiber che un handler riprende con resume (per esempio
+  `Enumerator#next`), dove il task si ferma dopo la fine dell'handler; da un altro thread solleva `Error` (usa
+  `post { task.stop }`). `Task#pass` cede il ciclo: serve a un task che legge un flusso sempre pronto, che
+  altrimenti ferma input e render. All'uscita di `run` i task vivi, anche quelli di `Fiber.schedule`, ricevono
+  `Task::Stop`; un `run` annidato usa lo scheduler del `run` esterno, e i suoi task si fermano all'uscita di
+  quello. `examples/demo.rb` legge il processo figlio con un task e `IO.popen`, al posto di `Subprocess` e `post`.
 
 ### Modificato
 

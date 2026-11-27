@@ -290,8 +290,9 @@ module Notcurses
       # ({Task#stop}). Dal Fiber del ciclo il task riparte subito. Da un task,
       # il task chiamante va fra i pronti e riparte a un giro successivo, dopo
       # la fine (o la nuova attesa) di fiber, come in {#fiber}. Da un Fiber che
-      # un handler riprende con resume, fiber la riceve al giro successivo: lì
-      # un transfer solleverebbe FiberError.
+      # un handler riprende con resume, fiber la riceve dopo la fine
+      # dell'handler (resume_ready dello stesso giro): lì un transfer
+      # solleverebbe FiberError.
       #
       # @param fiber [Fiber]
       # @return [void]
