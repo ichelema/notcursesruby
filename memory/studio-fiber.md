@@ -3,7 +3,9 @@
 - Data: 2026-11-24. Base: `master` `6923f2c`. Branch: `improvments/ICH-600-opus`.
 - Stato: **approvato dall'utente il 2026-11-24**, con le scelte D1–D6 (sezione 6). Il codice finale lo scrivono le
   issue di implementazione (sezione 7).
-- Prototipo e misure: `benchmark/fiber/` (`run.rb`, `app.rb`, `scheduler.rb`, `fiber_app.rb`, `hook.rb`).
+- Prototipo e misure: `benchmark/fiber/` (`run.rb`, `app.rb`, `scheduler.rb`, `hook.rb`). ICH-606 ha tolto
+  `fiber_app.rb` (si legge con `git show b855f39:benchmark/fiber/fiber_app.rb`), e da allora `run.rb` misura lo
+  scheduler finale (`Notcurses::UI::Scheduler`); `scheduler.rb` resta per `hook.rb`.
 - Sorgenti letti come riferimento, fuori dal repository: `~/.claude/tmp/ich-600/vendor/` (async 2.24.0 e 2.46.0,
   io-event 1.11.2 e 1.22.3, fiber-profiler 0.7.1, `scheduler.c`, `thread.c`, `io.c` e `io_buffer.c` di Ruby 3.1–4.0,
   sorgente C di ffi 1.17.4). Il prototipo non contiene codice copiato da async o io-event: `NOTICE` non cambia.

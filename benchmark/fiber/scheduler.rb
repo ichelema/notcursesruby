@@ -3,8 +3,9 @@
 # frozen_string_literal: true
 
 # Prototipo dello studio ICH-600: un Fiber scheduler minimo in Ruby puro, con
-# IO.select, per Ruby 3.1-4.0. Non è il codice finale: implementa solo gli
-# hook che servono alle misure di benchmark/fiber/run.rb (io_wait,
+# IO.select, per Ruby 3.1-4.0. Il codice finale è Notcurses::UI::Scheduler
+# (ICH-606), che misura run.rb; questo file resta per hook.rb (studio ICH-602).
+# Implementa solo gli hook che servivano alle misure del prototipo (io_wait,
 # kernel_sleep, block, unblock, fiber, close) e quelli che Ruby 4.0 chiede
 # (fiber_interrupt, yield). Riprende i Fiber con resume e Fiber.yield: il
 # design usa transfer, come io-event, perché Fiber.yield torna a chi ha fatto

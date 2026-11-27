@@ -17,6 +17,16 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   `:pixel`, e in Kitty i tasti di controllo con `kitty @ send-key`. Senza la variabile la suite non le esegue.
 - `benchmark/plane_writes.rb`: misura le scritture di `Plane` contro la FFI diretta su un piano 60x200 e stampa
   una tabella markdown (ICH-594).
+- `Notcurses::UI::EventLoop#run` installa un Fiber scheduler per la sua durata (ICH-606): `Fiber.schedule` in un
+  handler crea un task che attende I/O, `sleep`, Queue, Mutex e `Timeout.timeout` senza fermare il ciclo. Gli
+  handler restano sul Fiber del ciclo, che è bloccante, e il thread di input resta. Con un task ancora pronto il
+  ciclo rende al massimo `max_fps` volte al secondo: keyword nuova di `EventLoop#run` e `App#run`, default 60.
+  `run` solleva `Error` se nel thread è attivo il Fiber scheduler di un'altra libreria (per esempio dentro
+  `Async { }`); un `run` annidato in un handler resta permesso. Su Ruby 4.0 lo scheduler consuma all'avvio il
+  warning «IO::Buffer is experimental», che altrimenti finirebbe sullo schermo alla prima scrittura da un task, e
+  un `IO#close` da un handler di un IO su cui attende un task solleva `Error` invece di bloccare il processo.
+  `benchmark/fiber/run.rb` misura il codice finale; il prototipo `benchmark/fiber/fiber_app.rb` esce dal
+  repository.
 
 ### Modificato
 

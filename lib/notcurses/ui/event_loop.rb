@@ -26,13 +26,16 @@ module Notcurses
       # @param interval [Float, nil] secondi fra due esecuzioni, nil = una volta
       # @param seq [Integer] ordine di creazione
       # @param block [Proc] blocco da eseguire, riceve il timer
+      # @param internal [Boolean] scadenza di un'attesa del Fiber scheduler
+      #   di run: non conta come lavoro del giro
       # @api private
-      def initialize(deadline, interval, seq, block)
+      def initialize(deadline, interval, seq, block, internal: false)
         @deadline = deadline
         @interval = interval
         @seq = seq
         @block = block
         @active = true
+        @internal = internal
       end
 
       # Ferma il timer: il blocco non viene più chiamato. Idempotente.
@@ -45,6 +48,11 @@ module Notcurses
 
       # @return [Boolean] true finché il blocco può ancora essere chiamato
       def active? = @active
+
+      # @return [Boolean] true per la scadenza di un'attesa del Fiber
+      #   scheduler di run
+      # @api private
+      def internal? = @internal
 
       # Esegue il blocco. Un timer di {EventLoop#after} diventa inattivo prima
       # del blocco.
@@ -111,6 +119,29 @@ module Notcurses
     # Un contesto che scarta l'input ({Context#drain_input?}) non viene
     # ascoltato: il ciclo serve solo timer, {#post} e resize.
     #
+    # Task. Durante {#run} il ciclo è anche il Fiber scheduler del thread:
+    # +Fiber.schedule+ in un handler crea un task, un Fiber che parte subito e
+    # gira fino alla prima attesa. Quando un task attende I/O (un pipe, un
+    # socket), +sleep+, una Queue, un Mutex o +Timeout.timeout+, il ciclo
+    # continua a consegnare eventi, e riprende il task nel giro in cui l'attesa
+    # finisce. Gli handler restano sul Fiber del ciclo, che è bloccante: dentro
+    # un handler +sleep+ e l'I/O fermano il ciclo come senza task, anche in un
+    # Fiber che l'handler riprende con resume (per esempio +Enumerator#next+),
+    # e un +Fiber.schedule+ chiamato lì parte al giro successivo. Un task che
+    # legge un flusso sempre pronto non attende mai, e ferma il ciclo finché
+    # non cede con +sleep(0)+. All'uscita di run i task ancora in attesa
+    # ricevono un'eccezione che non deriva da StandardError, e i loro ensure
+    # girano.
+    #
+    # Chiudere un IO su cui un task attende. Su Ruby 4.0 un close da un altro
+    # task o da un altro thread dà IOError al task; un close da un handler
+    # solleva Error e lascia l'IO aperto, perché close attenderebbe per
+    # sempre la fine dell'operazione del task. Su Ruby 3.1-3.4 non chiudere
+    # quell'IO dal thread del ciclo: per un difetto di Ruby close lascia
+    # l'attesa del task legata alla sua memoria, e quando il task esce
+    # dall'attesa il processo può andare in crash (segmentation fault con Ruby
+    # 3.4.12). Chiudilo dopo che il task ha smesso di attenderlo.
+    #
     # @example
     #   Notcurses::Context.open do |nc|
     #     ev = Notcurses::UI::EventLoop.new(nc)
@@ -163,6 +194,10 @@ module Notcurses
         @stop_requested = false
         @resize_requested = false
         @wake_w = nil
+        @scheduler = nil # Scheduler durante run, se run lo ha installato
+        @dirty = false # lavoro di un giro non ancora reso
+        @frame = 0.0
+        @last_render = 0.0
       end
 
       # Esegue il ciclo nel thread corrente fino a {#stop}, alla fine
@@ -253,22 +288,47 @@ module Notcurses
       # di input di notcurses: run non riceve più tasti e {Context#close} non
       # ritorna ({Context#get}, ICH-463).
       #
+      # Fiber scheduler. run installa lo scheduler dei task (vedi la classe)
+      # e lo toglie alla fine. Con un task ancora pronto (che ha ceduto il
+      # ciclo, o è appena stato sbloccato) il ciclo rende al massimo max_fps
+      # volte al secondo; quando sta per attendere, o per uscire, rende subito.
+      # Uno scheduler di un'altra libreria già attivo nel thread (per esempio
+      # dentro +Async { }+) fa sollevare Error. Un run in un handler di un altro
+      # run usa lo scheduler di quello: i suoi task restano fermi fino alla
+      # fine del run annidato. Chiamato da un Fiber non bloccante, run esegue il
+      # ciclo in un contesto bloccante; su Ruby 3.1 è un Fiber nuovo, e gli
+      # handler non vedono i valori locali al Fiber (+Thread.current[:x]+).
+      # Un'eccezione che un task non gestisce, anche nel suo ensure all'uscita,
+      # esce da run come quella di un handler.
+      #
       # @param no_flow_control [Boolean] disattiva IXON durante run
       # @param no_linesigs [Boolean] disattiva ISIG durante run
       #   ({Context#linesigs_disable})
+      # @param max_fps [Numeric] render al secondo, al massimo, con un task
+      #   ancora pronto: un numero finito maggiore di 0
       # @return [Symbol] :stop, :eof o :interrupt
-      # @raise [Error] se il ciclo è già in esecuzione
+      # @raise [Error] se il ciclo è già in esecuzione, o se nel thread è attivo
+      #   il Fiber scheduler di un'altra libreria
       # @raise [ClosedError] se il contesto è chiuso
       # @raise [ContextError] se il terminale rifiuta il cambio di IXON o ISIG;
       #   un errore del ripristino finale non sostituisce l'eccezione di un
       #   handler, che resta quella sollevata
-      # @raise [TypeError] se un'opzione non è un Boolean
-      # @raise [Exception] l'eccezione di un handler, di un timer o di un blocco
-      #   di {#post}
-      def run(no_flow_control: false, no_linesigs: false)
+      # @raise [TypeError] se no_flow_control o no_linesigs non è un Boolean, o
+      #   max_fps non è un numero
+      # @raise [ArgumentError] se max_fps non è un numero finito maggiore di 0
+      # @raise [Exception] l'eccezione di un handler, di un timer, di un blocco
+      #   di {#post} o di un task
+      def run(no_flow_control: false, no_linesigs: false, max_fps: 60)
         no_flow_control = Util.bool!(no_flow_control, 'no_flow_control')
         no_linesigs = Util.bool!(no_linesigs, 'no_linesigs')
+        frame = frame_interval(max_fps)
         raise Error, 'EventLoop#run: il ciclo è già in esecuzione' if @running
+
+        outer = Fiber.scheduler
+        if outer && !outer.is_a?(Scheduler)
+          raise Error, "EventLoop#run: nel thread è già attivo il Fiber scheduler #{outer.class} (per esempio " \
+                       'dentro Async { }): chiama run fuori da quello scheduler'
+        end
 
         @context.to_ptr
         @running = true
@@ -280,6 +340,7 @@ module Notcurses
         # qui e non nell'ensure: fra l'ingresso nell'ensure e il begin protetto un Interrupt salterebbe la pulizia
         pending = nil
         interrupted = nil
+        task_error = nil
         done = false
         begin
           ixon = @context.flow_control_disable if no_flow_control
@@ -324,16 +385,11 @@ module Notcurses
           @reason = :stop
           @dims = @context.dims
           render_frame
-          watched = [@input, wake_r].compact
-          # il primo giro non attende: il run precedente può aver lasciato eventi nella
-          # coda di notcurses con il pipe di prontezza già vuoto
-          wait = false
-          until @stop_requested
-            IO.select(watched, nil, nil, wait ? select_timeout : 0)
-            wait = true
-            drain(wake_r)
-            step
-          end
+          @frame = frame
+          # un run annidato usa lo scheduler del run esterno
+          Fiber.set_scheduler(@scheduler = Scheduler.new(self)) unless outer
+          # gli handler girano sul Fiber del ciclo, che deve essere bloccante: sleep e I/O non passano dallo scheduler
+          Util.blocking { cycle([@input, wake_r].compact, wake_r) }
           @reason
         rescue Interrupt
           :interrupt
@@ -345,7 +401,14 @@ module Notcurses
           begin
             # un secondo Ctrl+C (o un'altra eccezione asincrona) arriva dopo la pulizia, non a metà
             Thread.handle_interrupt(Object => :never) do
-              # per primo: da qui il thread di input non alza più segnali
+              # per primo: i passi seguenti (join del thread di input) girano senza scheduler, anche fuori da
+              # Util.blocking; close ferma i task in attesa, e gli ensure dei task girano con il contesto aperto
+              if @scheduler
+                Fiber.set_scheduler(nil)
+                task_error ||= @scheduler.failure
+                @scheduler = nil
+              end
+              # da qui il thread di input non alza più segnali
               stopped = @context.input_reader_stop(filter) if filter
               interrupted ||= stopped
               # nil vorrebbe dire IGNORE, che i processi figli erediterebbero
@@ -369,6 +432,7 @@ module Notcurses
             retry unless done
           end
           raise interrupted if interrupted && pending.nil?
+          raise task_error if task_error && pending.nil?
         end
       end
 
@@ -546,9 +610,82 @@ module Notcurses
         timer
       end
 
+      # Timer interno del Fiber scheduler di run: la scadenza di un'attesa di
+      # un task. Non conta come lavoro del giro.
+      #
+      # @param seconds [Float] attesa, >= 0
+      # @yield il blocco, nel thread del ciclo
+      # @return [Timer]
+      # @api private
+      def add_internal_timer(seconds, &block)
+        @seq += 1
+        schedule(Timer.new(clock + seconds, nil, @seq, block, internal: true))
+      end
+
+      # Ferma timer e lo toglie dalla lista: un task che attende con un
+      # timeout e riparte prima lascerebbe altrimenti un timer fermo nella
+      # lista per ogni attesa, fino alla scadenza.
+      #
+      # @param timer [Timer]
+      # @return [nil]
+      # @api private
+      def unschedule(timer)
+        timer.cancel
+        index = @timers.bsearch_index do |t|
+          t.deadline > timer.deadline || (t.deadline == timer.deadline && t.seq >= timer.seq)
+        end
+        @timers.delete_at(index) if index && @timers[index].equal?(timer)
+        nil
+      end
+
+      # Sveglia il ciclo: un byte sul pipe di risveglio. Da qualsiasi thread e
+      # dai gestori +trap+; senza run non fa niente.
+      #
+      # @return [void]
+      # @api private
+      def wake
+        @wake_w&.write_nonblock("\0", exception: false)
+      rescue IOError, Errno::EPIPE
+        nil # pipe chiuso da run in un altro thread: il ciclo è finito
+      end
+
       private
 
       def clock = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      # @return [Float] secondi fra due render con un task ancora pronto
+      def frame_interval(max_fps)
+        fps = Util.float!(max_fps, 'max_fps')
+        raise ArgumentError, "max_fps = #{max_fps}: serve un numero maggiore di 0" unless fps.positive?
+
+        1.0 / fps
+      end
+
+      # I giri di run, nel Fiber bloccante del ciclo. Il primo giro non attende:
+      # il run precedente può aver lasciato eventi nella coda di notcurses con il
+      # pipe di prontezza già vuoto.
+      def cycle(watched, wake_r)
+        @scheduler&.loop_fiber = Fiber.current
+        wait = false
+        until @stop_requested
+          if @scheduler
+            readers, writers, priority = @scheduler.io_sets # prima di select_timeout: un IO chiuso rende pronto il task
+            begin
+              ready = IO.select(watched + readers, writers, priority, wait ? select_timeout : 0)
+            rescue IOError
+              # un altro thread ha chiuso l'IO di un task durante IO.select: il giro dopo io_sets lo trova chiuso
+              raise unless [readers, writers, priority].any? { |ios| ios.any?(&:closed?) }
+
+              ready = nil
+            end
+          else
+            IO.select(watched, nil, nil, wait ? select_timeout : 0)
+          end
+          wait = true
+          drain(wake_r)
+          step(ready)
+        end
+      end
 
       # @raise [TypeError] se input non è un Input
       def input!(input)
@@ -602,12 +739,6 @@ module Notcurses
         raise error if error && !pending
       end
 
-      def wake
-        @wake_w&.write_nonblock("\0", exception: false)
-      rescue IOError, Errno::EPIPE
-        nil # pipe chiuso da run in un altro thread: il ciclo è finito
-      end
-
       def drain(reader)
         loop do
           data = reader.read_nonblock(4096, exception: false)
@@ -615,12 +746,12 @@ module Notcurses
         end
       end
 
-      # Timeout di IO.select: 0 con blocchi in coda o un resize da applicare,
-      # nil senza timer. Al massimo un giorno: oltre time_t IO.select solleva
-      # RangeError (after(Float::MAX)); il ciclo si sveglia, non trova timer
-      # scaduti e riattende.
+      # Timeout di IO.select: 0 con blocchi in coda, un resize da applicare o
+      # un task pronto, nil senza timer. Al massimo un giorno: oltre time_t
+      # IO.select solleva RangeError (after(Float::MAX)); il ciclo si sveglia,
+      # non trova timer scaduti e riattende.
       def select_timeout
-        return 0 if @resize_requested || !@queue.empty?
+        return 0 if @resize_requested || !@queue.empty? || @scheduler&.ready?
 
         timer = @timers.first
         timer && (timer.deadline - clock).clamp(0, 86_400)
@@ -628,16 +759,23 @@ module Notcurses
 
       def live? = !@stop_requested && !@context.closed?
 
-      def step
+      # @param ready [Array(Array<IO>, Array<IO>, Array<IO>), nil] il risultato
+      #   di IO.select, per i task che attendono un IO
+      def step(ready = nil)
         worked = false
         worked |= handle_resize(refresh: true) if @resize_requested && live?
         worked |= read_input if @input && live?
         worked |= run_posted
         worked |= run_timers
+        @scheduler&.resume_ready(*ready) { live? }
         if @context.closed?
           @stop_requested = true
-        elsif worked
-          render_frame
+        else
+          ran = @scheduler&.ran!
+          @dirty = true if worked || ran
+          # con un task ancora pronto il giro successivo non attende: al massimo un render ogni @frame secondi
+          throttled = !@stop_requested && @scheduler&.ready? && clock - @last_render < @frame
+          render_frame if @dirty && !throttled
         end
       end
 
@@ -678,7 +816,7 @@ module Notcurses
           @timers.shift
           next unless timer.active?
 
-          worked = true
+          worked = true unless timer.internal? # il task ripartito conta da sé (Scheduler#ran!)
           begin
             timer.fire
           ensure
@@ -714,6 +852,8 @@ module Notcurses
 
       def render_frame
         @context.render
+        @dirty = false
+        @last_render = clock
         # resize non segnalato (prima di run, o con il gestore di notcurses): lo applica il giro successivo
         @resize_requested = true if @context.dims != @dims
       end

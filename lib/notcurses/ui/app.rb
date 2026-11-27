@@ -100,15 +100,20 @@ module Notcurses
       #   Ctrl+Q arrivano come tasti
       # @param no_linesigs [Boolean] disattiva ISIG durante run: Ctrl+C,
       #   Ctrl+Z e Ctrl+\ arrivano come tasti
+      # @param max_fps [Numeric] render al secondo, al massimo, con un task
+      #   ancora pronto (vedi {EventLoop#run})
       # @return [Symbol] :stop, :eof o :interrupt
       # @raise [ClosedError] se l'App o il contesto sono chiusi
-      # @raise [Error] se il ciclo è già in esecuzione
+      # @raise [Error] se il ciclo è già in esecuzione, o se nel thread è attivo
+      #   il Fiber scheduler di un'altra libreria
       # @raise [ContextError] se il terminale rifiuta il cambio di IXON o ISIG
       #   (non sostituisce l'eccezione di un handler)
-      # @raise [TypeError] se un'opzione non è un Boolean
+      # @raise [TypeError] se no_flow_control o no_linesigs non è un Boolean, o
+      #   max_fps non è un numero
+      # @raise [ArgumentError] se max_fps non è un numero finito maggiore di 0
       # @raise [Exception] l'eccezione di un handler, di un componente, di un
-      #   timer o di un blocco di {#post}
-      def run(no_flow_control: false, no_linesigs: false)
+      #   timer, di un blocco di {#post} o di un task
+      def run(no_flow_control: false, no_linesigs: false, max_fps: 60)
         raise ClosedError, 'Notcurses::UI::App: applicazione già chiusa' if closed?
 
         super
