@@ -147,6 +147,7 @@ module Notcurses
       rescue Stop
         nil # fermato: wait restituisce nil
       ensure
+        @block = nil # la closure e il suo scope non restano legati al Task finito
         @finished.close
       end
     end
