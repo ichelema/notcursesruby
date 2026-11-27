@@ -254,7 +254,7 @@ module Notcurses
           @waits[fiber] = wait
           @ready.push(wait)
         else
-          start_from_task(fiber, current)
+          from_task(current) { fiber.transfer }
         end
         fiber
       end
@@ -295,12 +295,7 @@ module Notcurses
         return interrupt(fiber, Task::Stop) if current.equal?(@loop_fiber)
         return @interrupts.push([fiber, Task::Stop]) unless @transferring
 
-        wait = Wait.new(current, :ready)
-        @ready.push(wait)
-        @waits[current] = wait
-        fiber.raise(Task::Stop)
-      ensure
-        @waits.delete(current) if wait && @waits[current].equal?(wait)
+        from_task(current) { fiber.raise(Task::Stop) }
       end
 
       # Hook: Fiber.set_scheduler(nil), alla fine di run. Manda {Task::Stop} ai
@@ -365,12 +360,13 @@ module Notcurses
         @transferring = false
       end
 
-      # Fiber.schedule da un task: il task riparte a un giro successivo.
-      def start_from_task(fiber, current)
+      # Il task current passa il controllo a un altro Fiber nel blocco (Fiber.schedule o {#stop} da un task): resta
+      # fra i pronti e riparte a un giro successivo.
+      def from_task(current)
         wait = Wait.new(current, :ready)
         @ready.push(wait)
         @waits[current] = wait
-        fiber.transfer
+        yield
       ensure
         @waits.delete(current) if @waits[current].equal?(wait)
       end
