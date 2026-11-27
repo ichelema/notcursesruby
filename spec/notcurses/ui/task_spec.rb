@@ -381,6 +381,31 @@ RSpec.describe Notcurses::UI::Task do
     waiter&.kill
   end
 
+  it "un task il cui ensure attende di nuovo all'uscita di run risulta finito, e sveglia un thread in wait" do
+    ev = new_loop
+    seen = []
+    task = waiter = nil
+    ev.post do
+      task = ev.async do
+        sleep 10
+      ensure
+        seen << :ensure
+        sleep 0.01 # all'uscita di run questa attesa non finisce più
+        seen << :never
+      end
+      waiter = Thread.new { task.wait }
+      sleep 0.01 until waiter.status == "sleep"
+      ev.stop
+    end
+    expect(run_loop(ev)).to eq(:stop)
+    expect(waiter.join(2)).to be_truthy
+    expect(waiter.value).to be_nil
+    expect(task).not_to be_alive
+    expect(seen).to eq([:ensure])
+  ensure
+    waiter&.kill
+  end
+
   # Il thread del ciclo è quello di run, non quello che crea il task: prima
   # del fix wait da un handler bloccava il processo, quindi un processo figlio.
   it "un task creato da un altro thread prima di run: wait da un handler solleva Error, stop lo ferma" do

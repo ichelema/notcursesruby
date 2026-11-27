@@ -58,22 +58,23 @@ module Notcurses
 
         @thread = Thread.current
         @scheduler = Fiber.scheduler
+        # prima di Fiber.schedule: il blocco può finire prima che schedule ritorni (body lo toglie)
+        @scheduler.track(self)
         Fiber.schedule { body }
-        # da un Fiber che un handler riprende con resume il blocco parte al giro successivo: se run esce prima,
-        # lo scheduler lo scarta (abandon)
-        @scheduler.defer(self) if @state == :pending
         self
       end
 
-      # Il task non partirà più: lo scheduler lo scarta alla chiusura, o
-      # {#stop} lo ferma prima che parta. Chi attende in {#wait} riparte.
+      # Il task non avanza più: {#stop} lo ferma prima che parta, o lo
+      # scheduler lo scarta alla chiusura (un task non ancora partito, o fermo
+      # in un ensure che attende di nuovo). Il task risulta finito, e chi
+      # attende in {#wait} riparte con nil.
       #
       # @return [void]
       # @api private
       def abandon
-        return unless @state == :pending
+        return if finished?
 
-        @state = :stopped
+        @state = :stopped if @state == :pending
         @finished.close
       end
 
@@ -162,6 +163,7 @@ module Notcurses
         nil # fermato: wait restituisce nil
       ensure
         @block = nil # la closure e il suo scope non restano legati al Task finito
+        @scheduler.untrack(self)
         @finished.close
       end
     end
