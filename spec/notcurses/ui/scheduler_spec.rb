@@ -473,6 +473,28 @@ RSpec.describe "Fiber scheduler di Notcurses::UI::EventLoop" do
     w&.close
   end
 
+  # Review di ICH-606, finding 2: un unblock rimasto in coda dopo il timeout dell'attesa riprendeva l'attesa
+  # successiva del task. ConditionVariable#wait passa da kernel_sleep anche su Ruby 3.1.
+  it "un unblock arrivato durante il timeout di un'attesa non accorcia l'attesa successiva del task" do
+    ev = new_loop
+    mutex = Thread::Mutex.new
+    cond = Thread::ConditionVariable.new
+    slept = nil
+    ev.post do
+      Fiber.schedule do
+        mutex.synchronize { cond.wait(mutex, 0.1) } # scade mentre l'handler sotto tiene il ciclo
+        t0 = clock
+        sleep 0.3
+        slept = clock - t0
+        ev.stop
+      end
+      Thread.new { (sleep 0.15) && mutex.synchronize { cond.signal } } # unblock in coda con il ciclo fermo
+      sleep 0.25 # bloccante: il timer del wait e l'unblock arrivano allo stesso giro
+    end
+    expect(run_loop(ev)).to eq(:stop)
+    expect(slept).to be >= 0.3
+  end
+
   it "run in un Fiber non bloccante senza scheduler: gli handler girano bloccanti" do
     ev = new_loop
     seen = nil

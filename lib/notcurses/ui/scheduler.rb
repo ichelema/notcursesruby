@@ -310,7 +310,11 @@ module Notcurses
       def wait(kind, timeout, timeout_value, io = nil, events = nil)
         wait = Wait.new(Fiber.current, kind, io, events)
         if timeout && !@closing
-          wait.timer = @event_loop.add_internal_timer([timeout.to_f, 0.0].max) { resume(wait, timeout_value) }
+          wait.timer = @event_loop.add_internal_timer([timeout.to_f, 0.0].max) do
+            # un unblock rimasto in coda per l'attesa scaduta riprenderebbe l'attesa successiva del task
+            take_unblock(wait.fiber) if @waits[wait.fiber].equal?(wait) && kind != :io
+            resume(wait, timeout_value)
+          end
         end
         suspend(wait)
       end
@@ -407,6 +411,17 @@ module Notcurses
         !IO.select([@sync_r], nil, nil, timeout && [timeout.to_f, 0.0].max).nil?
       ensure
         @sync_fiber = nil
+      end
+
+      # Toglie da @ready gli unblock di fiber; gli altri elementi tornano in coda. Solo dal thread del ciclo.
+      # @return [Boolean] true se ne ha trovato almeno uno
+      def take_unblock(fiber)
+        found = false
+        @ready.size.times do
+          entry = @ready.pop(true)
+          entry.equal?(fiber) ? (found = true) : @ready.push(entry)
+        end
+        found
       end
 
       # timeout_after bloccante (vedi la classe): come Timeout senza scheduler.
