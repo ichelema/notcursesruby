@@ -63,6 +63,7 @@ module Notcurses
         @transferring = false # il Fiber del ciclo è fermo in un transfer verso un task
         @sync_fiber = nil # Fiber in un'attesa bloccante (vedi la classe)
         @sync_r = @sync_w = nil
+        @deferred = [] # Task di async con il Fiber in :start (defer)
         @failure = nil
         @ran = false
         @closing = false
@@ -80,8 +81,14 @@ module Notcurses
       #   task: un'attesa del Fiber corrente torna al ciclo (vedi la classe)
       def transferring? = @transferring
 
-      # @return [Boolean] true da {#close}: i task non partono e non ripartono
-      def closed? = @closing
+      # Task di {EventLoop#async} il cui Fiber parte a un giro successivo
+      # (:start): {#close} scarta quelli ancora fermi lì.
+      #
+      # @param task [Task]
+      # @return [void]
+      def defer(task)
+        @deferred << task
+      end
 
       # @return [Boolean] true se un task è ripartito dall'ultima chiamata
       def ran!
@@ -301,7 +308,8 @@ module Notcurses
       # Hook: Fiber.set_scheduler(nil), alla fine di run. Manda {Task::Stop} ai
       # task in attesa, così i loro ensure girano; un task che dentro l'ensure
       # attende di nuovo resta fermo e non riparte, e un task non ancora
-      # partito non parte. Non solleva mai: se close solleva, Ruby 3.1 lascia
+      # partito non parte ({Task#abandon} per quelli di {EventLoop#async}). Non
+      # solleva mai: se close solleva, Ruby 3.1 lascia
       # lo scheduler impostato. La prima eccezione uscita da un task resta in
       # {#failure}. Idempotente: dopo un'interruzione run lo richiama.
       #
@@ -319,6 +327,7 @@ module Notcurses
           @failure ||= e
         end
         @waits.clear
+        @deferred.each(&:abandon) # solo quelli ancora non partiti: chi li attende riparte
         @sync_r&.close
         @sync_w&.close
         nil

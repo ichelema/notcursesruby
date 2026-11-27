@@ -59,7 +59,22 @@ module Notcurses
         @thread = Thread.current
         @scheduler = Fiber.scheduler
         Fiber.schedule { body }
+        # da un Fiber che un handler riprende con resume il blocco parte al giro successivo: se run esce prima,
+        # lo scheduler lo scarta (abandon)
+        @scheduler.defer(self) if @state == :pending
         self
+      end
+
+      # Il task non partirà più: lo scheduler lo scarta alla chiusura, o
+      # {#stop} lo ferma prima che parta. Chi attende in {#wait} riparte.
+      #
+      # @return [void]
+      # @api private
+      def abandon
+        return unless @state == :pending
+
+        @state = :stopped
+        @finished.close
       end
 
       # @return [Boolean] true finché il task non è finito (anche prima che
@@ -103,8 +118,7 @@ module Notcurses
         return self if finished?
 
         if @state == :pending
-          @state = :stopped
-          @finished.close
+          abandon
         elsif Fiber.current.equal?(@fiber)
           raise Stop
         else
@@ -124,11 +138,7 @@ module Notcurses
 
       private
 
-      def finished? = @finished.closed? || abandoned?
-
-      # Un task avviato da un Fiber che un handler riprende con resume parte al
-      # giro successivo: se run esce prima, lo scheduler lo scarta.
-      def abandoned? = @state == :pending && @scheduler&.closed?
+      def finished? = @finished.closed?
 
       # wait può sospendere il Fiber corrente: da un thread diverso da quello
       # del ciclo, o da un task che il ciclo ha avviato con transfer. Prima che
