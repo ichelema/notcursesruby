@@ -44,7 +44,7 @@ module Notcurses
         @thread = Thread.current
         @fiber = nil
         @scheduler = nil # lo scheduler che ha avviato il task
-        @state = :pending # :pending, :running, :done, :stopped, :failed
+        @state = :pending # :pending (non partito), :started, :stopped (fermato prima di partire)
         @value = nil
         @finished = Thread::Queue.new # chiusa alla fine del task: sveglia chi attende in wait
       end
@@ -57,7 +57,7 @@ module Notcurses
         return self if finished? # fermato prima di partire
 
         @scheduler = Fiber.scheduler
-        @fiber = Fiber.schedule { body }
+        Fiber.schedule { body }
         self
       end
 
@@ -142,13 +142,11 @@ module Notcurses
         return unless @state == :pending # fermato prima di partire
 
         @fiber = Fiber.current
-        @state = :running
+        @state = :started
         @value = @block.call(self)
-        @state = :done
       rescue Stop
-        @state = :stopped
+        nil # fermato: wait restituisce nil
       ensure
-        @state = :failed if @state == :running
         @finished.close
       end
     end
