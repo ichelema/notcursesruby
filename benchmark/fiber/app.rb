@@ -7,19 +7,21 @@
 #
 #   ruby -Ilib benchmark/fiber/app.rb MODELLO BANCO TTY
 #
-# MODELLO: threads (Notcurses::UI::App di oggi), fibers (FiberApp del
-# prototipo: i segnali di linea li alza il Fiber di input) o fibers-native
-# (FiberApp: i segnali di linea li alza notcurses). BANCO: keys, pipe, ctrlc.
+# MODELLO: threads (Notcurses::UI::App senza task: timer, FdPlane e post),
+# fibers (App con i task del Fiber scheduler di EventLoop, ICH-606: sleep e
+# lettura del pipe in un task) o fibers-pass (banco pipe: il task cede il
+# ciclo con sleep(0) dopo ogni blocco). Con tutti i modelli l'input lo legge
+# il thread di input. BANCO: keys, pipe, ctrlc.
 # Il processo diventa leader di sessione e prende TTY come terminale di
 # controllo. fd 3: righe per run.rb ("ready", "busy T", "lat-done",
 # "result JSON"); fd 4, solo nel banco pipe: il pipe dei dati. PIPE_MODE:
 # append (LogView#append di ogni blocco) o read (solo lettura).
 
+require "io/nonblock"
 require "json"
 require "notcurses"
 
 model, bench, tty_path = ARGV
-require_relative "fiber_app" unless model == "threads"
 
 TIOCSCTTY = 0x540E # Linux
 KEYS = Integer(ENV.fetch("KEYS"))
@@ -36,8 +38,7 @@ results = IO.new(3, "w")
 results.sync = true
 
 Notcurses::Context.open(output: tty_path, termtype: "xterm-256color", suppress_banners: true) do |nc|
-  app = (model == "threads") ? Notcurses::UI::App.new(nc) : FiberApp.new(nc)
-  run_opts = (model == "fibers-native") ? {linesigs: :native} : {}
+  app = Notcurses::UI::App.new(nc)
   out = {}
 
   case bench
@@ -56,9 +57,9 @@ Notcurses::Context.open(output: tty_path, termtype: "xterm-256color", suppress_b
         app.stop
       end
     end
-    # Ciclo fermo, senza input: tre segni dopo 0,2 s, IDLE_S / 4 e IDLE_S, con un timer (thread) o uno
-    # sleep (Fiber). Ognuna delle due finestre fra i segni contiene un risveglio e il render di uno schermo
-    # invariato: run.rb toglie questo costo fisso con la differenza fra le due finestre.
+    # Ciclo fermo, senza input: tre segni dopo 0,2 s, IDLE_S / 4 e IDLE_S, con un timer (threads) o uno
+    # sleep in un task (fibers). Ognuna delle due finestre fra i segni contiene un risveglio e il render di uno
+    # schermo invariato: run.rb toglie questo costo fisso con la differenza fra le due finestre.
     waits = [0.2, Float(ENV.fetch("IDLE_S")) / 4, Float(ENV.fetch("IDLE_S"))]
     idle = []
     chain = lambda do |rest|
@@ -72,7 +73,7 @@ Notcurses::Context.open(output: tty_path, termtype: "xterm-256color", suppress_b
       if model == "threads"
         chain.call(waits)
       else
-        app.async do
+        Fiber.schedule do
           waits.each do |wait|
             sleep wait
             idle << [now, cpu]
@@ -81,7 +82,7 @@ Notcurses::Context.open(output: tty_path, termtype: "xterm-256color", suppress_b
         end
       end
     end
-    out[:reason] = app.run(**run_opts)
+    out[:reason] = app.run
     out.merge!(t1: stamps, idle: idle, load_cpu: marks[:end][1] - marks[:first][1],
       renders: marks[:end][2] - marks[:first][2])
 
@@ -117,19 +118,21 @@ Notcurses::Context.open(output: tty_path, termtype: "xterm-256color", suppress_b
       # come in fase3-design.md, sezione 5: il thread di lettura passa i dati al ciclo con post
       Notcurses::FdPlane.new(log.plane, data) { |_f, bytes| app.post { handle.call(bytes) unless log.closed? } }
     else
-      data.nonblock = true # una read bloccante fermerebbe il thread, non solo il Fiber
+      data.nonblock = true # una read bloccante fermerebbe il thread, non solo il task
       pass = model == "fibers-pass"
-      app.async do
-        loop do
-          handle.call(data.readpartial(Notcurses::FdPlane::CHUNK_SIZE))
-          app.pass if pass
+      app.post do # Fiber.schedule solo durante run
+        Fiber.schedule do
+          loop do
+            handle.call(data.readpartial(Notcurses::FdPlane::CHUNK_SIZE))
+            sleep(0) if pass # cede il ciclo: render e input
+          end
+        rescue EOFError
+          nil
         end
-      rescue EOFError
-        nil
       end
     end
     app.post { results.puts "ready" }
-    out[:reason] = app.run(**run_opts)
+    out[:reason] = app.run
     out[:t1] = lat
 
   when "ctrlc"
@@ -147,8 +150,11 @@ Notcurses::Context.open(output: tty_path, termtype: "xterm-256color", suppress_b
         raise
       end
     end
-    app.post { results.puts "ready" }
-    out[:reason] = app.run(**run_opts)
+    app.post do
+      Fiber.schedule { sleep } if model == "fibers" # un task in attesa: lo scheduler non cambia Ctrl+C
+      results.puts "ready"
+    end
+    out[:reason] = app.run
     out[:t_int] ||= now
   end
 

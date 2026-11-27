@@ -2,8 +2,9 @@
 # Source: notcurses/src/lib/in.c
 # frozen_string_literal: true
 
-# Studio ICH-600: misura i thread di oggi di Notcurses::UI contro il
-# prototipo con i Fiber (fiber_app.rb) e stampa tabelle markdown.
+# Studio ICH-600, codice finale di ICH-606: misura Notcurses::UI senza task
+# (thread, timer, FdPlane e post) contro i task del Fiber scheduler di
+# EventLoop, e stampa tabelle markdown.
 #
 # Uso, dalla radice del repository:
 #
@@ -55,7 +56,7 @@ TIMEOUT_S = 30
 BENCH_MODELS = {
   "keys" => %w[threads fibers],
   "pipe" => %w[threads fibers fibers-pass],
-  "ctrlc" => %w[threads fibers fibers-native]
+  "ctrlc" => %w[threads fibers]
 }.freeze
 PIPE_MODES = %w[append read].freeze
 
@@ -243,9 +244,7 @@ def ctrlc_once(model, kind)
 end
 
 def ctrlc_bench(model)
-  %w[raw kitty].filter_map do |kind|
-    next if model == "fibers-native" && kind == "raw" # uguale a fibers: SIGINT del kernel
-
+  %w[raw kitty].map do |kind|
     runs = Array.new(REPS) { ctrlc_once(model, kind) }
     {model: model, kind: kind, med: median(runs.map { |r| r[:ms] }), max: runs.map { |r| r[:ms] }.max,
      reasons: runs.map { |r| r[:reason] }.tally, busy_left: median(runs.map { |r| r[:busy_left] })}

@@ -78,5 +78,13 @@ ICH-602 (GVL del rasterize) ([piano.md](piano.md)).
   thread (D1), quindi la sua latenza. Ctrl+C di kitty con un handler occupato: 101 ms con il thread di input, 450 ms
   con un Fiber. A ciclo fermo nessuno dei due modelli usa CPU misurabile; un risveglio con il render di uno schermo
   invariato 60x200 costa circa 0,5 ms.
+- Fiber scheduler finale di `EventLoop#run` (ICH-606, 2026-11-27, `ruby -Ilib benchmark/fiber/run.rb`, valori di
+  default, 4 core; `threads` è `App` senza task, che ora gira anche lui con lo scheduler installato): pipe in sola
+  lettura con un task 898–1002 MB/s su Ruby 4.0.7 e 1011 MB/s su 3.1.7, con 0,97–1,10 ms di CPU per MB, contro
+  55–160 MB/s e 6,5–18,5 ms per MB di `FdPlane` più `post` (il modello `threads` cambia molto fra le corse: 160 e
+  55 MB/s in due corse su 4.0.7). Con `sleep(0)` dopo ogni blocco il task fa 379–418 MB/s e 2 render in 0,04 s di
+  flusso: il limite di `max_fps` (60) tiene. Con `LogView#append` tutti i modelli fanno 1,9–2,6 MB/s. Tasto →
+  handler, mediane: 74–122 µs senza task e 81–106 µs con un task che dorme, sempre con il thread di input. Ctrl+C
+  di kitty con un handler occupato: 100,5–101,9 ms con e senza task, come prima dello scheduler (D1).
 - La gem `async` 2.46.0 chiede Ruby ≥ 3.3; l'ultima versione per Ruby 3.1 è la 2.24.0. `async` e `io-event` sono MIT.
   Scelta dell'utente del 2026-11-24: Async non diventa una dipendenza, lo studio sui Fiber la legge solo come spunto.
