@@ -27,6 +27,16 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   un `IO#close` da un handler di un IO su cui attende un task solleva `Error` invece di bloccare il processo.
   `benchmark/fiber/run.rb` misura il codice finale; il prototipo `benchmark/fiber/fiber_app.rb` esce dal
   repository.
+- `Notcurses::UI::EventLoop#async` (quindi anche `App#async`) crea un `Notcurses::UI::Task` (ICH-607): il blocco
+  gira in un Fiber dello scheduler di `run` e legge pipe e socket, o attende `sleep` e code, senza un thread. Il
+  blocco parte subito, fino alla prima attesa; un `async` fuori da `run` parte all'avvio del `run` successivo.
+  `Task#wait` restituisce il valore del blocco (`nil` per un task fermato o uscito con un'eccezione); da un handler,
+  su un task non finito, solleva `Error`, perché l'attesa fermerebbe il ciclo: attendi da un altro task
+  (`app.async { task.wait }`). `Task#stop` manda `Task::Stop`, che non deriva da `StandardError`, e l'`ensure` del
+  task gira prima che `stop` ritorni; da un altro thread solleva `Error` (usa `post { task.stop }`). `Task#pass`
+  cede il ciclo: serve a un task che legge un flusso sempre pronto, che altrimenti ferma input e render.
+  All'uscita di `run` i task vivi, anche quelli di `Fiber.schedule`, ricevono `Task::Stop`. `examples/demo.rb`
+  legge il processo figlio con un task e `IO.popen`, al posto di `Subprocess` e `post`.
 
 ### Modificato
 

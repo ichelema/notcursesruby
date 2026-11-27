@@ -120,18 +120,19 @@ module Notcurses
     # ascoltato: il ciclo serve solo timer, {#post} e resize.
     #
     # Task. Durante {#run} il ciclo è anche il Fiber scheduler del thread:
-    # +Fiber.schedule+ in un handler crea un task, un Fiber che parte subito e
-    # gira fino alla prima attesa. Quando un task attende I/O (un pipe, un
-    # socket), +sleep+, una Queue, un Mutex o +Timeout.timeout+, il ciclo
-    # continua a consegnare eventi, e riprende il task nel giro in cui l'attesa
-    # finisce. Gli handler restano sul Fiber del ciclo, che è bloccante: dentro
-    # un handler +sleep+ e l'I/O fermano il ciclo come senza task, anche in un
-    # Fiber che l'handler riprende con resume (per esempio +Enumerator#next+),
-    # e un +Fiber.schedule+ chiamato lì parte al giro successivo. Un task che
-    # legge un flusso sempre pronto non attende mai, e ferma il ciclo finché
-    # non cede con +sleep(0)+. All'uscita di run i task ancora in attesa
-    # ricevono un'eccezione che non deriva da StandardError, e i loro ensure
-    # girano.
+    # {#async} crea un {Task}, un Fiber che parte subito e gira fino alla prima
+    # attesa, e che si può fermare ({Task#stop}) e attendere ({Task#wait});
+    # +Fiber.schedule+ in un handler crea un task senza il {Task}. Quando un
+    # task attende I/O (un pipe, un socket), +sleep+, una Queue, un Mutex o
+    # +Timeout.timeout+, il ciclo continua a consegnare eventi, e riprende il
+    # task nel giro in cui l'attesa finisce. Gli handler restano sul Fiber del
+    # ciclo, che è bloccante: dentro un handler +sleep+ e l'I/O fermano il
+    # ciclo come senza task, anche in un Fiber che l'handler riprende con
+    # resume (per esempio +Enumerator#next+), e un +Fiber.schedule+ chiamato lì
+    # parte al giro successivo. Un task che legge un flusso sempre pronto non
+    # attende mai, e ferma il ciclo finché non cede con {Task#pass} (o
+    # +sleep(0)+). All'uscita di run i task ancora in attesa ricevono
+    # {Task::Stop}, che non deriva da StandardError, e i loro ensure girano.
     #
     # Chiudere un IO su cui un task attende. Su Ruby 4.0 un close da un altro
     # task o da un altro thread dà IOError al task; un close da un handler
@@ -195,6 +196,7 @@ module Notcurses
         @resize_requested = false
         @wake_w = nil
         @scheduler = nil # Scheduler durante run, se run lo ha installato
+        @tasks = [] # Task di async creati fuori da run: partono all'avvio di run
         @dirty = false # lavoro di un giro non ancora reso
         @frame = 0.0
         @last_render = 0.0
@@ -465,6 +467,31 @@ module Notcurses
         self
       end
 
+      # Crea un {Task}: il blocco gira in un Fiber dello scheduler di {#run},
+      # e attende I/O, +sleep+, Queue, Mutex e +Timeout.timeout+ senza fermare
+      # il ciclo. Durante run il blocco parte subito, fino alla prima attesa;
+      # fuori da run parte all'avvio del run successivo. Come +Fiber.schedule+:
+      # chiamato da un Fiber che un handler riprende con resume (per esempio
+      # +Enumerator#next+), il blocco parte al giro successivo.
+      #
+      # @yieldparam task [Task] il task
+      # @return [Task]
+      # @raise [ArgumentError] senza blocco
+      # @raise [Error] durante run, da un thread diverso da quello del ciclo
+      # @raise [Exception] l'eccezione che il blocco solleva prima della prima
+      #   attesa
+      def async(&block)
+        raise ArgumentError, 'async: serve un blocco' unless block
+
+        if @running && !Fiber.scheduler.is_a?(Scheduler)
+          raise Error, 'EventLoop#async: chiamalo dal thread del ciclo; da un altro thread usa post { async { ... } }'
+        end
+
+        task = Task.new(block)
+        @running ? task.start : @tasks << task
+        task
+      end
+
       # Esegue il blocco una volta, dopo seconds secondi (dal thread del ciclo).
       #
       # @param seconds [Numeric] attesa, >= 0
@@ -666,6 +693,7 @@ module Notcurses
       # pipe di prontezza già vuoto.
       def cycle(watched, wake_r)
         @scheduler&.loop_fiber = Fiber.current
+        @tasks.shift.start until @tasks.empty? # dal Fiber del ciclo: ogni task parte subito
         wait = false
         until @stop_requested
           # prima di select_timeout: un IO chiuso rende pronto il task

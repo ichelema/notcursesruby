@@ -6,10 +6,10 @@ module Notcurses
   module UI
     # Fiber scheduler di {EventLoop#run} (ICH-606): {EventLoop#run} lo
     # installa per la sua durata. I task sono i Fiber non bloccanti creati con
-    # +Fiber.schedule+; quando attendono (I/O, sleep, Queue, Mutex, Timeout)
-    # tornano al Fiber del ciclo, che li riprende nel giro in cui l'attesa
-    # finisce. Gli handler girano sul Fiber del ciclo, che è bloccante: Ruby non
-    # chiama gli hook da lì.
+    # +Fiber.schedule+ e con {EventLoop#async}; quando attendono (I/O, sleep,
+    # Queue, Mutex, Timeout) tornano al Fiber del ciclo, che li riprende nel
+    # giro in cui l'attesa finisce. Gli handler girano sul Fiber del ciclo, che
+    # è bloccante: Ruby non chiama gli hook da lì.
     #
     # I Fiber ripartono con transfer: Fiber.yield tornerebbe a chi ha fatto
     # resume, che con Fiber annidati non è il ciclo. Un task che finisce torna
@@ -36,11 +36,6 @@ module Notcurses
     #
     # @api private
     class Scheduler
-      # Eccezione con cui {#close} ferma i task ancora in attesa all'uscita di
-      # run. Non deriva da StandardError: un +rescue => e+ del task non la
-      # ferma, e il suo ensure gira.
-      class Stop < Exception; end # rubocop:disable Lint/InheritException
-
       # Attesa in corso di un task. kind: :io (io_wait), :block (block),
       # :sleep (kernel_sleep), :ready (pronto a ripartire: yield, sleep(0), un
       # task che ha avviato un Fiber), :start (task non ancora partito).
@@ -80,6 +75,13 @@ module Notcurses
       # @return [Boolean] true se un task può ripartire senza attendere: il
       #   giro successivo del ciclo non attende
       def ready? = !(@ready.empty? && @interrupts.empty?)
+
+      # @return [Boolean] true se il ciclo è fermo in un transfer verso un
+      #   task: un'attesa del Fiber corrente torna al ciclo (vedi la classe)
+      def transferring? = @transferring
+
+      # @return [Boolean] true da {#close}: i task non partono e non ripartono
+      def closed? = @closing
 
       # @return [Boolean] true se un task è ripartito dall'ultima chiamata
       def ran!
@@ -277,8 +279,32 @@ module Notcurses
         @event_loop.unschedule(timer) if timer
       end
 
-      # Hook: Fiber.set_scheduler(nil), alla fine di run. Manda {Stop} ai task
-      # in attesa, così i loro ensure girano; un task che dentro l'ensure
+      # Manda {Task::Stop} a fiber, se attende in uno di questi hook
+      # ({Task#stop}). Dal Fiber del ciclo il task riparte subito. Da un task,
+      # il task chiamante va fra i pronti e riparte a un giro successivo, dopo
+      # la fine (o la nuova attesa) di fiber, come in {#fiber}. Da un Fiber che
+      # un handler riprende con resume, fiber la riceve al giro successivo: lì
+      # un transfer solleverebbe FiberError.
+      #
+      # @param fiber [Fiber]
+      # @return [void]
+      def stop(fiber)
+        return if @closing || !@waits.key?(fiber)
+
+        current = Fiber.current
+        return interrupt(fiber, Task::Stop) if current.equal?(@loop_fiber)
+        return @interrupts.push([fiber, Task::Stop]) unless @transferring
+
+        wait = Wait.new(current, :ready)
+        @ready.push(wait)
+        @waits[current] = wait
+        fiber.raise(Task::Stop)
+      ensure
+        @waits.delete(current) if wait && @waits[current].equal?(wait)
+      end
+
+      # Hook: Fiber.set_scheduler(nil), alla fine di run. Manda {Task::Stop} ai
+      # task in attesa, così i loro ensure girano; un task che dentro l'ensure
       # attende di nuovo resta fermo e non riparte, e un task non ancora
       # partito non parte. Non solleva mai: se close solleva, Ruby 3.1 lascia
       # lo scheduler impostato. La prima eccezione uscita da un task resta in
@@ -291,8 +317,8 @@ module Notcurses
         @waits.each_pair.to_a.each do |fiber, wait|
           next if wait.kind == :start || !@waits.key?(fiber) || !fiber.alive?
 
-          switch { fiber.raise(Stop) }
-        rescue Stop
+          switch { fiber.raise(Task::Stop) }
+        rescue Task::Stop
           nil
         rescue Exception => e # rubocop:disable Lint/RescueException -- gli altri task vanno fermati lo stesso
           @failure ||= e
