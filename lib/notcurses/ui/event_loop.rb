@@ -298,10 +298,11 @@ module Notcurses
       # Uno scheduler di un'altra libreria già attivo nel thread (per esempio
       # dentro +Async { }+) fa sollevare Error. Un run in un handler di un altro
       # run usa lo scheduler di quello: i suoi task restano fermi fino alla
-      # fine del run annidato, e i task avviati dal run annidato restano vivi
-      # fino all'uscita del run esterno. Chiamato da un Fiber non bloccante, run esegue il
-      # ciclo in un contesto bloccante; su Ruby 3.1 è un Fiber nuovo, e gli
-      # handler non vedono i valori locali al Fiber (+Thread.current[:x]+).
+      # fine del run annidato, e i task avviati dal run annidato non avanzano
+      # finché il run annidato non esce e restano vivi fino all'uscita del run
+      # esterno. Chiamato da un Fiber non bloccante, run esegue il ciclo in un
+      # contesto bloccante; su Ruby 3.1 è un Fiber nuovo, e gli handler non
+      # vedono i valori locali al Fiber (+Thread.current[:x]+).
       # Un'eccezione che un task non gestisce, anche nel suo ensure all'uscita,
       # esce da run come quella di un handler.
       #

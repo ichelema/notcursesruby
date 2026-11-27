@@ -342,17 +342,19 @@ RSpec.describe Notcurses::UI::Task do
     end
   end
 
-  it "un run annidato usa lo scheduler del run esterno: i suoi task restano vivi fino all'uscita di quello" do
+  it "un run annidato usa lo scheduler del run esterno: i suoi task non avanzano e restano vivi fino all'uscita di quello" do
     ev = new_loop
     seen = []
     ev.post do
       inner = Notcurses::UI::EventLoop.new(nc)
       task = inner.async do
+        sleep 0.01 # non finisce durante i 0,1 s del run annidato
+        seen << :slept
         sleep 10
       ensure
         seen << :ensure
       end
-      inner.post { inner.stop }
+      inner.after(0.1) { inner.stop }
       inner.run
       seen << [:inner_done, task.alive?]
       ev.stop

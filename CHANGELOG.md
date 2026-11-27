@@ -37,8 +37,8 @@ Tutti i cambi rilevanti di notcursesruby. Formato basato su
   `Enumerator#next`), dove il task si ferma dopo la fine dell'handler; da un altro thread solleva `Error` (usa
   `post { task.stop }`). `Task#pass` cede il ciclo: serve a un task che legge un flusso sempre pronto, che
   altrimenti ferma input e render. All'uscita di `run` i task vivi, anche quelli di `Fiber.schedule`, ricevono
-  `Task::Stop`; un `run` annidato usa lo scheduler del `run` esterno, e i suoi task si fermano all'uscita di
-  quello. `examples/demo.rb` legge il processo figlio con un task e `IO.popen`, al posto di `Subprocess` e `post`.
+  `Task::Stop`; un `run` annidato usa lo scheduler del `run` esterno: i task che avvia non avanzano finché il `run`
+  annidato non esce, e si fermano all'uscita del `run` esterno. `examples/demo.rb` legge il processo figlio con un task e `IO.popen`, al posto di `Subprocess` e `post`.
 
 ### Modificato
 
