@@ -154,8 +154,9 @@ altri thread e trap ──► post: Queue + un byte sul pipe di risveglio (invar
    `fiber_interrupt` usano solo `Thread::Queue` e `write_nonblock`, senza Mutex: valgono anche da un `trap`. Le
    scadenze degli hook usano la lista dei `Timer` di `EventLoop` (ordine `(deadline, seq)`, `CLOCK_MONOTONIC`); un
    timer interno non conta come lavoro, quindi non causa un render.
-2. **Ciclo.** `run` installa lo scheduler solo per la sua durata. Se `Fiber.scheduler` è già impostato, per
-   esempio dentro `Async { }`, `run` solleva `Error` (D5). Il giro resta quello di
+2. **Ciclo.** `run` installa lo scheduler solo per la sua durata. Se `Fiber.scheduler` è già impostato da
+   un'altra libreria, per esempio dentro `Async { }`, `run` solleva `Error` (D5). Un `run` annidato in un handler di
+   un altro `run` resta permesso e usa lo scheduler di quello (D7). Il giro resta quello di
    [fase3-design.md](fase3-design.md), sezione 1, con due cambi: i task pronti ripartono prima dell'attesa, e con un
    task ancora pronto il ciclo fa al massimo `max_fps` render al secondo, keyword di `run` con default 60 (D4).
    Quando il ciclo sta per attendere, il render avviene subito.
@@ -204,6 +205,7 @@ altri thread e trap ──► post: Queue + un byte sul pipe di risveglio (invar
 | D4 | Render con task sempre pronti | keyword `max_fps:` di `run`, default 60 | limite fisso di 60 al secondo |
 | D5 | Scheduler già attivo (Async) | `run` solleva `Error`; la cooperazione diventa una issue a parte se serve | `run` coopera con lo scheduler presente |
 | D6 | Warning di `IO::Buffer` (Ruby 4.0) | lo scheduler lo consuma all'avvio | solo documentato nello YARD |
+| D7 | `run` annidato in un handler (ICH-606, 2026-11-27) | permesso: `Error` solo con lo scheduler di un'altra libreria; i task del run esterno restano fermi fino alla fine del run annidato | `Error` anche per un `run` annidato (D5 alla lettera) |
 
 ## 7. Issue di implementazione
 
