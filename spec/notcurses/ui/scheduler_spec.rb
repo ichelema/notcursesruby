@@ -473,6 +473,32 @@ RSpec.describe "Fiber scheduler di Notcurses::UI::EventLoop" do
     w&.close
   end
 
+  # Review di ICH-606, finding 1: un unblock arrivato prima che l'attesa bloccante registrasse il Fiber si perdeva,
+  # e il processo restava fermo. In un processo figlio con timeout (regola 11).
+  it "un Enumerator#next su una Queue riempita da un altro thread non perde risvegli" do
+    script = child_script(<<~RUBY)
+      queue = Thread::Queue.new
+      count = 20_000
+      ev.post do
+        producer = Thread.new do
+          count.times do |i|
+            queue << i
+            Thread.pass
+          end
+        end
+        e = Enumerator.new { |y| loop { y << queue.pop } }
+        got = Array.new(count) { e.next }
+        producer.join
+        puts "consegnati: \#{got.size}, in ordine: \#{got == (0...count).to_a}"
+        ev.stop
+      end
+    RUBY
+    output, status, timed_out = NcHelpers.run_child(script, timeout: 30)
+    expect(timed_out).to be(false), output
+    expect(status).to be_success, output
+    expect(output).to eq("consegnati: 20000, in ordine: true\nok\n")
+  end
+
   # Review di ICH-606, finding 2: un unblock rimasto in coda dopo il timeout dell'attesa riprendeva l'attesa
   # successiva del task. ConditionVariable#wait passa da kernel_sleep anche su Ruby 3.1.
   it "un unblock arrivato durante il timeout di un'attesa non accorcia l'attesa successiva del task" do

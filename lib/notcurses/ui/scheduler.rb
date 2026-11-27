@@ -172,15 +172,15 @@ module Notcurses
       # @param fiber [Fiber]
       # @return [void]
       def unblock(_blocker, fiber)
-        if fiber.equal?(@sync_fiber)
-          begin
-            @sync_w.write_nonblock("\0", exception: false)
-          rescue IOError
-            nil # pipe chiuso da close: l'attesa è già finita
-          end
-        else
-          @ready.push(fiber)
-          @event_loop.wake
+        @ready.push(fiber)
+        @event_loop.wake
+        # dopo il push: un'attesa bloccante in corso si sveglia e cerca il suo Fiber in @ready (sync_wait)
+        return unless @sync_fiber
+
+        begin
+          @sync_w.write_nonblock("\0", exception: false)
+        rescue IOError
+          nil # pipe chiuso da close: l'attesa è già finita
         end
       end
 
@@ -402,13 +402,25 @@ module Notcurses
         [IO::READABLE, IO::WRITABLE, IO::PRIORITY].each_with_index.sum { |event, i| ready[i].empty? ? 0 : event }
       end
 
-      # block e sleep bloccanti (vedi la classe): unblock scrive un byte sul pipe.
+      # block e sleep bloccanti (vedi la classe). unblock mette il Fiber in @ready, e poi, se un'attesa bloccante è
+      # in corso, scrive un byte sul pipe: il Fiber si cerca in @ready prima e dopo ogni IO.select, così un unblock
+      # arrivato prima che @sync_fiber fosse impostato non si perde. Un byte per un altro Fiber sveglia l'attesa, che
+      # non trova il suo Fiber e riattende.
       # @return [Boolean] true se sbloccato, false a timeout scaduto
       def sync_wait(timeout)
+        fiber = Fiber.current
+        deadline = timeout && (clock + [timeout.to_f, 0.0].max)
         @sync_r, @sync_w = IO.pipe unless @sync_r
-        nil while @sync_r.read_nonblock(64, exception: false).is_a?(String) # un byte rimasto da un unblock in ritardo
-        @sync_fiber = Fiber.current
-        !IO.select([@sync_r], nil, nil, timeout && [timeout.to_f, 0.0].max).nil?
+        @sync_fiber = fiber
+        loop do
+          nil while @sync_r.read_nonblock(64, exception: false).is_a?(String)
+          return true if take_unblock(fiber)
+
+          remaining = deadline && (deadline - clock)
+          return false if remaining && remaining <= 0
+
+          IO.select([@sync_r], nil, nil, remaining)
+        end
       ensure
         @sync_fiber = nil
       end
@@ -423,6 +435,8 @@ module Notcurses
         end
         found
       end
+
+      def clock = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
       # timeout_after bloccante (vedi la classe): come Timeout senza scheduler.
       def sync_timeout(duration, exception, message)
