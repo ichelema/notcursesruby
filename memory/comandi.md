@@ -33,6 +33,12 @@ TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 LC_ALL=C.UTF-8 timeout -k 5
 # il diff tocca grapheme o Unicode? Se sì, esegui le spec cambiate anche con Ruby 3.1.7 (regola 21)
 git diff origin/master...HEAD | grep -E 'grapheme|\\X|\\p\{|unicode_normalize|strwidth|\\u[0-9A-Fa-f{]'
 .claude/scripts/spec31 spec/...
+
+# Ruby 3.4.12 in locale, senza bundle (gem ffi e rspec in ~/.claude/tmp/gems34): per un comportamento di Ruby che
+# cambia fra 3.1 e 4.0, per esempio i Fiber (lotto 17: un difetto visibile solo su 3.4.12)
+G=$HOME/.claude/tmp/gems34
+env GEM_HOME=$G GEM_PATH=$G PATH="$(mise where ruby@3.4.12)/bin:$PATH" TERM=xterm-256color LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 timeout -k 5 -s KILL 300 $G/bin/rspec -I lib spec/... < /dev/null
 ```
 
 - Il gate esegue la suite con la coverage e la suite casuale **in parallelo** (scelta dell'utente del 2026-11-24):

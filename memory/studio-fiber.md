@@ -136,6 +136,32 @@ Causa: Ruby passa dall'hook solo `rb_nogvl` con il flag `RB_NOGVL_OFFLOAD_SAFE` 
    (inferenza da async 2.46.0, `scheduler.rb:129-173`, non eseguito). `IO.select` di oggi
    (`event_loop.rb:332`) sotto uno scheduler senza l'hook `io_select` (3.1) ferma tutto il reactor.
 
+Fatti provati nel lotto 17 (ICH-606, 2026-11-27), su Ruby 3.1.7, 3.4.12 e 4.0.7:
+
+9. Un Fiber avviato con `transfer` torna, quando finisce, al Fiber più interno della catena dei `resume` partita dal
+   Fiber radice, anche se il ciclo non è il Fiber radice. L'eccezione che il Fiber non gestisce esce lì.
+   `Fiber#raise` raggiunge un Fiber fermo in `transfer`.
+10. Se l'hook `close` solleva, Ruby 3.1.7 lascia lo scheduler impostato (Ruby 4.0.7 lo toglie): `close` non deve
+    sollevare. `sleep(0)` chiama `kernel_sleep(0)`. `Timeout.timeout` chiama `timeout_after` anche su 3.1.7; su 4.0
+    passa un'istanza di `Timeout::ExitException`, il cui `exception(*)` restituisce `self`, quindi
+    `fiber.raise(exc, msg)` conserva l'identità che `Timeout` controlla.
+11. I Fiber di `Enumerator` (e ogni `Fiber.new`) non sono bloccanti: un `e.next` in un handler con un'attesa nel
+    corpo passa dagli hook, mentre il Fiber del ciclo è fermo nel `resume`. Un `transfer` verso il ciclo da lì
+    solleva `FiberError` (attempt to transfer to a resuming fiber): lo scheduler attende in modo bloccante quando il
+    ciclo non è fermo in un suo `transfer`.
+12. Ruby 4.0: `IO#close` di un IO su cui attende un Fiber chiama `fiber_interrupt`, poi attende la fine
+    dell'operazione (`thread.c:2914-2928`); il Fiber, per finirla, prende il mutex che close tiene
+    (`thread.c:1826-1840`). Da un Fiber bloccante dello stesso thread close dorme per sempre: lo scheduler solleva
+    `Error`. Ruby chiama `fiber_interrupt` una volta per ogni operazione aperta, anche due per lo stesso Fiber.
+13. Ruby 3.1–3.4: `IO#close` dallo stesso thread di un IO su cui attende un Fiber lascia l'attesa in una lista sullo
+    stack di close (`thread.c:2682-2750` di 3.4.12) e solleva `IOError` (stream closed in another thread) in chi
+    chiude; quando il Fiber esce dall'attesa, scrive sulla lista rimossa: segfault su 3.4.12, `TypeError` (expected
+    mutex) in un'altra prova. Difetto di Ruby, documentato nello YARD di `EventLoop`. Ruby 3.4 richiama `io_wait`
+    su un IO chiuso senza sollevare: lo scheduler solleva `IOError` (closed stream).
+14. Un `unblock` da un altro thread può arrivare prima che l'hook `block` registri l'attesa, e dopo il timeout
+    dell'attesa a cui era destinato (review di ICH-606, finding 1 e 2): l'attesa bloccante cerca il suo Fiber nella
+    coda dei pronti, e un timeout toglie gli `unblock` rimasti per quel Fiber.
+
 ## 4. Proposta di design
 
 ```text

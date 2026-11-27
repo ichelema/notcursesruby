@@ -6,8 +6,8 @@ gruppo o chiudi la fase. Il prossimo passo è in [handoff.md](../handoff.md).
 
 ## Ordine dei lavori
 
-Scelto dall'utente il 2026-11-24: gruppo H, una issue per lotto (ICH-604 fatta nel lotto 16, PR #39; poi ICH-606,
-poi ICH-607), studio ICH-601,
+Scelto dall'utente il 2026-11-24: gruppo H, una issue per lotto (ICH-604 fatta nel lotto 16, PR #39; ICH-606 fatta
+nel lotto 17, PR #40; poi ICH-607), studio ICH-601,
 studio ICH-602, gruppo I, gruppi A, B, C (dopo la riprogettazione), lotti 10–14, gruppi D, E, F, G, lotto 15. Il
 gruppo H e gli studi vengono prima dei bug High e Medium. I gruppi prendono i numeri di lotto 16 e seguenti quando
 partono; i numeri 10–15 restano quelli della storia in git. ICH-603, nata nel lotto 9c, non ha gruppo: lo sceglie
@@ -35,7 +35,7 @@ l'utente. ICH-463 è in Blocked ([fase-backlog.md](fase-backlog.md)).
 
 | Gruppo | Issue | Nota |
 | --- | --- | --- |
-| H | ICH-606, ICH-607 | Un lotto per issue, in quest'ordine: ICH-606 blocca ICH-607. Design in [studio-fiber.md](studio-fiber.md) |
+| H | ICH-607 | `app.async` e `Task` sopra lo scheduler di ICH-606 (lotto 17). Design in [studio-fiber.md](studio-fiber.md) |
 | I | ICH-605 | Da sola: solo la label `Performance`, `1_create-worktree` può chiedere il prefisso |
 | A | ICH-542 | Bug High, da solo |
 | B | ICH-560, ICH-567, ICH-561 | Bug Medium: `Direct` e blit `:pixel`; ICH-560 chiede l'approvazione della regola 1 |

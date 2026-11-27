@@ -19,10 +19,10 @@ Windows.
   Fase 5 blitter su Kitty e Ghostty e porting su macOS (PR #20 e #21). Correzioni della revisione del 2026-11-06: 17
   lotti e ICH-465 fuori dai lotti, PR #2…#19.
 - Fase «Issue in Backlog», dal 2026-11-15, base `ad0315b`: lotti 1–9c fatti (PR #22…#37), studio ICH-600 (PR #38,
-  merge `e90c5d3`) e lotto 16 (ICH-604, PR #39, merge `185cb82`). La storia dei lotti sta in git, nelle PR e in
-  Linear. Modello passato ai comandi del workflow: `opus`.
-- Al 2026-11-25, dopo il lotto 16, restano 34 issue aperte: 13 nei lotti 10–15, 18 senza lotto (con ICH-603 del
-  lotto 9c e ICH-605…607 dello studio), 2 studi di design (ICH-601, ICH-602), ICH-463 in Blocked.
+  merge `e90c5d3`), lotto 16 (ICH-604, PR #39, merge `185cb82`) e lotto 17 (ICH-606, PR #40, merge `e524c00`). La
+  storia dei lotti sta in git, nelle PR e in Linear. Modello passato ai comandi del workflow: `opus`.
+- Al 2026-11-27, dopo il lotto 17, restano 33 issue aperte: 13 nei lotti 10–15, 17 senza lotto (con ICH-603 del
+  lotto 9c e ICH-605 e ICH-607 dello studio), 2 studi di design (ICH-601, ICH-602), ICH-463 in Blocked.
 
 ## Criteri dei lotti
 
