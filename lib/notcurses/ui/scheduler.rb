@@ -50,6 +50,9 @@ module Notcurses
       CLOSED = "closed stream"
       private_constant :Wait, :CLOSED
 
+      # {#io_sets} senza task in attesa di un IO: nessuna allocazione per giro
+      NO_IO = [[].freeze, [].freeze, [].freeze].freeze
+
       # @return [Exception, nil] la prima eccezione uscita da un task durante
       #   {#close}
       attr_reader :failure
@@ -94,6 +97,8 @@ module Notcurses
       # @return [Array(Array<IO>, Array<IO>, Array<IO>)] lettura, scrittura,
       #   priorità
       def io_sets
+        return NO_IO if @waits.empty?
+
         sets = [[], [], []]
         @waits.each_value do |wait|
           next unless wait.kind == :io
@@ -118,19 +123,8 @@ module Notcurses
       # @return [void]
       # @raise [Exception] l'eccezione che un task non gestisce
       def resume_ready(readable = nil, writable = nil, priority = nil, &live)
-        resume_io(readable, writable, priority, &live) if readable || writable || priority
-        # Ruby 4.0 chiama fiber_interrupt una volta per ogni operazione aperta sull'IO, anche due per lo stesso
-        # task: la seconda colpirebbe l'attesa successiva del task
-        interrupted = {}.compare_by_identity
-        @interrupts.size.times do
-          break unless yield
-
-          fiber, exception = @interrupts.pop(true)
-          next if interrupted.key?(fiber)
-
-          interrupted[fiber] = true
-          interrupt(fiber, exception)
-        end
+        resume_io(readable, writable, priority, &live) if !@waits.empty? && (readable || writable || priority)
+        resume_interrupts(&live) unless @interrupts.empty?
         @ready.size.times do
           break unless yield
 
@@ -364,6 +358,21 @@ module Notcurses
         return unless @waits.key?(fiber)
 
         switch { message ? fiber.raise(exception, message) : fiber.raise(exception) }
+      end
+
+      # Ruby 4.0 chiama fiber_interrupt una volta per ogni operazione aperta sull'IO, anche due per lo stesso task:
+      # la seconda colpirebbe l'attesa successiva del task, quindi vale una sola per task e per giro.
+      def resume_interrupts
+        interrupted = {}.compare_by_identity
+        @interrupts.size.times do
+          break unless yield
+
+          fiber, exception = @interrupts.pop(true)
+          next if interrupted.key?(fiber)
+
+          interrupted[fiber] = true
+          interrupt(fiber, exception)
+        end
       end
 
       def resume_io(readable, writable, priority)

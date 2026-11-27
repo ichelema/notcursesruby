@@ -668,18 +668,15 @@ module Notcurses
         @scheduler&.loop_fiber = Fiber.current
         wait = false
         until @stop_requested
-          if @scheduler
-            readers, writers, priority = @scheduler.io_sets # prima di select_timeout: un IO chiuso rende pronto il task
-            begin
-              ready = IO.select(watched + readers, writers, priority, wait ? select_timeout : 0)
-            rescue IOError
-              # un altro thread ha chiuso l'IO di un task durante IO.select: il giro dopo io_sets lo trova chiuso
-              raise unless [readers, writers, priority].any? { |ios| ios.any?(&:closed?) }
+          # prima di select_timeout: un IO chiuso rende pronto il task
+          readers, writers, priority = @scheduler ? @scheduler.io_sets : Scheduler::NO_IO
+          begin
+            ready = IO.select(readers.empty? ? watched : watched + readers, writers, priority, wait ? select_timeout : 0)
+          rescue IOError
+            # un altro thread ha chiuso l'IO di un task durante IO.select: il giro dopo io_sets lo trova chiuso
+            raise unless [readers, writers, priority].any? { |ios| ios.any?(&:closed?) }
 
-              ready = nil
-            end
-          else
-            IO.select(watched, nil, nil, wait ? select_timeout : 0)
+            ready = nil
           end
           wait = true
           drain(wake_r)
