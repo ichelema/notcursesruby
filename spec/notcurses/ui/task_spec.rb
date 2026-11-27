@@ -322,6 +322,44 @@ RSpec.describe Notcurses::UI::Task do
     end
   end
 
+  # Il thread del ciclo è quello di run, non quello che crea il task: prima
+  # del fix wait da un handler bloccava il processo, quindi un processo figlio.
+  it "un task creato da un altro thread prima di run: wait da un handler solleva Error, stop lo ferma" do
+    script = <<~RUBY
+      require "notcurses"
+      $stdout.sync = true
+      opts = { output: "/dev/null", termtype: "xterm-256color", suppress_banners: true, drain_input: true }
+      Notcurses::Context.open(**opts) do |nc|
+        ev = Notcurses::UI::EventLoop.new(nc)
+        ev.after(5) { ev.stop }
+        seen = []
+        task = Thread.new do
+          ev.async do
+            sleep 10
+          ensure
+            seen << :ensure
+          end
+        end.value
+        ev.post do
+          begin
+            task.wait
+          rescue Notcurses::Error => e
+            seen << e.class
+          end
+          task.stop
+          seen << task.alive?
+          ev.stop
+        end
+        ev.run
+        puts "seen \#{seen.inspect}"
+      end
+    RUBY
+    output, status, timed_out = NcHelpers.run_child(script, timeout: 10)
+    expect(timed_out).to be(false), output
+    expect(output).to include("seen [Notcurses::Error, :ensure, false]")
+    expect(status).to be_success
+  end
+
   it "all'uscita di run i task vivi ricevono Task::Stop, anche quelli di Fiber.schedule, e i loro ensure girano" do
     ev = new_loop
     seen = []

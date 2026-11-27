@@ -41,7 +41,7 @@ module Notcurses
       # @api private
       def initialize(block)
         @block = block
-        @thread = Thread.current
+        @thread = nil # il thread del ciclo, da start: async fuori da run può arrivare da un altro thread
         @fiber = nil
         @scheduler = nil # lo scheduler che ha avviato il task
         @state = :pending # :pending (non partito), :started, :stopped (fermato prima di partire)
@@ -56,6 +56,7 @@ module Notcurses
       def start
         return self if finished? # fermato prima di partire
 
+        @thread = Thread.current
         @scheduler = Fiber.scheduler
         Fiber.schedule { body }
         self
@@ -96,7 +97,7 @@ module Notcurses
       # @raise [Error] da un thread diverso da quello del ciclo
       # @raise [Stop] chiamato dal task stesso
       def stop
-        unless Thread.current.equal?(@thread)
+        if @thread && !Thread.current.equal?(@thread)
           raise Error, "Task#stop: chiamalo dal thread del ciclo; da un altro thread usa post { task.stop }"
         end
         return self if finished?
@@ -129,10 +130,11 @@ module Notcurses
       # giro successivo: se run esce prima, lo scheduler lo scarta.
       def abandoned? = @state == :pending && @scheduler&.closed?
 
-      # wait può sospendere il Fiber corrente: da un altro thread, o da un task
-      # che il ciclo ha avviato con transfer.
+      # wait può sospendere il Fiber corrente: da un thread diverso da quello
+      # del ciclo, o da un task che il ciclo ha avviato con transfer. Prima che
+      # il task parta il thread del ciclo non si conosce: solo da un task.
       def suspendable?
-        return true unless Thread.current.equal?(@thread)
+        return true if @thread && !Thread.current.equal?(@thread)
 
         scheduler = Fiber.scheduler
         !Fiber.current.blocking? && scheduler.is_a?(Scheduler) && scheduler.transferring?
