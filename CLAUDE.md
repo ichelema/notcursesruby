@@ -165,7 +165,8 @@ legge quel file. Committalo da solo con `docs(handoff): <stato in breve> [skip c
 in un worktree e non può scrivere nel checkout principale, mostra all'utente il testo nuovo e chiedigli di salvarlo da
 una sessione nel checkout principale. Tre sezioni:
 
-- **Stato**: data, ultimo merge su `master` (PR e commit), lotto, branch, worktree e PR in corso, ultima suite.
+- **Stato**: data, ultimo merge su `master` (PR e commit), lotto, branch, worktree e PR in corso, ultima suite: la
+  CI di `master` sull'ultimo merge (run e esito), o l'ultimo gate se un lotto è in corso.
 - **Prossimo passo**: passi numerati, con il comando da proporre all'utente. Il primo passo rimanda ai passi 1–5 di
   «Come riprendere il lavoro».
 - **Decisioni che servono all'utente**: le domande aperte, oppure «Nessuna».
