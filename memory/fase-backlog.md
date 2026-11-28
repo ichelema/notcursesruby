@@ -121,13 +121,12 @@ Lo studio ICH-600 è il modello: design e misure in [studio-fiber.md](studio-fib
 
 Valgono alla chiusura di ogni lotto e alla fine della fase. I comandi sono in [comandi.md](comandi.md).
 
-- Suite completa: 0 fallimenti, in ordine normale con la coverage (un'esecuzione sola) e in ordine casuale con un
-  seme nuovo.
-- `ruby -w -Ilib -e 'require "notcurses"'` senza warning; `bundle exec rubocop` 0 offense.
-- `yard doc --fail-on-warning` 0 warning, `yard stats --list-undoc` 100 %; `gem build` senza warning.
-- Coverage >= 98 % totale e >= 90 % per file; `spec/coverage_spec.rb` e `spec/notcurses/api_spec.rb` passano.
-- CI verde su tutta la matrice sull'ultimo commit di `master` che ha una CI: i commit `[skip ci]` dopo di lui cambiano
-  solo documenti o commenti.
+- CI verde su tutta la matrice sull'ultimo commit di `master` che ha una CI, di solito il merge del lotto: i commit
+  `[skip ci]` dopo di lui cambiano solo documenti o commenti. La CI sostituisce i controlli in locale (scelta
+  dell'utente del 2026-11-28): ogni job esegue `ruby -w`, la suite in ordine normale e quella in ordine casuale con
+  un seme nuovo; nel job 4.0.9 la suite in ordine normale è quella con la coverage (soglie: 98 % totale, 90 % per file, con
+  `spec/coverage_spec.rb` e `spec/notcurses/api_spec.rb`), `gem build`, `yard doc --fail-on-warning` con il 100 %
+  documentato e `rubocop`. Un job saltato o rosso per l'infrastruttura va rilanciato prima della chiusura.
 - `git diff ad0315b -- lib/notcurses/ffi lib/notcurses/ffi.rb` vuoto, salvo cambi approvati dall'utente.
 - Se un lotto cambia codice usato solo su macOS (per esempio `Context#stop_notcurses`), scrivilo nella PR: la CI gira
   solo su Linux.
