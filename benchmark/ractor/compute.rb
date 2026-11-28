@@ -60,6 +60,28 @@ end
 
 def clock_block = proc { |_| Process.clock_gettime(Process::CLOCK_MONOTONIC) }
 
+# Pausa più lunga in ms di un thread del Ractor principale che dorme 1 ms alla
+# volta, mentre gira il blocco: quanto il blocco ferma un ciclo della UI.
+def max_pause
+  gaps = []
+  stop = false
+  ticker = Thread.new do # rubocop:disable ThreadSafety/NewThread -- il thread che misura
+    last = now
+    until stop
+      sleep 0.001
+      gaps << (now - last)
+      last = now
+    end
+  end
+  sleep 0.005 # il thread che misura è partito
+  t0 = now
+  yield
+  gaps << (now - t0) if gaps.empty? # il blocco non ha mai lasciato girare il thread
+  stop = true
+  ticker.join
+  gaps.max * 1000
+end
+
 # Mediana in ms della latenza di REPS passaggi.
 def latency
   Array.new(REPS) { yield * 1000 }.sort[REPS / 2]
@@ -68,8 +90,8 @@ end
 puts "Ruby #{RUBY_VERSION}, #{Etc.nprocessors} core, #{JOBS} job per carico, #{REPS} ripetizioni", ""
 puts "### Calcolo: #{JOBS} job uguali (mediana, tra parentesi minimo e massimo)", ""
 puts "| Carico | 1 job ms | 1 job in un Ractor ms | #{JOBS} in serie ms | #{JOBS} Thread ms | #{JOBS} Ractor ms | " \
-     "Ractor contro serie | GC in serie / in Ractor |"
-puts "| --- | --- | --- | --- | --- | --- | --- | --- |"
+     "Ractor contro serie | GC in serie / in Ractor | Pausa max del thread principale con #{JOBS} Ractor ms |"
+puts "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
 Jobs.inputs.each do |job, args|
   one = measure { job.call(*args) }
   one_r = measure { WAIT.call(Ractor.new(job, *args) { |j, *a| j.call(*a) }) }
@@ -78,16 +100,21 @@ Jobs.inputs.each do |job, args|
   ractors = measure do
     Array.new(JOBS) { Ractor.new(job, *args) { |j, *a| j.call(*a) } }.each { |r| WAIT.call(r) }
   end
+  pauses = Array.new(REPS) do
+    max_pause { Array.new(JOBS) { Ractor.new(job, *args) { |j, *a| j.call(*a) } }.each { |r| WAIT.call(r) } }
+  end.sort
   cell = ->(m) { "#{fmt(m[0])} (#{fmt(m[1])}–#{fmt(m[2])})" }
   puts "| #{job.name.delete_prefix("Jobs::")} | #{fmt(one[0])} | #{fmt(one_r[0])} | #{cell.call(serial)} | " \
-       "#{cell.call(threads)} | #{cell.call(ractors)} | #{fmt(serial[0] / ractors[0], 2)}x | #{serial[3]} / #{ractors[3]} |"
+       "#{cell.call(threads)} | #{cell.call(ractors)} | #{fmt(serial[0] / ractors[0], 2)}x | #{serial[3]} / #{ractors[3]} | " \
+       "#{fmt(pauses[REPS / 2])} (#{fmt(pauses.first)}–#{fmt(pauses.last)}) |"
 end
 puts
 
 puts "### Trasporto: latenza di un passaggio (mediana)", ""
 puts "| Dati | Al Ractor: copia ms | Al Ractor: condivisi ms | Al Ractor: send(move: true) ms | " \
-     "Dal Ractor: valore finale ms | Dal Ractor: main.send(move: true) ms | Dal Ractor: main.send con copia ms |"
-puts "| --- | --- | --- | --- | --- | --- | --- |"
+     "Dal Ractor: valore finale ms | Dal Ractor: main.send(move: true) ms | Dal Ractor: main.send con copia ms | " \
+     "Dal Ractor: Port#send(move: true) ms (solo 4.0) |"
+puts "| --- | --- | --- | --- | --- | --- | --- | --- |"
 Payload::KINDS.each_with_index do |label, kind|
   data = Payload.build(kind)
   shared = Ractor.make_shareable(Payload.build(kind))
@@ -132,6 +159,46 @@ Payload::KINDS.each_with_index do |label, kind|
       now - t1
     end
   ]
-  puts "| #{label} | #{cells.map { |c| fmt(c, 2) }.join(" | ")} |"
+  if defined?(Ractor::Port)
+    port = Ractor::Port.new
+    cells << latency do
+      Ractor.new(port, kind) { |p, k|
+        d = Payload.build(k)
+        p.send([Process.clock_gettime(Process::CLOCK_MONOTONIC), d], move: true)
+      }
+      t1, = port.receive
+      now - t1
+    end
+  end
+  puts "| #{label} | #{cells.map { |c| fmt(c, 2) }.join(" | ")}#{" | —" unless defined?(Ractor::Port)} |"
+end
+puts
+
+# Mediana di REPS misure di max_pause.
+def pause_median(&) = Array.new(REPS) { max_pause(&) }.sort[REPS / 2]
+
+puts "### Trasporto: pausa più lunga del thread principale (mediana)", ""
+puts "| Dati | Argomento copiato da Ractor.new ms | main.send(move: true) ricevuto da un thread ms | " \
+     "Port#send(move: true) ricevuto da un thread ms (solo 4.0) |"
+puts "| --- | --- | --- | --- |"
+Payload::KINDS.each_with_index do |label, kind|
+  data = Payload.build(kind)
+  cells = [
+    pause_median { WAIT.call(Ractor.new(data) { |d| d.size }) },
+    pause_median do
+      rx = Thread.new { Ractor.receive } # rubocop:disable ThreadSafety/NewThread -- il thread di consegna
+      Ractor.new(kind) { |k| Ractor.main.send(Payload.build(k), move: true) }
+      rx.join
+    end
+  ]
+  if defined?(Ractor::Port)
+    port = Ractor::Port.new
+    cells << pause_median do
+      rx = Thread.new { port.receive } # rubocop:disable ThreadSafety/NewThread -- il thread di consegna
+      Ractor.new(port, kind) { |p, k| p.send(Payload.build(k), move: true) }
+      rx.join
+    end
+  end
+  puts "| #{label} | #{cells.map { |c| fmt(c, 2) }.join(" | ")}#{" | —" unless defined?(Ractor::Port)} |"
 end
 puts

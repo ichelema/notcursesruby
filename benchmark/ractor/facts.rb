@@ -60,6 +60,20 @@ FIBER_WAIT = <<~RUBY
   puts "\#{ticks} tick in 200 ms"
 RUBY
 
+# Il prototipo di background.rb con un ciclo finto: post mette il blocco in
+# una coda, e il caso lo esegue con LOOP.q.pop.call.
+PROTO = <<~RUBY
+  require "#{ROOT}/benchmark/ractor/jobs"
+  require "#{ROOT}/benchmark/ractor/background"
+  class FakeLoop
+    attr_reader :q
+    def initialize = @q = Thread::Queue.new
+    def post(&block) = @q << block
+  end
+  LOOP = FakeLoop.new
+  BG = ProtoBackground.new(LOOP)
+RUBY
+
 FACTS = [
   ["API dei Ractor", <<~RUBY],
     puts %w[take value].select { |m| Ractor.method_defined?(m) }.map { |m| "Ractor#" + m }
@@ -77,6 +91,20 @@ FACTS = [
     b = stderr_of { WAIT.(Ractor.new { 1 }) }
     puts "\#{a.bytesize} byte, poi \#{b.bytesize} byte su stderr"
   RUBY
+  ["Warning acceso: un secondo Ractor.new dopo la fine del primo (Ractor.count di nuovo 1)", <<~RUBY],
+    a = stderr_of { WAIT.(Ractor.new { 1 }) }
+    sleep 0.05
+    count = Ractor.count
+    b = stderr_of { WAIT.(Ractor.new { 1 }) }
+    puts "\#{a.bytesize} byte, poi con Ractor.count = \#{count} \#{b.bytesize} byte su stderr"
+  RUBY
+  ["Warning spento a un primo Ractor.new che fallisce (argomento non copiabile), poi acceso", <<~RUBY],
+    Warning[:experimental] = false
+    a = stderr_of { Ractor.new(Thread.current) { 1 } rescue nil }
+    Warning[:experimental] = true
+    b = stderr_of { WAIT.(Ractor.new { 1 }) }
+    puts "\#{a.bytesize} byte, poi \#{b.bytesize} byte su stderr"
+  RUBY
   ["Eccezione non gestita nel Ractor", <<~RUBY],
     Warning[:experimental] = false
     e = nil
@@ -86,6 +114,17 @@ FACTS = [
       nil
     end
     puts "\#{e.class} (cause \#{e.cause.class}); \#{err.bytesize} byte su stderr (\#{err[/terminated with exception/]})"
+  RUBY
+  ["Eccezione mandata dal Ractor: backtrace, NoMethodError, move: true", <<~RUBY],
+    Warning[:experimental] = false
+    out = []
+    Ractor.new { begin; raise ArgumentError, "x"; rescue => e; Ractor.main.send(e); end }
+    out << "ArgumentError con backtrace \#{Ractor.receive.backtrace.inspect}"
+    out << WAIT.(Ractor.new { begin; nil.foo; rescue => e; begin; Ractor.main.send(e); "NoMethodError copiato"; rescue => x; "NoMethodError: \#{x.class}: \#{x.message}"; end; end })
+    Ractor.receive if out.last == "NoMethodError copiato"
+    out << WAIT.(Ractor.new { begin; raise ArgumentError, "x"; rescue => e; begin; Ractor.main.send(e, move: true); "move ok"; rescue => x; "move: \#{x.class}: \#{x.message}"; end; end })
+    Ractor.receive if out.last == "move ok"
+    puts out.join("; ")
   RUBY
   ["Attesa con take o value in un task (Fiber scheduler)", <<~RUBY + FIBER_WAIT],
     WAIT_UNDER_TEST = -> { WAIT.(Ractor.new(200) { |ms| Busy.call(ms) }) }
@@ -116,6 +155,17 @@ FACTS = [
     4.times { |i| Ractor.new(200 + i) { |ms| Busy.call(ms); Ractor.main.send("x" * (16 << 20), move: true) } }
     puts "\#{rx.value.size} risultati da 16 MB in \#{((now - t0) * 1000).round} ms"
   RUBY
+  ["Ractor.select si sveglia con un messaggio (Ractor.current su 3.x, un Port su 4.0)", <<~RUBY],
+    Warning[:experimental] = false
+    wake = defined?(Ractor::Port) ? Ractor::Port.new : Ractor.current
+    slow = Ractor.new { sleep 0.3; :slow }
+    got = Thread.new { Ractor.select(wake, slow) }
+    sleep 0.05
+    t0 = now
+    defined?(Ractor::Port) ? wake << :wake : Ractor.current.send(:wake)
+    r, v = got.value
+    puts "\#{r.equal?(slow) ? "il Ractor" : "il risveglio"} (\#{v.inspect}) dopo \#{((now - t0) * 1000).round(1)} ms"
+  RUBY
   ["Il blocco di Ractor.new usa una variabile esterna", <<~RUBY],
     Warning[:experimental] = false
     x = 1
@@ -124,6 +174,9 @@ FACTS = [
   ["Una lambda del programma come argomento", <<~RUBY],
     Warning[:experimental] = false
     begin; WAIT.(Ractor.new(->(v) { v }) { |j| j.(1) }); puts "ok"; rescue => e; puts "\#{(e.cause || e).class}: \#{(e.cause || e).message}"; end
+  RUBY
+  ["Ractor.make_shareable di una lambda del programma (self = main)", <<~RUBY],
+    begin; Ractor.make_shareable(->(v) { v }); puts "ok"; rescue => e; puts "\#{e.class}: \#{e.message[0, 60]}"; end
   RUBY
   ["Un modulo con self.call, e una lambda resa condivisibile dentro un modulo", <<~RUBY],
     Warning[:experimental] = false
@@ -152,45 +205,106 @@ FACTS = [
   RUBY
   ["ncvisual_from_file senza contesto, nel Ractor principale", <<~RUBY],
     require "notcurses"
-    v = Notcurses::FFI.ncvisual_from_file("#{ROOT}/notcurses/data/changes.jpg")
-    puts v.null? ? "NULL: il motore delle immagini lo installa notcurses_init (media/shim.c:7)" : "un ncvisual"
+    path = "#{ROOT}/notcurses/data/changes.jpg"
+    abort "\#{path} assente: serve notcurses/data (submodule o link)" unless File.exist?(path)
+    v = Notcurses::FFI.ncvisual_from_file(path)
+    puts v.null? ? "NULL: il motore delle immagini lo installa notcurses_init (media/shim.c:12)" : "un ncvisual"
   RUBY
-  ["Cancellazione: un thread nel Ractor riceve un messaggio e alza un flag", <<~RUBY],
+  ["ncvisual_from_file in un Ractor, con un Context aperto nel Ractor principale", <<~RUBY],
+    require "notcurses"
     Warning[:experimental] = false
-    r = Ractor.new do
-      Thread.new { Ractor.receive; Ractor.current[:cancel] = true }
-      n = 0
-      n += 1 until Ractor.current[:cancel]
-      :cancelled
+    path = "#{ROOT}/notcurses/data/changes.jpg"
+    abort "\#{path} assente: serve notcurses/data (submodule o link)" unless File.exist?(path)
+    Notcurses::Context.open(output: File::NULL, termtype: "xterm-256color", suppress_banners: true) do
+      ok = WAIT.(Ractor.new(path) { |p| v = Notcurses::FFI.ncvisual_from_file(p); r = !v.null?; Notcurses::FFI.ncvisual_destroy(v) if r; r })
+      $stdout.puts ok ? "un ncvisual: funziona, ma la regola 3 vuole notcurses in un solo thread alla volta" : "NULL"
     end
-    sleep 0.05
-    t0 = now
-    r.send(:cancel)
-    puts "\#{WAIT.(r)} in \#{((now - t0) * 1000).round(1)} ms"
   RUBY
-  ["exit con un Ractor in un calcolo senza fine", <<~RUBY]
-    pid = fork do
-      Warning[:experimental] = false
-      Ractor.new { loop {} }
-      sleep 0.05
-      exit 0
+  ["Cancellazione: un thread nel Ractor riceve un messaggio e alza un flag (messaggio dopo 0, 20, 50, 80 ms)", <<~RUBY],
+    Warning[:experimental] = false
+    lat = [0, 20, 50, 80].map do |ms|
+      r = Ractor.new do
+        Thread.new { Ractor.receive; Ractor.current[:cancel] = true }
+        n = 0
+        n += 1 until Ractor.current[:cancel]
+        :cancelled
+      end
+      sleep ms / 1000.0
+      t0 = now
+      r.send(:cancel)
+      WAIT.(r)
+      ((now - t0) * 1000).round
     end
-    t0 = now
+    puts "flag alzato dopo \#{lat.join(", ")} ms"
+  RUBY
+  ["exit con un Ractor in un calcolo senza fine", <<~RUBY],
+    Warning[:experimental] = false
+    rd, wr = IO.pipe
+    pid = fork { Ractor.new { loop {} }; sleep 0.05; wr.puts now; exit 0 }
+    wr.close
     Process.wait(pid)
-    puts "stato \#{$?.exitstatus} dopo \#{((now - t0) * 1000).round} ms"
+    puts "stato \#{$?.exitstatus}, \#{((now - rd.read.to_f) * 1000).round} ms dall'exit"
+  RUBY
+  ["exit con un Ractor in un calcolo senza fine e un secondo thread fermo in Ractor.receive (il corpo di RUNNER)", <<~RUBY],
+    Warning[:experimental] = false
+    rd, wr = IO.pipe
+    pid = fork { Ractor.new { Thread.new { Ractor.receive }; loop {} }; sleep 0.05; wr.puts now; exit 0 }
+    wr.close
+    Process.wait(pid)
+    puts "stato \#{$?.exitstatus}, \#{((now - rd.read.to_f) * 1000).round} ms dall'exit"
+  RUBY
+  ["Ractor vivi 50 ms dopo la fine di 20 Ractor con un secondo thread fermo in Ractor.receive", <<~RUBY],
+    Warning[:experimental] = false
+    20.times.map { Ractor.new { Thread.new { Ractor.receive }; :ok } }.each { |r| WAIT.(r) }
+    sleep 0.05
+    puts "\#{Ractor.count - 1} vivi su 20"
+  RUBY
+  ["kill e join del secondo thread fermo in Ractor.receive, in 100 Ractor", <<~RUBY],
+    Warning[:experimental] = false
+    rs = Array.new(100) { Ractor.new { t = Thread.new { Ractor.receive }; t.kill; t.join; :ok } }
+    puts "\#{rs.map { |r| WAIT.(r) }.size} Ractor finiti"
+  RUBY
+  ["Prototipo: dopo un job consegnato, l'applicazione attende un suo Ractor con take o value", PROTO + <<~RUBY],
+    BG.start(Jobs::Fail, on_error: ->(_) {}) { nil }
+    LOOP.q.pop.call
+    WAIT.(Ractor.new(200) { |ms| Busy.call(ms) })
+    puts "take o value tornato"
+  RUBY
+  ["Prototipo: dopo un job consegnato, l'applicazione usa Ractor.select su un suo Ractor", PROTO + <<~RUBY],
+    BG.start(Jobs::Fail, on_error: ->(_) {}) { nil }
+    LOOP.q.pop.call
+    Ractor.select(Ractor.new(200) { |ms| Busy.call(ms) })
+    puts "select tornato"
+  RUBY
+  ["Prototipo: un job crea un Ractor annidato e ne attende il valore", PROTO + <<~RUBY]
+    module Nested
+      def self.call = (r = Ractor.new { 42 }; r.respond_to?(:value) ? r.value : r.take)
+    end
+    got = nil
+    err = stderr_of do
+      BG.start(Nested, on_error: ->(e) { got = "on_error: \#{e.class}: \#{e.message}" }) { |v| got = "consegnato \#{v}" }
+      t = Thread.new { LOOP.q.pop.call }
+      got = "nessuna consegna in 3 s" unless t.join(3)
+    end
+    puts "\#{got}; \#{err.bytesize} byte su stderr"
   RUBY
 ].freeze
 
+# Esegue il fatto in un processo figlio: il risultato è l'ultima riga scritta.
+# Se il figlio non finisce entro TIMEOUT_S, lo ferma e riporta l'ultima riga
+# scritta prima del blocco (per esempio un take che torna e un processo che
+# poi non esce).
 def run_fact(code)
   cmd = [RbConfig.ruby, "-I", File.join(ROOT, "lib"), "-e", PRELUDE + code]
   Open3.popen2e(*cmd) do |stdin, out, wait|
     stdin.close
-    unless out.wait_readable(TIMEOUT_S) && wait.join(TIMEOUT_S)
-      Process.kill(:KILL, wait.pid)
-      return "bloccato (fermato dopo #{TIMEOUT_S} s)"
-    end
-    text = out.read.strip
-    wait.value.success? ? text.lines.last.to_s.strip : "errore: #{text.lines.last.to_s.strip}"
+    reader = Thread.new { out.read } # rubocop:disable ThreadSafety/NewThread -- legge il figlio mentre si attende la sua fine
+    finished = wait.join(TIMEOUT_S)
+    Process.kill(:KILL, wait.pid) unless finished
+    last = reader.value.strip.lines.last.to_s.strip
+    next "bloccato (fermato dopo #{TIMEOUT_S} s)#{", dopo «#{last}»" unless last.empty?}" unless finished
+
+    wait.value.success? ? last : "errore: #{last}"
   end
 end
 
