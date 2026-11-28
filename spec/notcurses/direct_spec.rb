@@ -12,7 +12,7 @@ require_relative '../support/nc_helpers'
 # temporaneo (mai un TTY), terminfo fisso, input scartato.
 module DirectSpecHelpers
   OPTIONS = { output: '/dev/null', termtype: 'xterm-256color', drain_input: true }.freeze
-  DATA_DIR = File.expand_path('../../notcurses/data', __dir__)
+  DATA_DIR = NcHelpers::DATA_DIR
   LIB_DIR = File.expand_path('../../lib', __dir__)
 
   module_function
@@ -804,13 +804,13 @@ RSpec.describe Notcurses::Direct do
     end
 
     describe 'immagini' do
-      it 'render_image disegna un\'immagine e restituisce self' do
+      it 'render_image disegna un\'immagine e restituisce self', :notcurses_data do
         out = written { expect(d.render_image(data_file('onedot.png'), align: :center, blitter: :half)).to equal(d) }
         expect(out).not_to be_empty
         expect(d.render_image(data_file('onedot.png'), scale: :stretch, blitter: ffi::NCBLIT_1x1)).to equal(d)
       end
 
-      it 'render_image segnala i file mancanti e valida align, blitter e scale' do
+      it 'render_image segnala i file mancanti e valida align, blitter e scale', :notcurses_data do
         expect { d.render_image(File.join(@dir, 'manca.png')) }.to raise_error(Notcurses::DirectError)
         png = data_file('onedot.png')
         expect { d.render_image(png, align: :unaligned) }.to raise_error(ArgumentError)
@@ -820,7 +820,7 @@ RSpec.describe Notcurses::Direct do
         expect { d.render_image(nil) }.to raise_error(TypeError)
       end
 
-      it 'render_frame restituisce un Frame che raster disegna una sola volta' do
+      it 'render_frame restituisce un Frame che raster disegna una sola volta', :notcurses_data do
         frame = d.render_frame(data_file('worldmap.png'), max_rows: 10, max_cols: 20)
         expect(frame).to be_a(Notcurses::Direct::Frame)
         expect(frame.dims).to eq([5, 20])
@@ -831,7 +831,7 @@ RSpec.describe Notcurses::Direct do
         expect { frame.dims }.to raise_error(Notcurses::ClosedError)
       end
 
-      it 'raster con un align non valido non consuma il frame' do
+      it 'raster con un align non valido non consuma il frame', :notcurses_data do
         frame = d.render_frame(data_file('worldmap.png'), blitter: :ascii, max_rows: 4, max_cols: 8)
         expect { frame.raster(align: :bottom) }.to raise_error(ArgumentError)
         expect(frame).not_to be_closed
@@ -839,14 +839,14 @@ RSpec.describe Notcurses::Direct do
         expect(frame).to be_closed
       end
 
-      it 'render_frame segnala gli errori e valida gli argomenti' do
+      it 'render_frame segnala gli errori e valida gli argomenti', :notcurses_data do
         expect { d.render_frame(File.join(@dir, 'manca.png')) }.to raise_error(Notcurses::DirectError)
         expect { d.render_frame(data_file('onedot.png'), scale: :none) }.to raise_error(Notcurses::DirectError)
         expect { d.render_frame(data_file('worldmap.png'), max_rows: -1) }.to raise_error(ArgumentError)
         expect { d.render_frame(data_file('worldmap.png'), blitter: :eight_by_one) }.to raise_error(ArgumentError)
       end
 
-      it 'Frame#close abbandona il frame ed è idempotente' do
+      it 'Frame#close abbandona il frame ed è idempotente', :notcurses_data do
         frame = d.render_frame(data_file('onedot.png'))
         expect(frame.close).to be_nil
         expect(frame.close).to be_nil
@@ -854,7 +854,7 @@ RSpec.describe Notcurses::Direct do
         expect { frame.raster }.to raise_error(Notcurses::ClosedError)
       end
 
-      it 'load_image carica un\'immagine riusabile con render e geometry' do
+      it 'load_image carica un\'immagine riusabile con render e geometry', :notcurses_data do
         image = d.load_image(data_file('worldmap.png'))
         expect(image).to be_a(Notcurses::Direct::Image)
         geom = image.geometry(d, blitter: :half)
@@ -873,7 +873,7 @@ RSpec.describe Notcurses::Direct do
         expect { image.render(d) }.to raise_error(Notcurses::ClosedError)
       end
 
-      it 'load_image con un blocco chiude l\'immagine; Image.open fa lo stesso' do
+      it 'load_image con un blocco chiude l\'immagine; Image.open fa lo stesso', :notcurses_data do
         kept = d.load_image(data_file('onedot.png')) { |image| image }
         expect(kept).to be_closed
         result = Notcurses::Direct::Image.open(d, data_file('onedot.png')) { |image| image.geometry(d).pixx }
@@ -882,7 +882,7 @@ RSpec.describe Notcurses::Direct do
 
       # ICH-474: un'eccezione asincrona al ritorno di ncdirectf_from_file arrivava prima che il wrapper incapsulasse
       # il puntatore: l'immagine restava allocata, con il file aperto.
-      it 'un Thread#raise al ritorno di ncdirectf_from_file libera l\'immagine creata dal C' do
+      it 'un Thread#raise al ritorno di ncdirectf_from_file libera l\'immagine creata dal C', :notcurses_data do
         freed = []
         allow(ffi).to receive(:ncdirectf_free).and_wrap_original do |m, ptr|
           freed << ptr.address
@@ -906,7 +906,7 @@ RSpec.describe Notcurses::Direct do
         expect(created.first).not_to eq(0)
       end
 
-      it 'Image segnala gli errori e valida gli argomenti' do
+      it 'Image segnala gli errori e valida gli argomenti', :notcurses_data do
         expect { d.load_image(File.join(@dir, 'manca.png')) }.to raise_error(Notcurses::DirectError)
         expect { Notcurses::Direct::Image.new(:direct, data_file('onedot.png')) }.to raise_error(TypeError)
         d.load_image(data_file('onedot.png')) do |image|
@@ -916,7 +916,7 @@ RSpec.describe Notcurses::Direct do
         end
       end
 
-      it 'stream disegna tutti i frame e passa al blocco il loro indice' do
+      it 'stream disegna tutti i frame e passa al blocco il loro indice', :notcurses_data do
         seen = []
         out = written { expect(d.stream(@gif, align: :center) { |i| seen << i }).to equal(d) }
         expect(seen).to eq([0, 1])
@@ -1025,7 +1025,7 @@ RSpec.describe Notcurses::Direct do
     end
   end
 
-  describe 'Image e Frame dopo la chiusura del contesto' do
+  describe 'Image e Frame dopo la chiusura del contesto', :notcurses_data do
     it 'l\'immagine resta valida e si chiude; i frame non disegnati diventano chiusi' do
       image = nil
       frame = nil

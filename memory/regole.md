@@ -70,7 +70,10 @@ citano le regole per numero: non rinumerarle. Una regola nuova prende il numero 
     `trap`: i workaround che leggono i campi privati restringono le finestre, e lo YARD lo dice (decisione
     dell'utente nel lotto 2).
 24. Un reviewer esegue rspec con `mise -C "<rev-path>" x -- bundle exec rspec ...`, senza `cd`, scrive i file di
-    appoggio solo in `<rev-path>/.review-tmp/` e non usa `rm`. Prima di rimuovere un worktree di review in cui sono
-    girati script su terminali muti, chi lo rimuove controlla con `pgrep` i processi orfani fermi nell'init.
+    appoggio solo in `<rev-path>/.review-tmp/` e non usa `rm`. Non esegue la suite completa: esegue le spec dei file
+    del diff e quelle del codice che li usa, anche con Ruby 3.1.7 e 3.4.12 quando il diff tocca Fiber, thread o
+    Unicode. La suite completa l'hanno già eseguita il gate e la CI (scelta dell'utente del 2026-11-28). Prima di
+    rimuovere un worktree di review in cui sono girati script su terminali muti, chi lo rimuove controlla con
+    `pgrep` i processi orfani fermi nell'init.
 25. Dopo una prova su un terminale vero, per esempio Kitty, il terminale torna pulito: modo del tty, schermo normale,
     cursore visibile, immagini kitty cancellate (regola 16 della Fase 5).

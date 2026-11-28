@@ -25,6 +25,7 @@ idiomatico e framework `Notcurses::UI`. Questo file contiene le regole di lavoro
 | `hindsight.config.json` | Missioni e pagine del bank Hindsight del progetto |
 | `.claude/skills/` | Skill del progetto: `notcurses-man` (man page e header di notcurses), `verify` (terminale headless `ncvt` e script `screen`), `context7-mcp` |
 | `.claude/scripts/spec31` | Spec con Ruby 3.1.7 (regola 21) |
+| `.claude/scripts/gate` | Gate prima della PR: suite con la coverage e in ordine casuale in parallelo, RuboCop, link `notcurses/data` in un worktree |
 | `.claude/rules/context7.md` | Quando usare Context7 |
 | `.claude/worktrees/` | Worktree dei lotti, creati da `1_create-worktree` |
 
@@ -91,8 +92,9 @@ autorizzato il merge.
 - **Prima della PR e dopo ogni round di fix della review** (eccezioni in «Gate leggero»): suite completa con la
   coverage (vale come esecuzione in ordine normale: non ripeterla senza coverage), una suite in ordine casuale con un
   seme nuovo (`--order rand`: il seme lo sceglie rspec) e `bundle exec rubocop`. La CI controlla l'ordine casuale e
-  la soglia della coverage: un controllo saltato in locale costa un giro di CI.
-  Se la suite in ordine casuale fallisce, ripetila con lo stesso seme (`--order rand:N`), non con un seme nuovo: un
+  la soglia della coverage: un controllo saltato in locale costa un giro di CI. Il gate si lancia con
+  `.claude/scripts/gate` (gate leggero: `--light`), che in un worktree crea anche il link `notcurses/data`.
+  Se la suite in ordine casuale fallisce, ripetila con lo stesso seme (`--rand N`), non con un seme nuovo: un
   altro seme può nascondere la dipendenza. Se il fallimento si ripete e riguarda spec che il lotto non tocca,
   fermati e chiedi all'utente (regola 16). Se il diff tocca grapheme o Unicode, esegui le spec
   cambiate anche con `.claude/scripts/spec31` (regola 21). Prova sulla superficie ogni consiglio nuovo nei messaggi
@@ -163,7 +165,8 @@ legge quel file. Committalo da solo con `docs(handoff): <stato in breve> [skip c
 in un worktree e non può scrivere nel checkout principale, mostra all'utente il testo nuovo e chiedigli di salvarlo da
 una sessione nel checkout principale. Tre sezioni:
 
-- **Stato**: data, ultimo merge su `master` (PR e commit), lotto, branch, worktree e PR in corso, ultima suite.
+- **Stato**: data, ultimo merge su `master` (PR e commit), lotto, branch, worktree e PR in corso, ultima suite: la
+  CI di `master` sull'ultimo merge (run e esito), o l'ultimo gate se un lotto è in corso.
 - **Prossimo passo**: passi numerati, con il comando da proporre all'utente. Il primo passo rimanda ai passi 1–5 di
   «Come riprendere il lavoro».
 - **Decisioni che servono all'utente**: le domande aperte, oppure «Nessuna».
