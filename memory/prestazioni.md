@@ -2,7 +2,7 @@
 
 Costi misurati del wrapper e dei modelli di concorrenza di Ruby, con il metodo di misura. Le misure sono del
 2026-11-24 (Ruby 4.0.7, ffi 1.17.4, 4 core, `master` `a30715d`), salvo quelle «dopo il lotto 9c». Il lavoro che ne
-segue è in Linear: ICH-594 (scritture, lotto 9c, fatto) e gli studi di design ICH-600 (Fiber), ICH-601 (Ractor) e
+segue è in Linear: ICH-594 (scritture, lotto 9c, fatto) e gli studi di design ICH-600 (Fiber), ICH-601 (Ractor, [studio-ractor.md](studio-ractor.md)) e
 ICH-602 (GVL del rasterize) ([piano.md](piano.md)).
 
 ## Metodo
@@ -62,10 +62,18 @@ ICH-602 (GVL del rasterize) ([piano.md](piano.md)).
 
 - I Thread non danno parallelismo al codice Ruby: 4 segmentazioni da 6 MB costano 452 ms in serie, 469 ms con 4
   Thread e 177 ms con 4 Ractor.
-- Le funzioni FFI si chiamano anche da un Ractor non principale (`FFI.ncstrwidth`, `Notcurses.strwidth`). Il wrapper
-  no: ha stato mutabile a livello di modulo (`Guard`, lock del contesto in `context.rb:10-11`).
+- Le funzioni FFI si chiamano anche da un Ractor non principale (`FFI.ncstrwidth`, `Notcurses.strwidth`), su Ruby
+  3.1.7, 3.4.12 e 4.0.7. Il wrapper no: ha stato mutabile a livello di modulo (`Guard`, lock del contesto in
+  `context.rb:10-11`).
 - API dei Ractor: Ruby 3.1–3.4 hanno `Ractor#take` e non `Ractor::Port`; Ruby 4.0 ha `Ractor::Port` e
-  `Ractor#value` e non `Ractor#take`. Ruby 4.0.7 stampa «Ractor API is experimental».
+  `Ractor#value` e non `Ractor#take`. Il primo `Ractor.new` del processo scrive un warning «experimental» su tutte
+  le versioni.
+- Ractor in un'applicazione di `Notcurses::UI` (studio ICH-601, 2026-11-28, `benchmark/ractor/`, Ruby 3.1.7, 3.4.12
+  e 4.0.7; dettagli in [studio-ractor.md](studio-ractor.md)): con 4 job di calcolo la latenza mediana dei tasti è
+  188–442 ms con il calcolo nell'handler o in 4 `Thread`, 0,1–8,4 ms con 4 Ractor. Il tempo in 4 Ractor contro la
+  serie va da 1,75x a 3,09x più veloce su 4.0.7, e da 0,70x a 3,08x su 3.x secondo il carico. Su 3.1.7 e 3.4.12 due
+  thread che attendono insieme un'operazione di Ractor si bloccano per sempre. Un argomento non condiviso di
+  `Ractor.new` si copia nel thread del chiamante: 35–46 ms per un Array di 200 000 String.
 - Fiber: `Fiber.set_scheduler` esiste da Ruby 3.0, `Fiber.blocking` da 3.2 (manca in 3.1.7),
   `Fiber::Scheduler#blocking_operation_wait` da 3.4, gli hook `fiber_interrupt` e `yield` da 4.0.
 - L'hook `blocking_operation_wait` non sposta le chiamate FFI con `blocking: true`: 0 chiamate su Ruby 3.4.12 e
