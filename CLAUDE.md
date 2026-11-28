@@ -84,6 +84,22 @@ autorizzato il merge.
   problema, la causa, i dati misurati e le scelte aperte. Aggiungi un esempio (codice, sequenza di eventi o figura)
   quando l'esempio rende la spiegazione più chiara. Le domande della regola 14 vengono dopo il worktree, prima di
   `2_work-issue`.
+- **Memoria nel piano**: il piano di `2_work-issue` ha una sezione «Memoria consultata», come la riga «Percorso C
+  letto» della regola 20. Contiene:
+  - la query del recall in Hindsight (sezione «Hindsight») e i fatti utili trovati, con la data, oppure «nessun
+    fatto utile». Vale anche un recall fatto prima nella stessa sessione, se la query copriva le issue del lotto;
+  - i file di `memory/` aperti per il lotto, dai rimandi di `handoff.md` o di [memory/indice.md](memory/indice.md),
+    e cosa dicono per queste issue. Apri sempre le sezioni di [memory/lezioni.md](memory/lezioni.md) che toccano il
+    codice del lotto;
+  - le pagine del bank che toccano il lotto, di solito «Decisions» e «Conventions» (sezione «Hindsight», «Pagine»),
+    e cosa dicono per queste issue.
+
+  Copia questi fatti nel prompt dei subagenti (sezione «Hindsight»).
+- **Prima di una domanda all'utente** (regole 14 e 16): cerca la risposta in «Scelte di design chiuse» di
+  [memory/lezioni.md](memory/lezioni.md), nella pagina «Decisions» del bank (sezione «Hindsight», «Pagine») e con un
+  recall sul tema della domanda. Se una scelta chiusa risponde già
+  per questo caso, applicala e dillo all'utente in una riga, con la fonte. Se la memoria non risponde, o il caso è
+  diverso da quello deciso, chiedi e scrivi nella domanda cosa hai trovato, oppure «niente in memoria».
 - **Un lotto alla volta**: ogni lotto parte da `master` aggiornato, dopo il merge del lotto precedente.
 - **Commit**: un commit per issue, Conventional Commits in inglese con scope (regola 15). Per ogni issue la spec che
   fallisce, il fix e la suite completa (regola 11). Se il gate segue subito il fix (ultima issue del lotto, ultimo
@@ -99,6 +115,11 @@ autorizzato il merge.
   fermati e chiedi all'utente (regola 16). Se il diff tocca grapheme o Unicode, esegui le spec
   cambiate anche con `.claude/scripts/spec31` (regola 21). Prova sulla superficie ogni consiglio nuovo nei messaggi
   d'errore, nello YARD o nel `CHANGELOG` (regola 22): il piano di `2_work-issue` elenca i consigli e come provarli.
+- **Fallimento inatteso**: quando una spec, il gate o la CI falliscono per un motivo che il diff non spiega, prima
+  del debug apri [memory/punti-aperti.md](memory/punti-aperti.md) (spec instabili e difetti sospetti), la sezione
+  «Test e coverage» di [memory/lezioni.md](memory/lezioni.md) e fai un recall sul sintomo (nome della spec, messaggio
+  d'errore, job della CI). Se il fallimento è già noto, segui quello che dice la memoria; altrimenti vale il resto di
+  questa regola e la regola 16.
 - **Gate leggero**: alla fine di `2_work-simplify`, e dopo un round di fix della review che non cambia il
   comportamento (refactor, rinomine, commenti, YARD), esegui solo la suite con la coverage e `bundle exec rubocop`,
   senza la suite in ordine casuale: il codice è già passato da un gate completo, e la CI prova 5 ordini casuali.
@@ -201,11 +222,19 @@ che non stanno nel repository. Per il formato completo carica la skill `trinity:
 - Recall e retain automatici sono spenti: li chiami tu. All'avvio un hook mostra le pagine di conoscenza del bank:
   sono un consiglio, come il recall.
 - **Recall** (`mcp__hindsight__recall`) alla ripresa e all'inizio di ogni lotto, con una query sulle issue, sul
-  codice e sui componenti del lotto:
+  codice e sui componenti del lotto. Il piano di `2_work-issue` ne riporta l'esito (regola «Memoria nel piano»):
 
   ```json
   {"query": "<issue, file e componenti del lotto>", "budget": "high", "tags": ["claude-code", "repo:notcursesruby"], "tags_match": "any"}
   ```
+
+  Fai un recall anche prima di una domanda all'utente e davanti a un fallimento inatteso (regole «Prima di una
+  domanda all'utente» e «Fallimento inatteso»), con una query sul tema della domanda o sul sintomo.
+
+- **Pagine**: all'avvio l'hook mostra solo «Apprendimenti ricorrenti e criticità». Le altre pagine del bank
+  («Feature Work», «Decisions», «Conventions», «Components», «Concepts») si leggono con `mcp__hindsight__search_pages` (query
+  sul tema, restituisce gli id `kp-...`) e poi `mcp__hindsight__get_page`. È testo già sintetizzato, senza chiamate
+  LLM; come il recall, è un consiglio da controllare sul codice.
 
 - **Retain** (`mcp__hindsight__retain`) al passo 6 della chiusura e alla fine di ogni task significativo fuori dai
   lotti: cause radice, correzioni (file e metodo), decisioni dell'utente con la motivazione, approcci scartati e
@@ -220,6 +249,8 @@ che non stanno nel repository. Per il formato completo carica la skill `trinity:
     branch; per un fatto valido in tutti i progetti usa solo `claude-code`. Nessun altro tag.
 - Non salvare segreti, stato della sessione, output grezzo dei tool, fatti già nel codice o nella storia git, o
   regole già scritte in questo file o in `memory/regole.md`.
-- Per una sintesi su lavoro e decisioni passate usa `mcp__hindsight__reflect`.
+- **Reflect** (`mcp__hindsight__reflect`) solo negli studi di design (per esempio ICH-601 e ICH-602), per mettere
+  insieme misure, decisioni e approcci scartati prima del passo 0. Costa una decina di chiamate LLM: per un fatto
+  singolo bastano recall e pagine.
 - I subagenti non leggono Hindsight: copia nel loro prompt i fatti utili, con la data o la fonte.
 - Se il server non risponde, prosegui e dillo in una riga.
