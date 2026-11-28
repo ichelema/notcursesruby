@@ -48,19 +48,35 @@ jobs:
           - ruby: '4.0.9'
             full: true
     steps:
+      # Anche i database dei repository: lo snapshot non cambia, e con la cache
+      # lo step non scarica niente da archive.archlinux.org, che va spesso in
+      # timeout (7 run fallite su 11 fra il 2026-11-21 e il 2026-11-27).
       - name: Cache dei pacchetti Arch
+        id: pacman-cache
         uses: actions/cache@v6
         with:
-          path: /var/cache/pacman/pkg
-          key: pacman-${{ env.ARCH_SNAPSHOT }}-v1
+          path: |
+            /var/cache/pacman/pkg
+            /var/lib/pacman/sync
+          key: pacman-${{ env.ARCH_SNAPSHOT }}-v2
 
       - name: Pacchetti dello snapshot ${{ env.ARCH_SNAPSHOT }}
+        env:
+          HIT: ${{ steps.pacman-cache.outputs.cache-hit }}
         run: |
           echo "Server = https://archive.archlinux.org/repos/${ARCH_SNAPSHOT}/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
           pacman-key --init > /dev/null
           pacman-key --populate archlinux > /dev/null
-          # -Syuu porta anche l'immagine alla data dello snapshot
-          pacman -Syuu --noconfirm --needed notcurses git mise base-devel libyaml openssl zlib libffi
+          # cache-hit e non la presenza dei file: l'immagine può avere database di un'altra data
+          refresh=y
+          [ "$HIT" = true ] && refresh=
+          # senza cache l'archivio può non rispondere: 3 tentativi
+          for try in 1 2 3; do
+            # -uu porta anche l'immagine alla data dello snapshot
+            pacman -S${refresh}uu --noconfirm --needed notcurses git mise base-devel libyaml openssl zlib libffi && break
+            [ "$try" = 3 ] && exit 1
+            sleep 30
+          done
           pacman -Q notcurses ffmpeg glibc
 
       - uses: actions/checkout@v7
