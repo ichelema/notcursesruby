@@ -458,8 +458,8 @@ RSpec.describe 'Attese del terminale senza GVL (integrazione, pty)' do
     puts 'fine'
   RUBY
 
-  it 'render_image, Frame#raster e stream con il blitter :pixel lasciano girare i thread Ruby' do
-    png = File.expand_path('../../notcurses/data/onedot.png', __dir__)
+  it 'render_image, Frame#raster e stream con il blitter :pixel lasciano girare i thread Ruby', :notcurses_data do
+    png = File.join(NcHelpers::DATA_DIR, 'onedot.png')
     out, status, timed_out = run_child("PNG = #{png.dump}\n#{pixel_script}", timeout: 20)
     expect(timed_out).to be(false), "processo figlio bloccato (GVL tenuto durante un'attesa?):\n#{out}"
     expect(out).to include('can_pixel true', 'render_image ok', 'raster ok', 'stream ok', 'fine')

@@ -12,7 +12,7 @@ require_relative '../support/nc_helpers'
 # temporaneo (mai un TTY), terminfo fisso, input scartato.
 module DirectSpecHelpers
   OPTIONS = { output: '/dev/null', termtype: 'xterm-256color', drain_input: true }.freeze
-  DATA_DIR = File.expand_path('../../notcurses/data', __dir__)
+  DATA_DIR = NcHelpers::DATA_DIR
   LIB_DIR = File.expand_path('../../lib', __dir__)
 
   module_function
@@ -803,7 +803,7 @@ RSpec.describe Notcurses::Direct do
       end
     end
 
-    describe 'immagini' do
+    describe 'immagini', :notcurses_data do
       it 'render_image disegna un\'immagine e restituisce self' do
         out = written { expect(d.render_image(data_file('onedot.png'), align: :center, blitter: :half)).to equal(d) }
         expect(out).not_to be_empty
@@ -1025,7 +1025,7 @@ RSpec.describe Notcurses::Direct do
     end
   end
 
-  describe 'Image e Frame dopo la chiusura del contesto' do
+  describe 'Image e Frame dopo la chiusura del contesto', :notcurses_data do
     it 'l\'immagine resta valida e si chiude; i frame non disegnati diventano chiusi' do
       image = nil
       frame = nil

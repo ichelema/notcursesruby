@@ -35,7 +35,26 @@ module NcHelpers
   # prima free sbagliata o su un heap corrotto.
   MALLOC_DEBUG = '/usr/lib/libc_malloc_debug.so.0'
 
+  # Immagini di notcurses (submodule notcurses): le leggono le spec con il tag
+  # :notcurses_data. In un worktree il submodule non c'è: serve un link.
+  DATA_DIR = File.expand_path('../../notcurses/data', __dir__)
+
   module_function
+
+  # @return [String] perché la suite non parte senza {DATA_DIR}, con il comando
+  #   che la crea: il link al checkout principale, o il submodule lì
+  def missing_data_message
+    root = File.expand_path('../..', __dir__)
+    common = IO.popen(['git', '-C', root, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+      err: File::NULL, &:read).strip
+    main = common.delete_suffix('/.git')
+    fix = if common.empty? || main == root
+      'git submodule update --init --depth 1 notcurses'
+    else
+      ".claude/scripts/gate (crea il link), oppure ln -s #{main}/notcurses/data #{DATA_DIR}"
+    end
+    "manca #{DATA_DIR}: le spec con il tag :notcurses_data leggono le sue immagini. Crea la cartella: #{fix}"
+  end
 
   # Esegue script in un processo Ruby figlio sotto {MALLOC_DEBUG}, con lib/ nel
   # load path e stdin vuoto. Chi lo chiama salta l'esempio se {MALLOC_DEBUG}
@@ -242,6 +261,19 @@ module NcHelpers
     [thread.value, returned]
   ensure
     trace&.disable
+  end
+end
+
+# Senza notcurses/data le spec con :notcurses_data falliscono una per una, dopo
+# minuti di suite (lotto 18: 11 fallimenti in un worktree senza il link): la
+# suite si ferma subito, con il comando che crea la cartella. Una run senza
+# quelle spec parte lo stesso.
+RSpec.configure do |config|
+  config.before(:suite) do
+    needed = RSpec.world.example_groups.flat_map(&:descendants).any? do |group|
+      group.filtered_examples.any? { |example| example.metadata[:notcurses_data] }
+    end
+    raise NcHelpers.missing_data_message if needed && !File.directory?(NcHelpers::DATA_DIR)
   end
 end
 
