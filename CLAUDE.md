@@ -90,11 +90,14 @@ autorizzato il merge.
     fatto utile». Vale anche un recall fatto prima nella stessa sessione, se la query copriva le issue del lotto;
   - i file di `memory/` aperti per il lotto, dai rimandi di `handoff.md` o di [memory/indice.md](memory/indice.md),
     e cosa dicono per queste issue. Apri sempre le sezioni di [memory/lezioni.md](memory/lezioni.md) che toccano il
-    codice del lotto.
+    codice del lotto;
+  - le pagine del bank che toccano il lotto, di solito «Decisions» e «Conventions» (sezione «Hindsight», «Pagine»),
+    e cosa dicono per queste issue.
 
   Copia questi fatti nel prompt dei subagenti (sezione «Hindsight»).
 - **Prima di una domanda all'utente** (regole 14 e 16): cerca la risposta in «Scelte di design chiuse» di
-  [memory/lezioni.md](memory/lezioni.md) e con un recall sul tema della domanda. Se una scelta chiusa risponde già
+  [memory/lezioni.md](memory/lezioni.md), nella pagina «Decisions» del bank (sezione «Hindsight», «Pagine») e con un
+  recall sul tema della domanda. Se una scelta chiusa risponde già
   per questo caso, applicala e dillo all'utente in una riga, con la fonte. Se la memoria non risponde, o il caso è
   diverso da quello deciso, chiedi e scrivi nella domanda cosa hai trovato, oppure «niente in memoria».
 - **Un lotto alla volta**: ogni lotto parte da `master` aggiornato, dopo il merge del lotto precedente.
@@ -228,6 +231,11 @@ che non stanno nel repository. Per il formato completo carica la skill `trinity:
   Fai un recall anche prima di una domanda all'utente e davanti a un fallimento inatteso (regole «Prima di una
   domanda all'utente» e «Fallimento inatteso»), con una query sul tema della domanda o sul sintomo.
 
+- **Pagine**: all'avvio l'hook mostra solo «Apprendimenti ricorrenti e criticità». Le altre pagine del bank
+  («Feature Work», «Decisions», «Conventions», «Components», «Concepts») si leggono con `mcp__hindsight__search_pages` (query
+  sul tema, restituisce gli id `kp-...`) e poi `mcp__hindsight__get_page`. È testo già sintetizzato, senza chiamate
+  LLM; come il recall, è un consiglio da controllare sul codice.
+
 - **Retain** (`mcp__hindsight__retain`) al passo 6 della chiusura e alla fine di ogni task significativo fuori dai
   lotti: cause radice, correzioni (file e metodo), decisioni dell'utente con la motivazione, approcci scartati e
   trappole delle spec. Il retain è asincrono: restituisce un `operation_id`, e i fatti diventano cercabili quando
@@ -241,6 +249,8 @@ che non stanno nel repository. Per il formato completo carica la skill `trinity:
     branch; per un fatto valido in tutti i progetti usa solo `claude-code`. Nessun altro tag.
 - Non salvare segreti, stato della sessione, output grezzo dei tool, fatti già nel codice o nella storia git, o
   regole già scritte in questo file o in `memory/regole.md`.
-- Per una sintesi su lavoro e decisioni passate usa `mcp__hindsight__reflect`.
+- **Reflect** (`mcp__hindsight__reflect`) solo negli studi di design (per esempio ICH-601 e ICH-602), per mettere
+  insieme misure, decisioni e approcci scartati prima del passo 0. Costa una decina di chiamate LLM: per un fatto
+  singolo bastano recall e pagine.
 - I subagenti non leggono Hindsight: copia nel loro prompt i fatti utili, con la data o la fonte.
 - Se il server non risponde, prosegui e dillo in una riga.
