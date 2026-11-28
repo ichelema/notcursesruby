@@ -37,8 +37,17 @@ cd "$root" || exit 2
 
 echo "gate: $mode in $root"
 
-# Una suite di un'altra sessione sulla stessa macchina falsa i tempi delle spec pty (memory/comandi.md).
-others="$(pgrep -af 'rspec' | grep -v -e "^$$ " -e 'pgrep' || true)"
+# Una suite di un'altra sessione sulla stessa macchina falsa i tempi delle spec pty (memory/comandi.md). Il processo
+# di una suite è ".../bin/rspec ..." (bundle exec, spec31, Ruby 3.4 senza bundle): non conta una riga di comando che
+# contiene solo la parola, e non contano gli antenati del gate (la shell che lo lancia).
+ancestors=" $$ "
+pid=$$
+while pid="$(ps -o ppid= -p "$pid" | tr -d ' ')" && [ -n "$pid" ] && [ "$pid" -gt 1 ]; do
+  ancestors+="$pid "
+done
+others="$(pgrep -af -- '/bin/rspec( |$)' | while read -r pid args; do
+  case "$ancestors" in *" $pid "*) ;; *) echo "$pid $args" ;; esac
+done)"
 if [ -n "$others" ]; then
   echo "FAIL: un'altra suite è in corso; aspetta che finisca:" >&2
   echo "$others" >&2
@@ -47,7 +56,10 @@ fi
 
 if [ ! -d notcurses/data ]; then
   if [ "$main" != "$root" ] && [ -d "$main/notcurses/data" ] && [ ! -e notcurses/data ] && [ ! -L notcurses/data ]; then
-    ln -s "$main/notcurses/data" notcurses/data
+    if ! ln -s "$main/notcurses/data" notcurses/data; then
+      echo "FAIL: link notcurses/data -> $main/notcurses/data non creato" >&2
+      exit 1
+    fi
     echo "link creato: notcurses/data -> $main/notcurses/data"
   else
     echo "FAIL: manca notcurses/data; nel checkout principale: git submodule update --init --depth 1 notcurses" >&2
@@ -55,8 +67,16 @@ if [ ! -d notcurses/data ]; then
   fi
 fi
 
-dir="${GATE_DIR:-$(mktemp -d "$HOME/.claude/tmp/gate.XXXXXX")}"
-mkdir -p "$dir"
+dir="${GATE_DIR:-}"
+if [ -z "$dir" ]; then
+  if ! mkdir -p "$HOME/.claude/tmp" || ! dir="$(mktemp -d "$HOME/.claude/tmp/gate.XXXXXX")"; then
+    echo "FAIL: cartella dei log non creata in $HOME/.claude/tmp" >&2
+    exit 2
+  fi
+fi
+mkdir -p "$dir" || exit 2
+# un GATE_DIR riusato: il riepilogo non deve leggere i log di una run vecchia
+rm -f -- "$dir/coverage.log" "$dir/coverage.out" "$dir/rand.log" "$dir/rubocop.log"
 echo "log in $dir"
 free -h | awk 'NR == 2 { print "memoria disponibile: " $7 }'
 
@@ -77,10 +97,31 @@ report() {
   local verdict=PASS
   [ "$status" -eq 0 ] || verdict=FAIL
   echo "$verdict $name (exit $status)"
+  if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+    echo "  timeout: l'esempio fermo è quello dopo l'ultimo finito; vedi «Suite ferma fino al timeout» in memory/comandi.md"
+  fi
+  if [ ! -s "$log" ]; then
+    echo "  log vuoto: la suite si è fermata prima di scrivere ($log)"
+    return
+  fi
   grep -E '^[0-9]+ examples?, ' "$log" | tail -1 | sed 's/^/  /'
-  grep -E '^rspec \./' "$log" | sed 's/^/  /'
-  [ "$status" -ne 124 ] && [ "$status" -ne 137 ] || echo "  timeout: l'ultimo esempio nel log è quello fermo"
+  # con un + nel percorso, come in ogni worktree di lotto, rspec scrive il percorso assoluto al posto di ./
+  grep -E '^rspec ' "$log" | sed -e "s|^rspec $root/|rspec ./|" -e 's/^/  /'
 }
+
+# Un Ctrl-C o un TERM al gate non raggiunge le suite: timeout ha un process group suo, con rspec e i suoi figli. Senza
+# questa pulizia le suite restano vive fino a 600 s, e il gate successivo si ferma per «un'altra suite».
+suites=()
+# shellcheck disable=SC2329 # la chiama il trap
+stop_suites() {
+  local sub child
+  for sub in "${suites[@]}"; do
+    for child in $(pgrep -P "$sub"); do
+      kill -TERM -- "-$child" 2> /dev/null
+    done
+  done
+}
+trap 'stop_suites; echo "FAIL: gate interrotto, suite fermate" >&2; exit 130' INT TERM HUP
 
 coverage_status=0
 rand_status=0
@@ -90,27 +131,37 @@ case "$mode" in
     coverage_pid=$!
     random &
     rand_pid=$!
+    suites=("$coverage_pid" "$rand_pid")
     wait "$coverage_pid" || coverage_status=$?
     wait "$rand_pid" || rand_status=$?
     ;;
-  light) coverage || coverage_status=$? ;;
-  rand) random "rand:$seed" || rand_status=$? ;;
+  light)
+    coverage &
+    suites=("$!")
+    wait "$!" || coverage_status=$?
+    ;;
+  rand)
+    random "rand:$seed" &
+    suites=("$!")
+    wait "$!" || rand_status=$?
+    ;;
 esac
+trap - INT TERM HUP
 
 failed=0
 if [ "$mode" != rand ]; then
   report coverage "$coverage_status" "$dir/coverage.log"
-  grep -E 'Coverage:' "$dir/coverage.out" | tail -2 | sed 's/^/  /'
+  grep -E 'Coverage:' "$dir/coverage.out" 2> /dev/null | tail -2 | sed 's/^/  /'
   # exit 2: spec verdi, coverage sotto la soglia (spec/support/coverage.rb)
   [ "$coverage_status" -ne 2 ] || echo "  coverage sotto la soglia"
   [ "$coverage_status" -eq 0 ] || failed=1
 fi
 if [ "$mode" != light ]; then
   report "ordine casuale" "$rand_status" "$dir/rand.log"
-  grep -m1 -E 'Randomized with seed' "$dir/rand.log" | sed 's/^/  /'
+  grep -m1 -E 'Randomized with seed' "$dir/rand.log" 2> /dev/null | sed 's/^/  /'
   if [ "$rand_status" -ne 0 ]; then
     failed=1
-    used="$(grep -m1 -oE 'seed [0-9]+' "$dir/rand.log" | cut -d' ' -f2)"
+    used="$(grep -m1 -oE 'seed [0-9]+' "$dir/rand.log" 2> /dev/null | cut -d' ' -f2)"
     [ -z "$used" ] || echo "  ripeti con lo stesso seme, in serie: .claude/scripts/gate --rand $used"
   fi
 fi
