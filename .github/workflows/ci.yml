@@ -34,7 +34,7 @@ defaults:
 
 jobs:
   test:
-    name: Ruby ${{ matrix.ruby }}${{ matrix.full && ' (coverage, gem, YARD)' || '' }}
+    name: Ruby ${{ matrix.ruby }}, ordine ${{ matrix.suite == 'normal' && 'normale' || 'casuale' }}${{ matrix.full && ' (coverage, gem, YARD)' || '' }}
     runs-on: ubuntu-24.04
     container:
       image: archlinux:base@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
@@ -44,8 +44,12 @@ jobs:
       matrix:
         # versioni esatte: binari precompilati di jdx/ruby per 3.2-4.0, 3.1.7 compilato
         ruby: ['3.1.7', '3.2.11', '3.3.13', '3.4.12', '4.0.9']
+        # le due suite in job separati e in parallelo: una run dura quanto il job più lento con una suite sola
+        # (circa 6 minuti invece di 10, con il doppio dei minuti di runner)
+        suite: [normal, random]
         include:
           - ruby: '4.0.9'
+            suite: normal
             full: true
     steps:
       # Anche i database dei repository: lo snapshot non cambia, e con la cache
@@ -136,6 +140,7 @@ jobs:
 
       - name: Suite in ordine normale${{ matrix.full && ', con la coverage' || '' }}
         id: suite
+        if: matrix.suite == 'normal'
         run: |
           args=()
           [[ "${{ matrix.full }}" == true ]] && args=(--require ./spec/support/coverage.rb)
@@ -143,6 +148,7 @@ jobs:
 
       # il seme compare nel log ("Randomized with seed N"): rspec --order rand:N lo riproduce
       - name: Suite in ordine casuale
+        if: matrix.suite == 'random'
         run: timeout -k 5 -s KILL 600 bundle exec rspec --order rand < /dev/null
 
       # con spec fallite SimpleCov non scrive .last_run.json (il report HTML sì)
