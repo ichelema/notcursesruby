@@ -5,13 +5,15 @@ Aggiornato il 2026-11-28. Questo file dice solo cosa fare nella prossima session
 
 ## Stato
 
-- Ultimo merge su `master`: PR #43 (`.claude/scripts/gate`, stop delle spec senza `notcurses/data`, regola 24 e
-  «Controlli finali» sulla CI di `master`, fuori dai lotti), commit `d7db438`. Prima: PR #42 (cache dei database di
-  pacman nella CI), commit `a37e000`; PR #41 (lotto 18, ICH-607), commit `84e4cd6`. Dopo `d7db438` `master` ha solo
-  commit di documentazione con `[skip ci]`.
+- Ultimo merge su `master`: PR #44 (le due suite della CI in job separati e in parallelo, fuori dai lotti), commit
+  `0ac533d`. Prima: PR #43 (`.claude/scripts/gate`, stop delle spec senza `notcurses/data`, regola 24 e «Controlli
+  finali» sulla CI di `master`), commit `d7db438`; PR #42 (cache dei database di pacman nella CI), commit `a37e000`;
+  PR #41 (lotto 18, ICH-607), commit `84e4cd6`. Dopo `0ac533d` `master` ha solo commit di documentazione con
+  `[skip ci]`.
 - Nessun lotto in corso: nessun worktree, nessuna PR aperta. ICH-607 è Done; il gruppo H è chiuso.
-- Ultima suite: la CI di `master` su `d7db438` è verde su tutta la matrice (run `46097206619`, 10 min 47 s). La
-  cache `pacman-2026/10/26-v2` è attiva: lo step dei pacchetti non usa più `archive.archlinux.org`.
+- Ultima suite: la CI di `master` su `0ac533d` è verde, 10 job su 10 (run `46099232036`, 6 min 12 s; prima della PR
+  #44 una run durava circa 10 min 45 s). La cache `pacman-2026/10/26-v2` è attiva: lo step dei pacchetti non usa
+  più `archive.archlinux.org`.
 - Fase «Issue in Backlog»: lotti 1–9c, studio ICH-600 e lotti 16–18 fatti; 32 issue aperte. Ordine scelto
   dall'utente ([memory/piano.md](memory/piano.md)): studio ICH-601, studio ICH-602, gruppo I (ICH-605), poi gruppi
   A, B, C, lotti 10–14, gruppi D, E, F, G, lotto 15. ICH-603 è in Backlog senza gruppo. ICH-463 resta in Blocked.
