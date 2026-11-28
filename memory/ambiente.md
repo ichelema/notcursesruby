@@ -83,7 +83,9 @@
 ## CI
 
 - Container `archlinux:base` fissato per digest, snapshot `2026/10/26` dell'Arch Linux Archive, Ruby da mise, matrice
-  3.1.7, 3.2.11, 3.3.13, 3.4.12, 4.0.9. RuboCop solo nel job 4.0.9.
+  3.1.7, 3.2.11, 3.3.13, 3.4.12, 4.0.9 per due suite (`suite: [normal, random]`): 10 job, ognuno con una sola suite,
+  in parallelo (scelta dell'utente del 2026-11-28: una run dura quanto il job più lento con una suite, al posto di
+  circa 10 minuti con le due suite in fila). Coverage, gem, YARD e RuboCop solo nel job «4.0.9, ordine normale».
 - Per una versione nuova di notcurses cambia in `ci.yml` `ARCH_SNAPSHOT` e il digest dell'immagine `archlinux:base`:
   la chiave della cache dei pacchetti cambia da sola. Insieme aggiorna lo SHA di `codecov/codecov-action` e il
   commento della versione (`gh api repos/codecov/codecov-action/commits/<tag> --jq .sha`, ICH-311). Poi controlla nei
