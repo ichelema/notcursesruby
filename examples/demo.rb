@@ -7,7 +7,8 @@
 #   ruby -Ilib examples/demo.rb
 #
 # Tab e Shift+Tab spostano il focus; il mouse sceglie le voci e preme i
-# pulsanti; un processo figlio scrive nel log; l'orologio usa un timer.
+# pulsanti; un task (app.async) legge un processo figlio e scrive nel log;
+# l'orologio usa un timer.
 # Ridimensiona il terminale: il layout segue. Ctrl+X o "Esci" chiedono
 # conferma; Ctrl-C esce subito (:interrupt).
 
@@ -47,9 +48,16 @@ reason = Notcurses::Context.open do |nc|
   clock = ui::Label.new(app.root, align: :right, size: 1)
   app.every(1) { clock.text = Time.now.strftime('%T') }
 
+  # un task legge il processo figlio senza thread: readpartial attende senza fermare il ciclo
   child = '$stdout.sync = true; 5.times { |i| puts "riga #{i + 1} dal processo figlio"; sleep 1 }'
-  Notcurses::Subprocess.new(log.plane, RbConfig.ruby, '-e', child) do |_sub, bytes|
-    app.post { log.append(bytes) unless log.closed? } # il blocco gira nel thread di lettura
+  app.async do
+    IO.popen([RbConfig.ruby, '-e', child]) do |io|
+      loop { log.append(io.readpartial(4096)) }
+    rescue EOFError
+      log.append("Fine del processo figlio\n")
+    ensure
+      Process.kill('TERM', io.pid) # uscita prima della fine del figlio: la chiusura di io non lo attende
+    end
   end
   app.on_key('x', ctrl: true) { confirm.call } # non Ctrl+Q: il terminale lo usa per il controllo di flusso
   app.on_resize { |rows, cols| log.append("Resize: #{rows}x#{cols}\n") }

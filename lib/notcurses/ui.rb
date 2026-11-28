@@ -15,6 +15,7 @@ module Notcurses
   end
 end
 
+require_relative 'ui/task'
 require_relative 'ui/scheduler'
 require_relative 'ui/event_loop'
 require_relative 'ui/component'

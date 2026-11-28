@@ -58,6 +58,24 @@ module Notcurses
     #     app.run
     #     puts name.text
     #   end
+    #
+    # @example Un task legge un processo figlio senza thread ({EventLoop#async})
+    #   Notcurses::Context.open do |nc|
+    #     app = Notcurses::UI::App.new(nc)
+    #     log = Notcurses::UI::LogView.new(app.root)
+    #     app.async do |task|
+    #       IO.popen(%w[ping -c 3 localhost]) do |io|
+    #         loop do
+    #           log.append(io.readpartial(4096))
+    #           task.pass # con un flusso sempre pieno, input e render continuano
+    #         end
+    #       rescue EOFError
+    #         log.append("fine\n")
+    #       end
+    #     end
+    #     app.on_key('q') { app.stop }
+    #     app.run
+    #   end
     class App < EventLoop
       MOUSE_FOCUS = [Key::BUTTON1, Key::BUTTON2, Key::BUTTON3].freeze
       LINUX_CONSOLE = /\A(?:FBcon|VT)(?: |\z)/
