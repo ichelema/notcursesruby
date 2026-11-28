@@ -7,7 +7,7 @@ gruppo o chiudi la fase. Il prossimo passo è in [handoff.md](../handoff.md).
 ## Ordine dei lavori
 
 Scelto dall'utente il 2026-11-24: gruppo H, una issue per lotto (fatto: ICH-604 nel lotto 16, PR #39; ICH-606 nel
-lotto 17, PR #40; ICH-607 nel lotto 18, PR #41), poi studio ICH-601,
+lotto 17, PR #40; ICH-607 nel lotto 18, PR #41), poi studio ICH-601 (fatto: PR #45),
 studio ICH-602, gruppo I, gruppi A, B, C (dopo la riprogettazione), lotti 10–14, gruppi D, E, F, G, lotto 15. Il
 gruppo H e gli studi vengono prima dei bug High e Medium. I gruppi prendono i numeri di lotto 16 e seguenti quando
 partono; i numeri 10–15 restano quelli della storia in git. ICH-603, nata nel lotto 9c, non ha gruppo: lo sceglie
@@ -43,11 +43,12 @@ l'utente. ICH-463 è in Blocked ([fase-backlog.md](fase-backlog.md)).
 | E | ICH-554, ICH-556, ICH-562 | Performance Low: `Visual` e blit; ICH-554 può chiedere un cambio della Fase 1 |
 | F | ICH-540, ICH-541 | Bug Low: dopo il gruppo H (ICH-541 è collegata a ICH-600) |
 | G | ICH-590, ICH-596 | Bug Low: ognuna chiede una scelta dell'utente prima del fix |
+| J | ICH-608 | Improvement Low dello studio ICH-601 (`app.background`): da sola; il posto nell'ordine lo sceglie l'utente. Prima del fix si scelgono il nome del controllo della cancellazione e il meccanismo di cancellazione (punto 4 di [studio-ractor.md](studio-ractor.md)) |
 
 ## Studi di design
 
 | Issue | Studio | Stato |
 | --- | --- | --- |
 | ICH-600 | Fiber al posto dei thread | Fatto: PR #38, merge `e90c5d3`; design in [studio-fiber.md](studio-fiber.md) |
-| ICH-601 | Ractor per il calcolo parallelo | Il prossimo: il gruppo H è chiuso (lotto 18) |
-| ICH-602 | Rilascio del GVL durante il rasterize | Dopo ICH-601; tocca la Fase 1 (regola 1) e la regola 3 |
+| ICH-601 | Ractor per il calcolo parallelo | Fatto: PR #45, merge `5be7b06`; design in [studio-ractor.md](studio-ractor.md) |
+| ICH-602 | Rilascio del GVL durante il rasterize | Il prossimo; tocca la Fase 1 (regola 1) e la regola 3 |

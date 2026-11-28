@@ -140,6 +140,12 @@ Le istruzioni per i reviewer sono le regole 23 e 24 di [regole.md](regole.md). Q
   file; dal 2026-11-22 la cartella è in `.gitignore`. `rm` resta fuori per Blast Radius ([ambiente.md](ambiente.md)).
 - Il controllo con `pgrep` (regola 24) viene dal lotto 8c: gli script di prova del reviewer su terminali muti hanno
   lasciato processi orfani fermi nell'init, fermati con SIGTERM e usciti in meno di 3 s.
+- In uno studio di design ogni fatto del documento ha una prova in uno script committato, e la prova usa la stessa
+  configurazione del design. Nello studio ICH-601 la review (PR #45) ha trovato 8 fatti falsi o incompleti: l'`exit`
+  era misurato con un Ractor semplice invece che con il corpo del prototipo (1 s contro 2 ms), `ncvisual_from_file`
+  senza contesto invece che con il contesto aperto di un'applicazione, la cancellazione con una fase fissa (50 ms
+  invece di fino a 100 ms). Un fatto detto all'utente durante una scelta va provato prima: nella scelta sugli errori
+  dello stesso studio il backtrace delle eccezioni copiate era dato per presente, ed era vuoto.
 - Il verify di una PR che non deve cambiare il comportamento (lotto 9c, prestazioni) lancia lo stesso script con la
   lib di `master` e con quella della PR, e confronta gli output con `diff`: deve cambiare solo il pid. `screen` usa la
   lib del proprio checkout: per il confronto lancia `ncvt` direttamente con `ruby -I<lib> -r<skill>/snap.rb`,

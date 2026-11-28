@@ -23,10 +23,12 @@ Windows.
   lotto 18 (ICH-607, PR #41, merge `84e4cd6`): il gruppo H è chiuso. Fuori dai lotti, la PR #42 (merge `a37e000`) ha
   messo in cache i database di pacman della CI, e la PR #43 (merge `d7db438`) ha aggiunto `.claude/scripts/gate`, lo
   stop delle spec senza `notcurses/data`, la regola 24 sulla suite dei reviewer e i «Controlli finali» sulla CI di
-  `master` (scelte dell'utente del 2026-11-28). La storia dei lotti sta in git, nelle PR e in Linear. Modello passato
-  ai comandi del workflow: `opus`.
-- Al 2026-11-28, dopo il lotto 18, restano 32 issue aperte: 13 nei lotti 10–15, 16 senza lotto (con ICH-603 del
-  lotto 9c e ICH-605 dello studio), 2 studi di design (ICH-601, ICH-602), ICH-463 in Blocked.
+  `master` (scelte dell'utente del 2026-11-28); la PR #44 (merge `0ac533d`) ha diviso le due suite della CI in job
+  paralleli. Studio ICH-601 (PR #45, merge `5be7b06`). La storia dei lotti sta in git, nelle PR e in Linear. Modello
+  passato ai comandi del workflow: `opus`.
+- Al 2026-11-28, dopo lo studio ICH-601, restano 32 issue aperte: 13 nei lotti 10–15, 17 senza lotto (con ICH-603 del
+  lotto 9c, ICH-605 dello studio ICH-600 e ICH-608 dello studio ICH-601), 1 studio di design (ICH-602), ICH-463 in
+  Blocked.
 
 ## Criteri dei lotti
 
@@ -83,12 +85,13 @@ Una issue nata da un lotto entra in un lotto con la scelta dell'utente. Un lotto
 ## Studi di design
 
 Creati il 2026-11-24 su richiesta dell'utente, dopo l'analisi delle prestazioni e della concorrenza
-([prestazioni.md](prestazioni.md)). ICH-600 è fatto; ICH-601 e ICH-602 vengono dopo il gruppo H (scelta dell'utente del
+([prestazioni.md](prestazioni.md)). ICH-600 e ICH-601 sono fatti; ICH-602 viene dopo (scelta dell'utente del
 2026-11-24). Ogni studio produce un design approvato dall'utente, un prototipo misurato e le issue di implementazione.
 Lo studio ICH-600 è il modello: design e misure in [studio-fiber.md](studio-fiber.md).
 
-- ICH-601: calcolo parallelo in Ractor per le applicazioni; il wrapper resta nel Ractor principale. L'API dei Ractor
-  è diversa fra Ruby 3.x e 4.0 ([prestazioni.md](prestazioni.md)).
+- ICH-601, fatto (PR #45): calcolo parallelo in Ractor; design, fatti e scelte D1–D5 in
+  [studio-ractor.md](studio-ractor.md). Issue di implementazione: ICH-608 (gruppo J di [piano.md](piano.md)). Lezione
+  della review: ogni fatto dello studio ha una prova in `benchmark/ractor/facts.rb` ([lezioni.md](lezioni.md)).
 - ICH-602: rilasciare il GVL durante il rasterize. Tocca la Fase 1 (regola 1) e la regola 3, ed è collegata a ICH-600:
   l'hook `blocking_operation_wait` non copre le chiamate FFI, quindi un worker pool non serve.
 
