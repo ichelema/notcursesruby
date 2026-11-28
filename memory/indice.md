@@ -25,7 +25,7 @@ Leggi questo indice, poi apri solo i file che servono. Le regole d'uso sono in [
 | [fase3-design.md](fase3-design.md) | Design della Fase 3: `EventLoop`, focus, resize, widget composti, thread, test |
 | [fase4-design.md](fase4-design.md) | Design della Fase 4: gemspec, file del pacchetto, YARD, coverage, CI |
 | [fase5-design.md](fase5-design.md) | Design della Fase 5: blitter su un terminale vero, spec grafiche, piano per macOS |
-| [studio-fiber.md](studio-fiber.md) | Studio ICH-600: Fiber al posto dei thread in `Notcurses::UI`, misure del prototipo `benchmark/fiber/`, design e scelte D1–D6 |
+| [studio-fiber.md](studio-fiber.md) | Studio ICH-600: Fiber al posto dei thread in `Notcurses::UI`, misure del prototipo `benchmark/fiber/`, design e scelte D1–D7, fatti provati nei lotti 17 e 18 (scheduler, `Task`) |
 
 ## Fuori da `memory/`
 

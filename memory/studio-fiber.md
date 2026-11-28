@@ -162,6 +162,25 @@ Fatti provati nel lotto 17 (ICH-606, 2026-11-27), su Ruby 3.1.7, 3.4.12 e 4.0.7:
     dell'attesa a cui era destinato (review di ICH-606, finding 1 e 2): l'attesa bloccante cerca il suo Fiber nella
     coda dei pronti, e un timeout toglie gli `unblock` rimasti per quel Fiber.
 
+Fatti provati nel lotto 18 (ICH-607, 2026-11-27), su Ruby 3.1.7, 3.4.12 e 4.0.7:
+
+15. `Thread::Queue#close` sveglia insieme i task fermi in `pop` (tramite `unblock`) e i thread: `Task#wait` è un
+    `pop` su una coda che il task chiude quando finisce, e lo scheduler non ha un percorso apposta.
+16. Il thread del ciclo di un `Task` è quello che lo avvia (`Task#start`), non quello di `async`: un `async` fuori da
+    `run` può arrivare da un altro thread (review di ICH-607, finding 1: `wait` da un handler bloccava il processo).
+17. `Task#stop` da un task usa lo schema di `Fiber.schedule` da un task (`Scheduler#from_task`): il chiamante va fra
+    i pronti, poi `Fiber#raise` passa al task da fermare. La coda delle interruzioni non va bene: tiene una sola
+    eccezione per task e per giro, e può perdere uno `Stop`. Da un Fiber che un handler riprende con resume lo
+    `Stop` passa dalla coda delle interruzioni, e arriva in `resume_ready` dello stesso giro, dopo l'handler.
+18. All'uscita di `run` un task può non finire mai: non ancora partito (creato da un `Enumerator#next` in un
+    handler), oppure fermo in un `ensure` che attende di nuovo. Lo scheduler tiene i `Task` vivi e in `close` li
+    chiude con `Task#abandon`, così chi attende in `wait` riparte con `nil`.
+19. I task avviati da un `run` annidato usano lo scheduler del `run` esterno e non avanzano finché il `run` annidato
+    non esce: il suo ciclo non chiama `resume_ready`, e i timer delle attese stanno nel ciclo esterno.
+20. Spec: un flusso sempre pronto senza attese si prova con `File.open("/dev/zero")` e `readpartial`; un caso che
+    prima del fix blocca il processo gira in un processo figlio con `NcHelpers.run_child`, un thread bloccato in
+    `wait` si prova con `join(2)` e `kill` nell'`ensure` dell'esempio.
+
 ## 4. Proposta di design
 
 ```text
@@ -240,8 +259,8 @@ Create in Linear il 2026-11-24 con la conferma dell'utente, in Backlog, priorit�
 | Issue | Label | Contenuto | Relazioni |
 | --- | --- | --- | --- |
 | ICH-604 | Improvement | Guardia «blocking» dei callback C sincroni (punto 5). Fatta: PR #39, merge `185cb82` | blocca ICH-606 |
-| ICH-606 | Improvement | Scheduler di `EventLoop` (punti 1, 2, 7; D1, D4–D6), con `benchmark/fiber/run.rb` adattato al codice finale | bloccata da ICH-604, blocca ICH-607 |
-| ICH-607 | Improvement | `app.async` e `Task` (punto 4; D2, D3), con un esempio in `examples/demo.rb` | bloccata da ICH-606 |
+| ICH-606 | Improvement | Scheduler di `EventLoop` (punti 1, 2, 7; D1, D4–D6), con `benchmark/fiber/run.rb` adattato al codice finale. Fatta: PR #40, merge `e524c00` | bloccata da ICH-604, blocca ICH-607 |
+| ICH-607 | Improvement | `app.async` e `Task` (punto 4; D2, D3), con un esempio in `examples/demo.rb`. Fatta: PR #41, merge `84e4cd6`; le scelte dell'utente sono nel commento della issue | bloccata da ICH-606 |
 | ICH-605 | Performance | `LogView#append` costa circa 400–510 ms di CPU per MB (2 MB/s) su uno schermo 60x200: difetto trovato dallo studio | — |
 
 Su ICH-602 un commento riporta la misura dell'hook `blocking_operation_wait` (sezione 2).

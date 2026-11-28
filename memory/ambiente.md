@@ -94,7 +94,7 @@
   del lotto 15 delle correzioni del 2026-11-06 ha letto il changelog di ffi dalla 1.16.0 alla 1.17.4 senza trovare API
   più recenti in uso.
 - Podman riproduce in locale il container della CI: l'immagine `archlinux:base` con il digest di `ci.yml`, il mirror
-  dello snapshot, poi `pacman -Syuu` con i pacchetti di `ci.yml`. Sulla VPS c'è Podman 6.2.0 (2026-11-23).
+  dello snapshot, poi `pacman -Syuu` con i pacchetti di `ci.yml` (senza la cache della CI). Sulla VPS c'è Podman 6.2.0 (2026-11-23).
 - Soglie di coverage: 98 % totale, 90 % per file, layer FFI escluso.
 - `codecov.yml` tiene `codecov/patch` e `codecov/project` come status informativi: i rami nuovi girano solo nei
   processi figli delle spec, che SimpleCov non misura.
@@ -104,6 +104,13 @@
   senza il fix.
 - Una CI rossa in circa 30 secondi su tutti i job indica di solito un guasto dell'infrastruttura, non il codice (lotto
   8b: `archive.archlinux.org` giù). Conferma con `gh run view <id> --log-failed` e controlla il servizio con `curl`.
+- Cache dello step dei pacchetti (PR #42, 2026-11-28): la chiave `pacman-<snapshot>-v2` tiene i pacchetti e anche i
+  database di pacman (`/var/lib/pacman/sync`). Con la cache lo step esegue `pacman -Suu` senza sincronizzare i
+  database e non usa la rete; senza la cache esegue `-Syuu` con 3 tentativi. Prima, ogni job scaricava `core.db` ed
+  `extra.db` dall'archivio, che andava in timeout: 7 run fallite su 11 fra il 2026-11-21 e il 2026-11-27. Una cache
+  creata in una PR vale solo per quella PR: dopo un cambio di chiave la prima run di `master` scarica di nuovo i
+  database. Non risulta un altro mirror delle snapshot datate: il wiki dell'Arch Linux Archive blocca i client
+  automatici, e i nomi `*.archive.pkgbuild.com` non rispondono (prova del 2026-11-28).
 - Dopo l'apertura della PR la CI può partire con qualche minuto di ritardo: il comando di attesa è in
   [comandi.md](comandi.md).
 

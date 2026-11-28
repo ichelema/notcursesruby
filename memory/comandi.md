@@ -50,6 +50,9 @@ env GEM_HOME=$G GEM_PATH=$G PATH="$(mise where ruby@3.4.12)/bin:$PATH" TERM=xter
   controlla con `pgrep -af rspec` che non giri la suite di un'altra sessione, per esempio quella del worktree di un
   lotto.
 - Prima di una suite lunga controlla `free -h` ([ambiente.md](ambiente.md)).
+- In un worktree di lotto, prima del primo gate, crea il link `notcurses/data` di [ambiente.md](ambiente.md) e
+  controllalo con `test -L`: senza, 11 spec di immagini falliscono (`spec/notcurses/direct_spec.rb` e
+  `spec/integration/pty_spec.rb:461`) e il gate va ripetuto (lotto 18).
 - Non lanciare `rspec` con cwd in un checkout per provare il codice di un altro: `rspec` mette il `lib/` del cwd nel
   load path prima di `-I`. Nei worktree esegui la suite dalla radice del worktree. Senza `cd`, usa
   `mise -C <checkout> x -- bundle exec rspec ...`: il comando gira con cwd in `<checkout>` e carica il suo `lib/`
