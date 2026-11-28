@@ -70,10 +70,12 @@ ICH-602 (GVL del rasterize) ([piano.md](piano.md)).
   le versioni.
 - Ractor in un'applicazione di `Notcurses::UI` (studio ICH-601, 2026-11-28, `benchmark/ractor/`, Ruby 3.1.7, 3.4.12
   e 4.0.7; dettagli in [studio-ractor.md](studio-ractor.md)): con 4 job di calcolo la latenza mediana dei tasti è
-  188–442 ms con il calcolo nell'handler o in 4 `Thread`, 0,1–8,4 ms con 4 Ractor. Il tempo in 4 Ractor contro la
-  serie va da 1,75x a 3,09x più veloce su 4.0.7, e da 0,70x a 3,08x su 3.x secondo il carico. Su 3.1.7 e 3.4.12 due
-  thread che attendono insieme un'operazione di Ractor si bloccano per sempre. Un argomento non condiviso di
-  `Ractor.new` si copia nel thread del chiamante: 35–46 ms per un Array di 200 000 String.
+  188–442 ms con il calcolo nell'handler o in 4 `Thread`, 0,1–8,4 ms con 4 Ractor; un job che crea Array molto
+  grandi ferma anche il thread principale (31–128 ms con 4 Ractor). Il tempo in 4 Ractor contro la serie va da
+  1,75x a 3,09x più veloce su 4.0.7, e da 0,70x a 3,08x su 3.x secondo il carico, con molta variazione fra le
+  sessioni. Su 3.1.7 e 3.4.12 due thread dello stesso Ractor che attendono insieme un'operazione di Ractor si
+  bloccano (su 3.4.12 l'attesa può tornare, ma il processo poi non esce). Un argomento non condiviso di `Ractor.new`
+  si copia nel thread del chiamante: 35–43 ms per un Array di 200 000 String.
 - Fiber: `Fiber.set_scheduler` esiste da Ruby 3.0, `Fiber.blocking` da 3.2 (manca in 3.1.7),
   `Fiber::Scheduler#blocking_operation_wait` da 3.4, gli hook `fiber_interrupt` e `yield` da 4.0.
 - L'hook `blocking_operation_wait` non sposta le chiamate FFI con `blocking: true`: 0 chiamate su Ruby 3.4.12 e

@@ -15,10 +15,10 @@
 #   un Plot.
 # - Pixels: porta un'immagine RGBA in scala di grigi e la dimezza, i byte per
 #   Visual.from_rgba o Visual.blit_rgba. Decodificare con notcurses
-#   (ncvisual_from_file) in un altro Ractor non si può: il motore delle
-#   immagini lo installa notcurses_init (media/shim.c:7), cioè un contesto
-#   aperto nel Ractor principale, e la regola 3 vuole notcurses in un solo
-#   thread alla volta.
+#   (ncvisual_from_file) in un altro Ractor funziona solo con un contesto
+#   aperto nel Ractor principale (il motore delle immagini lo installa
+#   notcurses_init, media/shim.c:12), e la regola 3 lo esclude: notcurses
+#   resta in un solo thread alla volta.
 module Jobs
   # Conta i grapheme del testo.
   module Segment

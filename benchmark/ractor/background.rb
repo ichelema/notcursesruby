@@ -23,13 +23,22 @@
 #   Quindi un solo thread di consegna per processo, che riceve i risultati
 #   dal canale dei risultati: ogni job ci manda il suo messaggio.
 # - Il risultato passa con move: true. Il costo lo paga soprattutto il
-#   Ractor che manda: il thread del ciclo si ferma al massimo 4-14 ms per un
-#   Array di 200 000 String (compute.rb e lo studio).
+#   Ractor che manda: il thread del ciclo si ferma al massimo 6-17 ms per un
+#   Array di 200 000 String (compute.rb, seconda tabella del trasporto).
 #
-# Limite, solo su Ruby 3.x (che non ha Ractor::Port): il canale è la coda di
-# Ractor.main, una sola per processo. Un'applicazione che usa Ractor.receive
-# nel Ractor principale prende anche i messaggi dei job, e la sua attesa si
-# blocca con quella del thread di consegna. Su Ruby 4.0 il canale è un Port.
+# Limiti su Ruby 3.x (che non ha Ractor::Port): dopo il primo job il thread di
+# consegna resta in Ractor.receive, quindi il Ractor principale non può più
+# fare nessuna attesa di Ractor. Un Ractor.receive dell'applicazione prende
+# anche i messaggi dei job; un take o un Ractor.select non torna su 3.1.7, e su
+# 3.4.12 torna ma poi il processo non esce. Lo stesso vale nel Ractor del job,
+# dove il thread di cancellazione è fermo in Ractor.receive: un job non può
+# attendere un suo Ractor annidato. Su Ruby 4.0 il canale è un Port.
+#
+# Costo del thread di cancellazione, su tutte le versioni (facts.rb): un
+# Ractor con un secondo thread fermo in Ractor.receive resta vivo circa 1 s
+# dopo la fine del blocco, e un exit del processo con un job al lavoro dura
+# circa 1 s. kill e join del thread a fine blocco non vanno: su 3.4.12 join
+# non torna. Il meccanismo resta da scegliere in ICH-608.
 class ProtoBackground
   # Chiave della memoria locale del Ractor che il job controlla con
   # ProtoBackground.cancelled?.
