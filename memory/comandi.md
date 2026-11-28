@@ -6,12 +6,19 @@ scritto nel prompt di sistema: assegnalo a mano. Non esiste una variabile `$SCRA
 ## Suite e coverage
 
 ```sh
-S=/percorso/dello/scratchpad   # dal prompt di sistema della sessione
+# gate prima della PR (CLAUDE.md): la suite con la coverage e una suite in ordine casuale, in parallelo (nota
+# sotto), poi RuboCop. Lo script crea il link notcurses/data in un worktree, si ferma se gira un'altra suite e
+# stampa esito, esempi, seme, coverage e spec fallite; i log vanno in GATE_DIR (default ~/.claude/tmp/gate.*).
+# Exit 0 verde, 1 rosso, 2 uso sbagliato o un'altra suite in corso. Lancialo in background: dura ~6 minuti
+.claude/scripts/gate
+# Gate leggero (fine di 2_work-simplify, fix di review senza cambio di comportamento): coverage e RuboCop
+.claude/scripts/gate --light
+# una suite casuale rossa: ripetila da sola, in serie, con lo stesso seme (lo script stampa il comando)
+.claude/scripts/gate --rand N
 
-# gate prima della PR (CLAUDE.md): la suite con la coverage e una suite in ordine casuale, 2 esecuzioni, lanciate
-# in parallelo (nota sotto)
-# Gate leggero (fine di 2_work-simplify, fix di review senza cambio di comportamento): solo la suite con la coverage
-# COLORTERM serve alle 10 spec dei colori RGB, TERM fisso anche dentro Kitty o Ghostty
+# I comandi che lo script esegue, per una suite fuori dal gate. COLORTERM serve alle 10 spec dei colori RGB, TERM
+# fisso anche dentro Kitty o Ghostty
+S=/percorso/dello/scratchpad   # dal prompt di sistema della sessione
 
 # suite con la coverage, in ordine normale (report in coverage/). Eseguita su un solo file di spec fallisce per la
 # soglia. Con --out il terminale non mostra l'esito delle spec: leggi il riepilogo con
@@ -50,9 +57,10 @@ env GEM_HOME=$G GEM_PATH=$G PATH="$(mise where ruby@3.4.12)/bin:$PATH" TERM=xter
   controlla con `pgrep -af rspec` che non giri la suite di un'altra sessione, per esempio quella del worktree di un
   lotto.
 - Prima di una suite lunga controlla `free -h` ([ambiente.md](ambiente.md)).
-- In un worktree di lotto, prima del primo gate, crea il link `notcurses/data` di [ambiente.md](ambiente.md) e
-  controllalo con `test -L`: senza, 11 spec di immagini falliscono (`spec/notcurses/direct_spec.rb` e
-  `spec/integration/pty_spec.rb:461`) e il gate va ripetuto (lotto 18).
+- Le spec che leggono le immagini di `notcurses/data` hanno il tag `:notcurses_data`. Senza la cartella, una run che
+  le contiene si ferma subito nel `before(:suite)` di `spec/support/nc_helpers.rb`, con il comando che la crea; una
+  run senza quelle spec parte lo stesso (lotto 18: il gate senza il link dava 11 fallimenti dopo 5 minuti).
+  `.claude/scripts/gate` crea da solo il link di [ambiente.md](ambiente.md) in un worktree.
 - Non lanciare `rspec` con cwd in un checkout per provare il codice di un altro: `rspec` mette il `lib/` del cwd nel
   load path prima di `-I`. Nei worktree esegui la suite dalla radice del worktree. Senza `cd`, usa
   `mise -C <checkout> x -- bundle exec rspec ...`: il comando gira con cwd in `<checkout>` e carica il suo `lib/`
