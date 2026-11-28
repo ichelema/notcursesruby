@@ -54,7 +54,7 @@ class ProtoBackground
   RUNNER = proc do |out, id, job, *args|
     Thread.new do # rubocop:disable ThreadSafety/NewThread -- riceve la cancellazione dentro il Ractor
       Ractor.receive
-      Ractor.current[:notcurses_cancel] = true
+      Ractor.current[CANCEL_KEY] = true
     end
     begin
       out.send([id, :ok, job.call(*args)], move: true)

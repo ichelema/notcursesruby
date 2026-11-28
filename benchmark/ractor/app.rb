@@ -70,10 +70,8 @@ Notcurses::Context.open(output: tty_path, termtype: "xterm-256color", suppress_b
   app.on_input do |input|
     case input.id
     when 103 # g
-      t = now
-      out[:t_go] = t
       renders0 = nc.stats.renders
-      results.puts "go #{t}"
+      results.puts "go #{now}"
       case model
       when "inline"
         JOBS.times { show.call(job.call(*args)) }

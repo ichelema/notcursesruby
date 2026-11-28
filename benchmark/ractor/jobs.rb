@@ -70,14 +70,14 @@ module Jobs
       n = 0
       until Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0 > seconds
         n += 1
-        return [:cancelled, n] if (n % 1000).zero? && Ractor.current[:notcurses_cancel]
+        return [:cancelled, n] if (n % 1000).zero? && ProtoBackground.cancelled?
       end
       [:done, n]
     end
   end
 
   # Input deterministici e frozen, di dimensione scale: con 1 ogni job dura
-  # circa 150-250 ms su un core (Ruby 3.1.7 e 4.0.7).
+  # circa 140-210 ms su un core (Ruby 3.1.7, 3.4.12 e 4.0.7, compute.rb).
   def self.inputs(scale = 1)
     {
       Segment => [((("é漢a" * 50) + "\n") * (6_000 * scale)).freeze],
